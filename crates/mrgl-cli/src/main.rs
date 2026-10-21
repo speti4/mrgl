@@ -4,7 +4,8 @@
 //!
 //! `scan`, `list` and `root` are task 002, the game root discovery behind them is task 020;
 //! `add github:<owner>/<repo>` resolves a release (task 003); `add <file.zip>` and `remove` are task 004
-//! (the install engine); `backup` (the WTF backup, the listing and the restore) is task 013; the Forever
+//! (the install engine); `list` reads the state sidecar for the managed and the unmanaged addons (task 037);
+//! `backup` (the WTF backup, the listing and the restore) is task 013; the Forever
 //! notes on `add` and on `list` (the derived build signal and the curated note) are task 011; `link` and
 //! `unlink` (the dev addon junctions) are task 005; `export` and `import` (the addon list) and the
 //! interface warning of `list` and `add` are task 015; `pin`, `unpin`, `ignore`, `unignore` and
@@ -22,7 +23,7 @@ use mrgl_core::backup;
 use mrgl_core::client;
 use mrgl_core::dependencies::{self, AddonDependencies};
 use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
-use mrgl_core::flavor::{self, FlavorId, VersionSource};
+use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{Engine, Marked, Metadata};
@@ -32,7 +33,7 @@ use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
-use mrgl_core::state::{Entry, FlavorHome, State};
+use mrgl_core::state::{Entry, FlavorHome, State, Status};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::{Error, VERSION};
 
@@ -66,7 +67,8 @@ enum Command {
         /// The flavor folder, for example `C:\Program Files (x86)\World of Warcraft\_forever_`.
         folder: PathBuf,
     },
-    /// List the addons installed in a flavor, with their sources and versions where known.
+    /// List the addons installed in a flavor: managed by mrgl (with the source and the installed version)
+    /// or unmanaged (with the TOC's source hints).
     List {
         /// The flavor: `forever`, `retail`, `classic` or `era`, a `.flavor.info` id (`wowf`, `wow`,
         /// `wow_classic`, `wow_classic_era`) or a flavor folder.
@@ -358,11 +360,15 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
         }
         Command::List { flavor, root } => {
             let mut warnings = Vec::new();
-            let folder = flavor_folder(flavor.as_deref(), root, &mut warnings)?;
+            let (folder, root) = flavor_folder_and_root(flavor.as_deref(), root, &mut warnings)?;
             let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
             let dependencies = check_dependencies(&scan, &mut warnings);
             let forever = forever_statuses(&scan, &mut warnings);
-            let state = sidecar_of(&scan, &mut warnings);
+            let state = list_state(&scan.flavor, &mut warnings);
+            let view = ListView {
+                state: &state,
+                root: root.as_ref(),
+            };
             report_scan(
                 reporter,
                 "list",
@@ -370,7 +376,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
                 warnings,
                 &dependencies,
                 forever.as_ref(),
-                state.as_ref(),
+                Some(view),
             );
         }
         Command::Root { folder } => root_command(reporter, folder)?,
@@ -431,6 +437,16 @@ fn flavor_folder(
     root_flag: Option<PathBuf>,
     warnings: &mut Vec<String>,
 ) -> Result<PathBuf, String> {
+    flavor_folder_and_root(spec, root_flag, warnings).map(|(folder, _)| folder)
+}
+
+/// [`flavor_folder`] with the game root it was found under (and where that came from); `None` for a
+/// flavor folder given as a path.
+fn flavor_folder_and_root(
+    spec: Option<&str>,
+    root_flag: Option<PathBuf>,
+    warnings: &mut Vec<String>,
+) -> Result<(PathBuf, Option<GameRoot>), String> {
     let Some(spec) = spec else {
         return Err(
             "no flavor given: --flavor forever, retail, classic, era, a .flavor.info id or a flavor folder"
@@ -447,11 +463,11 @@ fn flavor_folder(
         if root.origin.is_discovered() {
             warnings.push(root.found_line());
         }
-        return Ok(root.path.join(folder_name));
+        return Ok((root.path.join(folder_name), Some(root)));
     }
     let path = Path::new(spec);
     if path.is_dir() {
-        return Ok(path.to_path_buf());
+        return Ok((path.to_path_buf(), None));
     }
     Err(format!(
         "unknown flavor: {spec} (forever, retail, classic, era, a .flavor.info id or a flavor folder)"
@@ -472,12 +488,37 @@ fn game_root(
     Ok(resolution.root)
 }
 
+/// What `list` lays over a scan (task 037): the flavor's state sidecar and the game root the flavor was
+/// found under. `scan` has none of it and stays the raw folder view.
+struct ListView<'a> {
+    state: &'a State,
+    root: Option<&'a GameRoot>,
+}
+
+/// The flavor's sidecar for `list`, read through the install engine (D-003). A missing sidecar is a fresh
+/// state, and so is a corrupt one, rebuilt without a word: the scan is the truth, every addon reads as
+/// unmanaged, and the next install or removal rewrites the file and says so once. A sidecar that cannot
+/// be read at all (no mrgl home, a locked file) is a warning, and every addon reads as unmanaged too.
+fn list_state(flavor: &Flavor, warnings: &mut Vec<String>) -> State {
+    match Engine::new(flavor.clone()).and_then(|engine| engine.load_state()) {
+        Ok(loaded) => loaded.state,
+        Err(error) => {
+            warnings.push(format!(
+                "state sidecar not read, every addon listed as unmanaged: {error}"
+            ));
+            State::new(&flavor.id)
+        }
+    }
+}
+
 /// Prints a scan: the addon lines, the warnings and the summary, or the one JSON document. A client
 /// running from the flavor folder (task 023) is named in the summary and is `client_running` in the JSON.
 /// `dependencies` is the dependency check of the scan (task 029; empty for `scan`, which reads the folder
 /// only). A Forever listing (task 011) marks every addon through [`mark_forever`].
 /// With the flavor's sidecar (`list`), a pinned, an ignored and a prerelease addon carry their marks
 /// (task 021).
+/// With a [`ListView`] (`list`, task 037) every addon is managed or unmanaged, the summary counts both,
+/// and the JSON carries the counts and the game root with its origin.
 fn report_scan(
     reporter: &Reporter,
     kind: &str,
@@ -485,7 +526,7 @@ fn report_scan(
     mut warnings: Vec<String>,
     dependencies: &[AddonDependencies],
     forever: Option<&BTreeMap<String, ForeverStatus>>,
-    state: Option<&State>,
+    list: Option<ListView>,
 ) {
     warnings.extend(scan.flavor.warnings.iter().cloned());
     warnings.extend(scan.warnings.iter().cloned());
@@ -497,14 +538,21 @@ fn report_scan(
         }
     };
     let mismatches = interface::check_scan(scan);
+    // `classify` keeps the scan's order: one status per addon, or none at all for `scan`.
+    let statuses = list.as_ref().map(|view| view.state.classify(scan));
+    let status_of = |index: usize| statuses.as_ref().map(|statuses| &statuses[index]);
+    let managed = statuses
+        .as_ref()
+        .map(|statuses| statuses.iter().filter(|status| status.is_managed()).count());
     let mut lines = Vec::new();
     let mut objects = Vec::new();
-    for addon in &scan.addons {
-        let mut line = addon_line(addon);
-        let mut object = serde_json::to_value(addon).unwrap_or_default();
+    for (index, addon) in scan.addons.iter().enumerate() {
+        let mut line = addon_line(addon, status_of(index));
+        let mut object = addon_json(addon, status_of(index));
         // The marks of task 021 (pinned, ignored, prerelease) come first, from the sidecar entry.
-        if let Some(state) = state {
-            let entry = state
+        if let Some(view) = &list {
+            let entry = view
+                .state
                 .entry_for_folder(&addon.folder)
                 .map(|(_, entry)| entry);
             let (suffix, fields) = marks(entry);
@@ -519,7 +567,7 @@ fn report_scan(
         objects.push(object);
     }
     if reporter.json {
-        reporter.document(serde_json::json!({
+        let mut document = serde_json::json!({
             "kind": kind,
             "flavor": &scan.flavor,
             "addons": objects,
@@ -527,7 +575,17 @@ fn report_scan(
             "client_running": client,
             "interface_mismatches": &mismatches,
             "warnings": warnings,
-        }));
+        });
+        if let (Some(view), Some(managed)) = (&list, managed) {
+            document["counts"] = serde_json::json!({
+                "addons": scan.addons.len(),
+                "managed": managed,
+                "unmanaged": scan.addons.len() - managed,
+            });
+            document["root"] = serde_json::json!(view.root.map(|root| &root.path));
+            document["root_origin"] = serde_json::json!(view.root.map(|root| root.origin));
+        }
+        reporter.document(document);
         return;
     }
     for line in lines {
@@ -571,13 +629,19 @@ fn report_scan(
         1 => format!("1 addon in {} ({build})", scan.flavor.folder_name()),
         count => format!("{count} addons in {} ({build})", scan.flavor.folder_name()),
     };
+    if let Some(managed) = managed.filter(|_| !scan.addons.is_empty()) {
+        summary.push_str(&format!(
+            ": {managed} managed by mrgl, {} unmanaged",
+            scan.addons.len() - managed
+        ));
+    }
     match scan.skipped.len() {
         0 => {}
         1 => summary.push_str(", 1 folder without a TOC skipped"),
         count => summary.push_str(&format!(", {count} folders without a TOC skipped")),
     }
-    if let Some(state) = state {
-        summary.push_str(&marks_summary(scan, state));
+    if let Some(view) = &list {
+        summary.push_str(&marks_summary(scan, view.state));
     }
     let kind = if scan.addons.is_empty() {
         Kind::Nothing
@@ -585,22 +649,6 @@ fn report_scan(
         Kind::Success
     };
     reporter.say(kind, summary);
-}
-
-/// The flavor's sidecar for `list`'s marks: a missing one is empty, a corrupt one or no home folder is a
-/// warning and no marks.
-fn sidecar_of(scan: &Scan, warnings: &mut Vec<String>) -> Option<State> {
-    let id = &scan.flavor.id;
-    match FlavorHome::new(id).and_then(|home| home.read_state(id)) {
-        Ok(loaded) => {
-            warnings.extend(loaded.warning);
-            Some(loaded.state)
-        }
-        Err(error) => {
-            warnings.push(error.to_string());
-            None
-        }
-    }
 }
 
 /// The marks of task 021 on one addon of `list`, the one place they are spelled: the suffix of its line
@@ -671,10 +719,22 @@ fn marks_summary(scan: &Scan, state: &State) -> String {
     summary
 }
 
-/// One addon as a plain line: folder, version, interface list, the source hints and the flags.
-fn addon_line(addon: &Addon) -> String {
+/// The version an addon line and its JSON object show: the installed one for a managed addon (the
+/// sidecar's), the primary TOC's `## Version` otherwise.
+fn shown_version<'a>(addon: &'a Addon, status: Option<&Status<'a>>) -> Option<&'a str> {
+    match status.and_then(|status| status.entry) {
+        Some(entry) => Some(entry.version.as_str()),
+        None => addon.version(),
+    }
+}
+
+/// One addon as a plain line, the one builder of `scan` and `list`: folder, version, interface list,
+/// then for `list` (a status) `managed` with the source spec as the sidecar has it (`managed by <name>`
+/// for a secondary folder of a managed addon) or `unmanaged`, then the TOC's source hints of an addon
+/// mrgl does not manage, then the flags. A later mark is one more part pushed before the join.
+fn addon_line(addon: &Addon, status: Option<&Status>) -> String {
     let toc = addon.primary_toc().map(|file| &file.toc);
-    let version = addon.version().unwrap_or("-").to_string();
+    let version = shown_version(addon, status).unwrap_or("-").to_string();
     let interface = toc
         .map(|toc| {
             toc.interface
@@ -694,7 +754,23 @@ fn addon_line(addon: &Addon) -> String {
     .into_iter()
     .filter_map(|(name, id)| id.map(|_| name))
     .collect();
-    if !hints.is_empty() {
+    match status {
+        Some(Status {
+            name: Some(name),
+            entry: Some(entry),
+            ..
+        }) => {
+            if name.eq_ignore_ascii_case(&addon.folder) {
+                parts.push("managed".to_string());
+            } else {
+                parts.push(format!("managed by {name}"));
+            }
+            parts.push(entry.source.clone());
+        }
+        Some(_) => parts.push("unmanaged".to_string()),
+        None => {}
+    }
+    if !hints.is_empty() && !status.is_some_and(Status::is_managed) {
         parts.push(hints.join(","));
     }
     if addon.has_legacy() {
@@ -734,11 +810,10 @@ fn mark_dependencies(
 /// dependency adds its warning line.
 fn check_dependencies(scan: &Scan, warnings: &mut Vec<String>) -> Vec<AddonDependencies> {
     let id = &scan.flavor.id;
+    // A corrupt sidecar is `list_state`'s to report once (task 037: rebuilt without a word); here it
+    // only leaves every flag unknown.
     let state = match FlavorHome::new(id).and_then(|home| home.read_state(id)) {
-        Ok(loaded) => {
-            warnings.extend(loaded.warning);
-            Some(loaded.state)
-        }
+        Ok(loaded) => Some(loaded.state),
         Err(error) => {
             warnings.push(error.to_string());
             None
@@ -795,7 +870,7 @@ fn forever_statuses(
                 return Some(statuses);
             }
         };
-    warnings.extend(loaded.warning);
+    // A corrupt sidecar is `list_state`'s to report (task 037: rebuilt without a word).
     let github = GitHub::from_env(sources::http_from_env());
     for entry in loaded.state.addons.values() {
         let Some(folder) = entry.folders.first() else {
@@ -927,6 +1002,30 @@ fn installed_mismatch(engine: &Engine, primary: Option<&String>) -> Option<Inter
         .iter()
         .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
         .and_then(|addon| interface::check_addon(addon, engine.flavor.version))
+}
+
+/// One addon as a JSON object, the one builder of `scan` and `list`: the scan's fields (`folder`, `path`,
+/// `tocs`, `other_tocs`, `chosen`, `linked`), and for `list` (a status) `managed`, `name` (the managed
+/// addon that owns the folder), `source` (its spec as the sidecar has it) and `version` (the installed
+/// one, else the TOC's `## Version`), `null` where unknown. A later field is one more insert.
+fn addon_json(addon: &Addon, status: Option<&Status>) -> serde_json::Value {
+    let mut object = match serde_json::to_value(addon) {
+        Ok(serde_json::Value::Object(object)) => object,
+        _ => serde_json::Map::new(),
+    };
+    if let Some(status) = status {
+        object.insert("managed".into(), status.is_managed().into());
+        object.insert("name".into(), serde_json::json!(status.name));
+        object.insert(
+            "source".into(),
+            serde_json::json!(status.entry.map(|entry| &entry.source)),
+        );
+        object.insert(
+            "version".into(),
+            serde_json::json!(shown_version(addon, Some(status))),
+        );
+    }
+    serde_json::Value::Object(object)
 }
 
 /// The target of an `add`: the flavor the spec names and, when a game folder is known and holds that

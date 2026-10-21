@@ -44,7 +44,7 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 ```powershell
 cargo build --release
 target\release\mrgl.exe --version
-target\release\mrgl.exe list --flavor forever                               # what is installed, flavor-correctly
+target\release\mrgl.exe list --flavor forever                               # what is installed, managed by mrgl or not
 target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # remember a game folder installed elsewhere
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # which release asset is the Forever one
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
@@ -76,6 +76,13 @@ On a standard install no flag is needed: mrgl finds the game folder through the 
 under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
 run would use and where it came from, and `mrgl root <folder>` remembers one (also `--root <folder>` or
 `MRGL_ROOT` for one run).
+
+`mrgl list` marks every addon folder managed or unmanaged. A managed addon is one mrgl installed: its line
+shows the version mrgl installed and the source it came from, as the state under `%LOCALAPPDATA%\mrgl\`
+remembers them. Every other folder is unmanaged (put there by hand or by another manager): its line shows the
+TOC's version and the CurseForge, Wago and WoWInterface ids the TOC names, and mrgl leaves it alone until it
+is installed through mrgl. The summary counts both; `--json` carries `managed`, `source` and `version` per
+addon.
 
 On Forever, `add --dry-run` and `list` show a Forever note for each addon. `forever build: yes`, `no` or
 `unknown` says whether the addon's source publishes a Forever build at all: its `release.json` names one,
