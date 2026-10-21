@@ -12,7 +12,7 @@ drop is the only other exit. Closing a task files every follow-up as a `backlog/
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 17 backlog (4 ready · 0 blocked · 2 waiting · 11 ideas) · 0 in progress · 3 done · 0 dropped · 5 decisions
+**State:** 28 backlog (4 ready · 0 blocked · 2 waiting · 22 ideas) · 0 in progress · 3 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -50,6 +50,10 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 019 | [Build version fallback from the client exe when .build.info has no row for the …](backlog/019-build-version-fallback-from-the-client-exe.md) | S | 2026-10-21 |
+| 021 | [Pin, ignore and the pre-release channel per addon; CLI pin, unpin, ignore and u…](backlog/021-pin-ignore-and-prerelease-channel.md) | S | 2026-10-21 |
+| 022 | [Rollback to the previous version from the kept zip; CLI rollback](backlog/022-rollback-from-the-kept-zip.md) | S | 2026-10-21 |
+| 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](backlog/029-dependency-check-from-toc-and-nolib.md) | S | 2026-10-21 |
+| 030 | [Release notes before an update: the GitHub release body in one line](backlog/030-release-notes-before-an-update.md) | S | 2026-10-21 |
 
 #### M2 Window MVP
 
@@ -61,6 +65,8 @@ _none_
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
 | 017 | [Window design sketch: the list view, the states and the voice's place, before t…](backlog/017-window-design-sketch-before-the-shell.md) | S | 2026-10-21 |
 | 020 | [Game root auto-discovery: the launcher's registry key and the common install fo…](backlog/020-game-root-auto-discovery.md) | S | 2026-10-21 |
+| 023 | [Game-running detection: no WTF write while the client runs](backlog/023-game-running-detection.md) | S | 2026-10-21 |
+| 024 | [mrgl doctor: a diagnostic report for a bug report](backlog/024-doctor-diagnostic-report.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
 
@@ -70,6 +76,21 @@ _none_
 | 013 | [WTF backup and restore](backlog/013-wtf-backup-and-restore.md) | M | 2026-10-21 |
 | 014 | [Addon sets with enable and disable](backlog/014-addon-sets-with-enable-and-disable.md) | M | 2026-10-21 |
 | 015 | [Addon list export and import, and a TOC-interface versus build warning](backlog/015-list-export-import-and-interface-warning.md) | S | 2026-10-21 |
+| 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](backlog/025-savedvariables-size-and-orphan-cleanup.md) | S | 2026-10-21 |
+| 027 | [Per-character addon sets](backlog/027-per-character-addon-sets.md) | S | 2026-10-21 |
+| 028 | [Lists as discovery: a shareable list format and a Forever starter list in the r…](backlog/028-lists-as-discovery-and-forever-starter-list.md) | S | 2026-10-21 |
+
+#### M4 Sources
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 026 | [Adopt: take over an existing AddOns folder from its TOC source headers; CLI ado…](backlog/026-adopt-existing-addons-folder-from-toc-headers.md) | M | 2026-10-21 |
+
+#### M5 Trust
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 031 | [Self-update of the portable zip with attestation verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | M | 2026-10-21 |
 
 ### In progress
 
