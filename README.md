@@ -72,6 +72,18 @@ A backup is a plain zip under `%LOCALAPPDATA%\mrgl\backups\<flavor-id>\` (or the
 restore moves the current `WTF` folder aside into the same place before it writes, so it can be undone by
 hand; it is refused while the game client runs.
 
+`list` and `add` check every addon's required dependencies (the TOC's `## Dependencies` and
+`## RequiredDeps`) and name what the game will not find, as a warning, never a refusal:
+
+```text
+Mrgl? Mrgl…
+Needy needs the missing dependency LibMissing: install it or the addon does not load
+```
+
+A dependency counts as there when an addon folder of that name is installed, or when the addon carries the
+library inside its own folder (a release that is not a `nolib` build). `--json` has the details per addon
+under `dependencies`.
+
 ## Documentation
 
 - [Development](docs/development.md): layout, CI, releases and helper scripts

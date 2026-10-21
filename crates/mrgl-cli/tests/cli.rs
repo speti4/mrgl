@@ -2098,3 +2098,175 @@ fn add_dry_run_of_a_release_with_an_empty_body_shows_no_notes() {
         "https://github.com/Example/NoNotes/releases/tag/v1.0.0"
     );
 }
+
+// --- task 029: the dependency check in `list` and after `add` ---
+
+/// The synthetic game folder of the dependency check: `Needy` with a met, an embedded and a missing
+/// required dependency, `LibMet`, and `NolibBuild` with a library folder inside.
+fn dependency_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/dependencies/_forever_")
+}
+
+#[test]
+fn list_warns_about_a_missing_dependency_and_marks_the_line() {
+    let output = mrgl()
+        .args(["--serious", "list", "--flavor"])
+        .arg(dependency_fixture())
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "LibMet  1.0.0  16001",
+            "Needy  1.0.0  16001  missing: LibMissing",
+            "NolibBuild  1.0.0  16001",
+            "Needy needs the missing dependency LibMissing: install it or the addon does not load",
+            "3 addons in _forever_ (wowf 1.60.1.70245)",
+        ],
+        "{text}"
+    );
+}
+
+#[test]
+fn list_json_carries_the_dependencies_of_every_addon() {
+    let output = mrgl()
+        .args(["--json", "list", "--flavor"])
+        .arg(dependency_fixture())
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let addon = |folder: &str| {
+        value["addons"]
+            .as_array()
+            .expect("addons")
+            .iter()
+            .find(|addon| addon["folder"] == folder)
+            .cloned()
+            .unwrap_or_else(|| panic!("no {folder} in {value}"))
+    };
+    assert_eq!(
+        addon("Needy")["dependencies"],
+        serde_json::json!({
+            "folder": "Needy",
+            "required": ["LibMet", "LibEmbedded", "LibMissing"],
+            "met": ["LibMet"],
+            "embedded": ["LibEmbedded"],
+            "missing": ["LibMissing"],
+            "nolib": null,
+        })
+    );
+    assert_eq!(
+        addon("LibMet")["dependencies"]["required"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        value["warnings"],
+        serde_json::json!([
+            "Needy needs the missing dependency LibMissing: install it or the addon does not load"
+        ])
+    );
+}
+
+#[test]
+fn list_reads_the_nolib_flag_from_the_sidecar() {
+    let home = temp_home("nolib-flag");
+    std::fs::create_dir_all(home.join("wowf")).expect("the flavor's home");
+    std::fs::write(
+        home.join("wowf").join("state.json"),
+        r#"{"schema": 1, "flavor": "wowf", "addons": {"NolibBuild": {"source": "github:someone/nolib-build",
+            "version": "1.0.0", "folders": ["NolibBuild"], "files": {}, "installed_at": "2026-10-21T14:03:05Z",
+            "nolib": true}}}"#,
+    )
+    .expect("the sidecar");
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .args(["--serious", "list", "--flavor"])
+        .arg(dependency_fixture())
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line == "NolibBuild  1.0.0  16001  missing: LibEmbedded"),
+        "{text}"
+    );
+    assert!(
+        text.lines().any(|line| line
+            == "NolibBuild needs the missing dependency LibEmbedded: install it or the addon does not load (a nolib build: its libraries are addons of their own)"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn scan_reads_the_folder_only_and_checks_no_dependency() {
+    let output = mrgl()
+        .args(["--json", "scan"])
+        .arg(dependency_fixture())
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert!(value["addons"][0].get("dependencies").is_none(), "{value}");
+    assert_eq!(value["warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn add_warns_after_the_install_when_a_dependency_is_missing() {
+    let game = Game::new("dependencies");
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(zips().join("needs-library-1.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(
+        output.status.success(),
+        "a warning, never a refusal: {}",
+        stderr_last_line(&output)
+    );
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "installing needs-library-1.0.0.zip into _forever_",
+            "NeedsLibrary needs the missing dependency LibMissing: install it or the addon does not load",
+            "installed NeedsLibrary 1.0.0 (1 folder: NeedsLibrary) into _forever_",
+        ],
+        "{text}"
+    );
+    assert!(
+        game.addon("NeedsLibrary")
+            .join("NeedsLibrary.toc")
+            .is_file()
+    );
+
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(zips().join("needs-library-1.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let dependencies = &value["addon"]["dependencies"][0];
+    assert_eq!(dependencies["folder"], "NeedsLibrary");
+    assert_eq!(dependencies["embedded"], serde_json::json!(["LibEmbedded"]));
+    assert_eq!(dependencies["missing"], serde_json::json!(["LibMissing"]));
+    assert_eq!(
+        dependencies["nolib"],
+        serde_json::Value::Null,
+        "a zip in hand does not say"
+    );
+}

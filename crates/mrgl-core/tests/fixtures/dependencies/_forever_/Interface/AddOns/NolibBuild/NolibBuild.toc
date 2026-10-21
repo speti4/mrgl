@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Nolib Build
+## Version: 1.0.0
+## Dependencies: LibMet, LibEmbedded
+
+core.lua

@@ -89,6 +89,14 @@ write("escaping-path.zip", [
     ("Escape/../../Outside.lua", "-- must never be written\n"),
 ])
 
+write("needs-library-1.0.0.zip", [
+    ("NeedsLibrary/NeedsLibrary.toc",
+     toc("Needs Library", "1.0.0",
+         extra="## Dependencies: LibEmbedded, LibMissing\r\n## OptionalDeps: LibOptional\r\n")),
+    ("NeedsLibrary/core.lua", "-- NeedsLibrary 1.0.0\n"),
+    ("NeedsLibrary/Libs/LibEmbedded/LibEmbedded.lua", "-- an embedded library\n"),
+])
+
 write("no-addon.zip", [
     ("readme.txt", "no addon folder anywhere\n"),
     ("Docs/notes.txt", "still no TOC\n"),

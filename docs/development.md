@@ -24,7 +24,13 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
   calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
   D-003), the game root resolution (`discover`, task 020: the flag, `MRGL_ROOT`, the remembered root, then
-  the launcher's registry key and the usual install folders, behind a lookup trait with a stub) and the
+  the launcher's registry key and the usual install folders, behind a lookup trait with a stub), the
+  dependency check (`dependencies`, task 029: every required name of the TOC the flavor loads, `## Dependencies`,
+  `## RequiredDeps` and the other `## Dep…` lines, ASCII case-insensitive, is *met* when an addon folder of
+  that name is in the scan, *embedded* when a folder of that name sits inside the addon's own folder, at
+  most three levels down, which a build without `nolib` carries, and *missing* otherwise; an optional
+  dependency is never reported; the sidecar entry's `nolib` flag, recorded from the pick at install, turns
+  the embedded lookup off for a `nolib` build, and an entry without it is unknown, embedded possible) and the
   voice table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick, with the release notes' line and
@@ -33,7 +39,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   task 038), `backup` with `--list`, `--restore` and `--yes` (task 013),
   `update`, `link`, `unlink` (stubs that answer with the task that builds them until that task lands), with
   `--json` for machines and `--serious` for the
-  murloc-averse; its end-to-end tests under `tests/`.
+  murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
+  (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
+  `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
+  addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
+  `folder`, `required`, `met`, `embedded`, `missing` and `nolib` (`true`, `false` or `null` for unknown).
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
   capability file and the icon.
 - `scripts/` — helper scripts for the icon, the release zip, the changelog and the commit rules.
@@ -259,10 +269,13 @@ shape the BigWigs packager writes, `forever` next to other flavors, one without 
 without `release.json`, one with no release, one with a draft and a prerelease above the stable release),
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
 one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
-folder, a path that tries to escape the staging folder, and a zip with no addon at all), and a hand-written
+folder, a path that tries to escape the staging folder, an addon with an embedded and a missing required
+dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
 SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made
-up from the first line, task 013). A real addon zip, a real AddOns folder or a `WTF` folder never enters the
+up from the first line, task 013), and a third game folder for the dependency check (`dependencies/`, task
+029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency, and a
+library folder inside an addon that a `nolib` entry in a test's sidecar turns into a missing one). A real addon zip, a real AddOns folder or a `WTF` folder never enters the
 repo; a manual round on a real game folder is a task of its own, and its result is a dated line in that
 task's Verification. The running-client tests copy their own test binary into a temporary flavor folder and
 start it as a stand-in client (it waits for its stdin to close), so no game file and no committed

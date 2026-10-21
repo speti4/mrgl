@@ -160,6 +160,9 @@ pub struct Pick {
     /// The release's page, where the full notes are (`html_url` on GitHub), when the source names one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page: Option<String>,
+    /// The asset is a `nolib` build (`release.json`'s flag, or a `-nolib` name): its libraries are
+    /// separate addons. The install records it on the sidecar entry for the dependency check (task 029).
+    pub nolib: bool,
 }
 
 impl Pick {

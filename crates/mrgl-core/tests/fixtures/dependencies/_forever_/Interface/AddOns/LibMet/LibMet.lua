@@ -1,0 +1,1 @@
+-- LibMet: a library installed as an addon of its own
