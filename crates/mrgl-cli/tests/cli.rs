@@ -2420,3 +2420,190 @@ fn list_marks_a_managed_forever_addon_from_the_cache_alone() {
     assert!(!addons.is_empty());
     assert!(addons.iter().all(|addon| addon.get("forever").is_none()));
 }
+
+/// A made-up token: the doctor names the key and never prints its value (task 024).
+const DOCTOR_SECRET: &str = "ghp_madeUpTokenValueForTheDoctorEndToEndTest";
+
+/// The doctor's synthetic game folder: the client tests' `_forever_` with an empty AddOns folder.
+fn doctor_game_root(name: &str) -> PathBuf {
+    let root = temp_game_root(&format!("doctor-{name}"));
+    std::fs::create_dir_all(root.join("_forever_").join("Interface").join("AddOns"))
+        .expect("the AddOns folder");
+    root
+}
+
+/// Asserts that an output carries no home folder path: neither the profile folder of this run nor any
+/// `\Users\` folder (the 8.3 short form a runner's temporary folder carries included).
+fn assert_no_home_path(output: &str) {
+    let lower = output.to_lowercase();
+    if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
+        let profile = profile.to_string_lossy().to_lowercase();
+        assert!(!lower.contains(&profile), "the profile folder in: {output}");
+    }
+    assert!(
+        !lower.contains(":\\users\\") && !lower.contains(":\\\\users\\\\"),
+        "a home folder path in: {output}"
+    );
+}
+
+#[test]
+fn doctor_prints_every_line_offline_without_a_key_value_or_a_home_path() {
+    let root = doctor_game_root("lines");
+    let home = temp_home("doctor-lines");
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .env("MRGL_GITHUB_TOKEN", DOCTOR_SECRET)
+        .env("MRGL_DISCOVERY", "webview2=131.0.2903.70")
+        .args(["--serious", "doctor", "--root"])
+        .arg(&root)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    let lines: Vec<&str> = stdout.lines().collect();
+    let root_name = root
+        .file_name()
+        .expect("a name")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(lines[0], format!("mrgl: {}", env!("CARGO_PKG_VERSION")));
+    assert!(
+        lines[1].starts_with("root: ") && lines[1].ends_with(&format!("{root_name} (from --root)")),
+        "{stdout}"
+    );
+    assert!(
+        lines[2].starts_with("home: ") && lines[2].ends_with("doctor-lines"),
+        "{stdout}"
+    );
+    let rest = [
+        "webview2: 131.0.2903.70 (per-machine)",
+        "github rate limit: 58 of 60 left, resets 2026-10-21T16:00:00Z",
+        "api keys: MRGL_GITHUB_TOKEN set",
+        "flavor: _forever_ (wowf)",
+    ];
+    assert_eq!(lines[3..7], rest, "{stdout}");
+    assert!(
+        lines[7].starts_with("  folder: ") && lines[7].ends_with("_forever_"),
+        "{stdout}"
+    );
+    let flavor = [
+        "  build: 1.60.1.70245, interface 16001, from .build.info",
+        "  curseforge app: no",
+        "  addons folder: writable",
+        "  sidecar: missing",
+        "  cache: empty",
+        "  client: not running",
+        "diagnostics of 1 flavor, nothing to look at; paste the lines above into a bug report",
+    ];
+    assert_eq!(lines[8..], flavor, "{stdout}");
+    assert!(!stdout.contains(DOCTOR_SECRET), "{stdout}");
+    assert_no_home_path(&stdout);
+    // The probe left nothing behind, and the home folder got nothing either.
+    let left = std::fs::read_dir(root.join("_forever_").join("Interface").join("AddOns"))
+        .expect("the AddOns folder")
+        .count();
+    assert_eq!(left, 0);
+    assert!(
+        !home.exists(),
+        "the doctor writes nothing under the home folder"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn doctor_json_is_one_document_without_a_key_value_or_a_home_path() {
+    let root = doctor_game_root("json");
+    let output = mrgl()
+        .env("MRGL_GITHUB_TOKEN", DOCTOR_SECRET)
+        .env("MRGL_DISCOVERY", "webview2=131.0.2903.70")
+        .args(["--json", "doctor", "--flavor", "forever", "--root"])
+        .arg(&root)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(!text.contains(DOCTOR_SECRET), "{text}");
+    assert_no_home_path(&text);
+    let value: serde_json::Value = serde_json::from_str(&text).expect("one JSON document");
+    assert_eq!(value["kind"], "doctor");
+    assert_eq!(value["mrgl_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(value["root_origin"], "flag");
+    assert_eq!(value["webview2"]["version"], "131.0.2903.70");
+    assert_eq!(value["github_rate_limit"]["remaining"], 58);
+    assert_eq!(value["github_rate_limit"]["limit"], 60);
+    assert_eq!(
+        value["api_keys"],
+        serde_json::json!([{ "name": "MRGL_GITHUB_TOKEN", "present": true }])
+    );
+    let flavor = &value["flavors"][0];
+    assert_eq!(flavor["id"], "wowf");
+    assert_eq!(flavor["version"], "1.60.1.70245");
+    assert_eq!(flavor["version_source"], "build-info");
+    assert_eq!(flavor["addons"]["status"], "writable");
+    assert_eq!(flavor["sidecar"]["status"], "missing");
+    assert_eq!(flavor["cache"]["bytes"], 0);
+    assert_eq!(flavor["client"]["status"], "not_running");
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn doctor_offline_without_a_root_says_unknown_and_succeeds() {
+    let empty_stub = temp_home("doctor-offline-stub");
+    std::fs::create_dir_all(&empty_stub).expect("an empty stub folder");
+    let output = mrgl()
+        .env("MRGL_HTTP_STUB", &empty_stub)
+        .arg("doctor")
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines[1], "root: none found");
+    assert_eq!(lines[3], "webview2: unknown");
+    assert_eq!(lines[4], "github rate limit: unknown (HTTP 404)");
+    assert_eq!(lines[5], "api keys: MRGL_GITHUB_TOKEN not set");
+    // The summary speaks through the voice: a murloc line, then the plain one.
+    assert_eq!(lines.len(), 8, "{stdout}");
+    assert!(lines[6].starts_with("Mrgl"), "{stdout}");
+    assert_eq!(
+        lines[7],
+        "diagnostics of no flavor, 1 thing to look at (no game root); paste the lines above into a bug report"
+    );
+    assert_no_home_path(&stdout);
+    let _ = std::fs::remove_dir_all(&empty_stub);
+}
+
+#[test]
+fn doctor_names_a_missing_flavor_and_refuses_an_unknown_one() {
+    let root = doctor_game_root("flavor");
+    let output = mrgl()
+        .args(["--serious", "doctor", "--flavor", "era", "--root"])
+        .arg(&root)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == "flavor: _classic_era_ (wow_classic_era), folder missing"),
+        "{stdout}"
+    );
+    assert!(!root.join("_classic_era_").exists(), "nothing created");
+    assert_eq!(
+        stdout_last_line(&output),
+        "diagnostics of 1 flavor, 1 thing to look at (_classic_era_ is missing); paste the lines above into a bug report"
+    );
+
+    let output = mrgl()
+        .args(["doctor", "--flavor", "bogus"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "unknown flavor: bogus (forever, retail, classic, era or a .flavor.info id)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

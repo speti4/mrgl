@@ -185,6 +185,13 @@ fn resolved(folder: &Path) -> Vec<PathBuf> {
     forms
 }
 
+/// The 8.3 short form of an existing path, without the `\\?\` prefix (`C:\Users\RUNNER~1`); `None`
+/// outside Windows, for a missing path or a volume that keeps no short names. The doctor hides the profile
+/// folder in both of its forms (task 024).
+pub(crate) fn short_form(path: &Path) -> Option<PathBuf> {
+    system::short_form(path).map(|short| strip_verbatim(&short))
+}
+
 /// `\\?\C:\x` as `C:\x` and `\\?\UNC\server\share` as `\\server\share`, so a canonical path and a
 /// process's Win32 path compare component by component.
 fn strip_verbatim(path: &Path) -> PathBuf {

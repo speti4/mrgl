@@ -33,15 +33,16 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the embedded lookup off for a `nolib` build, and an entry without it is unknown, embedded possible), the
   Forever notes (`forever`, task 011: the build signal `yes`, `no` or `unknown` that
   `sources::github::forever_build` derives from a release, and the curated `data/forever-notes.json`
-  compiled in with `include_str!`, with the stale rule) and the voice table (`voice`, D-005). Synthetic
-  fixtures are under `tests/fixtures/`.
+  compiled in with `include_str!`, with the stale rule), the diagnostic report (`doctor`, task 024: the
+  facts a bug report needs, with the profile folder as `~`, see [The doctor](#the-doctor)) and the voice
+  table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick, with the release notes' line and
   link under it when the release has notes, task 030; the install from the pick is task 040), `add
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
-  task 038), `backup` with `--list`, `--restore` and `--yes` (task 013),
-  `update`, `link`, `unlink` (stubs that answer with the task that builds them until that task lands), with
-  `--json` for machines and `--serious` for the
+  task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
+  (task 024), `update`, `link`, `unlink` (stubs that answer with the task that builds them until that task
+  lands), with `--json` for machines and `--serious` for the
   murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
@@ -75,6 +76,73 @@ warning, error, fatal) from the table in `voice.rs`. JSON output (`--json`) and 
 `--serious` or `MRGL_SERIOUS=1` drops the murloc line. Tests assert the plain line, so a change to the murloc
 vocabulary breaks no test. The vocabulary and the rules are in [nerglish.md](nerglish.md); the decision is
 D-005.
+
+## The doctor
+
+`mrgl doctor [--flavor <flavor>] [--root <folder>]` prints the diagnostic report a bug report asks for (task
+024): a plain block, one fact per line like the data lines of a listing, so it pastes as it is, then the
+two-line summary through the voice (a success when nothing needs a look, a warning that names what does);
+`--json` is the same report as one document with `kind: "doctor"`. The report is the core's
+(`mrgl_core::doctor`: `report_of_process` builds it, `Report::lines` and `Report::text` are the block), so the
+window's "copy diagnostics" action (task 009) copies the same text. It reads and never repairs: the AddOns
+probe is its one write. A fact it cannot read is a value (`unknown`, `missing`), never an error, and only an
+unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, in its long
+and its 8.3 short form) is shown with that folder as `~`, and an API key is named, never read out, so a pasted
+report carries no home folder path and no secret.
+
+The lines, with the JSON field in brackets:
+
+- `mrgl: <version>` (`mrgl_version`): the version of the exe.
+- `root: <folder> (<origin>)` (`root`, `root_origin`): the game root the run resolved, as every command does,
+  and how: `from --root`, `from MRGL_ROOT`, `remembered`, `found in the launcher's registry key`, `found in a
+  usual install folder` (`flag`, `environment`, `remembered`, `registry`, `common_folder`); `none found` when
+  nothing names or finds one.
+- `home: <folder>` (`home`): the mrgl home folder (`MRGL_HOME`, else `%LOCALAPPDATA%\mrgl`).
+- `webview2: <version> (per-machine)` or `(per-user)` (`webview2`: `version`, `scope`): the WebView2 runtime
+  the window runs on, the `pv` value under `Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}`,
+  read the way the game root discovery reads the launcher's key: per machine (`HKLM\SOFTWARE\WOW6432Node\…`,
+  then `HKLM\SOFTWARE\…`) before per user (`HKCU\Software\…`); `unknown` when no key names a version.
+- `github rate limit: <n> of <limit> left, resets <time>` (`github_rate_limit`: `remaining`, `limit`,
+  `reset`, `reason`): one `GET https://api.github.com/rate_limit` (GitHub does not count it), with the token
+  when one is set; the limit is 60 requests an hour without a token and 5000 with one, the reset time is UTC.
+  `unknown (<reason>)` when offline, on another status than 200, or for an answer without the numbers.
+- `api keys: MRGL_GITHUB_TOKEN set` or `not set` (`api_keys`: `name`, `present`): which keys are set, by
+  name; an empty variable is not set. The CurseForge key joins with its source (M4).
+- `flavor: <folder> (<id>)` (`flavors[]`: `folder`, `id`, `found`): one block per flavor folder of the root,
+  or the one `--flavor` names; the id is the folder's `.flavor.info` value. `folder missing` when the asked
+  flavor has no folder under the root: the block then says what the home folder remembers of it.
+- `  folder: <path>` (`path`): the flavor folder.
+- `  build: <version>, interface <n>, from <file>` (`version`, `interface`, `version_source`,
+  `version_file`): the installed build and the file it came from, `.build.info` or the client exe (task 019);
+  `unknown` when neither has it.
+- `  curseforge app: yes` or `no` (`curse_client`): the CurseForge app's `.curseclient` marker is in the
+  folder.
+- `  addons folder: writable`, `not writable (<reason>)` or `missing` (`addons`: `status`, `reason`): an empty
+  probe file `.mrgl-doctor-probe-<pid>-<n>` was created in `Interface\AddOns` and removed at once; `missing`
+  when there is no such folder (a client before its first launch) or no flavor folder, and then nothing is
+  written.
+- `  sidecar: parsed, <n> managed addons`, `rebuilt (<reason>)`, `missing` or `unreadable (<reason>)`
+  (`sidecar`: `status`, `managed`, `reason`): the state sidecar `<home>\<flavor-id>\state.json` (D-003).
+  `parsed` reads; `rebuilt` is there but corrupt, of another schema or of another flavor, so the next command
+  that reads it starts over from a scan; `missing` means nothing was installed through mrgl yet; `unreadable`
+  is a file that cannot be opened at all.
+- `  cache: <size> in <n> files` or `empty` (`cache`: `bytes`, `files`, `reason`): the install engine's zips
+  under `<home>\<flavor-id>\cache\`, links and junctions not followed.
+- `  client: running (<exe>, pid <n>)`, `not running` or `unknown (<reason>)` (`client`: `status`, `pid`,
+  `exe`, `reason`): whether a process runs from the flavor folder (task 023); `unknown` when the process list
+  cannot be taken.
+- `  warning: <text>` (`flavors[].warnings`): what reading the flavor folder met (an unknown id, a build
+  neither file has).
+- `warning: <text>` (`warnings`): what the run met before the flavors (an unreadable config, an unreadable
+  game folder).
+
+The summary names what needs a look: no game root, a missing flavor folder, an AddOns folder that takes no
+write, a sidecar that is rebuilt or unreadable, a process list that cannot be taken, a used-up rate limit and
+the warnings. The tests run the report offline: the core's tests hand it a fixed process list, an in-memory
+HTTP stub and a fixed WebView2 answer; the end-to-end tests stub the WebView2 version with a
+`webview2=<version>` item of `MRGL_DISCOVERY` (any other value of the variable is no runtime, so `off` reads
+no registry), answer the rate limit from `releases/api.github.com/rate_limit.json` and assert that neither a
+key's value nor a `\Users\` path is in the output.
 
 ## The UI
 
@@ -327,8 +395,9 @@ when it is a game root (a `.build.info` and at least one flavor folder); it is u
 with its origin (a plain line in `list`, the answer of `mrgl root` with no argument, `root_origin` in
 `--json`), and never written to `config.json`: `mrgl root <folder>` is the one place that remembers it.
 `MRGL_DISCOVERY` replaces the lookup for one run: `off` finds nothing, and a `;`-separated list
-(`registry=<path>` for the launcher's value, every other item a usual folder) is the stub the end-to-end
-tests run on, so no test reads the real registry or looks under `Program Files`.
+(`registry=<path>` for the launcher's value, `webview2=<version>` for the doctor's WebView2 version, every
+other item a usual folder) is the stub the end-to-end tests run on, so no test reads the real registry or
+looks under `Program Files`.
 
 ## Forever notes
 
