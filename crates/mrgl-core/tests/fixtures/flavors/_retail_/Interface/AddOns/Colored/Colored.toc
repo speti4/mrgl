@@ -1,0 +1,4 @@
+## Interface: 120105
+## Title: |cff00ff00Colored|r Addon
+## Notes: |cffff0000Red|r notes
+## Version: 1.2.3

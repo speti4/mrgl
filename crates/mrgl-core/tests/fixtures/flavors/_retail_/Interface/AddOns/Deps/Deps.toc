@@ -1,0 +1,8 @@
+## Interface: 120105
+## Title: Deps
+## Version: 6
+## RequiredDeps: LibAlpha, LibBeta
+## Dependencies: LibGamma
+## Dependencies: LibDelta
+## Deps: LibEpsilon
+## OptionalDeps: LibZeta, LibEta

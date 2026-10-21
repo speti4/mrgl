@@ -44,6 +44,8 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 ```powershell
 cargo build --release
 target\release\mrgl.exe --version
+target\release\mrgl.exe root "C:\Program Files (x86)\World of Warcraft"   # remember the game folder once
+target\release\mrgl.exe list --flavor forever                               # what is installed, flavor-correctly
 ```
 
 ## Documentation

@@ -1,0 +1,3 @@
+## Interface: 30403
+## Title: Old Suffixes
+## Version: 4.0-wrath

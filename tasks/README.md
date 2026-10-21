@@ -12,7 +12,7 @@ drop is the only other exit. Closing a task files every follow-up as a `backlog/
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 16 backlog (5 ready · 0 blocked · 2 waiting · 9 ideas) · 0 in progress · 2 done · 0 dropped · 5 decisions
+**State:** 17 backlog (4 ready · 0 blocked · 2 waiting · 11 ideas) · 0 in progress · 3 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -20,7 +20,6 @@ _Generated 2026-10-21 — edit the files, not this section._
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 002 | [Flavor detection and the AddOns scan with TOC parsing; CLI scan and list](backlog/002-flavor-detection-and-addons-scan-with-toc-parsing.md) | M | 2026-10-21 |
 | 003 | [GitHub release source: release.json, flavor-correct asset pick, ETag cache; CLI…](backlog/003-github-release-source-with-release-json.md) | M | 2026-10-21 |
 | 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](backlog/004-install-engine-with-state-sidecar.md) | M | 2026-10-21 |
 | 006 | [Update check: installed state against the latest release per flavor; update --a…](backlog/006-update-check-and-update-all.md) | S | 2026-10-21 |
@@ -46,6 +45,12 @@ _none_
 
 ### Ideas
 
+#### M1 Core + CLI
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 019 | [Build version fallback from the client exe when .build.info has no row for the …](backlog/019-build-version-fallback-from-the-client-exe.md) | S | 2026-10-21 |
+
 #### M2 Window MVP
 
 | # | Task | Size | Created |
@@ -55,6 +60,7 @@ _none_
 | 011 | [Forever notes dataset: dead, crippled or viable, from the research](backlog/011-forever-notes-dataset.md) | S | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
 | 017 | [Window design sketch: the list view, the states and the voice's place, before t…](backlog/017-window-design-sketch-before-the-shell.md) | S | 2026-10-21 |
+| 020 | [Game root auto-discovery: the launcher's registry key and the common install fo…](backlog/020-game-root-auto-discovery.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
 
@@ -78,6 +84,7 @@ _none_
 | # | Task | Closed |
 |---|---|---|
 | 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
+| 002 | [Flavor detection and the AddOns scan with TOC parsing; CLI scan, list and root](done/002-flavor-detection-and-addons-scan-with-toc-parsing.md) | 2026-10-21 |
 | 001 | [Project scaffolding: repo structure, task standard, decisions, origin and resea…](done/001-project-scaffolding.md) | 2026-10-21 |
 
 ### Decisions
