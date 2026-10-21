@@ -18,17 +18,24 @@ The repository, the task standard and the empty workspace: no app yet.
 - Install engine: zip to staging, addon-folder detection, atomic swap, rollback, the state sidecar; `add <zip>` and `remove` ([004](https://github.com/speti4/mrgl/blob/main/tasks/done/004-install-engine-with-state-sidecar.md))
 - Build version fallback from the client exe when `.build.info` has no row for the flavor ([019](https://github.com/speti4/mrgl/blob/main/tasks/done/019-build-version-fallback-from-the-client-exe.md))
 - Pin, ignore and the pre-release channel per addon; CLI `pin`, `unpin`, `ignore` and `unignore` ([021](https://github.com/speti4/mrgl/blob/main/tasks/done/021-pin-ignore-and-prerelease-channel.md))
+- Dependency check from the TOC `## Dependencies` and `## RequiredDeps` and the `release.json` `nolib` flag ([029](https://github.com/speti4/mrgl/blob/main/tasks/done/029-dependency-check-from-toc-and-nolib.md))
+- Release notes before an update: the GitHub release body in one line ([030](https://github.com/speti4/mrgl/blob/main/tasks/done/030-release-notes-before-an-update.md))
 
 ### M2 Window MVP
 
+- Forever notes dataset: dead, crippled or viable, from the research ([011](https://github.com/speti4/mrgl/blob/main/tasks/done/011-forever-notes-dataset.md))
 - Window design sketch: the list view, the states and the voice's place, before the shell is built ([017](https://github.com/speti4/mrgl/blob/main/tasks/done/017-window-design-sketch-before-the-shell.md))
 - Game root auto-discovery: the launcher's registry key and the common install folders ([020](https://github.com/speti4/mrgl/blob/main/tasks/done/020-game-root-auto-discovery.md))
 - Game-running detection: no `WTF` write while the client runs ([023](https://github.com/speti4/mrgl/blob/main/tasks/done/023-game-running-detection.md))
+- `mrgl doctor`: a diagnostic report for a bug report ([024](https://github.com/speti4/mrgl/blob/main/tasks/done/024-doctor-diagnostic-report.md))
 - Window polish: hide the Forever note column without notes, cap the toast stack ([035](https://github.com/speti4/mrgl/blob/main/tasks/done/035-window-polish-forever-column-and-toast-cap.md))
+- The install engine warns when the client runs ([038](https://github.com/speti4/mrgl/blob/main/tasks/done/038-install-warns-when-the-client-runs.md))
 
 ### M3 Toolbox
 
+- Dev addon linking: junctions for a development folder's addons; CLI `link` and `unlink` ([005](https://github.com/speti4/mrgl/blob/main/tasks/done/005-dev-addon-linking-with-junctions.md))
 - WTF backup and restore ([013](https://github.com/speti4/mrgl/blob/main/tasks/done/013-wtf-backup-and-restore.md))
+- Addon list export and import, and a TOC-interface versus build warning ([015](https://github.com/speti4/mrgl/blob/main/tasks/done/015-list-export-import-and-interface-warning.md))
 
 ### Project housekeeping
 
@@ -36,3 +43,4 @@ The repository, the task standard and the empty workspace: no app yet.
 - Mirror the task files into GitHub issues and milestones ([016](https://github.com/speti4/mrgl/blob/main/tasks/done/016-task-to-github-issue-mirror.md))
 - GitHub repository settings after the first push: rulesets, CodeQL, private reporting, security updates ([018](https://github.com/speti4/mrgl/blob/main/tasks/done/018-github-repository-settings-after-the-first-push.md))
 - CONTRIBUTING.md names the mirrored issues as the task files' public face ([032](https://github.com/speti4/mrgl/blob/main/tasks/done/032-contributing-names-the-mirrored-issues.md))
+- One zip-entry check for the install engine and the backup restore ([044](https://github.com/speti4/mrgl/blob/main/tasks/done/044-one-zip-entry-check-for-the-engine-and-the-backup.md))
