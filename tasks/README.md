@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 33 backlog (1 ready · 0 blocked · 2 waiting · 30 ideas) · 0 in progress · 9 done · 0 dropped · 5 decisions
+**State:** 32 backlog (1 ready · 0 blocked · 2 waiting · 29 ideas) · 0 in progress · 10 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -70,7 +70,6 @@ _none_
 | 024 | [mrgl doctor: a diagnostic report for a bug report](backlog/024-doctor-diagnostic-report.md) | S | 2026-10-21 |
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](backlog/033-close-the-milestone-of-a-shipped-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
-| 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](backlog/035-window-polish-forever-column-and-toast-cap.md) | S | 2026-10-21 |
 | 038 | [The install engine warns when the client runs](backlog/038-install-warns-when-the-client-runs.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
@@ -116,6 +115,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](done/035-window-polish-forever-column-and-toast-cap.md) | 2026-10-21 |
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
 | 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
 | 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
