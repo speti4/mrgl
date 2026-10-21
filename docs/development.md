@@ -490,10 +490,24 @@ makes the command line answer every request from that folder instead (the URL's 
 `MRGL_GITHUB_TOKEN` holds a personal access token for the GitHub API (60 requests an hour without one); it is
 sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
-request; the cache can be deleted any time. Next to it, `release-json.json` keeps the current release's
-`release.json` with that release's tag (task 011): this is how `list` reads the Forever build offline. Every
+request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
+`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline. Every
 fixture repository under `releases/` is classified for the Forever build in `tests/github_source.rs`, so a
 new fixture names its expected build there.
+
+The release list walks its pages (task 042): when the first page of 30 holds no stable release (a repository
+that publishes a nightly prerelease every day), the source follows the `Link` header's `rel="next"` page,
+on `api.github.com` only, with the token, until a page holds a stable release or five pages are read
+(`sources::github::MAX_PAGES`); past the bound the newest prerelease is current, as for a repository without
+a stable release. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
+conditional request. A release's `release.json` is read from `release-json/tag-<tag>.json` when the file
+names the same tag and the same asset URL and size, so a repeated resolve of an unchanged release costs that
+one request and no download. A 429, or a 403 with `x-ratelimit-remaining: 0`, is the rate limit: its line
+names the local time it resets (`x-ratelimit-reset`, else `retry-after`) and `MRGL_GITHUB_TOKEN`. The folder
+stub serves a `page` above 1 from `<answer>.page-<n>.json`, and a `<answer>.headers` file next to an answer
+adds its `Name: value` lines to the headers, a `Status: <code>` line setting the status, which is how the
+paged fixture `Example/Nightly` (30 nightly prereleases, the stable release on page two) and the rate-limit
+tests are served.
 
 The build version fallback (task 019: the client exe's version resource when `.build.info` has no row for
 the flavor) is tested against a second synthetic game folder, `client-exe/`: a `.build.info` with a row for

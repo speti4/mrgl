@@ -1,13 +1,15 @@
 //! The GitHub source over the fixture answers under `tests/fixtures/releases/` (task 003): one folder per
 //! shape of a repository, served by the folder stub, so no test opens a socket. The cache tests use a
 //! temporary folder of their own. Every fixture repository is classified for the Forever build (task 011).
+//! The page walk, the rate-limit hint and the per-tag `release.json` cache (task 042) read the paged fixture
+//! `Example/Nightly` or a stub folder a test writes for itself.
 
 use std::path::{Path, PathBuf};
 
 use mrgl_core::flavor::{BuildVersion, FlavorId};
 use mrgl_core::forever::ForeverBuild;
-use mrgl_core::sources::github::{GitHub, current_release, forever_build};
-use mrgl_core::sources::{Channel, FolderHttp, Source, SourceSpec, Target};
+use mrgl_core::sources::github::{GitHub, MAX_PAGES, current_release, forever_build};
+use mrgl_core::sources::{Channel, FolderHttp, Source, SourceSpec, Target, local_time_text};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/releases")
@@ -444,6 +446,7 @@ fn every_fixture_release_is_classified_for_forever() {
         ("Example/BetaOnly", ForeverBuild::Yes),
         ("Example/Empty", ForeverBuild::Unknown),
         ("Example/MainlineOnly", ForeverBuild::No),
+        ("Example/Nightly", ForeverBuild::Yes),
         ("Example/NoMetadata", ForeverBuild::No),
         ("Example/NoNotes", ForeverBuild::Unknown),
         ("Example/NoReleaseJson", ForeverBuild::Unknown),
@@ -516,12 +519,257 @@ fn the_forever_build_is_read_back_from_the_cache_alone() {
     let cached = cache
         .join("questie")
         .join("questie")
-        .join("release-json.json");
+        .join("release-json")
+        .join("tag-v1.2.3.json");
     let text = std::fs::read_to_string(&cached).expect("the release.json is cached");
     assert!(text.contains(r#""release":"v1.2.3""#), "{text}");
     std::fs::write(&cached, text.replace("v1.2.3", "v1.2.2")).unwrap();
     assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Unknown);
     std::fs::write(&cached, "{ not json").unwrap();
     assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Unknown);
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+// --- task 042: the page walk, the rate-limit reset time, the per-tag release.json cache ---
+
+/// A stub folder of a test's own: each `(path, content)` written under it, the path as the folder stub reads
+/// a URL (`api.github.com/repos/o/r/releases.json`, a `.headers` file next to an answer).
+fn stub_with(name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let stub = temp_cache(name);
+    for (path, content) in files {
+        let path = stub.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+    }
+    stub
+}
+
+/// The URLs a source asked for, in order.
+fn asked(github: &GitHub<FolderHttp>) -> Vec<String> {
+    github
+        .http()
+        .requests()
+        .into_iter()
+        .map(|request| request.url)
+        .collect()
+}
+
+const NIGHTLY_LIST: &str = "https://api.github.com/repos/Example/Nightly/releases?per_page=30";
+
+#[test]
+fn a_stable_release_on_page_two_is_found_through_the_link_header() {
+    let github = github();
+    let spec = spec("github:Example/Nightly");
+    let pick = github
+        .resolve(&spec, &target(FlavorId::Forever, None))
+        .expect("the stable one on page two");
+    assert_eq!(pick.release, "v1.0.0");
+    assert!(!pick.prerelease);
+    assert_eq!(pick.asset, "Nightly-v1.0.0-forever.zip");
+    assert_eq!(pick.interface, Some(16001));
+    assert!(!pick.guess);
+    assert_eq!(
+        asked(&github),
+        [
+            NIGHTLY_LIST.to_string(),
+            format!("{NIGHTLY_LIST}&page=2"),
+            "https://github.com/Example/Nightly/releases/download/v1.0.0/release.json".to_string(),
+        ]
+    );
+    // The second page carries the token like the first: it is the API.
+    let token = GitHub::new(FolderHttp::new(fixtures()), Some("secret".into()), None);
+    token
+        .resolve(&spec, &target(FlavorId::Forever, None))
+        .expect("a pick");
+    assert_eq!(
+        token.http().requests()[1].header_value("Authorization"),
+        Some("Bearer secret")
+    );
+    let releases = github.releases("Example", "Nightly").expect("the list");
+    assert_eq!(releases.len(), 35);
+
+    // The prerelease channel has its pick on page one, but the walk is the list's, not the channel's.
+    let beta = github
+        .resolve(
+            &spec,
+            &target(FlavorId::Forever, None).with_channel(Channel::Prerelease),
+        )
+        .expect("the newest nightly");
+    assert_eq!(beta.release, "v1.1.0-nightly.30");
+    assert!(beta.guess, "no release.json: a pick by name");
+}
+
+#[test]
+fn the_page_walk_is_cached_and_a_second_resolve_asks_once() {
+    let cache = temp_cache("pages");
+    let github = GitHub::new(FolderHttp::new(fixtures()), None, Some(cache.clone()));
+    let spec = spec("github:Example/Nightly");
+    let first = github
+        .resolve(&spec, &target(FlavorId::Forever, None))
+        .expect("first");
+    let file = cache.join("example").join("nightly").join("releases.json");
+    let cached: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).expect("cached")).expect("JSON");
+    assert_eq!(
+        cached["releases"].as_array().map(Vec::len),
+        Some(35),
+        "both pages"
+    );
+    let before = github.http().requests().len();
+    let second = github
+        .resolve(&spec, &target(FlavorId::Forever, None))
+        .expect("second");
+    assert_eq!(first, second);
+    assert_eq!(
+        asked(&github)[before..],
+        [NIGHTLY_LIST.to_string()],
+        "one conditional request: the list is unchanged and release.json is cached"
+    );
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+#[test]
+fn the_page_walk_stops_at_the_bound_and_off_the_api_host() {
+    let page = |n: usize, next: &str| {
+        let list = format!(
+            r#"[{{"tag_name":"v0.0.{n}-nightly","prerelease":true,"assets":[{{"name":"A-forever.zip","browser_download_url":"https://github.test/A-{n}-forever.zip"}}]}}]"#
+        );
+        let headers = format!("Link: <{next}>; rel=\"next\"\n");
+        (list, headers)
+    };
+    let list_url = "https://api.github.com/repos/o/r/releases?per_page=30";
+    let mut files: Vec<(String, String)> = Vec::new();
+    for n in 1..=MAX_PAGES + 2 {
+        let (list, headers) = page(n, &format!("{list_url}&page={}", n + 1));
+        let name = if n == 1 {
+            "api.github.com/repos/o/r/releases.json".to_string()
+        } else {
+            format!("api.github.com/repos/o/r/releases.page-{n}.json")
+        };
+        files.push((format!("{name}.headers"), headers));
+        files.push((name, list));
+    }
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, content)| (path.as_str(), content.as_str()))
+        .collect();
+    let stub = stub_with("bound", &borrowed);
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    let pick = github
+        .resolve(&spec("github:o/r"), &target(FlavorId::Forever, None))
+        .expect("the newest prerelease, as without a stable one");
+    assert_eq!(pick.release, "v0.0.1-nightly");
+    assert_eq!(
+        github.http().requests().len(),
+        MAX_PAGES,
+        "{:?}",
+        asked(&github)
+    );
+
+    // A next link to another host is not followed: the token would go with it.
+    let stub = stub_with(
+        "offhost",
+        &[
+            (
+                "api.github.com/repos/o/r/releases.json",
+                r#"[{"tag_name":"v2-beta","prerelease":true,"assets":[{"name":"A-forever.zip","browser_download_url":"https://github.test/A-forever.zip"}]}]"#,
+            ),
+            (
+                "api.github.com/repos/o/r/releases.json.headers",
+                "Link: <https://elsewhere.test/repos/o/r/releases?page=2>; rel=\"next\"\n",
+            ),
+        ],
+    );
+    let github = GitHub::new(FolderHttp::new(&stub), Some("secret".into()), None);
+    let pick = github
+        .resolve(&spec("github:o/r"), &target(FlavorId::Forever, None))
+        .expect("the prerelease");
+    assert_eq!(pick.release, "v2-beta");
+    assert_eq!(asked(&github), [list_url.to_string()]);
+    let _ = std::fs::remove_dir_all(&stub);
+}
+
+#[test]
+fn the_rate_limit_hint_names_the_reset_time_and_the_token() {
+    let list_url = "https://api.github.com/repos/o/r/releases?per_page=30";
+    let answer = |name: &str, headers: &str| {
+        let stub = stub_with(
+            name,
+            &[
+                (
+                    "api.github.com/repos/o/r/releases.json",
+                    r#"{"message":"API rate limit exceeded"}"#,
+                ),
+                ("api.github.com/repos/o/r/releases.json.headers", headers),
+            ],
+        );
+        let error = GitHub::new(FolderHttp::new(&stub), None, None)
+            .resolve(&spec("github:o/r"), &target(FlavorId::Forever, None))
+            .unwrap_err()
+            .to_string();
+        let _ = std::fs::remove_dir_all(&stub);
+        error
+    };
+    let reset = 1_792_598_400;
+    assert_eq!(
+        answer(
+            "limit-403",
+            "Status: 403\nX-RateLimit-Limit: 60\nX-RateLimit-Remaining: 0\nX-RateLimit-Reset: 1792598400\n"
+        ),
+        format!(
+            "GitHub answered 403 for {list_url}: the rate limit is used up until {} (local time); set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour",
+            local_time_text(reset)
+        )
+    );
+    let secondary = answer("limit-429", "Status: 429\nRetry-After: 60\n");
+    assert!(
+        secondary.starts_with(&format!(
+            "GitHub answered 429 for {list_url}: the rate limit is used up until "
+        )) && secondary.contains("MRGL_GITHUB_TOKEN"),
+        "{secondary}"
+    );
+    assert_eq!(
+        answer("denied", "Status: 403\nX-RateLimit-Remaining: 12\n"),
+        format!("GitHub answered 403 for {list_url}: access denied")
+    );
+}
+
+#[test]
+fn a_second_resolve_of_a_tag_reads_release_json_from_the_cache() {
+    let cache = temp_cache("per-tag");
+    let github = GitHub::new(FolderHttp::new(fixtures()), None, Some(cache.clone()));
+    let spec = spec("github:Questie/Questie");
+    let target = target(FlavorId::Forever, None);
+    let first = github.resolve(&spec, &target).expect("first");
+    assert_eq!(
+        github.http().requests().len(),
+        2,
+        "the list and release.json"
+    );
+    let per_tag = cache
+        .join("questie")
+        .join("questie")
+        .join("release-json")
+        .join("tag-v1.2.3.json");
+    let text = std::fs::read_to_string(&per_tag).expect("release.json cached for its tag");
+    assert!(text.contains(r#""release":"v1.2.3""#), "{text}");
+
+    let second = github.resolve(&spec, &target).expect("second");
+    assert_eq!(first, second);
+    let requests = github.http().requests();
+    assert_eq!(requests.len(), 3, "one request: {requests:?}");
+    assert_eq!(
+        requests[2].url,
+        "https://api.github.com/repos/Questie/Questie/releases?per_page=30"
+    );
+    assert!(requests[2].header_value("If-None-Match").is_some());
+
+    // A cached file of another asset (re-uploaded: another URL or size) is downloaded again.
+    std::fs::write(&per_tag, text.replace("download/v1.2.3", "download/v0")).unwrap();
+    let third = github.resolve(&spec, &target).expect("third");
+    assert_eq!(first, third);
+    let requests = github.http().requests();
+    assert_eq!(requests.len(), 5);
+    assert!(requests[4].url.ends_with("/v1.2.3/release.json"));
     let _ = std::fs::remove_dir_all(&cache);
 }

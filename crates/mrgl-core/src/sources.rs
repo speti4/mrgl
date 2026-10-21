@@ -375,9 +375,13 @@ impl Http for UreqHttp {
 
 /// The offline stand-in: a folder of files, one per URL. `https://api.github.com/repos/o/r/releases?per_page=30`
 /// is answered from `<root>/api.github.com/repos/o/r/releases` or, when that is missing, the same path
-/// with `.json`; the query string is ignored; a path with no file is a 404 with an empty body. Every answer
-/// carries an `ETag` derived from the file's content, and a request whose `If-None-Match` names that tag
-/// gets a 304 without a body, so the cache is testable too. The requests are kept for the tests to read.
+/// with `.json`; the query string is ignored but for a `page` above 1, which answers from the same path with
+/// `.page-<n>` appended (`releases.page-2.json`, task 042); a path with no file is a 404 with an empty body.
+/// Every answer carries an `ETag` derived from the file's content, and a request whose `If-None-Match` names
+/// that tag gets a 304 without a body, so the cache is testable too. A file `<answer>.headers` next to an
+/// answer adds its `Name: value` lines to the answer's headers, and its `Status: <code>` line sets the status
+/// (a `Link` to the next page, a 403 with the rate-limit headers; task 042). The requests are kept for the
+/// tests to read.
 pub struct FolderHttp {
     root: PathBuf,
     requests: Mutex<Vec<Request>>,
@@ -435,7 +439,12 @@ impl Http for FolderHttp {
         if let Ok(mut requests) = self.requests.lock() {
             requests.push(request.clone());
         }
-        let path = self.path_for(&request.url);
+        let mut path = self.path_for(&request.url);
+        if let Some(page) = page_of(&request.url).filter(|page| *page > 1) {
+            let mut paged = path.into_os_string();
+            paged.push(format!(".page-{page}"));
+            path = PathBuf::from(paged);
+        }
         let file = if path.is_file() {
             path
         } else {
@@ -461,8 +470,21 @@ impl Http for FolderHttp {
             }
         };
         let etag = Self::etag_of(&body);
-        let headers = vec![("ETag".to_string(), etag.clone())];
-        if request.header_value("If-None-Match") == Some(etag.as_str()) {
+        let mut status = 200;
+        let mut headers = vec![("ETag".to_string(), etag.clone())];
+        let mut sidecar = file.into_os_string();
+        sidecar.push(".headers");
+        if let Ok(text) = std::fs::read_to_string(PathBuf::from(sidecar)) {
+            for (name, value) in text.lines().filter_map(|line| line.split_once(':')) {
+                let (name, value) = (name.trim(), value.trim());
+                if name.eq_ignore_ascii_case("status") {
+                    status = value.parse().unwrap_or(status);
+                } else if !name.is_empty() {
+                    headers.push((name.to_string(), value.to_string()));
+                }
+            }
+        }
+        if status == 200 && request.header_value("If-None-Match") == Some(etag.as_str()) {
             return Ok(Response {
                 status: 304,
                 headers,
@@ -470,11 +492,33 @@ impl Http for FolderHttp {
             });
         }
         Ok(Response {
-            status: 200,
+            status,
             headers,
             body,
         })
     }
+}
+
+/// The `page` of a URL's query string, when it names one (`?per_page=30&page=2` is 2).
+fn page_of(url: &str) -> Option<u32> {
+    let (_, query) = url.split_once('?')?;
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(key, _)| *key == "page")
+        .and_then(|(_, value)| value.parse().ok())
+}
+
+/// Unix seconds as the local time of this machine to the minute, `2026-10-22 14:05`, for a message line
+/// (the rate limit's reset, task 042).
+pub fn local_time_text(seconds: i64) -> String {
+    let time =
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds.max(0).unsigned_abs());
+    let civil = crate::backup::clock::local_civil(time);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        civil.year, civil.month, civil.day, civil.hour, civil.minute
+    )
 }
 
 /// A client picked by the environment: the folder stub when `MRGL_HTTP_STUB` names a folder, else the real
@@ -652,6 +696,63 @@ mod tests {
             stub.path_for("https://host/../../x")
                 .starts_with(root.join("host"))
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_folder_stub_serves_pages_and_a_headers_file() {
+        let root = std::env::temp_dir().join(format!("mrgl-stub-pages-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("api.example.test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("list.json"), b"[1]").unwrap();
+        std::fs::write(
+            dir.join("list.json.headers"),
+            "Link: <https://api.example.test/list?page=2>; rel=\"next\"\nnot a header line\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("list.page-2.json"), b"[2]").unwrap();
+        std::fs::write(dir.join("limited.json"), b"{}").unwrap();
+        std::fs::write(
+            dir.join("limited.json.headers"),
+            "Status: 403\r\nX-RateLimit-Remaining: 0\r\n",
+        )
+        .unwrap();
+        let stub = FolderHttp::new(&root);
+        let first = stub
+            .get(&Request::get("https://api.example.test/list?per_page=30"))
+            .unwrap();
+        assert_eq!((first.status, first.body.as_slice()), (200, &b"[1]"[..]));
+        assert_eq!(
+            first.header("link"),
+            Some("<https://api.example.test/list?page=2>; rel=\"next\"")
+        );
+        let second = stub
+            .get(&Request::get(
+                "https://api.example.test/list?per_page=30&page=2",
+            ))
+            .unwrap();
+        assert_eq!((second.status, second.body.as_slice()), (200, &b"[2]"[..]));
+        assert_eq!(second.header("link"), None);
+        let page_one = stub
+            .get(&Request::get("https://api.example.test/list?page=1"))
+            .unwrap();
+        assert_eq!(page_one.body, b"[1]");
+        let missing = stub
+            .get(&Request::get("https://api.example.test/list?page=3"))
+            .unwrap();
+        assert_eq!(missing.status, 404);
+        // A status from the headers file is never a 304, whatever the request's tag.
+        let limited = stub
+            .get(
+                &Request::get("https://api.example.test/limited")
+                    .header("If-None-Match", FolderHttp::etag_of(b"{}")),
+            )
+            .unwrap();
+        assert_eq!(limited.status, 403);
+        assert_eq!(limited.header("x-ratelimit-remaining"), Some("0"));
+        assert_eq!(page_of("https://h/x?per_page=30"), None);
+        assert_eq!(page_of("https://h/x?per_page=30&page=4"), Some(4));
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -1,0 +1,482 @@
+[
+  {
+    "tag_name": "v1.1.0-nightly.30",
+    "name": "v1.1.0-nightly.30",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-03T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.30",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.30-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.30/Nightly-v1.1.0-nightly.30-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.29",
+    "name": "v1.1.0-nightly.29",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-02T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.29",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.29-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.29/Nightly-v1.1.0-nightly.29-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.28",
+    "name": "v1.1.0-nightly.28",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-01T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.28",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.28-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.28/Nightly-v1.1.0-nightly.28-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.27",
+    "name": "v1.1.0-nightly.27",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-28T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.27",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.27-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.27/Nightly-v1.1.0-nightly.27-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.26",
+    "name": "v1.1.0-nightly.26",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-27T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.26",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.26-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.26/Nightly-v1.1.0-nightly.26-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.25",
+    "name": "v1.1.0-nightly.25",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-26T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.25",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.25-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.25/Nightly-v1.1.0-nightly.25-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.24",
+    "name": "v1.1.0-nightly.24",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-25T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.24",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.24-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.24/Nightly-v1.1.0-nightly.24-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.23",
+    "name": "v1.1.0-nightly.23",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-24T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.23",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.23-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.23/Nightly-v1.1.0-nightly.23-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.22",
+    "name": "v1.1.0-nightly.22",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-23T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.22",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.22-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.22/Nightly-v1.1.0-nightly.22-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.21",
+    "name": "v1.1.0-nightly.21",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-22T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.21",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.21-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.21/Nightly-v1.1.0-nightly.21-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.20",
+    "name": "v1.1.0-nightly.20",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-21T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.20",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.20-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.20/Nightly-v1.1.0-nightly.20-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.19",
+    "name": "v1.1.0-nightly.19",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-20T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.19",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.19-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.19/Nightly-v1.1.0-nightly.19-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.18",
+    "name": "v1.1.0-nightly.18",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-19T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.18",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.18-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.18/Nightly-v1.1.0-nightly.18-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.17",
+    "name": "v1.1.0-nightly.17",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-18T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.17",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.17-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.17/Nightly-v1.1.0-nightly.17-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.16",
+    "name": "v1.1.0-nightly.16",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-17T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.16",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.16-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.16/Nightly-v1.1.0-nightly.16-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.15",
+    "name": "v1.1.0-nightly.15",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-16T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.15",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.15-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.15/Nightly-v1.1.0-nightly.15-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.14",
+    "name": "v1.1.0-nightly.14",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-15T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.14",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.14-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.14/Nightly-v1.1.0-nightly.14-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.13",
+    "name": "v1.1.0-nightly.13",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-14T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.13",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.13-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.13/Nightly-v1.1.0-nightly.13-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.12",
+    "name": "v1.1.0-nightly.12",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-13T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.12",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.12-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.12/Nightly-v1.1.0-nightly.12-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.11",
+    "name": "v1.1.0-nightly.11",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-12T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.11",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.11-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.11/Nightly-v1.1.0-nightly.11-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.10",
+    "name": "v1.1.0-nightly.10",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-11T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.10",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.10-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.10/Nightly-v1.1.0-nightly.10-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.9",
+    "name": "v1.1.0-nightly.9",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-10T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.9",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.9-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.9/Nightly-v1.1.0-nightly.9-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.8",
+    "name": "v1.1.0-nightly.8",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-09T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.8",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.8-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.8/Nightly-v1.1.0-nightly.8-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.7",
+    "name": "v1.1.0-nightly.7",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-08T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.7",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.7-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.7/Nightly-v1.1.0-nightly.7-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.6",
+    "name": "v1.1.0-nightly.6",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-07T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.6",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.6-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.6/Nightly-v1.1.0-nightly.6-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.5",
+    "name": "v1.1.0-nightly.5",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-06T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.5",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.5-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.5/Nightly-v1.1.0-nightly.5-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.4",
+    "name": "v1.1.0-nightly.4",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-05T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.4",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.4-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.4/Nightly-v1.1.0-nightly.4-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.3",
+    "name": "v1.1.0-nightly.3",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-04T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.3",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.3-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.3/Nightly-v1.1.0-nightly.3-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.2",
+    "name": "v1.1.0-nightly.2",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-03T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.2",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.2-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.2/Nightly-v1.1.0-nightly.2-forever.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.1.0-nightly.1",
+    "name": "v1.1.0-nightly.1",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-10-02T04:00:00Z",
+    "html_url": "https://github.com/Example/Nightly/releases/tag/v1.1.0-nightly.1",
+    "assets": [
+      {
+        "name": "Nightly-v1.1.0-nightly.1-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Nightly/releases/download/v1.1.0-nightly.1/Nightly-v1.1.0-nightly.1-forever.zip"
+      }
+    ]
+  }
+]
