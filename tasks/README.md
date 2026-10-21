@@ -12,7 +12,7 @@ drop is the only other exit. Closing a task files every follow-up as a `backlog/
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 28 backlog (4 ready · 0 blocked · 2 waiting · 22 ideas) · 0 in progress · 3 done · 0 dropped · 5 decisions
+**State:** 27 backlog (3 ready · 0 blocked · 2 waiting · 22 ideas) · 1 in progress · 3 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -23,7 +23,6 @@ _Generated 2026-10-21 — edit the files, not this section._
 | 003 | [GitHub release source: release.json, flavor-correct asset pick, ETag cache; CLI…](backlog/003-github-release-source-with-release-json.md) | M | 2026-10-21 |
 | 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](backlog/004-install-engine-with-state-sidecar.md) | M | 2026-10-21 |
 | 006 | [Update check: installed state against the latest release per flavor; update --a…](backlog/006-update-check-and-update-all.md) | S | 2026-10-21 |
-| 016 | [Mirror the task files into GitHub issues and milestones](backlog/016-task-to-github-issue-mirror.md) | S | 2026-10-21 |
 
 ### Needs decision
 
@@ -94,7 +93,11 @@ _none_
 
 ### In progress
 
-_none_
+#### M1 Core + CLI
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 016 | [Mirror the task files into GitHub issues and milestones](wip/016-task-to-github-issue-mirror.md) | 2026-10-21 | `none` |
 
 ### Closed – do not reopen
 
