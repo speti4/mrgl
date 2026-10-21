@@ -33,6 +33,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - `mrgl doctor`: a diagnostic report for a bug report ([024](https://github.com/speti4/mrgl/blob/main/tasks/done/024-doctor-diagnostic-report.md))
 - Window polish: hide the Forever note column without notes, cap the toast stack ([035](https://github.com/speti4/mrgl/blob/main/tasks/done/035-window-polish-forever-column-and-toast-cap.md))
 - The install engine warns when the client runs ([038](https://github.com/speti4/mrgl/blob/main/tasks/done/038-install-warns-when-the-client-runs.md))
+- A second registry source for the game root: the Uninstall entry, and expanded values ([043](https://github.com/speti4/mrgl/blob/main/tasks/done/043-second-registry-source-for-the-game-root.md))
 - A Windows version line in the doctor report ([051](https://github.com/speti4/mrgl/blob/main/tasks/done/051-windows-version-line-in-the-doctor-report.md))
 
 ### M3 Toolbox
