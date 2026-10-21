@@ -1,0 +1,4 @@
+QuestArrows: enabled
+# a line the client never wrote, kept as it is
+BagSorter: enabled
+BossTimers: disabled

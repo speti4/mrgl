@@ -1,5 +1,5 @@
-//! The toolbox (M3 Toolbox): WTF backup and restore (task 013), later addon sets (named lists of addons
-//! per flavor, with enable and disable) and the export and import of an addon list. Nothing here touches
+//! The toolbox (M3 Toolbox): WTF backup and restore (task 013); the addon sets (named lists of addons per
+//! flavor, with enable and disable) are [`crate::sets`] (task 014). Nothing here touches
 //! `Interface\AddOns` except through [`crate::install`].
 //!
 //! A backup is a plain zip a user can open by hand: every file of the flavor's `WTF` folder as an entry

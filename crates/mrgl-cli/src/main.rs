@@ -13,7 +13,7 @@
 //! `channel`, with their marks in `list`, are task 021; `rollback` (the previous version from the kept
 //! zip, then pinned) is task 022; `savedvars` (the SavedVariables sizes and the orphan cleanup) is task
 //! 025; every source-backed install takes the one install path of the engine (task 055); `update` (the
-//! update check and `update --all`) is task 006.
+//! update check and `update --all`) is task 006; `set` (the addon sets) is task 014.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, IsTerminal};
@@ -37,6 +37,7 @@ use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
+use mrgl_core::sets::{self, AddonSet};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
@@ -298,6 +299,13 @@ enum Command {
         #[arg(long)]
         clean: bool,
     },
+    /// Addon sets: save the enabled and disabled addons of the characters' AddOns.txt under a name, apply
+    /// a set to every character, list, show or remove sets (the toolbox). An apply is refused while the
+    /// client runs.
+    Set {
+        #[command(subcommand)]
+        action: SetAction,
+    },
 }
 
 /// A `--max-unpacked` size (task 039): `3G`, `500M`, a number of bytes ([`zip_entry::parse_size`]).
@@ -487,6 +495,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             dry_run,
             yes,
         } => update_command(reporter, name.as_deref(), flavor.as_deref(), dry_run, yes)?,
+        Command::Set { action } => set_command(reporter, action)?,
     }
     Ok(())
 }
@@ -2829,6 +2838,336 @@ fn count_files(count: usize) -> String {
         "1 file".to_string()
     } else {
         format!("{count} files")
+    }
+}
+
+/// The verbs of `mrgl set` (task 014).
+#[derive(Subcommand, Debug)]
+enum SetAction {
+    /// Save the addons the characters' AddOns.txt name, enabled or disabled, as a set; an addon the
+    /// characters disagree on is left out, and a set of the same name is replaced.
+    Save {
+        /// The set's name.
+        name: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Apply a set to every character: exactly the set's addons get its state in AddOns.txt, every other
+    /// line stays as it is. Refused while the client runs.
+    Apply {
+        /// The set's name.
+        name: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// List the flavor's sets.
+    List {
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Print a set's addons, one `Name: state` line each.
+    Show {
+        /// The set's name.
+        name: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Remove a set; no AddOns.txt is touched.
+    Remove {
+        /// The set's name.
+        name: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+}
+
+/// `mrgl set save|apply|list|show|remove … --flavor <id>` (task 014): the sets live in `sets.json` under
+/// the flavor's folder of the mrgl home; an apply rewrites the characters' `AddOns.txt` and is refused
+/// while the client runs (task 023), before anything is written.
+fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
+    let spec = match &action {
+        SetAction::Save { flavor, .. }
+        | SetAction::Apply { flavor, .. }
+        | SetAction::List { flavor }
+        | SetAction::Show { flavor, .. }
+        | SetAction::Remove { flavor, .. } => flavor.clone(),
+    };
+    let mut warnings = Vec::new();
+    let folder = flavor_folder(spec.as_deref(), None, &mut warnings)?;
+    let flavor = flavor::read_flavor(&folder).map_err(|error| error.to_string())?;
+    warnings.extend(flavor.warnings.iter().cloned());
+    let path = sets::sets_path(&flavor.id).map_err(|error| error.to_string())?;
+    let folder_name = flavor.folder_name();
+    let warn = |warnings: &[String]| {
+        for warning in warnings {
+            reporter.say(Kind::Warning, warning);
+        }
+    };
+    match action {
+        SetAction::Save { name, .. } => {
+            let saved = sets::save_set(&flavor, &path, &name).map_err(|error| error.to_string())?;
+            warnings.extend(saved.warnings.iter().cloned());
+            if reporter.json {
+                reporter.document(serde_json::json!({
+                    "kind": "set-save",
+                    "flavor": &flavor,
+                    "path": &path,
+                    "name": &saved.name,
+                    "set": &saved.set,
+                    "replaced": saved.replaced,
+                    "characters": saved.characters,
+                    "conflicts": &saved.conflicts,
+                    "warnings": warnings,
+                }));
+                return Ok(());
+            }
+            if !saved.conflicts.is_empty() {
+                warnings.push(format!(
+                    "left out of set {}, the characters disagree on them: {}",
+                    saved.name,
+                    saved.conflicts.join(", ")
+                ));
+            }
+            warn(&warnings);
+            let mut summary = format!(
+                "saved set {} of {folder_name} from {}: {}",
+                saved.name,
+                count_characters(saved.characters),
+                count_set(&saved.set)
+            );
+            if saved.replaced {
+                summary.push_str("; it replaces the set saved before under that name");
+            }
+            reporter.say(Kind::Success, summary);
+        }
+        SetAction::Apply { name, .. } => {
+            if !reporter.json {
+                reporter.say(
+                    Kind::Progress,
+                    format!("applying set {name} to every character of {folder_name}"),
+                );
+            }
+            let applied =
+                sets::apply_set(&flavor, &path, &name).map_err(|error| error.to_string())?;
+            report_applied(reporter, &flavor, &applied, warnings);
+        }
+        SetAction::List { .. } => {
+            let file = sets::read_sets_at(&path, &flavor.id).map_err(|error| error.to_string())?;
+            if reporter.json {
+                let listed: Vec<serde_json::Value> = file
+                    .sets
+                    .iter()
+                    .map(|(name, set)| {
+                        serde_json::json!({
+                            "name": name,
+                            "saved_at": &set.saved_at,
+                            "enabled": set.enabled(),
+                            "disabled": set.disabled(),
+                            "addons": &set.addons,
+                        })
+                    })
+                    .collect();
+                reporter.document(serde_json::json!({
+                    "kind": "set-list",
+                    "flavor": &flavor,
+                    "path": &path,
+                    "sets": listed,
+                    "warnings": warnings,
+                }));
+                return Ok(());
+            }
+            for (name, set) in &file.sets {
+                reporter.line(format!(
+                    "{name}  {}  saved {}",
+                    count_set(set),
+                    set.saved_at
+                ));
+            }
+            warn(&warnings);
+            match file.sets.len() {
+                0 => reporter.say(
+                    Kind::Nothing,
+                    format!("no sets of {folder_name} yet: `mrgl set save <name>` saves one"),
+                ),
+                1 => reporter.say(
+                    Kind::Success,
+                    format!("1 set of {folder_name} in {}", path.display()),
+                ),
+                count => reporter.say(
+                    Kind::Success,
+                    format!("{count} sets of {folder_name} in {}", path.display()),
+                ),
+            }
+        }
+        SetAction::Show { name, .. } => {
+            let (name, set) =
+                sets::find_set(&flavor.id, &path, &name).map_err(|error| error.to_string())?;
+            if reporter.json {
+                reporter.document(serde_json::json!({
+                    "kind": "set-show",
+                    "flavor": &flavor,
+                    "name": name,
+                    "set": &set,
+                    "warnings": warnings,
+                }));
+                return Ok(());
+            }
+            for (addon, state) in &set.addons {
+                reporter.line(format!("{addon}: {state}"));
+            }
+            warn(&warnings);
+            reporter.say(
+                Kind::Success,
+                format!(
+                    "set {name} of {folder_name}: {}, saved {}",
+                    count_set(&set),
+                    set.saved_at
+                ),
+            );
+        }
+        SetAction::Remove { name, .. } => {
+            let (name, set) =
+                sets::remove_set(&flavor.id, &path, &name).map_err(|error| error.to_string())?;
+            if reporter.json {
+                reporter.document(serde_json::json!({
+                    "kind": "set-remove",
+                    "flavor": &flavor,
+                    "name": name,
+                    "set": &set,
+                    "warnings": warnings,
+                }));
+                return Ok(());
+            }
+            warn(&warnings);
+            reporter.say(
+                Kind::Success,
+                format!(
+                    "removed set {name} of {folder_name} ({}); no AddOns.txt was touched",
+                    count_set(&set)
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The outcome of `set apply`: one data line per character, a warning for the addons that are not
+/// installed, and the summary; or the one JSON document.
+fn report_applied(
+    reporter: &Reporter,
+    flavor: &Flavor,
+    applied: &sets::Applied,
+    mut warnings: Vec<String>,
+) {
+    let folder_name = flavor.folder_name();
+    if reporter.json {
+        let characters: Vec<serde_json::Value> = applied
+            .characters
+            .iter()
+            .map(|change| {
+                let changed: Vec<serde_json::Value> = change
+                    .changed
+                    .iter()
+                    .map(|(name, state)| serde_json::json!({ "name": name, "state": state }))
+                    .collect();
+                serde_json::json!({
+                    "account": &change.character.account,
+                    "realm": &change.character.realm,
+                    "name": &change.character.name,
+                    "addons_txt": change.character.addons_txt(),
+                    "created": change.created,
+                    "changed": changed,
+                })
+            })
+            .collect();
+        reporter.document(serde_json::json!({
+            "kind": "set-apply",
+            "flavor": flavor,
+            "name": &applied.name,
+            "characters": characters,
+            "changed": applied.changed(),
+            "not_installed": &applied.not_installed,
+            "warnings": warnings,
+        }));
+        return;
+    }
+    for change in &applied.characters {
+        let what = if change.changed.is_empty() {
+            "unchanged".to_string()
+        } else {
+            let lines: Vec<String> = change
+                .changed
+                .iter()
+                .map(|(name, state)| format!("{name} {state}"))
+                .collect();
+            let created = if change.created {
+                " (a new AddOns.txt)"
+            } else {
+                ""
+            };
+            format!("{}{created}", lines.join(", "))
+        };
+        reporter.line(format!("{}: {what}", change.character.label()));
+    }
+    if !applied.not_installed.is_empty() {
+        warnings.push(format!(
+            "set {} names addons that are not installed in {folder_name}, their lines are written all the same: {}",
+            applied.name,
+            applied.not_installed.join(", ")
+        ));
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let characters = count_characters(applied.characters.len());
+    match applied.changed() {
+        0 => reporter.say(
+            Kind::Nothing,
+            format!(
+                "set {} already matches every character of {folder_name} ({characters}), nothing written",
+                applied.name
+            ),
+        ),
+        1 => reporter.say(
+            Kind::Success,
+            format!(
+                "applied set {} to {characters} of {folder_name}: 1 addon line changed",
+                applied.name
+            ),
+        ),
+        count => reporter.say(
+            Kind::Success,
+            format!(
+                "applied set {} to {characters} of {folder_name}: {count} addon lines changed",
+                applied.name
+            ),
+        ),
+    }
+}
+
+/// `3 addons (2 enabled, 1 disabled)`.
+fn count_set(set: &AddonSet) -> String {
+    let addons = match set.addons.len() {
+        1 => "1 addon".to_string(),
+        count => format!("{count} addons"),
+    };
+    format!(
+        "{addons} ({} enabled, {} disabled)",
+        set.enabled(),
+        set.disabled()
+    )
+}
+
+fn count_characters(count: usize) -> String {
+    if count == 1 {
+        "1 character".to_string()
+    } else {
+        format!("{count} characters")
     }
 }
 
