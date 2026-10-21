@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 30 backlog (3 ready · 0 blocked · 2 waiting · 25 ideas) · 0 in progress · 5 done · 0 dropped · 5 decisions
+**State:** 30 backlog (3 ready · 0 blocked · 2 waiting · 25 ideas) · 0 in progress · 6 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -66,7 +66,6 @@ _none_
 | 011 | [Forever notes dataset: dead, crippled or viable, from the research](backlog/011-forever-notes-dataset.md) | S | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
 | 020 | [Game root auto-discovery: the launcher's registry key and the common install fo…](backlog/020-game-root-auto-discovery.md) | S | 2026-10-21 |
-| 023 | [Game-running detection: no WTF write while the client runs](backlog/023-game-running-detection.md) | S | 2026-10-21 |
 | 024 | [mrgl doctor: a diagnostic report for a bug report](backlog/024-doctor-diagnostic-report.md) | S | 2026-10-21 |
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](backlog/033-close-the-milestone-of-a-shipped-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
@@ -96,6 +95,12 @@ _none_
 |---|---|---|---|
 | 031 | [Self-update of the portable zip with attestation verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | M | 2026-10-21 |
 
+#### M6 macOS preview
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 036 | [macOS process list for the game-running check](backlog/036-macos-process-list-for-the-client-check.md) | S | 2026-10-21 |
+
 ### In progress
 
 _none_
@@ -108,6 +113,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
 | 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
 | 017 | [Window design sketch: the list view, the states and the voice's place, before t…](done/017-window-design-sketch-before-the-shell.md) | 2026-10-21 |
 | 016 | [Mirror the task files into GitHub issues and milestones](done/016-task-to-github-issue-mirror.md) | 2026-10-21 |
