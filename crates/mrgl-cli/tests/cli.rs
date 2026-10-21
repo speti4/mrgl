@@ -4374,7 +4374,10 @@ fn savedvars_clean_is_refused_while_the_client_runs() {
     let home = root.join("home");
     let before = snapshot(&wtf);
 
-    let mut child = spawn_stand_in(&flavor);
+    let Some(mut child) = spawn_stand_in(&flavor) else {
+        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        return;
+    };
     let output = mrgl()
         .env("MRGL_HOME", &home)
         .args(["--serious", "savedvars", "--clean", "--flavor"])
@@ -4382,8 +4385,7 @@ fn savedvars_clean_is_refused_while_the_client_runs() {
         .output()
         .expect("run mrgl");
     let pid = child.id();
-    child.kill().expect("killed");
-    child.wait().expect("waited");
+    child.stop();
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),

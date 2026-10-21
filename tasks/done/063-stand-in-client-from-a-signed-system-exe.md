@@ -64,7 +64,10 @@ signed blocking executable is known the test is skipped with a message, never a 
 ## Deviations from the plan
 
 - A third copy of the helper lived in `crates/mrgl-core/tests/backup.rs` (the restore refused while the
-  client runs, task 013); it got the same change, or one test binary would still copy itself.
+  client runs, task 013); it got the same change, or one test binary would still copy itself. Task 025,
+  merged while this one ran, brought a fourth copy (`crates/mrgl-core/tests/savedvars.rs`) and a fourth CLI
+  test that spawns the stand-in (`savedvars_clean_is_refused_while_the_client_runs`); both follow the same
+  change on top of it.
 - A non-Windows target has no stand-in test at all, as before: the tests that spawn it were already
   `#[cfg(windows)]` (the macOS process list is task 036), so the skip path is the Windows one without a
   `ping.exe`.
@@ -77,6 +80,9 @@ signed blocking executable is known the test is skipped with a message, never a 
   CLI scan, CLI restore-client, CLI install client-running), each byte-equal (SHA-256) to the system's
   `ping.exe`, 45 056 bytes; no copy of a test binary appeared. After each run no `client-stand-in` process
   was left and no `.exe` remained under the scratch temp folder. No test reports as ignored any more.
+- 2026-10-22 — on top of `main` with task 025: `cargo fmt --check`, `cargo clippy --all-targets --locked --
+  -D warnings` and `cargo test --locked` green, the two savedvars stand-in tests included; no
+  `stand_in_client` or `current_exe` is left under `crates/`, and no test reports as ignored.
 - 2026-10-22 — Windows Defender exclusions for the repo folder and the temp folder were active on the
   machine during these runs, so the local runs cannot show a quarantine either way; `Get-MpThreatDetection`
   lists no detection after the ones that led to this task. The proof of the fix is the design (no copy of
