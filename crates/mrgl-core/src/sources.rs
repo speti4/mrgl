@@ -153,6 +153,13 @@ pub struct Pick {
     pub guess: bool,
     /// Why this asset, in plain English, for the message and the sidecar.
     pub reason: String,
+    /// The release notes in one line: the first line of the release body with something in it, by
+    /// [`notes_line`]; `None` (and left out of the JSON) when the body is missing or says nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// The release's page, where the full notes are (`html_url` on GitHub), when the source names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
 }
 
 impl Pick {
@@ -429,6 +436,32 @@ impl<H: Http + ?Sized> Http for &H {
     }
 }
 
+/// The longest notes line a pick carries, in characters; a longer line keeps its first
+/// `NOTES_MAX_CHARS - 1` characters and ends with `…`.
+pub const NOTES_MAX_CHARS: usize = 120;
+
+/// The release notes in one line (task 030): the first line of a release body that has something in it
+/// once its Markdown markers are gone. Leading `#`, `*`, `-`, `+` and `>` (headings, emphasis, list items,
+/// quotes) and trailing `#` and `*` are stripped with the whitespace around them, so a rule (`---`) or a
+/// bare `##` counts as empty; the line is cut at [`NOTES_MAX_CHARS`] with an ellipsis. `None` when no line
+/// is left: an empty body, or one of markers and blank lines only.
+pub fn notes_line(body: &str) -> Option<String> {
+    let line = body
+        .lines()
+        .map(|line| {
+            line.trim_start_matches(|c: char| c.is_whitespace() || "#*-+>".contains(c))
+                .trim_end_matches(|c: char| c.is_whitespace() || "#*".contains(c))
+        })
+        .find(|line| !line.is_empty())?;
+    if line.chars().count() <= NOTES_MAX_CHARS {
+        return Some(line.to_string());
+    }
+    let mut cut: String = line.chars().take(NOTES_MAX_CHARS - 1).collect();
+    cut.truncate(cut.trim_end().len());
+    cut.push('…');
+    Some(cut)
+}
+
 /// An in-memory stand-in for the unit tests: a URL to its answer, every miss a 404.
 #[cfg(test)]
 pub(crate) struct MapHttp {
@@ -573,6 +606,58 @@ mod tests {
         assert_eq!(
             Target::new(FlavorId::Other("wow_x".into())).flavor_name(),
             "wow_x"
+        );
+    }
+
+    #[test]
+    fn the_notes_line_is_the_first_line_with_text_and_its_markers_gone() {
+        assert_eq!(
+            notes_line("Fixes the quest log\nand more").as_deref(),
+            Some("Fixes the quest log")
+        );
+        assert_eq!(
+            notes_line("\r\n  \r\n## What's new ##\r\n- one").as_deref(),
+            Some("What's new")
+        );
+        assert_eq!(
+            notes_line("---\n\n* **Bold first item**\n").as_deref(),
+            Some("Bold first item")
+        );
+        assert_eq!(
+            notes_line("> quoted line  ").as_deref(),
+            Some("quoted line")
+        );
+    }
+
+    #[test]
+    fn an_empty_body_or_one_of_markers_only_has_no_notes() {
+        assert_eq!(notes_line(""), None);
+        assert_eq!(notes_line("  \r\n\n\t"), None);
+        assert_eq!(notes_line("#\n## \n###\n---\n***\n>"), None);
+    }
+
+    #[test]
+    fn a_body_of_headings_only_gives_the_first_heading() {
+        assert_eq!(
+            notes_line("# v2.1.0\n## Changes\n### Fixes").as_deref(),
+            Some("v2.1.0")
+        );
+    }
+
+    #[test]
+    fn a_long_line_is_cut_with_an_ellipsis() {
+        let exact = "a".repeat(NOTES_MAX_CHARS);
+        assert_eq!(notes_line(&exact).as_deref(), Some(exact.as_str()));
+        let long = format!("{} tail", "é".repeat(NOTES_MAX_CHARS));
+        let cut = notes_line(&long).expect("a line");
+        assert_eq!(cut.chars().count(), NOTES_MAX_CHARS);
+        assert!(cut.ends_with('…'), "{cut}");
+        assert!(cut.starts_with("éé"), "{cut}");
+        // A cut that lands after a space drops it, so the ellipsis follows a word.
+        let spaced = format!("{} {}", "a".repeat(NOTES_MAX_CHARS - 2), "b".repeat(10));
+        assert_eq!(
+            notes_line(&spaced),
+            Some(format!("{}…", "a".repeat(NOTES_MAX_CHARS - 2)))
         );
     }
 }

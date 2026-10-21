@@ -1,0 +1,24 @@
+{
+  "releases": [
+    {
+      "filename": "Notes-v2.1.0.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "mainline",
+          "interface": 120105
+        }
+      ]
+    },
+    {
+      "filename": "Notes-v2.1.0-forever.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "forever",
+          "interface": 16001
+        }
+      ]
+    }
+  ]
+}

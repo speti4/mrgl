@@ -1,0 +1,31 @@
+[
+  {
+    "tag_name": "v2.1.0",
+    "name": "v2.1.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-21T10:00:00Z",
+    "html_url": "https://github.com/Example/Notes/releases/tag/v2.1.0",
+    "body": "\r\n### Quest arrows point the right way again\r\n\r\n- The minimap button keeps its place\r\n- Fewer lines in the chat frame\r\n",
+    "assets": [
+      {
+        "name": "Notes-v2.1.0.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Notes/releases/download/v2.1.0/Notes-v2.1.0.zip"
+      },
+      {
+        "name": "Notes-v2.1.0-forever.zip",
+        "content_type": "application/zip",
+        "size": 1024,
+        "browser_download_url": "https://github.com/Example/Notes/releases/download/v2.1.0/Notes-v2.1.0-forever.zip"
+      },
+      {
+        "name": "release.json",
+        "content_type": "application/json",
+        "size": 256,
+        "browser_download_url": "https://github.com/Example/Notes/releases/download/v2.1.0/release.json"
+      }
+    ]
+  }
+]

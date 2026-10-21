@@ -54,6 +54,15 @@ target\release\mrgl.exe backup --list --flavor forever                      # th
 target\release\mrgl.exe backup --restore WTF-2026-10-21-193605.zip --flavor forever   # one back, asks first
 ```
 
+`add --dry-run` names the asset it picked and why; when the release has notes, the next line is their first
+line and the release page, so you know what an update brings before you take it (the plain lines, as
+`--serious` prints them):
+
+```text
+pick for forever: github:<owner>/<repo> v2.1.0 (Addon-v2.1.0-forever.zip, flavor forever, interface 16001): release.json names forever (interface 16001)
+release notes: Quest arrows point the right way again (https://github.com/<owner>/<repo>/releases/tag/v2.1.0)
+```
+
 On a standard install no flag is needed: mrgl finds the game folder through the launcher's registry key or
 under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
 run would use and where it came from, and `mrgl root <folder>` remembers one (also `--root <folder>` or

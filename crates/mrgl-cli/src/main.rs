@@ -508,6 +508,7 @@ fn add_command(
                 format!("pick for {name}: {}", pick.summary()),
             );
         }
+        say_release_notes(reporter, &pick);
         if dry_run {
             reporter.say(Kind::Nothing, "dry run: nothing installed");
         }
@@ -520,6 +521,18 @@ fn add_command(
         task: "040",
     }
     .to_string())
+}
+
+/// The release notes under the pick (task 030): the notes line, then the release page, as one message of the
+/// neutral kind (something to read, not an outcome); nothing at all when the release body says nothing.
+fn say_release_notes(reporter: &Reporter, pick: &sources::Pick) {
+    let Some(notes) = &pick.notes else {
+        return;
+    };
+    match &pick.page {
+        Some(page) => reporter.say(Kind::Nothing, format!("release notes: {notes} ({page})")),
+        None => reporter.say(Kind::Nothing, format!("release notes: {notes}")),
+    }
 }
 
 /// `mrgl root [<folder>]`: remember a game folder, or print the one a run would use with its origin
