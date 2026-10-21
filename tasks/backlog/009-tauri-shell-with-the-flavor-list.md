@@ -14,6 +14,7 @@ unmanaged, linked, update available) from the core, with search. The IPC data mo
 contract of the sketch's `mock-data.js` behind `window.Data` and replaces it in `index.html` (the mock stays
 for a browser look); the core's `Message` gains a `kind` field so the window picks the voice placement;
 a resolve through IPC reuses the source's `Pick` (003), never a second code path; the flavor header names
-the version's source when it is the client exe (019).
+the version's source when it is the client exe (019); the Forever column binds to the core's Forever
+status (011) and the "copy diagnostics" action is 049.
 Why: the daily overview the CurseForge app gives today, without it.
 Done when: the four flavors of a real install show their addons with the right states, offline.

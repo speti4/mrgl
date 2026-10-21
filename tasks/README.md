@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 30 backlog (2 ready · 0 blocked · 2 waiting · 26 ideas) · 0 in progress · 17 done · 0 dropped · 5 decisions
+**State:** 31 backlog (2 ready · 0 blocked · 2 waiting · 27 ideas) · 0 in progress · 18 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -63,13 +63,13 @@ _none_
 |---|---|---|---|
 | 009 | [Tauri shell with the flavor list](backlog/009-tauri-shell-with-the-flavor-list.md) | M | 2026-10-21 |
 | 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
-| 011 | [Forever notes dataset: dead, crippled or viable, from the research](backlog/011-forever-notes-dataset.md) | S | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
 | 024 | [mrgl doctor: a diagnostic report for a bug report](backlog/024-doctor-diagnostic-report.md) | S | 2026-10-21 |
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](backlog/033-close-the-milestone-of-a-shipped-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
 | 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](backlog/043-second-registry-source-for-the-game-root.md) | S | 2026-10-21 |
 | 053 | [Missing dependencies on the addon's row in the window](backlog/053-missing-dependencies-on-the-window-row.md) | S | 2026-10-21 |
+| 058 | [Forever notes for the addons the community lists as partly restricted](backlog/058-forever-notes-for-the-partly-restricted-addons.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
 
@@ -87,6 +87,7 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 026 | [Adopt: take over an existing AddOns folder from its TOC source headers; CLI ado…](backlog/026-adopt-existing-addons-folder-from-toc-headers.md) | M | 2026-10-21 |
+| 059 | [The Forever build signal for the Wago, WoWInterface and CurseForge sources](backlog/059-forever-build-signal-for-the-other-sources.md) | S | 2026-10-21 |
 
 #### M5 Trust
 
@@ -124,7 +125,7 @@ _none_
 | 019 | [Build version fallback from the client exe when .build.info has no row for the …](done/019-build-version-fallback-from-the-client-exe.md) | 2026-10-21 |
 | 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
 
-_7 more in `done/`._
+_8 more in `done/`._
 
 ### Decisions
 
