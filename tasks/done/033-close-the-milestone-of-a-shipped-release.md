@@ -6,6 +6,7 @@ started: 2026-10-22
 plan: none
 milestone: M2 Window MVP
 changelog: housekeeping
+closed: 2026-10-22
 ---
 
 # 033 — Close the GitHub milestone a release ships: a step in the release checklist
@@ -32,28 +33,45 @@ carries a checklist, a prompt in it; the first use is 012's and is named there a
 
 ## Steps
 
-1. [ ] The step in the release checklist with the exact `gh api` call (find the milestone by title,
+1. [x] The step in the release checklist with the exact `gh api` call (find the milestone by title,
        patch `state: closed`)
-2. [ ] `scripts/release.ps1`: the checklist prompt if the script has one, otherwise `none` in the Log
-3. [ ] Docs under *Docs that move*; every check of CONTRIBUTING.md green; close
+2. [x] `scripts/release.ps1`: the checklist prompt if the script has one, otherwise `none` in the Log
+3. [x] Docs under *Docs that move*; every check of CONTRIBUTING.md green; close
 
 ## Log
 
 - 2026-10-22 — promoted; runs as a task session in its own worktree (docs/maintainer-sessions.md), paired
   with 061
+- 2026-10-22 — the step is item 4 of the release list in `docs/development.md` ("The changelog"): once the
+  release is published, find the milestone by its title (the roadmap heading) and close it by its number
+  when its open count is 0; a task of that milestone the release does not ship moves to a later milestone
+  in its task file first, and a release that completes two milestones closes both. The two calls:
+  `gh api "repos/speti4/mrgl/milestones?state=open&per_page=100" --jq '.[] | select(.title == "…") | …'`
+  prints the number, title and counts; `gh api -X PATCH repos/speti4/mrgl/milestones/<number> -f
+  state=closed` closes it. "The release" points to the list, and "The issue mirror" says that a release
+  closes a milestone by hand, step 4.
+- 2026-10-22 — `scripts/release.ps1`: none. The script has no checklist and no prompt; it builds and packs,
+  and CI runs it unattended on the tag, where a prompt could not be answered.
 
 ## Deviations from the plan
 
-- none yet
+- The step sits in the numbered release list under "The changelog", not in "The release": that list is the
+  release checklist of `docs/development.md`, and "The release" has none; "The release" got a sentence that
+  points to it.
 
 ## Verification
 
-- (dated, concrete, at close)
+- 2026-10-22 — the lookup of the step run read-only against the repo in PowerShell, exactly as written:
+  it printed `2  M2 Window MVP  open 9, closed 7`, the number the `PATCH` call takes. The `PATCH` was not run:
+  no milestone is complete yet, and closing one is the release's step. Locally: `cargo fmt --check`,
+  `python -I scripts/changelog.py --check` and `uvx zizmor .github` pass; no Rust code changed.
+- The first use is the first release (012): its milestone is closed by this step once `v0.1.0` is
+  published, and that close is the last part of this task's *Done when*.
 
 ## Closing checklist
 
-- [ ] every follow-up is listed in the pull request under `## Follow-ups`, the main session files them
-- [ ] every doc under *Docs that move* changed in this change
-- [ ] Verification written, dated
-- [ ] `tasks_check` green (the README index is the main session's)
-- [ ] moved to `done/` with `closed: YYYY-MM-DD`
+- [x] every follow-up is listed in the pull request under `## Follow-ups`, the main session files them
+- [x] every doc under *Docs that move* changed in this change
+- [x] Verification written, dated
+- [x] `tasks_check` green (the README index is the main session's)
+- [x] moved to `done/` with `closed: YYYY-MM-DD`
