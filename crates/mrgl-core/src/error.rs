@@ -86,6 +86,44 @@ pub enum Error {
         reason: String,
         staging: PathBuf,
     },
+
+    /// A source spec the manager cannot read: not `github:<owner>/<repo>` (task 003).
+    #[error("unknown source: {spec} ({hint})")]
+    UnknownSource { spec: String, hint: &'static str },
+
+    /// The network: no connection, a timeout, a TLS failure, a body cut short.
+    #[error("cannot reach {url}: {reason}")]
+    Network { url: String, reason: String },
+
+    /// A source's server answered with a status the manager cannot work with; the hint says what to do.
+    #[error("{host} answered {status} for {url}: {hint}")]
+    SourceStatus {
+        host: &'static str,
+        status: u16,
+        url: String,
+        hint: String,
+    },
+
+    /// A source's answer is not the document the manager expected (a release list, a `release.json`).
+    #[error("unreadable {what} from {spec}: {reason}")]
+    SourceDocument {
+        what: &'static str,
+        spec: String,
+        reason: String,
+    },
+
+    /// The repository has no release to pick from (drafts do not count).
+    #[error("no release in {spec}")]
+    NoRelease { spec: String },
+
+    /// The release has no asset for the flavor, neither by its `release.json` nor by an asset name.
+    #[error("no asset for flavor {flavor} in {spec} {release} ({detail})")]
+    NoAssetForFlavor {
+        spec: String,
+        release: String,
+        flavor: String,
+        detail: String,
+    },
 }
 
 /// The crate's result type.

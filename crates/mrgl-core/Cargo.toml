@@ -18,6 +18,9 @@ thiserror.workspace = true
 # The install engine of task 004: the zip reader and the file hashes of the state sidecar.
 zip.workspace = true
 sha2.workspace = true
+# The GitHub source reads the releases API and downloads an asset (task 003); a test never uses it, the
+# folder-backed stub of `sources` stands in.
+ureq.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # The process list behind the running-client check (task 023), Windows only; the other targets list nothing

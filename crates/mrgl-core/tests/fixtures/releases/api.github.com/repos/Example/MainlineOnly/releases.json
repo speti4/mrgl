@@ -1,0 +1,24 @@
+[
+  {
+    "tag_name": "v4.0.0",
+    "name": "v4.0.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-21T10:00:00Z",
+    "html_url": "https://github.com/Example/MainlineOnly/releases/tag/v4.0.0",
+    "assets": [
+      {
+        "name": "Only-v4.0.0.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Example/MainlineOnly/releases/download/v4.0.0/Only-v4.0.0.zip"
+      },
+      {
+        "name": "release.json",
+        "content_type": "application/json",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Example/MainlineOnly/releases/download/v4.0.0/release.json"
+      }
+    ]
+  }
+]

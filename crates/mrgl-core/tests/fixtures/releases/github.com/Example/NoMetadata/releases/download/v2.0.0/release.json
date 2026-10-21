@@ -1,0 +1,12 @@
+{
+  "releases": [
+    {
+      "filename": "NoMetadata-2.0.0.zip",
+      "nolib": false
+    },
+    {
+      "filename": "NoMetadata-2.0.0-classic.zip",
+      "nolib": false
+    }
+  ]
+}

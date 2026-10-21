@@ -1,0 +1,92 @@
+[
+  {
+    "tag_name": "v1.3.0",
+    "name": "v1.3.0",
+    "draft": true,
+    "prerelease": false,
+    "published_at": null,
+    "html_url": "https://github.com/Questie/Questie/releases/tag/v1.3.0",
+    "assets": [
+      {
+        "name": "Questie-v1.3.0.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.3.0/Questie-v1.3.0.zip"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.2.3",
+    "name": "v1.2.3",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-21T10:00:00Z",
+    "html_url": "https://github.com/Questie/Questie/releases/tag/v1.2.3",
+    "assets": [
+      {
+        "name": "Questie-v1.2.3.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3.zip"
+      },
+      {
+        "name": "Questie-v1.2.3-nolib.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-nolib.zip"
+      },
+      {
+        "name": "Questie-v1.2.3-classic.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-classic.zip"
+      },
+      {
+        "name": "Questie-v1.2.3-mists.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-mists.zip"
+      },
+      {
+        "name": "Questie-v1.2.3-forever.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-forever.zip"
+      },
+      {
+        "name": "Questie-v1.2.3-forever-nolib.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-forever-nolib.zip"
+      },
+      {
+        "name": "release.json",
+        "content_type": "application/json",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.2.3/release.json"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.2.2",
+    "name": "v1.2.2",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-01T10:00:00Z",
+    "html_url": "https://github.com/Questie/Questie/releases/tag/v1.2.2",
+    "assets": [
+      {
+        "name": "Questie-v1.2.2.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.2.2/Questie-v1.2.2.zip"
+      },
+      {
+        "name": "Questie-v1.2.2-forever.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/v1.2.2/Questie-v1.2.2-forever.zip"
+      }
+    ]
+  }
+]

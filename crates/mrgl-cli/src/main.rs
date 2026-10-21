@@ -2,7 +2,8 @@
 //! plain English line, `--serious` or `MRGL_SERIOUS=1` for the plain line alone, `--json` for machines.
 //! Exit codes: 0 success, 1 an error the plain line explains, 2 a usage error (clap's own).
 //!
-//! `scan`, `list` and `root` are task 002; `add <file.zip>` and `remove` are task 004 (the install engine);
+//! `scan`, `list` and `root` are task 002; `add github:<owner>/<repo>` resolves a release (task 003);
+//! `add <file.zip>` and `remove` are task 004 (the install engine);
 //! the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer "not implemented yet" with
 //! their task id until that task lands, so the help text and the voice are testable from the first commit.
 
@@ -15,6 +16,8 @@ use mrgl_core::flavor::{self, FlavorId};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{Engine, Metadata};
 use mrgl_core::scan::{self, Addon, Scan};
+use mrgl_core::sources::github::GitHub;
+use mrgl_core::sources::{self, Source, SourceSpec, Target};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::{Error, VERSION};
 
@@ -68,15 +71,18 @@ enum Command {
         /// The game folder to remember; without it, the remembered one is printed.
         folder: Option<PathBuf>,
     },
-    /// Install an addon from a source: `github:<owner>/<repo>`, later `wago:`, `wowi:`, `curse:`, or the
-    /// path of a zip in hand.
+    /// Install an addon from a source: the path of a zip in hand (installed), or `github:<owner>/<repo>`
+    /// (task 003 resolves the release; the install from the pick is task 040), later `wago:`, `wowi:`,
+    /// `curse:`.
     Add {
-        /// The source spec, or a zip path (a `.zip` name or an existing file).
+        /// The source spec (`github:<owner>/<repo>`), or a zip path (a `.zip` name or an existing file).
         source: String,
-        /// The flavor id or folder to install into.
+        /// The flavor to install into: `forever`, `retail`, `classic`, `era`, a `.flavor.info` id or a
+        /// flavor folder. The installed build is read from the game folder (`MRGL_ROOT` or `mrgl root`)
+        /// when there is one, which decides the game type of the progressing classic.
         #[arg(long)]
         flavor: Option<String>,
-        /// Resolve and report, write nothing.
+        /// Resolve the release and report the pick, write nothing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -139,9 +145,11 @@ impl Command {
     /// The "not yet" answer of a command whose task has not landed: its name and the task.
     fn not_yet(&self) -> Option<Error> {
         let (command, task) = match self {
-            Command::Scan { .. } | Command::List { .. } | Command::Root { .. } => return None,
-            Command::Add { source, .. } if !is_zip_in_hand(source) => ("add", "003"),
-            Command::Add { .. } | Command::Remove { .. } => return None,
+            Command::Scan { .. }
+            | Command::List { .. }
+            | Command::Root { .. }
+            | Command::Add { .. }
+            | Command::Remove { .. } => return None,
             Command::Update { all: true, .. } => ("update --all", "006"),
             Command::Update { .. } => ("update", "006"),
             Command::Link { .. } | Command::Unlink { .. } => ("link / unlink", "005"),
@@ -243,7 +251,12 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             source,
             flavor,
             dry_run,
-        } => add_zip(reporter, &source, flavor.as_deref(), dry_run)?,
+        } if is_zip_in_hand(&source) => add_zip(reporter, &source, flavor.as_deref(), dry_run)?,
+        Command::Add {
+            source,
+            flavor,
+            dry_run,
+        } => add_command(reporter, &source, flavor.as_deref(), dry_run)?,
         Command::Remove { name, flavor } => remove_command(reporter, &name, flavor.as_deref())?,
         _ => unreachable!("every other command answered with its task"),
     }
@@ -394,6 +407,96 @@ fn addon_line(addon: &Addon) -> String {
         parts.push("no toc for this flavor".to_string());
     }
     parts.join("  ")
+}
+
+/// The target of an `add`: the flavor the spec names and, when a game folder is known and holds that
+/// flavor, its installed build. A flavor folder path gives both; a name or an id alone gives the flavor
+/// only, so the pick for the progressing classic is a guess.
+fn add_target(spec: Option<&str>, warnings: &mut Vec<String>) -> Result<Target, String> {
+    let Some(spec) = spec else {
+        return Err(
+            "no flavor given: --flavor forever, retail, classic, era, a .flavor.info id or a flavor folder"
+                .to_string(),
+        );
+    };
+    if let Some(id) = FlavorId::from_spec(spec) {
+        let folder_name = id.folder_name().unwrap_or_default();
+        if let Some(root) = game_root(None, warnings)?
+            && let Ok(flavor) = flavor::read_flavor(&root.join(folder_name))
+        {
+            warnings.extend(flavor.warnings.iter().cloned());
+            return Ok(Target::from_flavor(&flavor));
+        }
+        return Ok(Target::new(id));
+    }
+    let path = Path::new(spec);
+    if path.is_dir() {
+        let flavor = flavor::read_flavor(path).map_err(|error| error.to_string())?;
+        warnings.extend(flavor.warnings.iter().cloned());
+        return Ok(Target::from_flavor(&flavor));
+    }
+    Err(format!(
+        "unknown flavor: {spec} (forever, retail, classic, era, a .flavor.info id or a flavor folder)"
+    ))
+}
+
+/// `mrgl add <source> --flavor <flavor> [--dry-run]`: resolve the release for the flavor and report the
+/// pick; the install from the pick is task 040, so without `--dry-run` the command says so and fails.
+fn add_command(
+    reporter: &Reporter,
+    source: &str,
+    flavor: Option<&str>,
+    dry_run: bool,
+) -> Result<(), String> {
+    let spec = SourceSpec::parse(source).map_err(|error| error.to_string())?;
+    let mut warnings = Vec::new();
+    let target = add_target(flavor, &mut warnings)?;
+    let name = target.flavor_name().to_string();
+    if !reporter.json {
+        reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
+    }
+    let github = GitHub::from_env(sources::http_from_env());
+    let pick = github
+        .resolve(&spec, &target)
+        .map_err(|error| error.to_string())?;
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "add",
+            "source": &spec,
+            "flavor": &target.flavor,
+            "build": target.version.map(|version| version.to_string()),
+            "dry_run": dry_run,
+            "pick": &pick,
+            "installed": false,
+            "warnings": warnings,
+        }));
+    } else {
+        for warning in &warnings {
+            reporter.say(Kind::Warning, warning);
+        }
+        if pick.guess {
+            reporter.say(
+                Kind::Warning,
+                format!("pick for {name}, a guess: {}", pick.summary()),
+            );
+        } else {
+            reporter.say(
+                Kind::Success,
+                format!("pick for {name}: {}", pick.summary()),
+            );
+        }
+        if dry_run {
+            reporter.say(Kind::Nothing, "dry run: nothing installed");
+        }
+    }
+    if dry_run {
+        return Ok(());
+    }
+    Err(Error::NotImplemented {
+        command: "add (the install)",
+        task: "040",
+    }
+    .to_string())
 }
 
 /// `mrgl root [<folder>]`: remember a game folder, or print the remembered one.

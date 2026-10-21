@@ -17,8 +17,15 @@ BOM in a fixture survives every checkout.
   `_classic_era_` show the game-type pick, `_forever_` has no `Interface` folder
   yet (the client before launch), `_unknown_` carries an id the manager does not know, and `_no_info_` has
   no `.flavor.info` at all.
-- `release-json/*.json` — `release.json` files in the shape the BigWigs packager writes, with `forever` next
-  to other flavors and a release without metadata (task 003).
+- `releases/` — the answers of the GitHub source (task 003), laid out as the folder stub reads them: the
+  URL's host and path under this folder (`api.github.com/repos/<owner>/<repo>/releases.json` is the release
+  list, `github.com/<owner>/<repo>/releases/download/<tag>/release.json` the packager's metadata of one
+  release). `Questie/Questie` carries a draft above a stable release whose `release.json` names `mainline`,
+  `classic`, `mists` and `forever`, with `nolib` twins; `Example/NoMetadata` has a `release.json` in the old
+  shape without flavor metadata; `Example/NoReleaseJson` has zips only (`-forever`, `-cata` and the unsuffixed
+  retail one); `Example/Empty` has no release; `Example/Prerelease` has a draft, a prerelease and a stable
+  release; `Example/BetaOnly` has a prerelease alone; `Example/MainlineOnly` names retail only. The asset
+  names are made up and no zip sits behind them: a download test serves a text file from a temporary folder.
 - `zips/*.zip` — small archives for the install engine (task 004), written by `zips/make-zips.py` (fixed
   timestamps and entry order, so a rerun changes no byte; `python -I` it after editing a shape): one addon
   folder in three versions (`one-folder-1.0.0` with `old.lua`, `1.1.0` with `new.lua` instead, `1.2.0`),

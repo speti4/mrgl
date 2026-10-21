@@ -1,0 +1,30 @@
+[
+  {
+    "tag_name": "v2.0.0",
+    "name": "v2.0.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-21T10:00:00Z",
+    "html_url": "https://github.com/Example/NoMetadata/releases/tag/v2.0.0",
+    "assets": [
+      {
+        "name": "NoMetadata-2.0.0.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Example/NoMetadata/releases/download/v2.0.0/NoMetadata-2.0.0.zip"
+      },
+      {
+        "name": "NoMetadata-2.0.0-classic.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Example/NoMetadata/releases/download/v2.0.0/NoMetadata-2.0.0-classic.zip"
+      },
+      {
+        "name": "release.json",
+        "content_type": "application/json",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Example/NoMetadata/releases/download/v2.0.0/release.json"
+      }
+    ]
+  }
+]
