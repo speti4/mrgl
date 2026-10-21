@@ -46,6 +46,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - WTF backup and restore ([013](https://github.com/speti4/mrgl/blob/main/tasks/done/013-wtf-backup-and-restore.md))
 - Addon list export and import, and a TOC-interface versus build warning ([015](https://github.com/speti4/mrgl/blob/main/tasks/done/015-list-export-import-and-interface-warning.md))
 - SavedVariables: size per addon and orphan cleanup into a backup zip; CLI `savedvars` ([025](https://github.com/speti4/mrgl/blob/main/tasks/done/025-savedvariables-size-and-orphan-cleanup.md))
+- An import option that installs the listed version, not the current release ([057](https://github.com/speti4/mrgl/blob/main/tasks/done/057-import-option-for-the-listed-version.md))
 
 ### M5 Trust
 
