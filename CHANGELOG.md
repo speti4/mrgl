@@ -15,6 +15,10 @@ The repository, the task standard and the empty workspace: no app yet.
 
 - Flavor detection and the AddOns scan with TOC parsing; CLI `scan`, `list` and `root` ([002](https://github.com/speti4/mrgl/blob/main/tasks/done/002-flavor-detection-and-addons-scan-with-toc-parsing.md))
 
+### M2 Window MVP
+
+- Window design sketch: the list view, the states and the voice's place, before the shell is built ([017](https://github.com/speti4/mrgl/blob/main/tasks/done/017-window-design-sketch-before-the-shell.md))
+
 ### Project housekeeping
 
 - Project scaffolding: repo structure, task standard, decisions, origin and research ([001](https://github.com/speti4/mrgl/blob/main/tasks/done/001-project-scaffolding.md))
