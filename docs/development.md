@@ -52,6 +52,15 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   list (`list_file`, task 015: the export from the sidecar and the import through the source and the engine,
   below), the interface check (`interface`, task 015, below) and the voice table (`voice`, D-005). Synthetic
   fixtures are under `tests/fixtures/`.
+  The SavedVariables are `savedvars` (task 025): the walk of `WTF\Account\<account>\SavedVariables\` and
+  `WTF\Account\<account>\<realm>\<character>\SavedVariables\`, a `<Addon>.lua` and its `.lua.bak` as one
+  entry with their sizes, the largest first, and the orphan rule: a file is an orphan when no folder of its
+  name, compared without regard to case, is an addon the scan finds under `Interface\AddOns` (a folder with a
+  TOC named after it, or one the scan cannot read); a disabled addon keeps its folder and is never one, a
+  `Blizzard_` file is the client's own, and with no AddOns folder at all nothing is marked. The cleanup,
+  the third `WTF` write of D-002 and D-003, runs the 023 guard first, writes the orphans and their `.bak`
+  files with the backup's zip writer, entry names relative to `WTF`, and removes each file only once its
+  entry, read back from the finished zip, matches it byte for byte; `backup::restore_wtf` refuses that zip.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002; `list` reads the flavor's
   sidecar through the install engine and marks every addon managed or unmanaged with `state::classify`,
   task 037, while `scan` stays the raw folder view), `add github:<owner>/<repo>
@@ -70,6 +79,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
   addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
   `folder`, `required`, `met`, `embedded`, `missing` and `nolib` (`true`, `false` or `null` for unknown).
+  `savedvars --flavor <flavor> [--clean]` (task 025) prints a data line per SavedVariables entry (size,
+  addon, `account` or `account / realm / character`, `orphan` or `client`) and a summary, `--clean` moves
+  the orphans; `--json` is the `savedvars` or the `savedvars-clean` document.
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
   capability file and the icon.
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
@@ -468,6 +480,12 @@ with its origin (a plain line in `list`, the answer of `mrgl root` with no argum
 (`registry=<path>` for the launcher's value, `webview2=<version>` for the doctor's WebView2 version, every
 other item a usual folder) is the stub the end-to-end tests run on, so no test reads the real registry or
 looks under `Program Files`.
+
+The same `backups\<flavor-id>\` folder takes the zips of `mrgl savedvars --clean` (task 025):
+`SavedVariables-<date>.zip` per cleanup, the orphan SavedVariables files (no addon folder of their name, in
+any case, under `Interface\AddOns`; a disabled addon keeps its folder) and their `.bak` files, each under its
+path relative to `WTF`, so unzipping it into `WTF` by hand puts every file back. `backup --list` shows it
+among the zips; `backup --restore` refuses it, since a restore replaces the whole `WTF` folder.
 
 ## Forever notes
 

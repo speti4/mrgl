@@ -4084,3 +4084,280 @@ fn rollback_errors_are_exit_code_one_and_change_nothing() {
         b"-- OneFolder 1.1.0\n"
     );
 }
+
+// --- task 025: `savedvars` lists the SavedVariables by size and moves the orphans into a backup zip ---
+
+/// The SavedVariables files the `savedvars` tests add to the fixture `WTF` tree, relative to `WTF`, with
+/// their sizes: `GoneAddon` (a `.lua` and its `.bak`), `NoTocFolder` (its folder has no TOC) and a lone
+/// `GoneToo.lua.bak` are the orphans; `Blizzard_Console` is the client's; `DisabledAddon` is disabled in
+/// `AddOns.txt` and keeps its folder.
+const SAVEDVARS_ADDED: [(&str, usize); 6] = [
+    ("Account/MRGLFIXTURE/SavedVariables/GoneAddon.lua", 300),
+    ("Account/MRGLFIXTURE/SavedVariables/GoneAddon.lua.bak", 200),
+    ("Account/MRGLFIXTURE/SavedVariables/NoTocFolder.lua", 120),
+    (
+        "Account/MRGLFIXTURE/SavedVariables/Blizzard_Console.lua",
+        40,
+    ),
+    (
+        "Account/MRGLFIXTURE/Fixture Realm/Mrgltest/SavedVariables/DisabledAddon.lua",
+        60,
+    ),
+    (
+        "Account/MRGLFIXTURE/Fixture Realm/Mrgltest/SavedVariables/GoneToo.lua.bak",
+        90,
+    ),
+];
+
+/// The files `savedvars --clean` moves, relative to `WTF`.
+const SAVEDVARS_ORPHANS: [&str; 4] = [
+    "Account/MRGLFIXTURE/SavedVariables/GoneAddon.lua",
+    "Account/MRGLFIXTURE/SavedVariables/GoneAddon.lua.bak",
+    "Account/MRGLFIXTURE/SavedVariables/NoTocFolder.lua",
+    "Account/MRGLFIXTURE/Fixture Realm/Mrgltest/SavedVariables/GoneToo.lua.bak",
+];
+
+/// A synthetic game folder with the fixture `WTF` tree, the files of [`SAVEDVARS_ADDED`] and an AddOns
+/// folder with `MrglFixture` and `DisabledAddon` (with TOCs) and `NoTocFolder` (without one).
+fn savedvars_game(name: &str) -> PathBuf {
+    let root = temp_game_root_with_wtf(&format!("savedvars-{name}"));
+    let wtf = root.join("_forever_").join("WTF");
+    for (file, size) in SAVEDVARS_ADDED {
+        std::fs::write(wtf.join(file), vec![b'x'; size]).expect("a SavedVariables file");
+    }
+    let addons = root.join("_forever_").join("Interface").join("AddOns");
+    for folder in ["MrglFixture", "DisabledAddon"] {
+        std::fs::create_dir_all(addons.join(folder)).expect("an addon folder");
+        std::fs::write(
+            addons.join(folder).join(format!("{folder}.toc")),
+            format!("## Interface: 11508\n## Title: {folder}\n"),
+        )
+        .expect("a TOC");
+    }
+    std::fs::create_dir_all(addons.join("NoTocFolder")).expect("a folder without a TOC");
+    root
+}
+
+/// The byte count as `savedvars` prints it.
+fn savedvars_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    }
+}
+
+#[test]
+fn savedvars_lists_the_sizes_and_marks_the_orphans() {
+    let root = savedvars_game("list");
+    let flavor = root.join("_forever_");
+    let wtf = flavor.join("WTF");
+    let before = snapshot(&wtf);
+    let total: u64 = before
+        .iter()
+        .filter(|(path, _)| {
+            path.contains("/SavedVariables/") && (path.ends_with(".lua") || path.ends_with(".bak"))
+        })
+        .map(|(_, bytes)| bytes.len() as u64)
+        .sum();
+
+    let output = mrgl()
+        .args(["--serious", "savedvars", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines.len(),
+        7 + 1,
+        "a line per entry and the summary: {text}"
+    );
+    assert_eq!(lines[0], "    500 B  GoneAddon  MRGLFIXTURE  orphan");
+    assert!(
+        lines.contains(&"    120 B  NoTocFolder  MRGLFIXTURE  orphan"),
+        "{text}"
+    );
+    assert!(
+        lines.contains(&"     90 B  GoneToo  MRGLFIXTURE / Fixture Realm / Mrgltest  orphan"),
+        "{text}"
+    );
+    assert!(
+        lines.contains(&"     60 B  DisabledAddon  MRGLFIXTURE / Fixture Realm / Mrgltest"),
+        "a disabled addon is not an orphan: {text}"
+    );
+    assert!(
+        lines.contains(&"     40 B  Blizzard_Console  MRGLFIXTURE  client"),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        format!(
+            "7 SavedVariables files of _forever_, {} in all; 3 orphans (710 B) have no addon folder: `mrgl savedvars --clean` moves them into a backup zip",
+            savedvars_bytes(total)
+        )
+    );
+
+    // The murloc line comes with the summary when not serious.
+    let output = mrgl()
+        .args(["savedvars", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 7 + 2, "{text}");
+    assert!(!lines[7].is_empty());
+
+    let output = mrgl()
+        .args(["--json", "savedvars", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "savedvars");
+    assert_eq!(value["files"].as_array().map(Vec::len), Some(7));
+    assert_eq!(value["files"][0]["addon"], "GoneAddon");
+    assert_eq!(value["files"][0]["status"], "orphan");
+    assert_eq!(value["files"][0]["lua_bytes"], 300);
+    assert_eq!(value["files"][0]["bak_bytes"], 200);
+    assert_eq!(value["orphans"], 3);
+    assert_eq!(value["orphan_bytes"], 710);
+    assert_eq!(value["bytes"], total);
+    assert_eq!(snapshot(&wtf), before, "a listing writes nothing");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn savedvars_clean_moves_the_orphans_into_a_zip_under_the_home() {
+    let root = savedvars_game("clean");
+    let flavor = root.join("_forever_");
+    let wtf = flavor.join("WTF");
+    let home = root.join("home");
+    let before = snapshot(&wtf);
+
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .args(["--serious", "savedvars", "--clean", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{output:?}");
+    let backups = home.join("backups").join("wowf");
+    let zips: Vec<PathBuf> = std::fs::read_dir(&backups)
+        .expect("the backups folder")
+        .map(|entry| entry.expect("an entry").path())
+        .collect();
+    assert_eq!(zips.len(), 1, "{zips:?}");
+    let zip = &zips[0];
+    let name = zip
+        .file_name()
+        .expect("a name")
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        name.starts_with("SavedVariables-") && name.ends_with(".zip"),
+        "{name}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        format!(
+            "moved 3 orphans of _forever_ (4 files, 710 B) into {}; unzip it into the WTF folder to put them back",
+            zip.display()
+        )
+    );
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().count(),
+        3 + 1,
+        "the moved and the summary: {text}"
+    );
+    let mut expected = before.clone();
+    for orphan in SAVEDVARS_ORPHANS {
+        assert!(expected.remove(orphan).is_some(), "{orphan}");
+    }
+    assert_eq!(snapshot(&wtf), expected, "moved, and nothing else touched");
+
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .args(["--json", "savedvars", "--clean", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "savedvars-clean");
+    assert_eq!(value["zip"], serde_json::Value::Null);
+    assert_eq!(value["files"], 0);
+    assert_eq!(value["moved"].as_array().map(Vec::len), Some(0));
+
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .args(["--serious", "savedvars", "--clean", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success());
+    assert_eq!(
+        stdout(&output).trim_end(),
+        "no orphans in the SavedVariables of _forever_, nothing moved"
+    );
+
+    // `backup --restore` is not taught to read the cleanup zip: it refuses it before anything moves.
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .args([
+            "--serious",
+            "backup",
+            "--yes",
+            "--restore",
+            &name,
+            "--flavor",
+        ])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "not a WTF backup: {} holds the SavedVariables a cleanup moved; unzip it into the WTF folder by hand to put them back",
+            zip.display()
+        )
+    );
+    assert_eq!(snapshot(&wtf), expected);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn savedvars_clean_is_refused_while_the_client_runs() {
+    let root = savedvars_game("client");
+    let flavor = root.join("_forever_");
+    let wtf = flavor.join("WTF");
+    let home = root.join("home");
+    let before = snapshot(&wtf);
+
+    let mut child = spawn_stand_in(&flavor);
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .args(["--serious", "savedvars", "--clean", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    let pid = child.id();
+    child.kill().expect("killed");
+    child.wait().expect("waited");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "the client is running in _forever_ (client-stand-in.exe, pid {pid}): close the game first, nothing under WTF is written while it runs"
+        )
+    );
+    assert_eq!(snapshot(&wtf), before, "nothing was touched");
+    assert!(!home.join("backups").exists(), "no zip either");
+    let _ = std::fs::remove_dir_all(&root);
+}

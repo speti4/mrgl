@@ -28,6 +28,7 @@ use crate::client;
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
 use crate::home;
+use crate::savedvars;
 use crate::zip_entry::{self, CheckedEntry, ZipRole};
 
 /// The settings folder of a flavor, under its folder.
@@ -81,38 +82,76 @@ pub fn backup_wtf(flavor: &Flavor, into: &Path) -> Result<Backup> {
             path: flavor.folder.clone(),
         });
     }
+    let mut stats = Stats::default();
+    let zip = dated_zip(into, BACKUP_PREFIX, |writer, part| {
+        add_folder(writer, &wtf, "", part, &mut stats)
+    })?;
+    Ok(Backup {
+        zip,
+        files: stats.files,
+        folders: stats.folders,
+        bytes: stats.bytes,
+        warnings: stats.warnings,
+    })
+}
+
+/// Writes the given files into a dated zip under `into` (created when missing), `<prefix><date>.zip`, each
+/// under its entry name (`/` separators), in the given order and as a backup writes them: deflated, with
+/// its modification time. The zip and the bytes of every file before compression. The SavedVariables
+/// cleanup of task 025 writes its zip here, so both zips of the backups folder come from one writer.
+pub(crate) fn zip_files(
+    into: &Path,
+    prefix: &str,
+    files: &[(String, PathBuf)],
+) -> Result<(PathBuf, u64)> {
+    let mut bytes = 0;
+    let zip = dated_zip(into, prefix, |writer, part| {
+        for (entry_name, path) in files {
+            let metadata = fs::metadata(path).map_err(|source| Error::Io {
+                context: "reading a WTF file",
+                path: path.clone(),
+                source,
+            })?;
+            bytes += add_file(writer, path, entry_name, &metadata, part)?;
+        }
+        Ok(())
+    })?;
+    Ok((zip, bytes))
+}
+
+/// A writer the zip's entries are added to.
+type Writer = ZipWriter<BufWriter<File>>;
+
+/// Writes a zip under a fresh dated name, `<prefix><date>.zip` under `into` (created when missing): the
+/// entries `fill` adds, under a `.part` name, synced, then renamed, so a half-written zip never carries
+/// the name; on a failure the `.part` file is removed.
+fn dated_zip(
+    into: &Path,
+    prefix: &str,
+    fill: impl FnOnce(&mut Writer, &Path) -> Result<()>,
+) -> Result<PathBuf> {
     let io = |context: &'static str, path: &Path, source| Error::Io {
         context,
         path: path.to_path_buf(),
         source,
     };
     fs::create_dir_all(into).map_err(|source| io("creating the backups folder", into, source))?;
-    let zip = fresh_path(into, BACKUP_PREFIX, ".zip")
-        .map_err(|source| io("naming the backup", into, source))?;
+    let zip =
+        fresh_path(into, prefix, ".zip").map_err(|source| io("naming the backup", into, source))?;
     let part = zip.with_extension("zip.part");
-    let result = write_zip(&wtf, &part);
-    let (files, folders, bytes, warnings) = match result {
-        Ok(stats) => stats,
-        Err(error) => {
-            let _ = fs::remove_file(&part);
-            return Err(error);
-        }
-    };
+    if let Err(error) = write_zip(&part, fill) {
+        let _ = fs::remove_file(&part);
+        return Err(error);
+    }
     fs::rename(&part, &zip).map_err(|source| {
         let _ = fs::remove_file(&part);
         io("finishing the backup", &zip, source)
     })?;
-    Ok(Backup {
-        zip,
-        files,
-        folders,
-        bytes,
-        warnings,
-    })
+    Ok(zip)
 }
 
-/// Writes the zip of a `WTF` folder; the counts of files and folders, the bytes and the warnings.
-fn write_zip(wtf: &Path, zip: &Path) -> Result<(usize, usize, u64, Vec<String>)> {
+/// Writes a zip with the entries `fill` adds, finished and synced to the disk.
+fn write_zip(zip: &Path, fill: impl FnOnce(&mut Writer, &Path) -> Result<()>) -> Result<()> {
     let io = |context: &'static str, path: &Path, source| Error::Io {
         context,
         path: path.to_path_buf(),
@@ -120,8 +159,7 @@ fn write_zip(wtf: &Path, zip: &Path) -> Result<(usize, usize, u64, Vec<String>)>
     };
     let file = File::create(zip).map_err(|source| io("writing the backup", zip, source))?;
     let mut writer = ZipWriter::new(BufWriter::new(file));
-    let mut stats = Stats::default();
-    add_folder(&mut writer, wtf, "", zip, &mut stats)?;
+    fill(&mut writer, zip)?;
     writer
         .finish()
         .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?
@@ -129,7 +167,7 @@ fn write_zip(wtf: &Path, zip: &Path) -> Result<(usize, usize, u64, Vec<String>)>
         .map_err(|error| io("writing the backup", zip, error.into_error()))?
         .sync_all()
         .map_err(|source| io("writing the backup", zip, source))?;
-    Ok((stats.files, stats.folders, stats.bytes, stats.warnings))
+    Ok(())
 }
 
 #[derive(Default)]
@@ -144,7 +182,7 @@ struct Stats {
 /// directory entry and then its own entries, a file is one deflated entry with its times, a symbolic
 /// link or a junction is a warning and nothing else.
 fn add_folder(
-    writer: &mut ZipWriter<BufWriter<File>>,
+    writer: &mut Writer,
     dir: &Path,
     prefix: &str,
     zip: &Path,
@@ -188,27 +226,41 @@ fn add_folder(
         let metadata = entry
             .metadata()
             .map_err(|source| io("reading WTF", &path, source))?;
-        let modified = metadata.modified().ok();
-        let mut options = FullFileOptions::default()
-            .compression_method(CompressionMethod::Deflated)
-            .last_modified_time(dos_time(modified))
-            .large_file(metadata.len() >= u32::MAX as u64);
-        if let Some(field) = extended_timestamp(modified) {
-            options
-                .add_extra_field(EXTENDED_TIMESTAMP, field, false)
-                .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?;
-        }
-        writer
-            .start_file(&entry_name, options)
-            .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?;
-        let mut source =
-            File::open(&path).map_err(|source| io("reading a WTF file", &path, source))?;
-        let copied = io::copy(&mut source, writer)
-            .map_err(|source| io("writing the backup", zip, source))?;
+        stats.bytes += add_file(writer, &path, &entry_name, &metadata, zip)?;
         stats.files += 1;
-        stats.bytes += copied;
     }
     Ok(())
+}
+
+/// Adds one file as a deflated entry with its modification time (the zip's own date fields and the
+/// extended timestamp field); the bytes copied.
+fn add_file(
+    writer: &mut Writer,
+    path: &Path,
+    entry_name: &str,
+    metadata: &fs::Metadata,
+    zip: &Path,
+) -> Result<u64> {
+    let io = |context: &'static str, path: &Path, source| Error::Io {
+        context,
+        path: path.to_path_buf(),
+        source,
+    };
+    let modified = metadata.modified().ok();
+    let mut options = FullFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .last_modified_time(dos_time(modified))
+        .large_file(metadata.len() >= u32::MAX as u64);
+    if let Some(field) = extended_timestamp(modified) {
+        options
+            .add_extra_field(EXTENDED_TIMESTAMP, field, false)
+            .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?;
+    }
+    writer
+        .start_file(entry_name, options)
+        .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?;
+    let mut source = File::open(path).map_err(|source| io("reading a WTF file", path, source))?;
+    io::copy(&mut source, writer).map_err(|source| io("writing the backup", zip, source))
 }
 
 /// A path's modification time, when the file system gives one.
@@ -408,8 +460,19 @@ pub struct Restored {
 /// outside `WTF` refuses the whole zip), the current `WTF` moved aside into the backups folder as
 /// `WTF-before-restore-<date>`, the zip unpacked into a new `WTF`. A failure while unpacking removes the
 /// half-written folder and puts the aside one back ([`Error::RestoreFailed`]); when even that fails, the
-/// aside folder stays where it is and the error names it ([`Error::RestoreRevertFailed`]).
+/// aside folder stays where it is and the error names it ([`Error::RestoreRevertFailed`]). A cleanup zip of
+/// the SavedVariables (`SavedVariables-<date>.zip`, task 025) is refused before anything else: it holds a
+/// few files, not a `WTF` folder, and is unzipped into `WTF` by hand ([`Error::NotAWtfBackup`]).
 pub fn restore_wtf(flavor: &Flavor, zip: &Path, backups: &Path) -> Result<Restored> {
+    if zip.file_name().is_some_and(|name| {
+        name.to_string_lossy()
+            .to_ascii_lowercase()
+            .starts_with(&savedvars::CLEANUP_PREFIX.to_ascii_lowercase())
+    }) {
+        return Err(Error::NotAWtfBackup {
+            path: zip.to_path_buf(),
+        });
+    }
     client::ensure_client_not_running(flavor)?;
     let (mut archive, entries) = checked_entries(zip)?;
     let wtf = wtf_dir(flavor);

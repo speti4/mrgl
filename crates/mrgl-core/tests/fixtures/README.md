@@ -61,8 +61,9 @@ BOM in a fixture survives every checkout.
   `bindings-cache.wtf` and account-wide `SavedVariables/` (a `.lua` and its `.lua.bak`), and a realm with a
   character (`Fixture Realm/Mrgltest/`) with its `AddOns.txt`, `layout-local.txt` and character
   `SavedVariables/`. Every name and value is made up, a few hundred bytes in all; the tests copy the tree
-  into a temporary flavor folder and never write here. `.gitignore` allows a `WTF` folder here and nowhere
-  else.
+  into a temporary flavor folder and never write here; the SavedVariables tests of task 025 add their
+  made-up files and an `Interface\AddOns` folder to such a copy. `.gitignore` allows a `WTF` folder here and
+  nowhere else.
 - `dev/` — a development folder for the junction links of task 005: `OneFolder` (a TOC with `## Version:
   9.9.9-dev`, the same folder name as the `one-folder` zips, so an install over the linked addon can be
   refused) and `DevAddon` (a TOC without a version) are addons, `Media` holds a text file and no TOC. The

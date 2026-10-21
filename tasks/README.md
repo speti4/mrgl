@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 26 backlog (2 ready · 0 blocked · 2 waiting · 22 ideas) · 0 in progress · 27 done · 3 dropped · 5 decisions
+**State:** 25 backlog (2 ready · 0 blocked · 2 waiting · 21 ideas) · 0 in progress · 28 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -71,7 +71,6 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 014 | [Addon sets with enable and disable](backlog/014-addon-sets-with-enable-and-disable.md) | M | 2026-10-21 |
-| 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](backlog/025-savedvariables-size-and-orphan-cleanup.md) | S | 2026-10-21 |
 | 027 | [Per-character addon sets](backlog/027-per-character-addon-sets.md) | S | 2026-10-21 |
 | 028 | [Lists as discovery: a shareable list format and a Forever starter list in the r…](backlog/028-lists-as-discovery-and-forever-starter-list.md) | S | 2026-10-21 |
 | 057 | [An import option that installs the listed version, not the current release](backlog/057-import-option-for-the-listed-version.md) | S | 2026-10-21 |
@@ -115,6 +114,7 @@ _none_
 |---|---|---|
 | 061 | [CI compiles the non-Windows paths of the core](done/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 |
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](done/033-close-the-milestone-of-a-shipped-release.md) | 2026-10-22 |
+| 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](done/025-savedvariables-size-and-orphan-cleanup.md) | 2026-10-22 |
 | 044 | [One zip-entry check for the install engine and the backup restore](done/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | 2026-10-21 |
 | 040 | [add github:<owner>/<repo> installs the pick through the engine](done/040-add-github-installs-the-pick-through-the-engine.md) | 2026-10-21 |
 | 038 | [The install engine warns when the client runs](done/038-install-warns-when-the-client-runs.md) | 2026-10-21 |
@@ -122,9 +122,8 @@ _none_
 | 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](done/035-window-polish-forever-column-and-toast-cap.md) | 2026-10-21 |
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
 | 030 | [Release notes before an update: the GitHub release body in one line](done/030-release-notes-before-an-update.md) | 2026-10-21 |
-| 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](done/029-dependency-check-from-toc-and-nolib.md) | 2026-10-21 |
 
-_17 more in `done/`._
+_18 more in `done/`._
 
 ### Decisions
 
