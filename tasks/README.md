@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 26 backlog (2 ready · 0 blocked · 2 waiting · 22 ideas) · 2 in progress · 25 done · 3 dropped · 5 decisions
+**State:** 26 backlog (2 ready · 0 blocked · 2 waiting · 22 ideas) · 0 in progress · 27 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -99,17 +99,7 @@ _none_
 
 ### In progress
 
-#### M1 Core + CLI
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 061 | [CI compiles the non-Windows paths of the core](wip/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 | `none` |
-
-#### M2 Window MVP
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 033 | [Close the GitHub milestone a release ships: a step in the release checklist](wip/033-close-the-milestone-of-a-shipped-release.md) | 2026-10-22 | `none` |
+_none_
 
 ### Closed – do not reopen
 
@@ -123,6 +113,8 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 061 | [CI compiles the non-Windows paths of the core](done/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 |
+| 033 | [Close the GitHub milestone a release ships: a step in the release checklist](done/033-close-the-milestone-of-a-shipped-release.md) | 2026-10-22 |
 | 044 | [One zip-entry check for the install engine and the backup restore](done/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | 2026-10-21 |
 | 040 | [add github:<owner>/<repo> installs the pick through the engine](done/040-add-github-installs-the-pick-through-the-engine.md) | 2026-10-21 |
 | 038 | [The install engine warns when the client runs](done/038-install-warns-when-the-client-runs.md) | 2026-10-21 |
@@ -131,10 +123,8 @@ _none_
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
 | 030 | [Release notes before an update: the GitHub release body in one line](done/030-release-notes-before-an-update.md) | 2026-10-21 |
 | 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](done/029-dependency-check-from-toc-and-nolib.md) | 2026-10-21 |
-| 024 | [mrgl doctor: a diagnostic report for a bug report](done/024-doctor-diagnostic-report.md) | 2026-10-21 |
-| 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
 
-_15 more in `done/`._
+_17 more in `done/`._
 
 ### Decisions
 
