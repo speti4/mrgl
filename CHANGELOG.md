@@ -36,6 +36,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - Game root auto-discovery: the launcher's registry key and the common install folders ([020](https://github.com/speti4/mrgl/blob/main/tasks/done/020-game-root-auto-discovery.md))
 - Game-running detection: no `WTF` write while the client runs ([023](https://github.com/speti4/mrgl/blob/main/tasks/done/023-game-running-detection.md))
 - `mrgl doctor`: a diagnostic report for a bug report ([024](https://github.com/speti4/mrgl/blob/main/tasks/done/024-doctor-diagnostic-report.md))
+- Window preferences kept by the shell: theme and the serious switch out of `localStorage` ([034](https://github.com/speti4/mrgl/blob/main/tasks/done/034-window-preferences-kept-by-the-shell.md))
 - Window polish: hide the Forever note column without notes, cap the toast stack ([035](https://github.com/speti4/mrgl/blob/main/tasks/done/035-window-polish-forever-column-and-toast-cap.md))
 - The install engine warns when the client runs ([038](https://github.com/speti4/mrgl/blob/main/tasks/done/038-install-warns-when-the-client-runs.md))
 - A second registry source for the game root: the Uninstall entry, and expanded values ([043](https://github.com/speti4/mrgl/blob/main/tasks/done/043-second-registry-source-for-the-game-root.md))
