@@ -11,7 +11,8 @@
 //! scanned addons, [`forever`] holds the Forever notes (the derived build signal and the curated file
 //! compiled in, task 011), [`doctor`] is the diagnostic report a bug report carries, [`list_file`] is the
 //! addon list `export` writes and `import` installs from and [`interface`] checks a TOC's `## Interface`
-//! against the flavor's build (task 015), [`voice`] is the murloc table every message goes through (D-005)
+//! against the flavor's build (task 015), [`update`] is the update check of the managed addons
+//! against their sources (task 006), [`voice`] is the murloc table every message goes through (D-005)
 //! and [`zip_entry`] is the one check every zip entry passes before the install engine or a restore writes
 //! it.
 //! [`savedvars`] lists the SavedVariables files by size and moves the orphans into a backup zip (task 025).
@@ -38,6 +39,7 @@ pub mod scan;
 pub mod sources;
 pub mod state;
 pub mod toc;
+pub mod update;
 pub mod voice;
 pub mod zip_entry;
 

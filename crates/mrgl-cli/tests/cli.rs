@@ -137,19 +137,6 @@ fn json_is_plain_json() {
 }
 
 #[test]
-fn a_planned_command_fails_with_its_task_and_exit_code_one() {
-    let output = mrgl()
-        .args(["update", "--all", "--flavor", "forever"])
-        .output()
-        .expect("run mrgl");
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        stderr_last_line(&output),
-        "update --all is not implemented yet (task 006)"
-    );
-}
-
-#[test]
 fn a_usage_error_is_exit_code_two() {
     let output = mrgl().arg("--no-such-flag").output().expect("run mrgl");
     assert_eq!(output.status.code(), Some(2));
@@ -1527,7 +1514,7 @@ fn add_takes_a_flavor_folder_path_and_needs_a_flavor() {
 }
 
 #[test]
-fn an_unknown_source_spec_and_update_are_plain_errors() {
+fn an_unknown_source_spec_is_a_plain_error() {
     let output = mrgl()
         .args(["add", "wago:something", "--flavor", "forever"])
         .output()
@@ -1536,15 +1523,6 @@ fn an_unknown_source_spec_and_update_are_plain_errors() {
     assert_eq!(
         stderr_last_line(&output),
         "unknown source: wago:something (expected github:<owner>/<repo>)"
-    );
-    let output = mrgl()
-        .args(["update", "Something", "--flavor", "forever"])
-        .output()
-        .expect("run mrgl");
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        stderr_last_line(&output),
-        "update is not implemented yet (task 006)"
     );
 }
 
@@ -4944,4 +4922,268 @@ fn add_offline_finds_the_installed_release_from_the_cache_with_a_warning() {
             .any(|warning| is_stale_warning(warning.as_str().unwrap_or_default())),
         "{value}"
     );
+}
+
+// --- task 006: the update check and `update --all` / `update <name>`, against the folder stub ---
+
+/// A game with a fixture sidecar of ten managed addons, one for every state of the update check, each
+/// with its folder made by hand, and an unmanaged folder. The fixture answers serve the Forever zip of
+/// `Questie/Questie` v1.2.3, the one update.
+fn update_game(name: &str) -> Game {
+    let game = Game::new(name);
+    let entries = [
+        (
+            "Beta",
+            "github:Example/Prerelease",
+            "1.1.0-beta",
+            r#", "channel": "prerelease""#,
+        ),
+        ("Dev", r"link:D:\\dev\\Dev", "dev", ""),
+        ("Empty", "github:Example/Empty", "1.0.0", ""),
+        ("Gone", "github:Example/Missing", "1.0.0", ""),
+        ("Guess", "github:Example/NoReleaseJson", "2.0.0", ""),
+        (
+            "Ignored",
+            "github:Example/NoMetadata",
+            "1.0.0",
+            r#", "ignored": true"#,
+        ),
+        (
+            "Pinned",
+            "github:Example/Notes",
+            "2.0.0",
+            r#", "pinned": "2.0.0""#,
+        ),
+        ("Plain", "github:Example/Prerelease", "1.0.0", ""),
+        ("Questie", "github:Questie/Questie", "1.2.2", ""),
+        ("Zipped", r"C:\\Downloads\\Zipped-1.0.0.zip", "1.0.0", ""),
+    ];
+    let mut json = Vec::new();
+    for (folder, source, version, marks) in entries {
+        addon_by_hand(&game, folder, version);
+        json.push(format!(
+            r#""{folder}": {{ "source": "{source}", "version": "{version}", "folders": ["{folder}"], "files": {{}}, "installed_at": "2026-10-21T14:03:05Z"{marks} }}"#
+        ));
+    }
+    addon_by_hand(&game, "ByHand", "0.1");
+    std::fs::create_dir_all(game.home.join("wowf")).expect("the flavor home");
+    std::fs::write(
+        game.state_path(),
+        format!(
+            r#"{{ "schema": 1, "flavor": "wowf", "addons": {{ {} }} }}"#,
+            json.join(", ")
+        ),
+    )
+    .expect("the sidecar");
+    game
+}
+
+/// Every file under the flavor folder with its bytes, and the sidecar's bytes.
+fn game_snapshot(game: &Game) -> (std::collections::BTreeMap<String, Vec<u8>>, Vec<u8>) {
+    (
+        snapshot(&game.root.join("_forever_")),
+        std::fs::read(game.state_path()).expect("the sidecar"),
+    )
+}
+
+#[test]
+fn update_dry_run_reports_every_state_of_a_fixture_sidecar_and_writes_nothing() {
+    let game = update_game("update-dry");
+    let before = game_snapshot(&game);
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let mut lines: Vec<&str> = text.lines().collect();
+    // The 404 line names the release list URL, whose query belongs to the GitHub source.
+    let gone = lines.remove(4);
+    assert!(
+        gone.starts_with(
+            "Gone  1.0.0  source gone: GitHub answered 404 for https://api.github.com/repos/Example/Missing/releases"
+        ) && gone.ends_with(": no such repository, or it is private"),
+        "{gone}"
+    );
+    assert_eq!(
+        lines,
+        [
+            "checking the managed addons of _forever_ against their sources",
+            "Beta  1.1.0-beta  up to date",
+            "Dev  dev  not checked: a linked development folder",
+            "Empty  1.0.0  source gone: no release in github:Example/Empty",
+            "Guess  2.0.0 -> 3.0.0  guess only: no release.json names forever; the asset name ends in -forever, a guess; `mrgl add github:Example/NoReleaseJson` installs it anyway",
+            "Ignored  1.0.0  ignored, not checked",
+            "Pinned  2.0.0  pinned at 2.0.0, 2.1.0 is out, left alone",
+            "Plain  1.0.0  up to date",
+            "Questie  1.2.2 -> 1.2.3  update available",
+            "Zipped  1.0.0  not checked: a zip in hand; a newer zip goes in with mrgl add <zip>",
+            "dry run: 1 update available, 2 up to date, 1 pinned, 1 ignored, 1 guess only, 2 source gone, 2 not checked; nothing written",
+        ],
+        "{text}"
+    );
+    assert_eq!(game_snapshot(&game), before, "a dry run writes nothing");
+    assert!(!game.home.join("wowf").join("staging").exists());
+}
+
+#[test]
+fn update_all_with_yes_updates_through_the_one_path_and_counts_the_rest() {
+    let game = update_game("update-all");
+    let before = sidecar(&game);
+    let output = run_in(&game, &["update", "--all", "--yes"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().skip(11).collect();
+    assert_eq!(
+        lines,
+        [
+            "updating Questie from 1.2.2 to 1.2.3",
+            "downloading Questie-v1.2.3-forever.zip",
+            "installing Questie-v1.2.3-forever.zip into _forever_",
+            "updated Questie from 1.2.2 to 1.2.3 (1 folder: Questie) in _forever_",
+            "1 addon updated, 2 up to date, 1 pinned, 1 ignored, 1 guess only, 2 source gone, 2 not checked",
+        ],
+        "{text}"
+    );
+    assert!(
+        std::fs::read_to_string(game.addon("Questie").join("Questie.toc"))
+            .expect("the TOC")
+            .contains("## Version: v1.2.3"),
+        "the release's folder replaced the one made by hand"
+    );
+    let after = sidecar(&game);
+    assert_eq!(after["addons"]["Questie"]["version"], "1.2.3");
+    assert_eq!(after["addons"]["Questie"]["previous_version"], "1.2.2");
+    for name in ["Beta", "Pinned", "Ignored", "Guess", "Empty", "Zipped"] {
+        assert_eq!(after["addons"][name], before["addons"][name], "{name}");
+    }
+    assert_eq!(staging_entries(&game), Vec::<String>::new());
+
+    // A second run finds nothing to update.
+    let output = run_in(&game, &["update", "--all", "--yes"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "nothing updated: 3 up to date, 1 pinned, 1 ignored, 1 guess only, 2 source gone, 2 not checked"
+    );
+}
+
+#[test]
+fn update_without_yes_and_without_a_terminal_says_what_yes_does() {
+    let game = update_game("update-no-yes");
+    let before = game_snapshot(&game);
+    let output = run_in(&game, &["update", "--all"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "1 addon to update, nothing updated: no terminal to answer the confirmation; --yes updates without asking"
+    );
+    let output = game
+        .mrgl()
+        .args(["--json", "update", "--all", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    let error: serde_json::Value =
+        serde_json::from_str(&stderr_last_line(&output)).expect("a JSON error");
+    assert_eq!(
+        error["message"],
+        "1 addon to update, nothing updated: --json needs --yes, nobody is there to answer the confirmation"
+    );
+    assert_eq!(game_snapshot(&game), before, "nothing written");
+}
+
+#[test]
+fn update_json_is_one_document_with_every_state_and_count() {
+    let game = update_game("update-json");
+    let output = game
+        .mrgl()
+        .args(["--json", "update", "--all", "--yes", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "update");
+    assert_eq!(value["dry_run"], false);
+    assert_eq!(value["updated"], 1);
+    assert_eq!(
+        value["counts"],
+        serde_json::json!({
+            "update-available": 1, "up-to-date": 2, "pinned": 1, "ignored": 1, "guess-only": 1,
+            "source-gone": 2, "not-checked": 2, "failed": 0,
+        })
+    );
+    let states: Vec<(&str, &str)> = value["addons"]
+        .as_array()
+        .expect("the addons")
+        .iter()
+        .map(|addon| {
+            (
+                addon["name"].as_str().expect("a name"),
+                addon["state"].as_str().expect("a state"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("Beta", "up-to-date"),
+            ("Dev", "not-checked"),
+            ("Empty", "source-gone"),
+            ("Gone", "source-gone"),
+            ("Guess", "guess-only"),
+            ("Ignored", "ignored"),
+            ("Pinned", "pinned"),
+            ("Plain", "up-to-date"),
+            ("Questie", "update-available"),
+            ("Zipped", "not-checked"),
+        ]
+    );
+    let questie = &value["addons"][8];
+    assert_eq!(questie["latest"], "1.2.3");
+    assert_eq!(questie["updated"], true);
+    assert_eq!(questie["addon"]["version"], "1.2.3");
+    assert_eq!(questie["addon"]["previous_version"], "1.2.2");
+    assert_eq!(questie["pick"]["asset"], "Questie-v1.2.3-forever.zip");
+    assert_eq!(value["addons"][1]["updated"], false);
+    assert_eq!(value["addons"][6]["pinned"], "2.0.0");
+    assert_eq!(value["addons"][6]["latest"], "2.1.0");
+    assert_eq!(value["addons"][0]["channel"], "prerelease");
+}
+
+#[test]
+fn update_one_addon_takes_the_same_path_and_names_an_unknown_one() {
+    let game = update_game("update-one");
+    let output = run_in(&game, &["update", "pinned", "--yes"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "checking pinned of _forever_ against their sources",
+            "Pinned  2.0.0  pinned at 2.0.0, 2.1.0 is out, left alone",
+            "nothing updated: 1 pinned",
+        ]
+    );
+    let output = run_in(&game, &["update", "Questie", "--yes"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(stdout_last_line(&output), "1 addon updated");
+    assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.2.3");
+
+    for (name, plain) in [
+        ("Nope", "addon not found: Nope (flavor forever)"),
+        (
+            "ByHand",
+            "addon not managed by mrgl: ByHand (flavor forever); it was installed by hand or by another manager, and only an addon mrgl installed can be updated",
+        ),
+    ] {
+        let output = run_in(&game, &["update", name]);
+        assert_eq!(output.status.code(), Some(1), "{name}");
+        assert_eq!(stderr_last_line(&output), plain);
+    }
+    // Neither a name nor --all, or both: a usage error.
+    for args in [
+        vec!["update", "--flavor", "forever"],
+        vec!["update", "Questie", "--all", "--flavor", "forever"],
+    ] {
+        let output = game.mrgl().args(&args).output().expect("run mrgl");
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    }
 }

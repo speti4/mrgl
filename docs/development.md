@@ -72,9 +72,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   (task 024), `link <folder>` and `unlink <folder>` (task 005), `export --flavor <flavor> [--to <file>]`
   and `import <file> --flavor <flavor> [--dry-run]` (task 015), `pin <name> [version]`, `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
-  `rollback <name>` (task 022), `update` (a stub that answers with the task that builds it until that task lands), with `--json` for
-  machines and `--serious` for the
-  murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
+  `rollback <name>` (task 022), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
+  below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
   addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
@@ -115,8 +114,8 @@ managed or not) is reported and left alone. `--dry-run` resolves every entry and
 resolve). An entry that fails does not stop the others; the run then ends with exit code 1. The list may
 come from another flavor: the picks are made for the flavor it is imported into, with a warning.
 
-The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:` and `import`
-call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
+The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:`, `import`
+and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
 or a pick made already, and the name the list file gives the addon) and resolves it for the flavor's build
 on the addon's own channel, the channel of its sidecar entry from that source (else of the entry of that
 name, else `stable`, `Engine::target_for`, task 021). An addon the sidecar has from that source at the
@@ -125,10 +124,29 @@ the asset is downloaded into a fresh folder under `staging\`, staged and committ
 and version under the name the sidecar knows the source by (else the request's name, else the folders'),
 and the download is removed whatever the install returned. `Engine::resolve` is the same resolve alone, for
 a dry run, and `Engine::install_pick` the same path for a pick in hand. The link refusal of task 005 sits in
-`Engine::commit`, so a zip in hand, a source, an import and a rollback all refuse to install over
+`Engine::commit`, so a zip in hand, a source, an import, an update and a rollback all refuse to install over
 a linked addon or a junction mrgl did not make. The command line reports every install with one summary
 (the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
 interface checks).
+
+The update check (task 006) is `update::check` in the core: every managed addon of the sidecar (or the one
+a name or a folder names) against its source's current release on the addon's own channel, one
+`UpdateState` each, read-only. `up-to-date`: the release's version is the installed one. `update-available`:
+another version, picked from metadata. `guess-only`: another version whose asset for the flavor is a guess
+by its name; it is reported, not installed, and `mrgl add <source>` installs it anyway. `pinned`: checked
+and reported with the current release, left alone. `ignored`: skipped without a request. `source-gone`: no
+release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
+hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
+limit, a server error). Another version counts as an update whatever its number: the source's current
+release on the addon's channel is the one to have. An addon whose folders were deleted by hand is left out
+with a warning. `mrgl update --all` and `mrgl update <name>` print a plain data line per addon
+(`Questie  1.2.2 -> 1.2.3  update available`), ask once for the updates (`--yes` answers; without a
+terminal or with `--json` the command stops and says what `--yes` does, exit 1), install each through the
+one install path with the pick the check made (`AddonUpdate::request`, no second resolve) and end with the
+summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
+`1 update available` and writes nothing). `--json` is one `update` document: every addon with `state`,
+`latest`, `pick`, `updated` and the installed `addon` block, the `counts` per state and the warnings. An
+update or a check that fails does not stop the others; the run then ends with exit code 1.
 
 The interface check (task 015) compares the `## Interface` numbers of the TOC the flavor loads with the
 installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,

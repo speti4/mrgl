@@ -12,12 +12,11 @@
 //! interface warning of `list` and `add` are task 015; `pin`, `unpin`, `ignore`, `unignore` and
 //! `channel`, with their marks in `list`, are task 021; `rollback` (the previous version from the kept
 //! zip, then pinned) is task 022; `savedvars` (the SavedVariables sizes and the orphan cleanup) is task
-//! 025; the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer
-//! "not implemented yet" with their task id until that task lands, so the help text and the voice are
-//! testable from the first commit.
+//! 025; every source-backed install takes the one install path of the engine (task 055); `update` (the
+//! update check and `update --all`) is task 006.
 
 use std::collections::BTreeMap;
-use std::io::BufRead;
+use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -41,6 +40,7 @@ use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
+use mrgl_core::update::{self, UpdateState};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::zip_entry;
 use mrgl_core::{Error, VERSION};
@@ -115,20 +115,21 @@ enum Command {
         #[arg(long, value_name = "SIZE", value_parser = parse_max_unpacked)]
         max_unpacked: Option<u64>,
     },
-    /// Check the installed addons against their sources and update them.
+    /// Check the managed addons against their sources, each on its own channel, and update them after one
+    /// confirmation: a pinned addon is reported and left alone, an ignored one skipped.
     Update {
-        /// Every addon of the flavor, not one by name.
-        #[arg(long)]
+        /// Every managed addon of the flavor.
+        #[arg(long, conflicts_with = "name", required_unless_present = "name")]
         all: bool,
-        /// One addon by name.
+        /// One managed addon by name, or one of its folders.
         name: Option<String>,
         /// The flavor id or folder.
         #[arg(long)]
         flavor: Option<String>,
-        /// Resolve and report, write nothing.
+        /// Check and report, write nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Skip the confirmation.
+        /// Update without asking (scripts; needed without a terminal and with --json).
         #[arg(short = 'y', long)]
         yes: bool,
     },
@@ -305,35 +306,6 @@ fn parse_channel(text: &str) -> Result<Channel, String> {
     Channel::parse(text).ok_or_else(|| format!("unknown channel {text}: stable or prerelease"))
 }
 
-impl Command {
-    /// The "not yet" answer of a command whose task has not landed: its name and the task.
-    fn not_yet(&self) -> Option<Error> {
-        let (command, task) = match self {
-            Command::Scan { .. }
-            | Command::List { .. }
-            | Command::Root { .. }
-            | Command::Add { .. }
-            | Command::Remove { .. }
-            | Command::Link { .. }
-            | Command::Unlink { .. }
-            | Command::Backup { .. }
-            | Command::Export { .. }
-            | Command::Import { .. }
-            | Command::Pin { .. }
-            | Command::Unpin { .. }
-            | Command::Ignore { .. }
-            | Command::Unignore { .. }
-            | Command::Channel { .. }
-            | Command::Rollback { .. }
-            | Command::Savedvars { .. } => return None,
-            Command::Doctor { .. } => return None,
-            Command::Update { all: true, .. } => ("update --all", "006"),
-            Command::Update { .. } => ("update", "006"),
-        };
-        Some(Error::NotImplemented { command, task })
-    }
-}
-
 /// Prints the two-line messages, the plain data lines, or JSON when asked.
 struct Reporter {
     voice: Voice,
@@ -407,9 +379,6 @@ fn main() -> ExitCode {
 
 /// Runs a command; the error is the plain line of the failure.
 fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
-    if let Some(not_yet) = command.not_yet() {
-        return Err(not_yet.to_string());
-    }
     match command {
         Command::Scan { folder } => {
             let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
@@ -504,7 +473,13 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
         Command::Savedvars { flavor, clean } => {
             savedvars_command(reporter, flavor.as_deref(), clean)?
         }
-        _ => unreachable!("every other command answered with its task"),
+        Command::Update {
+            all: _,
+            name,
+            flavor,
+            dry_run,
+            yes,
+        } => update_command(reporter, name.as_deref(), flavor.as_deref(), dry_run, yes)?,
     }
     Ok(())
 }
@@ -2408,6 +2383,258 @@ fn import_line(item: &list_file::Imported) -> String {
         Outcome::Failed => format!("failed: {}", item.detail),
     };
     format!("{}  {what}", item.name)
+}
+
+/// What `update` did with one addon the check found an update for.
+enum Applied {
+    Updated(InstallSummary),
+    Failed(String),
+}
+
+/// `mrgl update --all | <name> --flavor <id> [--dry-run] [--yes]` (task 006): the update check of the core
+/// (`update::check`) over every managed addon or the one named, a data line per addon, then one
+/// confirmation for the updates it found (`--yes` answers it; without a terminal or with `--json` it is
+/// needed), then each update through the one install path of the engine (task 055) with the pick the
+/// check made, and the summary that counts every state (`2 addons updated, 12 up to date, 1 pinned, 1
+/// ignored`). `--dry-run` checks and writes nothing. An update or a check that fails does not stop the
+/// others; the command then ends with exit code 1.
+fn update_command(
+    reporter: &Reporter,
+    name: Option<&str>,
+    flavor: Option<&str>,
+    dry_run: bool,
+    yes: bool,
+) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let folder_name = engine.flavor.folder_name();
+    if !reporter.json {
+        let what = name.map_or("the managed addons".to_string(), |name| name.to_string());
+        reporter.say(
+            Kind::Progress,
+            format!("checking {what} of {folder_name} against their sources"),
+        );
+    }
+    let github = GitHub::from_env(sources::http_from_env());
+    let check = update::check(&engine, &github, name).map_err(|error| error.to_string())?;
+    warnings.extend(check.warnings.iter().cloned());
+    let updates: Vec<&update::AddonUpdate> = check.updates().collect();
+    if !reporter.json {
+        for addon in &check.addons {
+            reporter.line(addon.line());
+        }
+    }
+
+    let mut applied: BTreeMap<String, Applied> = BTreeMap::new();
+    if !dry_run && !updates.is_empty() {
+        let count = count_addons(updates.len());
+        if !yes {
+            if reporter.json {
+                return Err(format!(
+                    "{count} to update, nothing updated: --json needs --yes, nobody is there to answer the confirmation"
+                ));
+            }
+            if !std::io::stdin().is_terminal() {
+                return Err(format!(
+                    "{count} to update, nothing updated: no terminal to answer the confirmation; --yes updates without asking"
+                ));
+            }
+            reporter.say(
+                Kind::Warning,
+                format!("update {count} in {folder_name}? type y to go on"),
+            );
+            if !confirmed() {
+                reporter.say(Kind::Nothing, "update cancelled, nothing changed");
+                return Ok(());
+            }
+        }
+        for addon in &updates {
+            let Some(request) = addon.request() else {
+                continue;
+            };
+            if !reporter.json {
+                reporter.say(
+                    Kind::Progress,
+                    format!(
+                        "updating {} from {} to {}",
+                        addon.name,
+                        addon.version,
+                        addon.latest.as_deref().unwrap_or_default()
+                    ),
+                );
+            }
+            let outcome = engine.install_from_source(
+                &github,
+                &request,
+                &mut install_progress(reporter, &engine, &mut warnings),
+            );
+            let result = match outcome {
+                Ok(SourceInstalled {
+                    pick,
+                    outcome: PickInstalled::Installed(installed),
+                }) => {
+                    if let Some(line) = &installed.client_warning
+                        && !warnings.contains(line)
+                    {
+                        warnings.push(line.clone());
+                    }
+                    let summary = install_summary(&engine, &installed, &pick.source, &mut warnings);
+                    if !reporter.json {
+                        reporter.say(Kind::Success, &summary.line);
+                    }
+                    Applied::Updated(summary)
+                }
+                Ok(SourceInstalled {
+                    outcome: PickInstalled::AlreadyInstalled(current),
+                    ..
+                }) => Applied::Updated(already_installed_summary(&current, &folder_name)),
+                Err(error) => {
+                    let line = format!("{}: {error}", addon.name);
+                    if !reporter.json {
+                        reporter.say(Kind::Error, &line);
+                    }
+                    Applied::Failed(line)
+                }
+            };
+            applied.insert(addon.name.clone(), result);
+        }
+    }
+
+    let updated = applied
+        .values()
+        .filter(|result| matches!(result, Applied::Updated(_)))
+        .count();
+    let mut failed: Vec<&str> = applied
+        .iter()
+        .filter(|(_, result)| matches!(result, Applied::Failed(_)))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    failed.extend(
+        check
+            .addons
+            .iter()
+            .filter(|addon| addon.state == UpdateState::Failed)
+            .map(|addon| addon.name.as_str()),
+    );
+
+    if reporter.json {
+        let addons: Vec<serde_json::Value> = check
+            .addons
+            .iter()
+            .map(|addon| {
+                let mut value = serde_json::to_value(addon).unwrap_or_default();
+                let (updated, installed, error) = match applied.get(&addon.name) {
+                    Some(Applied::Updated(summary)) => (true, Some(summary.addon.clone()), None),
+                    Some(Applied::Failed(line)) => (false, None, Some(line.clone())),
+                    None => (false, None, None),
+                };
+                value["updated"] = updated.into();
+                value["addon"] = installed.into();
+                value["error"] = error.into();
+                value
+            })
+            .collect();
+        let counts: serde_json::Map<String, serde_json::Value> = UpdateState::ALL
+            .iter()
+            .map(|state| {
+                let key = serde_json::to_value(state)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .unwrap_or_default();
+                (key, check.count(*state).into())
+            })
+            .collect();
+        reporter.document(serde_json::json!({
+            "kind": "update",
+            "flavor": &engine.flavor,
+            "dry_run": dry_run,
+            "addons": addons,
+            "updated": updated,
+            "counts": counts,
+            "warnings": warnings,
+        }));
+    } else {
+        for warning in &warnings {
+            reporter.say(Kind::Warning, warning);
+        }
+        let (kind, summary) = update_summary(&check, dry_run, updated, &folder_name);
+        reporter.say(kind, summary);
+    }
+    if failed.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} of {folder_name} failed: {}; the other addons are done",
+        count_addons(failed.len()),
+        failed.join(", ")
+    ))
+}
+
+/// The summary of an update run: what was updated (or, on a dry run, what would be), then every other
+/// state's count, the zeros left out: `2 addons updated, 12 up to date, 1 pinned, 1 ignored`. A warning
+/// when something needs a look (a guess, a source gone, a failure), a success when something was
+/// updated or found, nothing to do otherwise.
+fn update_summary(
+    check: &update::UpdateCheck,
+    dry_run: bool,
+    updated: usize,
+    folder_name: &str,
+) -> (Kind, String) {
+    if check.addons.is_empty() {
+        return (
+            Kind::Nothing,
+            format!("no managed addons in {folder_name}, nothing to update"),
+        );
+    }
+    let available = check.count(UpdateState::UpdateAvailable);
+    let not_updated = available.saturating_sub(updated);
+    let mut parts: Vec<String> = Vec::new();
+    if dry_run {
+        match available {
+            0 => {}
+            1 => parts.push("1 update available".to_string()),
+            count => parts.push(format!("{count} updates available")),
+        }
+    } else {
+        if updated > 0 {
+            parts.push(format!("{} updated", count_addons(updated)));
+        }
+        if not_updated > 0 {
+            parts.push(format!("{not_updated} failed"));
+        }
+    }
+    for state in UpdateState::ALL
+        .into_iter()
+        .filter(|state| *state != UpdateState::UpdateAvailable)
+    {
+        let count = check.count(state);
+        if count > 0 {
+            parts.push(format!("{count} {}", state.label()));
+        }
+    }
+    let attention = [
+        UpdateState::GuessOnly,
+        UpdateState::SourceGone,
+        UpdateState::Failed,
+    ]
+    .into_iter()
+    .any(|state| check.count(state) > 0)
+        || (!dry_run && not_updated > 0);
+    let kind = if attention {
+        Kind::Warning
+    } else if (dry_run && available > 0) || updated > 0 {
+        Kind::Success
+    } else {
+        Kind::Nothing
+    };
+    let text = if dry_run {
+        format!("dry run: {}; nothing written", parts.join(", "))
+    } else if updated > 0 {
+        parts.join(", ")
+    } else {
+        format!("nothing updated: {}", parts.join(", "))
+    };
+    (kind, text)
 }
 
 /// `mrgl doctor [--flavor <flavor>] [--root <folder>]`: the diagnostic report (task 024). The plain output

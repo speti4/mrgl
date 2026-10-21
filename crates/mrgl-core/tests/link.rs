@@ -588,3 +588,48 @@ fn every_install_path_refuses_a_linked_addon_and_a_foreign_junction() {
     assert!(state.entry("Fresh").is_none());
     assert_eq!(snapshot(&sandbox.dev), before, "the development folder");
 }
+
+// --- task 006: the update goes through the same commit, so it refuses a foreign junction too ---
+
+#[cfg(windows)]
+#[test]
+fn an_update_over_a_foreign_junction_is_refused() {
+    use mrgl_core::update::{self, UpdateState};
+    let sandbox = Sandbox::new("update-path");
+    let one = zip("one-folder-1.1.0.zip");
+    sandbox
+        .engine
+        .install(
+            &one,
+            &Metadata {
+                source: "github:Example/One".to_string(),
+                version: Some("1.1.0".to_string()),
+                name: None,
+                nolib: None,
+            },
+        )
+        .expect("installs");
+    std::fs::remove_dir_all(sandbox.addon("OneFolder")).expect("the folder goes");
+    let dev = link::dev_folder(&sandbox.dev).expect("the folder");
+    link::create_junction(&sandbox.addon("OneFolder"), &dev.join("OneFolder"))
+        .expect("a junction by hand");
+    let source = OneZip {
+        zip: zip("one-folder-1.2.0.zip"),
+        version: "1.2.0",
+    };
+    let check = update::check(&sandbox.engine, &source, None).expect("checks");
+    let addon = &check.addons[0];
+    assert_eq!(addon.state, UpdateState::UpdateAvailable);
+    let request = addon.request().expect("an update");
+    let error = sandbox
+        .engine
+        .install_from_source(&source, &request, &mut |_| {})
+        .expect_err("refused");
+    assert!(
+        matches!(&error, Error::ForeignJunction { folder, .. } if folder == "OneFolder"),
+        "{error}"
+    );
+    assert!(link::is_link(&sandbox.addon("OneFolder")));
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert_eq!(state.addons["OneFolder"].version, "1.1.0");
+}
