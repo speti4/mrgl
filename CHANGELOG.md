@@ -18,4 +18,5 @@ The repository, the task standard and the empty workspace: no app yet.
 ### Project housekeeping
 
 - Project scaffolding: repo structure, task standard, decisions, origin and research ([001](https://github.com/speti4/mrgl/blob/main/tasks/done/001-project-scaffolding.md))
+- Mirror the task files into GitHub issues and milestones ([016](https://github.com/speti4/mrgl/blob/main/tasks/done/016-task-to-github-issue-mirror.md))
 - GitHub repository settings after the first push: rulesets, CodeQL, private reporting, security updates ([018](https://github.com/speti4/mrgl/blob/main/tasks/done/018-github-repository-settings-after-the-first-push.md))

@@ -1,0 +1,33 @@
+# Mirrors the task files into GitHub issues and milestones, one way (scripts/sync-issues.py, the
+# project-pal task standard): on every push to the default branch that touches them, and by hand
+# through "Run workflow". Every run bills a full Actions minute in a private repo; a public repo
+# runs free. `/tasks mirror` writes this file for the `ci` runner and sets the branch and the
+# tasks dir (`tasks/**` or `.claude/tasks/**`) below.
+name: sync-issues
+
+on:
+  push:
+    branches: [main]
+    paths: ["tasks/**", "scripts/sync-issues.py"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-issues
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # the task files
+      issues: write # issues, labels and milestones of the mirror
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 -I scripts/sync-issues.py --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
