@@ -541,6 +541,7 @@ mod tests {
                 page: None,
                 nolib: false,
                 forever_build: crate::forever::ForeverBuild::Unknown,
+                stale: None,
             })
         }
 

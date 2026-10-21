@@ -21,6 +21,11 @@
 //! the pick carries it, and every release's `release.json` is cached per tag next to the list (task 042), so
 //! a repeated resolve of the same release downloads it once and `list` can answer from the cache alone
 //! ([`GitHub::cached_forever_build`]), offline.
+//!
+//! When the API cannot be reached (no network, a timeout) and the release list is cached, the resolve
+//! answers from the cache, the cached `release.json` of the release included, and the pick carries
+//! [`Stale`] with the cache's date, so the caller warns that it may be stale (task 041); with nothing
+//! cached the network error stands.
 
 use std::path::{Path, PathBuf};
 
@@ -30,7 +35,7 @@ use crate::error::{Error, Result};
 use crate::flavor::FlavorId;
 use crate::forever::ForeverBuild;
 use crate::sources::{
-    self, Channel, Http, Pick, Request, Response, Source, SourceSpec, Target, notes_line,
+    self, Channel, Http, Pick, Request, Response, Source, SourceSpec, Stale, Target, notes_line,
 };
 use crate::{home, state};
 
@@ -457,6 +462,14 @@ impl<H: Http> GitHub<H> {
     /// the pages the `Link` header names as `next`, on the API host only, until one holds a stable
     /// release or [`MAX_PAGES`] are read; the cache keeps every page read with the first page's tag.
     pub fn releases(&self, owner: &str, repo: &str) -> Result<Vec<Release>> {
+        self.release_list(owner, repo).map(|(releases, _)| releases)
+    }
+
+    /// The release list as [`GitHub::releases`] reads it, and whether it is the cached one read offline
+    /// (task 041): a network error on the first page with a cached list answers from the cache with its
+    /// date and the error; without a cached list the error stands. Every answer of the source refreshes the
+    /// cache's date, a 304 included.
+    fn release_list(&self, owner: &str, repo: &str) -> Result<(Vec<Release>, Option<Stale>)> {
         let url = format!("{API_URL}/repos/{owner}/{repo}/releases?per_page={PER_PAGE}");
         let cache_file = self.cache_file(owner, repo);
         let cached: Option<CachedReleases<serde_json::Value>> = cache_file
@@ -467,7 +480,27 @@ impl<H: Http> GitHub<H> {
         if let Some(etag) = cached.as_ref().and_then(|cached| cached.etag.as_ref()) {
             request = request.header("If-None-Match", etag.clone());
         }
-        let response = self.http.get(&request)?;
+        let response = match self.http.get(&request) {
+            Ok(response) => response,
+            Err(error @ Error::Network { .. }) => {
+                let Some(cached) = cached else {
+                    return Err(error);
+                };
+                let stale = Stale {
+                    checked_at: cached.checked_at,
+                    reason: error.to_string(),
+                };
+                let releases = serde_json::from_value(cached.releases).map_err(|reason| {
+                    Error::SourceDocument {
+                        what: "release list",
+                        spec: format!("github:{owner}/{repo}"),
+                        reason: reason.to_string(),
+                    }
+                })?;
+                return Ok((releases, Some(stale)));
+            }
+            Err(error) => return Err(error),
+        };
         let unreadable = |reason: String| Error::SourceDocument {
             what: "release list",
             spec: format!("github:{owner}/{repo}"),
@@ -498,6 +531,7 @@ impl<H: Http> GitHub<H> {
                 if let Some(path) = &cache_file {
                     let cached = CachedReleases {
                         etag: response.header("etag").map(str::to_string),
+                        checked_at: Some(state::now_rfc3339()),
                         releases: &releases,
                     };
                     // The cache is a convenience: a folder that cannot be written costs a request per
@@ -507,12 +541,21 @@ impl<H: Http> GitHub<H> {
                 releases
             }
             304 => match cached {
-                Some(cached) => cached.releases,
+                Some(mut cached) => {
+                    // Confirmed: the offline resolve dates the cache from here (task 041).
+                    if let Some(path) = &cache_file {
+                        cached.checked_at = Some(state::now_rfc3339());
+                        let _ = write_cache(path, &cached);
+                    }
+                    cached.releases
+                }
                 None => return Err(status_error(304, &url, &response)),
             },
             status => return Err(status_error(status, &url, &response)),
         };
-        serde_json::from_value(releases).map_err(|reason| unreadable(reason.to_string()))
+        let releases =
+            serde_json::from_value(releases).map_err(|reason| unreadable(reason.to_string()))?;
+        Ok((releases, None))
     }
 
     /// A release's `release.json`, when it has one: `Ok(None)` without the asset, `Ok(Some(Err(reason)))`
@@ -590,11 +633,14 @@ impl<H: Http> GitHub<H> {
     }
 }
 
-/// The cache file's shape: the release list as the API sent it, with the tag to ask again with.
+/// The cache file's shape: the release list as the API sent it, with the tag to ask again with and when
+/// the API last confirmed it (RFC 3339 in UTC, task 041).
 #[derive(Debug, Serialize, Deserialize)]
 struct CachedReleases<T> {
     #[serde(default)]
     etag: Option<String>,
+    #[serde(default)]
+    checked_at: Option<String>,
     releases: T,
 }
 
@@ -707,7 +753,7 @@ fn rate_limit_reset(response: &Response) -> Option<i64> {
 impl<H: Http> Source for GitHub<H> {
     fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
         let SourceSpec::GitHub { owner, repo } = spec;
-        let releases = self.releases(owner, repo)?;
+        let (releases, stale) = self.release_list(owner, repo)?;
         let release =
             current_release_on(&releases, target.channel).ok_or_else(|| Error::NoRelease {
                 spec: spec.to_string(),
@@ -773,6 +819,7 @@ impl<H: Http> Source for GitHub<H> {
             page: release.html_url.clone().filter(|page| !page.is_empty()),
             nolib: chosen.nolib,
             forever_build,
+            stale,
         })
     }
 
@@ -1276,6 +1323,7 @@ mod tests {
             page: None,
             nolib: false,
             forever_build: ForeverBuild::Unknown,
+            stale: None,
         };
         let to = dir.join("nested").join("A.zip");
         github.fetch(&pick, &to).expect("fetched");

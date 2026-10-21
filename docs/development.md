@@ -518,6 +518,19 @@ bytes downloaded, the release list names <size>; the download was cut short or t
 again`, and an asset the list gives no size installs as before (the Forever zip of the `Questie/Questie`
 fixture lists none, so a test can put any fixture zip behind it).
 
+The offline rule (task 041): when the release list's request fails on the network (no connection, a
+timeout: `Error::Network`) and the list is cached, the resolve answers from the cache, the release's cached
+`release-json/tag-<tag>.json` included, so a stale pick needs no network at all; with nothing cached the
+network error stands, and a status answer (a 404, the rate limit) is never read as offline. The cache file
+keeps `checked_at`, when the API last confirmed the list (RFC 3339 in UTC, refreshed by a 200 and by a 304),
+and the pick carries `stale: { checked_at, reason }` (`null` for a fresh pick). `Pick::stale_warning` is the
+warning line, `offline: <source> <tag> is from the release list cached <local time>, the pick may be stale
+(<the network error>)` (`cached at an unknown time` for a cache without the date): `add --dry-run` and `add`
+print it as a warning and list it in the JSON `warnings`; the update check of task 006 reads the same flag
+from its picks. The asset itself is never cached before an install, so an `add` offline only gets as far as
+finding the release installed already. The folder stub with a folder that does not exist answers every
+request with a network error, which is how the tests go offline.
+
 The build version fallback (task 019: the client exe's version resource when `.build.info` has no row for
 the flavor) is tested against a second synthetic game folder, `client-exe/`: a `.build.info` with a row for
 retail only, and client exe stubs written by the deterministic `make-stubs.py` next to them (`python -I

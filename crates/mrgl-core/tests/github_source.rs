@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use mrgl_core::flavor::{BuildVersion, FlavorId};
 use mrgl_core::forever::ForeverBuild;
 use mrgl_core::sources::github::{GitHub, MAX_PAGES, current_release, forever_build};
-use mrgl_core::sources::{Channel, FolderHttp, Source, SourceSpec, Target, local_time_text};
+use mrgl_core::sources::{
+    Channel, FolderHttp, Pick, Source, SourceSpec, Target, local_time_text, unix_from_rfc3339,
+};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/releases")
@@ -867,4 +869,144 @@ fn the_downloaded_size_is_checked_against_the_listed_one() {
     assert_eq!(no_size.expect("no size: as before"), b"nine byte");
     let (null, _) = fetch("null-size-asset", r#""size":null,"#);
     assert_eq!(null.expect("a null size: as before"), b"nine byte");
+}
+
+// --- task 041: the offline resolve from the cached release list ---
+
+/// A source whose stub folder does not exist: every request is a network error.
+fn offline(cache: &Path) -> GitHub<FolderHttp> {
+    GitHub::new(
+        FolderHttp::new(cache.join("no-such-stub")),
+        None,
+        Some(cache.to_path_buf()),
+    )
+}
+
+#[test]
+fn a_network_error_with_a_warm_cache_resolves_stale() {
+    let cache = temp_cache("offline-warm");
+    let spec = spec("github:Questie/Questie");
+    let target = target(FlavorId::Forever, None);
+    let online = GitHub::new(FolderHttp::new(fixtures()), None, Some(cache.clone()));
+    let fresh = online.resolve(&spec, &target).expect("online");
+    assert_eq!(fresh.stale, None, "a fresh pick is not stale");
+    assert_eq!(fresh.stale_warning(), None);
+    let file = cache.join("questie").join("questie").join("releases.json");
+    let cached: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).expect("cached")).expect("JSON");
+    let checked_at = cached["checked_at"]
+        .as_str()
+        .expect("the cache's date")
+        .to_string();
+
+    let github = offline(&cache);
+    let pick = github.resolve(&spec, &target).expect("from the cache");
+    assert_eq!(
+        github.http().requests().len(),
+        1,
+        "the failed list request only: release.json comes from the per-tag cache"
+    );
+    let stale = pick.stale.clone().expect("a stale pick");
+    assert_eq!(stale.checked_at.as_deref(), Some(checked_at.as_str()));
+    let reason = "cannot reach https://api.github.com/repos/Questie/Questie/releases?per_page=30: offline, the stub folder is missing";
+    assert_eq!(stale.reason, reason);
+    assert_eq!(
+        Pick {
+            stale: None,
+            ..pick.clone()
+        },
+        fresh,
+        "the same pick"
+    );
+    let seconds = unix_from_rfc3339(&checked_at).expect("RFC 3339");
+    assert_eq!(
+        pick.stale_warning().expect("a warning"),
+        format!(
+            "offline: github:Questie/Questie v1.2.3 is from the release list cached {}, the pick may be stale ({reason})",
+            local_time_text(seconds)
+        )
+    );
+    let json = serde_json::to_value(&pick).expect("JSON");
+    assert_eq!(json["stale"]["checked_at"], checked_at.as_str());
+    assert_eq!(json["stale"]["reason"], reason);
+    assert_eq!(
+        serde_json::to_value(&fresh).expect("JSON")["stale"],
+        serde_json::Value::Null
+    );
+
+    // A cache written before the date was kept says so.
+    let mut undated = cached.clone();
+    undated.as_object_mut().unwrap().remove("checked_at");
+    std::fs::write(&file, undated.to_string()).unwrap();
+    let pick = offline(&cache).resolve(&spec, &target).expect("undated");
+    assert_eq!(
+        pick.stale
+            .as_ref()
+            .and_then(|stale| stale.checked_at.clone()),
+        None
+    );
+    assert!(
+        pick.stale_warning()
+            .expect("a warning")
+            .contains("is from the release list cached at an unknown time, the pick may be stale"),
+        "{:?}",
+        pick.stale_warning()
+    );
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+#[test]
+fn a_network_error_with_a_cold_cache_stays_the_error() {
+    let cache = temp_cache("offline-cold");
+    let error = offline(&cache)
+        .resolve(
+            &spec("github:Questie/Questie"),
+            &target(FlavorId::Forever, None),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, mrgl_core::error::Error::Network { .. }),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "cannot reach https://api.github.com/repos/Questie/Questie/releases?per_page=30: offline, the stub folder is missing"
+    );
+    // Without any cache folder at all, the same.
+    let error = GitHub::new(FolderHttp::new(cache.join("no-such-stub")), None, None)
+        .resolve(
+            &spec("github:Questie/Questie"),
+            &target(FlavorId::Forever, None),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, mrgl_core::error::Error::Network { .. }),
+        "{error:?}"
+    );
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+#[test]
+fn a_conditional_answer_refreshes_the_cache_date() {
+    let cache = temp_cache("offline-304");
+    let spec = spec("github:Questie/Questie");
+    let target = target(FlavorId::Forever, None);
+    let github = GitHub::new(FolderHttp::new(fixtures()), None, Some(cache.clone()));
+    github.resolve(&spec, &target).expect("first");
+    let file = cache.join("questie").join("questie").join("releases.json");
+    let mut cached: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).expect("cached")).expect("JSON");
+    cached["checked_at"] = "2000-01-01T00:00:00Z".into();
+    std::fs::write(&file, cached.to_string()).unwrap();
+    let second = github.resolve(&spec, &target).expect("second, a 304");
+    assert_eq!(second.stale, None, "a working network: no warning");
+    let cached: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).expect("cached")).expect("JSON");
+    let checked_at = cached["checked_at"].as_str().expect("a date");
+    assert_ne!(
+        checked_at, "2000-01-01T00:00:00Z",
+        "the 304 confirmed the list"
+    );
+    assert!(cached["etag"].is_string(), "{cached}");
+    let _ = std::fs::remove_dir_all(&cache);
 }

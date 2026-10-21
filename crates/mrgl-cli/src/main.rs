@@ -1265,6 +1265,8 @@ fn add_command(
     let pick = github
         .resolve(&spec, &target)
         .map_err(|error| error.to_string())?;
+    // Task 041: a pick from the cached release list, offline, is a warning on the screen and in the JSON.
+    warnings.extend(pick.stale_warning());
     let forever = (target.flavor == FlavorId::Forever)
         .then(|| ForeverStatus::for_source(&pick.source, pick.forever_build));
     if reporter.json {
@@ -1325,6 +1327,8 @@ fn install_from_source(
     let pick = github
         .resolve(spec, &target)
         .map_err(|error| error.to_string())?;
+    // Task 041: a pick from the cached release list, offline, is a warning on the screen and in the JSON.
+    warnings.extend(pick.stale_warning());
     if pick.guess {
         // A guess is worth a warning in the JSON document too, not only on the screen.
         warnings.push(format!("pick for {name}, a guess: {}", pick.summary()));

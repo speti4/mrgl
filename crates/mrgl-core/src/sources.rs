@@ -222,9 +222,37 @@ pub struct Pick {
     pub nolib: bool,
     /// Whether the release publishes a `forever` build at all, whatever the target (task 011).
     pub forever_build: ForeverBuild,
+    /// The pick comes from the cached release list because the source could not be reached (task 041):
+    /// when the cache was last confirmed and the network error; `None` (`null` in the JSON) for a pick the
+    /// source answered.
+    pub stale: Option<Stale>,
+}
+
+/// Why a pick may be stale: it was resolved from the cache, offline (task 041).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Stale {
+    /// When the source last confirmed the cached release list, RFC 3339 in UTC; `None` when the cache does
+    /// not say (written by an earlier build).
+    pub checked_at: Option<String>,
+    /// The network error that sent the resolve to the cache, as its plain line.
+    pub reason: String,
 }
 
 impl Pick {
+    /// The warning line of a pick resolved from the cache (task 041), `None` for a fresh one: the cache's
+    /// date in local time and the network error.
+    pub fn stale_warning(&self) -> Option<String> {
+        let stale = self.stale.as_ref()?;
+        let cached = match stale.checked_at.as_deref().and_then(unix_from_rfc3339) {
+            Some(seconds) => format!("cached {}", local_time_text(seconds)),
+            None => "cached at an unknown time".to_string(),
+        };
+        Some(format!(
+            "offline: {} {} is from the release list {cached}, the pick may be stale ({})",
+            self.source, self.release, stale.reason
+        ))
+    }
+
     /// The one-line summary of the pick, for the success or warning line.
     pub fn summary(&self) -> String {
         let interface = self
@@ -439,6 +467,13 @@ impl Http for FolderHttp {
         if let Ok(mut requests) = self.requests.lock() {
             requests.push(request.clone());
         }
+        // No folder at all is no network: the offline resolve of task 041 is tested this way.
+        if !self.root.is_dir() {
+            return Err(Error::Network {
+                url: request.url.clone(),
+                reason: "offline, the stub folder is missing".to_string(),
+            });
+        }
         let mut path = self.path_for(&request.url);
         if let Some(page) = page_of(&request.url).filter(|page| *page > 1) {
             let mut paged = path.into_os_string();
@@ -507,6 +542,31 @@ fn page_of(url: &str) -> Option<u32> {
         .filter_map(|pair| pair.split_once('='))
         .find(|(key, _)| *key == "page")
         .and_then(|(_, value)| value.parse().ok())
+}
+
+/// The Unix seconds of an RFC 3339 time in UTC as mrgl writes it (`2026-10-21T14:03:05Z`); `None` for any
+/// other shape.
+pub fn unix_from_rfc3339(text: &str) -> Option<i64> {
+    let text = text.strip_suffix('Z')?;
+    let (date, time) = text.split_once('T')?;
+    let mut date = date.split('-').map(str::parse::<u16>);
+    let mut time = time.split(':').map(str::parse::<u8>);
+    let civil = crate::backup::clock::Civil {
+        year: date.next()?.ok()?,
+        month: u8::try_from(date.next()?.ok()?).ok()?,
+        day: u8::try_from(date.next()?.ok()?).ok()?,
+        hour: time.next()?.ok()?,
+        minute: time.next()?.ok()?,
+        second: time.next()?.ok()?,
+    };
+    let valid = (1..=12).contains(&civil.month)
+        && (1..=31).contains(&civil.day)
+        && civil.hour < 24
+        && civil.minute < 60
+        && civil.second < 60
+        && date.next().is_none()
+        && time.next().is_none();
+    valid.then(|| crate::backup::clock::unix_from_civil(&civil))
 }
 
 /// Unix seconds as the local time of this machine to the minute, `2026-10-22 14:05`, for a message line
@@ -754,6 +814,37 @@ mod tests {
         assert_eq!(page_of("https://h/x?per_page=30"), None);
         assert_eq!(page_of("https://h/x?per_page=30&page=4"), Some(4));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_missing_stub_folder_is_no_network() {
+        let root = std::env::temp_dir().join(format!("mrgl-stub-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let error = FolderHttp::new(&root)
+            .get(&Request::get("https://api.example.test/a"))
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cannot reach https://api.example.test/a: offline, the stub folder is missing"
+        );
+    }
+
+    #[test]
+    fn an_rfc3339_time_reads_back_as_unix_seconds() {
+        assert_eq!(
+            unix_from_rfc3339("2026-10-21T14:03:05Z"),
+            Some(1_792_591_385)
+        );
+        assert_eq!(unix_from_rfc3339("1970-01-01T00:00:00Z"), Some(0));
+        for bad in [
+            "2026-10-21T14:03:05",
+            "2026-10-21 14:03:05Z",
+            "2026-13-21T14:03:05Z",
+            "2026-10-21T14:03Z",
+            "yesterday",
+        ] {
+            assert_eq!(unix_from_rfc3339(bad), None, "{bad}");
+        }
     }
 
     #[test]
