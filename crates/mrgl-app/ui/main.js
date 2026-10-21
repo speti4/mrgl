@@ -14,28 +14,13 @@
 
   const $ = (id) => document.getElementById(id);
 
-  // ---- preferences: the theme and the serious switch, remembered per machine until the shell has settings
+  // ---- preferences: the theme and the serious switch, kept by the shell in the home folder's config.json
+  // (task 034), so a cleared web view keeps them and `mrgl` reads the same switch
 
-  const store = {
-    get(key) {
-      try {
-        return window.localStorage.getItem(key);
-      } catch (_) {
-        return null;
-      }
-    },
-    set(key, value) {
-      try {
-        window.localStorage.setItem(key, value);
-      } catch (_) {
-        // A webview without storage still has a theme for this run.
-      }
-    },
-  };
-
+  const Preferences = window.Preferences;
   const systemDark = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-  let theme = Theme.normalize(store.get("theme"));
-  let serious = store.get("serious") === "1";
+  let theme = "auto";
+  let serious = false;
 
   function applyTheme() {
     const dark = Boolean(systemDark && systemDark.matches);
@@ -43,20 +28,66 @@
     $("theme-toggle").textContent = Theme.label(theme, dark);
   }
 
+  const seriousToggle = $("serious-toggle");
+
+  // Draws an answer of `Data.preferences()` or `Data.setPreferences()`.
+  function applyPreferences(answer) {
+    const shown = Preferences.view(answer);
+    theme = shown.theme;
+    serious = shown.serious;
+    seriousToggle.checked = serious;
+    seriousToggle.disabled = shown.locked;
+    seriousToggle.parentElement.title = shown.note;
+    applyTheme();
+    if (lastMessage) showStatus(lastMessage);
+  }
+
+  async function savePreferences(changes) {
+    try {
+      applyPreferences(await Data.setPreferences(changes));
+    } catch (error) {
+      // The command's error is a message in the voice; anything else is the bridge failing.
+      say(error && error.plain ? error : { kind: "error", murloc: "", plain: `preferences not saved: ${error}` });
+    }
+  }
+
+  // The sketch kept both in `localStorage`: a value the file does not have yet is carried over once, and
+  // the old keys go.
+  function legacyPreferences() {
+    const legacy = {};
+    try {
+      for (const key of Preferences.LEGACY_KEYS) {
+        legacy[key] = window.localStorage.getItem(key);
+        window.localStorage.removeItem(key);
+      }
+    } catch (_) {
+      // A web view without storage has nothing to carry over.
+    }
+    return legacy;
+  }
+
+  async function loadPreferences() {
+    try {
+      const answer = await Data.preferences();
+      const changes = Preferences.migration(answer, legacyPreferences());
+      applyPreferences(changes ? await Data.setPreferences(changes) : answer);
+    } catch (error) {
+      say(error && error.plain ? error : { kind: "error", murloc: "", plain: `preferences not read: ${error}` });
+    }
+  }
+
   $("theme-toggle").addEventListener("click", () => {
     theme = Theme.next(theme);
-    store.set("theme", theme);
     applyTheme();
+    savePreferences({ theme });
   });
   if (systemDark && systemDark.addEventListener) systemDark.addEventListener("change", applyTheme);
   applyTheme();
 
-  const seriousToggle = $("serious-toggle");
-  seriousToggle.checked = serious;
   seriousToggle.addEventListener("change", () => {
     serious = seriousToggle.checked;
-    store.set("serious", serious ? "1" : "0");
     if (lastMessage) showStatus(lastMessage);
+    savePreferences({ serious });
   });
 
   // ---- the voice's two places: the status bar (every message) and the toasts (finished ones)
@@ -375,6 +406,7 @@
 
   async function start() {
     try {
+      await loadPreferences();
       const [version, answer] = await Promise.all([Data.version(), Data.flavors()]);
       $("version").textContent = `mrgl ${version}`;
       applyAnswer(answer);

@@ -11,6 +11,10 @@
 //                                       the message for a copy that worked and for one that did not
 //   Data.resolve(flavorId, folder)   -> Promise<{ pick, message }>  the source's `Pick` (task 010 builds on it)
 //   Data.updateAll(flavorId, report) -> Promise<void>              `report(message)` per step, in order
+//   Data.preferences()               -> Promise<{ theme, serious, serious_source, stored }>  task 034: the
+//                                       theme and the serious switch as they apply, which source decided the
+//                                       switch (flag | environment | file | default), what config.json stores
+//   Data.setPreferences(changes)     -> Promise<the same>          `{ theme?, serious? }` into config.json
 //
 // A message is `{ kind, murloc, plain }` as `mrgl_core::voice` says it: the kind picks the murloc line, the
 // plain line carries every fact, and a serious voice sends the murloc line empty (D-005). The murloc table
@@ -179,6 +183,28 @@
     return Promise.resolve("0.1.0");
   }
 
+  // The browser look keeps the preferences for the page's life only; the window keeps them in config.json.
+  const stored = { theme: null, serious: null };
+
+  function preferencesAnswer() {
+    return {
+      theme: stored.theme || "auto",
+      serious: Boolean(stored.serious),
+      serious_source: stored.serious === null ? "default" : "file",
+      stored: Object.assign({}, stored),
+    };
+  }
+
+  function preferences() {
+    return Promise.resolve(preferencesAnswer());
+  }
+
+  function setPreferences(changes) {
+    if (changes && changes.theme !== undefined) stored.theme = changes.theme;
+    if (changes && changes.serious !== undefined) stored.serious = changes.serious;
+    return Promise.resolve(preferencesAnswer());
+  }
+
   // The folder dialog needs the window; the browser look answers with what it would do.
   function chooseRoot() {
     return Promise.resolve({
@@ -261,5 +287,5 @@
     report(say(held.length ? "warning" : "success", parts.join(", ")));
   }
 
-  return { version, flavors: flavors_, chooseRoot, diagnostics, resolve, updateAll, settings };
+  return { version, flavors: flavors_, chooseRoot, diagnostics, resolve, updateAll, preferences, setPreferences, settings };
 });

@@ -114,3 +114,13 @@ test("a row names its missing dependencies and a stale note", async () => {
   assert.ok(rows.some((row) => row.missing.length > 0), "a row with a missing dependency");
   assert.ok(rows.some((row) => row.forever && row.forever.stale), "a stale Forever note");
 });
+
+test("the mock keeps the preferences for the page's life", async () => {
+  const before = await Data.preferences();
+  assert.deepEqual(before, { theme: "auto", serious: false, serious_source: "default", stored: { theme: null, serious: null } });
+  const after = await Data.setPreferences({ theme: "dark", serious: true });
+  assert.equal(after.theme, "dark");
+  assert.equal(after.serious, true);
+  assert.equal(after.serious_source, "file");
+  assert.deepEqual((await Data.preferences()).stored, { theme: "dark", serious: true });
+});

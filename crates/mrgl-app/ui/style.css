@@ -202,6 +202,11 @@ button:disabled {
   gap: 0.4rem;
   color: var(--muted);
 }
+/* The serious switch when MRGL_SERIOUS decides it (task 034): shown, not changeable; the title says why. */
+.check:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
 /* ---- the main area: the empty state and the chosen flavor */
 

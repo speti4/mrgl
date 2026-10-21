@@ -19,7 +19,9 @@ pub fn run() {
             commands::choose_root,
             commands::diagnostics,
             commands::resolve,
-            commands::update_all
+            commands::update_all,
+            commands::preferences,
+            commands::set_preferences
         ])
         .run(tauri::generate_context!())
         .expect("error while running the mrgl window");

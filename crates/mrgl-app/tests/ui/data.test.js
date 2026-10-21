@@ -56,3 +56,17 @@ test("an empty answer reports nothing", async () => {
   await create(invoke).updateAll("wow", (message) => heard.push(message));
   assert.deepEqual(heard, []);
 });
+
+test("the preferences go to their commands, a missing change as null", async () => {
+  const answer = { theme: "dark", serious: true, serious_source: "file", stored: { theme: "dark", serious: true } };
+  const { calls, invoke } = fake({ preferences: answer, set_preferences: answer });
+  const Data = create(invoke);
+  assert.equal(await Data.preferences(), answer);
+  await Data.setPreferences({ theme: "dark" });
+  await Data.setPreferences({ serious: false });
+  assert.deepEqual(calls, [
+    ["preferences"],
+    ["set_preferences", { theme: "dark", serious: null }],
+    ["set_preferences", { theme: null, serious: false }],
+  ]);
+});

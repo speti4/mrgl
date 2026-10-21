@@ -248,7 +248,10 @@ fixtures under `zips/` that test it, written by `make-zips.py`: `declares-too-mu
 Every human-readable message of the CLI and the window goes through `mrgl_core::voice`: a murloc line and a
 plain English line, the murloc one picked by the message's kind (banner, progress, success, nothing to do,
 warning, error, fatal) from the table in `voice.rs`. JSON output (`--json`) and log lines are plain.
-`--serious` or `MRGL_SERIOUS=1` drops the murloc line. Tests assert the plain line, so a change to the murloc
+`--serious` or `MRGL_SERIOUS=1` drops the murloc line. The switch has three sources, the first that says
+wins: the `--serious` flag, then a non-empty `MRGL_SERIOUS` (`0` keeps the murloc, anything else drops it),
+then the `serious` preference in `config.json` that the window's switch writes (task 034,
+`voice::serious_from`). Tests assert the plain line, so a change to the murloc
 vocabulary breaks no test. The vocabulary and the rules are in [nerglish.md](nerglish.md); the decision is
 D-005.
 
@@ -346,7 +349,9 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   field, "Update all"), the addon list (one row per addon: name and folder, version and the version an update
   brings, the source badge, the state pill, the Forever note slot of task 011, and a row menu for the actions
   of tasks 010 and 021, with a progress slot per row), a legend, a status bar and the toast stack. The theme
-  toggle and the serious switch sit at the bottom of the sidebar.
+  toggle and the serious switch sit at the bottom of the sidebar, with "Game folder…" and "Copy
+  diagnostics" (task 009). The theme and the switch are kept by the shell in `config.json`, not in the web
+  view's storage (task 034, below).
 - `style.css` holds every color as a token on `:root`: the light set, the dark set under
   `prefers-color-scheme: dark` (unless the toggle says light) and under `data-theme="dark"` (the toggle), one
   token per state (managed, update available, linked, guess only, unmanaged) and per source badge (github,
@@ -365,8 +370,10 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   show (the folder dialog and the clipboard need the window).
 - The pure modules, each with a test file of the same name under `tests/ui/`: `state.js` (an addon's one state
   from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels),
-  `search.js` (every word of the query in the name, folder, source kind or source id), `theme.js` (auto,
-  light, dark), `flavors.js` (the navigation order and the friendly names) and `voice.js` (the two lines and
+  `search.js` (every word of the query in the name, folder, source kind or source id), `preferences.js`
+  (the window's preferences from an answer of the shell: the theme, the switch, the switch locked when
+  `MRGL_SERIOUS` decides it, and the one-time carry-over of a value the sketch kept in `localStorage`),
+  `theme.js` (auto, light, dark), `flavors.js` (the navigation order and the friendly names) and `voice.js` (the two lines and
   where a message goes, see [nerglish.md](nerglish.md), "The window").
 
 The IPC commands (`src/commands.rs`, task 009) are thin wrappers over the core and over the plain functions
@@ -395,6 +402,13 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
 - `resolve`: a managed addon through its source, for the flavor's build and on its channel: the source's
   own `Pick`, the handover to the update actions of task 010.
 - `update_all`: answers that the update actions are task 010, in the voice.
+- `preferences` and `set_preferences` (task 034): the theme (`auto`, `light`, `dark`) and the serious
+  switch as they apply, which source decided the switch (`environment` locks the window's switch: the
+  window cannot override `MRGL_SERIOUS`), and what `config.json` stores (`theme`, `serious`, next to
+  `root`). The view reads them at start, writes a toggle's change at once, and carries an old
+  `localStorage` value over once for a key the file does not have, then removes the old keys; a cleared
+  web view draws what the file says. Each writer of `config.json` sets only its own keys and keeps the
+  others, so `mrgl root` keeps the preferences and the window keeps the root.
 
 The application icon is generated once by `scripts\make-icon.py` (Pillow; run it as
 `uv run --with pillow python -I scripts\make-icon.py`) and committed: `icon.ico` for the
@@ -673,7 +687,9 @@ PE file with one `.rsrc` section and no code: `_classic_era_\WowClassic.exe` car
 all, and `stubs\` holds a 32-bit image and a resource without a string table for the parser's unit tests.
 No stub is a game executable or a copy of one.
 
-The command line keeps `config.json` (the remembered game folder) under the mrgl home folder,
+The command line and the window keep `config.json` under the mrgl home folder (`root`, the remembered game
+folder, written by `mrgl root` and the window's chooser; `theme` and `serious`, the window's preferences of
+task 034, the second also the third source of the voice's serious switch),
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
 sidecar `state.json`, the addon sets `sets.json` (task 014),
 the install engine's `staging\` (a zip is unpacked and checked here before anything

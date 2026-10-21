@@ -2,6 +2,8 @@
 //! English line. The murloc line is picked by the message's [`Kind`]; the plain line is the caller's and
 //! carries every fact. `serious` drops the murloc line. Nothing here prints: [`Voice::say`] returns the
 //! text and the caller decides where it goes, so the CLI, the window and the tests share one table.
+//! The serious switch has three sources, the first that says wins: the `--serious` flag, `MRGL_SERIOUS`,
+//! then the `serious` preference of `config.json` the window's switch writes (task 034, [`crate::home`]).
 
 use std::fmt;
 
@@ -68,9 +70,10 @@ impl Voice {
         Self { serious }
     }
 
-    /// The voice of a run: the `--serious` flag wins; otherwise `MRGL_SERIOUS` decides.
+    /// The voice of a run: the `--serious` flag wins, then `MRGL_SERIOUS`, then the `serious` preference
+    /// of the config file (task 034).
     pub fn from_env(serious_flag: bool) -> Self {
-        Self::new(serious_flag || serious_env_set(std::env::var_os(SERIOUS_ENV).as_deref()))
+        Self::new(serious_of_process(serious_flag).0)
     }
 
     /// Whether the murloc line is dropped.
@@ -91,6 +94,58 @@ impl Voice {
 /// `MRGL_SERIOUS` set to anything but empty or `0` means serious.
 fn serious_env_set(value: Option<&std::ffi::OsStr>) -> bool {
     value.is_some_and(|value| !value.is_empty() && value != "0")
+}
+
+/// Which source decided the serious switch (task 034).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeriousSource {
+    /// The `--serious` flag.
+    Flag,
+    /// `MRGL_SERIOUS`, set and not empty (`0` says not serious).
+    Environment,
+    /// The `serious` preference of `config.json`.
+    File,
+    /// Nothing set: the murloc speaks.
+    Default,
+}
+
+impl SeriousSource {
+    /// The source's name in machine-readable output.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            SeriousSource::Flag => "flag",
+            SeriousSource::Environment => "environment",
+            SeriousSource::File => "file",
+            SeriousSource::Default => "default",
+        }
+    }
+}
+
+/// The serious switch from its three sources, the first that says wins: the flag (it can only turn the
+/// murloc off), a non-empty `MRGL_SERIOUS` (`0` is not serious, anything else is), then the file's
+/// preference, read only when needed; nothing set is not serious.
+pub fn serious_from(
+    flag: bool,
+    environment: Option<&std::ffi::OsStr>,
+    file: impl FnOnce() -> Option<bool>,
+) -> (bool, SeriousSource) {
+    if flag {
+        return (true, SeriousSource::Flag);
+    }
+    if let Some(value) = environment.filter(|value| !value.is_empty()) {
+        return (serious_env_set(Some(value)), SeriousSource::Environment);
+    }
+    match file() {
+        Some(serious) => (serious, SeriousSource::File),
+        None => (false, SeriousSource::Default),
+    }
+}
+
+/// [`serious_from`] for this process: `MRGL_SERIOUS` and the config file under the mrgl home folder.
+pub fn serious_of_process(flag: bool) -> (bool, SeriousSource) {
+    serious_from(flag, std::env::var_os(SERIOUS_ENV).as_deref(), || {
+        crate::home::read_preferences().serious
+    })
 }
 
 #[cfg(test)]
@@ -141,6 +196,38 @@ mod tests {
         assert!(!serious_env_set(Some(OsStr::new("0"))));
         assert!(serious_env_set(Some(OsStr::new("1"))));
         assert!(serious_env_set(Some(OsStr::new("true"))));
+    }
+
+    #[test]
+    fn the_flag_wins_then_the_variable_then_the_file() {
+        use std::ffi::OsStr;
+        let unread = || -> Option<bool> { panic!("the file is read only when needed") };
+        assert_eq!(
+            serious_from(true, Some(OsStr::new("0")), unread),
+            (true, SeriousSource::Flag)
+        );
+        assert_eq!(
+            serious_from(false, Some(OsStr::new("1")), unread),
+            (true, SeriousSource::Environment)
+        );
+        assert_eq!(
+            serious_from(false, Some(OsStr::new("0")), unread),
+            (false, SeriousSource::Environment),
+            "a variable set to 0 says not serious, whatever the file says"
+        );
+        assert_eq!(
+            serious_from(false, Some(OsStr::new("")), || Some(true)),
+            (true, SeriousSource::File),
+            "an empty variable is not set"
+        );
+        assert_eq!(
+            serious_from(false, None, || Some(false)),
+            (false, SeriousSource::File)
+        );
+        assert_eq!(
+            serious_from(false, None, || None),
+            (false, SeriousSource::Default)
+        );
     }
 
     #[test]

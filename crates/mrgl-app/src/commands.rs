@@ -12,7 +12,7 @@ use mrgl_core::flavor;
 use mrgl_core::home;
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::http_from_env;
-use mrgl_core::voice::{Kind, Voice};
+use mrgl_core::voice::{self as core_voice, Kind, Voice};
 use serde::Serialize;
 use tauri_plugin_dialog::DialogExt;
 
@@ -339,6 +339,72 @@ pub async fn resolve(flavor: String, folder: String) -> ResolveAnswer {
     .await
 }
 
+/// The window's preferences (task 034): the theme and the serious switch as they apply, which source
+/// decided the switch (`environment` means `MRGL_SERIOUS`, which the window's switch cannot override),
+/// and what `config.json` stores, so the view can carry an old web view value over once.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PreferencesAnswer {
+    pub theme: String,
+    pub serious: bool,
+    pub serious_source: &'static str,
+    pub stored: StoredPreferences,
+}
+
+/// The preferences as the config file has them; `None` is a key it does not set.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct StoredPreferences {
+    pub theme: Option<String>,
+    pub serious: Option<bool>,
+}
+
+/// The answer from `MRGL_SERIOUS` and the stored preferences; the window has no `--serious` flag.
+pub fn preferences_answer(
+    environment: Option<&std::ffi::OsStr>,
+    stored: home::Preferences,
+) -> PreferencesAnswer {
+    let (serious, source) = core_voice::serious_from(false, environment, || stored.serious);
+    PreferencesAnswer {
+        theme: stored.theme.clone().unwrap_or_else(|| "auto".to_string()),
+        serious,
+        serious_source: source.as_str(),
+        stored: StoredPreferences {
+            theme: stored.theme,
+            serious: stored.serious,
+        },
+    }
+}
+
+/// The preferences of this process.
+#[tauri::command]
+pub fn preferences() -> PreferencesAnswer {
+    preferences_answer(
+        std::env::var_os(core_voice::SERIOUS_ENV).as_deref(),
+        home::read_preferences(),
+    )
+}
+
+/// Stores the given preferences in `config.json` (a missing one stays as it is) and answers with them as
+/// they apply; the error is the message that says why nothing was stored.
+#[tauri::command]
+pub fn set_preferences(
+    theme: Option<String>,
+    serious: Option<bool>,
+) -> Result<PreferencesAnswer, Message> {
+    let stored = home::config_path()
+        .and_then(|path| home::update_preferences_at(&path, theme.as_deref(), serious))
+        .map_err(|error| {
+            Message::new(
+                voice(),
+                Kind::Error,
+                format!("preferences not saved: {error}"),
+            )
+        })?;
+    Ok(preferences_answer(
+        std::env::var_os(core_voice::SERIOUS_ENV).as_deref(),
+        stored,
+    ))
+}
+
 /// "Update all" of a flavor: the update actions are task 010; until then the answer says so, in the voice.
 #[tauri::command]
 pub fn update_all(flavor: String) -> Vec<Message> {
@@ -381,6 +447,29 @@ mod tests {
             value,
             serde_json::json!({ "kind": "banner", "murloc": "Mrglglgl.", "plain": "4 flavors" })
         );
+    }
+
+    #[test]
+    fn the_stored_preferences_apply_unless_the_variable_says() {
+        use std::ffi::OsStr;
+        let stored = home::Preferences {
+            theme: Some("dark".into()),
+            serious: Some(true),
+        };
+        // A cleared web view asks again and gets the file's values.
+        let answer = preferences_answer(None, stored.clone());
+        assert_eq!(answer.theme, "dark");
+        assert!(answer.serious);
+        assert_eq!(answer.serious_source, "file");
+        assert_eq!(answer.stored.serious, Some(true));
+        let answer = preferences_answer(Some(OsStr::new("0")), stored);
+        assert!(!answer.serious, "MRGL_SERIOUS=0 wins over the file");
+        assert_eq!(answer.serious_source, "environment");
+        let answer = preferences_answer(None, home::Preferences::default());
+        assert_eq!(answer.theme, "auto");
+        assert!(!answer.serious);
+        assert_eq!(answer.serious_source, "default");
+        assert_eq!(answer.stored.theme, None);
     }
 
     #[test]

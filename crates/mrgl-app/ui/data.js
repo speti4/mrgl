@@ -10,6 +10,9 @@
 //   Data.diagnostics()               -> Promise<{ text, copied, failed }>  `diagnostics`: the doctor's text
 //   Data.resolve(flavorId, folder)   -> Promise<{ pick, message }>  `resolve`: the source's Pick (task 010)
 //   Data.updateAll(flavorId, report) -> Promise<void>               `update_all`, `report(message)` per step
+//   Data.preferences()               -> Promise<{ theme, serious, serious_source, stored }>  `preferences`
+//   Data.setPreferences(changes)     -> Promise<the same>           `set_preferences`: `{ theme?, serious? }`
+//                                       into `config.json` (task 034); rejects with a message
 //
 // Opened in a plain browser (no Tauri global, `ui/index.html` from the disk), the module writes the script
 // tag of `mock-data.js` instead, so the page shows the sketch's made-up rows: a look at the layout without
@@ -38,6 +41,12 @@
       chooseRoot: () => invoke("choose_root"),
       diagnostics: () => invoke("diagnostics"),
       resolve: (flavorId, folder) => invoke("resolve", { flavor: flavorId, folder }),
+      preferences: () => invoke("preferences"),
+      setPreferences: (changes) =>
+        invoke("set_preferences", {
+          theme: changes && changes.theme !== undefined ? changes.theme : null,
+          serious: changes && changes.serious !== undefined ? changes.serious : null,
+        }),
       async updateAll(flavorId, report) {
         const messages = await invoke("update_all", { flavor: flavorId });
         for (const message of messages || []) report(message);
