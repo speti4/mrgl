@@ -6,6 +6,7 @@ started: 2026-10-21
 plan: none
 milestone: M1 Core + CLI
 changelog: housekeeping
+closed: 2026-10-21
 ---
 
 # 001 — Project scaffolding: repo structure, task standard, decisions, origin and research
@@ -37,7 +38,7 @@ code beyond the voice table.
   repo only because the changelog generator imports its parser.
 - A usage guide in the zip and signed exes (M5).
 - The GitHub rulesets and CodeQL, which are repository settings made by hand after the first push
-  (`docs/development.md`).
+  (`docs/development.md`); filed as task 018.
 
 ## Steps
 
@@ -49,7 +50,7 @@ code beyond the voice table.
        clap skeleton with end-to-end tests), `mrgl-app` (the Tauri 2 shell, a Node test for the UI voice)
 6. [x] Every check green locally: fmt, clippy, test, msrv, deny, zizmor, changelog, commit-rules self-test,
        `tasks_check`
-7. [ ] The public repo `speti4/mrgl`, the first push, CI green
+7. [x] The public repo `speti4/mrgl`, the first push, CI green
 
 ## Log
 
@@ -69,19 +70,31 @@ code beyond the voice table.
   --locked`, `cargo deny check`, `uvx zizmor .github` (no findings), `python -I scripts/changelog.py --check`,
   `sh scripts/check-commit.sh --self-test` (38 cases), `tasks_check` 0 errors; the window exe starts and the
   CLI prints the two-line banner
+- 2026-10-21 — `speti4/mrgl` created public with the scaffold as its one initial commit; the `ci` workflow
+  (`test`, `lint`, `msrv`, `deny`, `workflow-lint`) and the `commit-rules` workflow green on `main`; the
+  repository settings of `docs/development.md` filed as task 018
 
 ## Deviations from the plan
 
-- none yet
+- The repository history starts with one commit that holds the reviewed scaffold, instead of the scaffold
+  commit followed by review commits: the review happened before the first push, so its rounds are a Log line
+  here, not history.
 
 ## Verification
 
-- (to be written at the close)
+- 2026-10-21 — on the pushed commit: `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D
+  warnings`, `cargo test --locked` (15 tests, the Node UI tests included), `cargo +1.90 check --all-targets
+  --locked`, `cargo deny check` (advisories, bans, licenses, sources ok), `uvx zizmor .github` (no findings),
+  `python -I scripts/changelog.py --check`, `sh scripts/check-commit.sh --self-test` (38 cases passed),
+  `tasks_check` (0 errors, 0 warnings, index current); `mrgl --serious --help` prints no murloc line,
+  `mrgl --json scan x` prints `{"kind":"error",…}` with exit code 1, the window starts under
+  `MRGL_SERIOUS=1`; on GitHub, the `ci` and `commit-rules` workflow runs of the initial commit succeeded
+  (https://github.com/speti4/mrgl/actions).
 
 ## Closing checklist
 
-- [ ] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log
-- [ ] every doc under *Docs that move* changed in this change
-- [ ] Verification written, dated
-- [ ] `tasks_check` green, README index regenerated
-- [ ] moved to `done/` with `closed: YYYY-MM-DD`
+- [x] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log
+- [x] every doc under *Docs that move* changed in this change
+- [x] Verification written, dated
+- [x] `tasks_check` green, README index regenerated
+- [x] moved to `done/` with `closed: YYYY-MM-DD`

@@ -11,4 +11,6 @@ The repository, the task standard and the empty workspace: no app yet.
 
 <!-- The summary above is written by hand; the list below is generated from tasks/done/ by scripts/changelog.py. -->
 
-No task closed yet.
+### Project housekeeping
+
+- Project scaffolding: repo structure, task standard, decisions, origin and research ([001](https://github.com/speti4/mrgl/blob/main/tasks/done/001-project-scaffolding.md))
