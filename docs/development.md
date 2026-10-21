@@ -7,8 +7,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
 
 - `crates/mrgl-core` — the library: flavor detection (`flavor`), the AddOns scan and TOC parsing (`scan`,
   `toc`), the sources (`sources`: GitHub `release.json` first, later Wago, WoWInterface and CurseForge), the
-  install engine (`install`), the state sidecar (`state`, D-003), backups and addon sets (`backup`) and the
-  voice table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
+  install engine (`install`), the state sidecar (`state`, D-003), backups and addon sets (`backup`), the
+  running-client check (`client`, task 023: a process found by its executable's path under the flavor
+  folder, the guard every `WTF` write calls and the install engine's warning) and the voice table (`voice`,
+  D-005). Synthetic fixtures are under `tests/fixtures/`.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add`, `update`, `remove`,
   `link`, `unlink`, `backup` (stubs that answer with the task that builds them until that task lands), with
   `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under `tests/`.
@@ -234,7 +236,9 @@ addons cover the multi-TOC suffixes, the `## Interface` lists, the `X-Curse-Proj
 `X-WoWI-ID` headers and the other shapes its README lists), `release.json` files in the shape the BigWigs
 packager writes (`forever` next to other flavors), and small zips with several addon folders in one archive.
 A real addon zip, a real AddOns folder or a `WTF` folder never enters the repo; a manual round on a real game
-folder is a task of its own, and its result is a dated line in that task's Verification.
+folder is a task of its own, and its result is a dated line in that task's Verification. The running-client
+tests copy their own test binary into a temporary flavor folder and start it as a stand-in client (it waits
+for its stdin to close), so no game file and no committed executable is involved.
 
 The command line keeps `config.json` (the remembered game folder) under the mrgl home folder,
 `%LOCALAPPDATA%\mrgl\` (D-003); `MRGL_HOME` overrides the home folder, and the end-to-end tests set it to a

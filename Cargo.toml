@@ -34,6 +34,15 @@ tauri-plugin-dialog = "2"
 # Links to an addon's project page open in the system browser; registered in the shell, its first command
 # comes with the flavor list (task 009).
 tauri-plugin-opener = "2"
+# The running-client check (task 023): one Toolhelp snapshot, the image path of each process and the 8.3
+# short form of the flavor folder, straight from the Windows SDK bindings Tauri already pulls in; a process
+# crate would add a tree of crates for three calls.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+] }
 
 # The release builds (the zip of task 001's release script): fat LTO and one codegen unit for size and speed,
 # symbols stripped. Panics keep unwinding (the default), so a panic in a command can be caught and reported

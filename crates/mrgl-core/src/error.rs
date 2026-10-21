@@ -19,6 +19,22 @@ pub enum Error {
     #[error("no home folder for mrgl: neither MRGL_HOME nor LOCALAPPDATA is set")]
     NoHome,
 
+    /// The game client runs from the flavor folder: nothing under `WTF` is written while it does (task
+    /// 023; D-002, D-003). The guard is [`crate::client::ensure_client_not_running`].
+    #[error("the client is running in {flavor} ({}, pid {}): close the game first, nothing under WTF is written while it runs", .client.exe_name(), .client.pid)]
+    ClientRunning {
+        /// The flavor folder's name (`_forever_`).
+        flavor: String,
+        client: crate::client::RunningClient,
+    },
+
+    /// The running processes could not be listed, so a running client cannot be ruled out.
+    #[error("cannot list the running processes: {source}")]
+    ProcessList {
+        #[source]
+        source: std::io::Error,
+    },
+
     /// A command is planned but not built yet; the task id says where.
     #[error("{command} is not implemented yet (task {task})")]
     NotImplemented {

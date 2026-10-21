@@ -1,10 +1,13 @@
 //! End-to-end tests of the `mrgl` exe: the voice's two-line rule, `--serious`, `MRGL_SERIOUS`, `--json`, the
 //! exit codes, and `scan`, `list` and `root` over the synthetic flavors tree of `mrgl-core`. The tests assert
 //! the plain line (docs/nerglish.md, rule 3); the murloc line is checked only for being there. `MRGL_HOME`
-//! points every run at a temporary folder, so no test reads or writes the real config.
+//! points every run at a temporary folder, so no test reads or writes the real config. The running-client
+//! tests (task 023) copy this test binary into a temporary flavor folder and start it as a stand-in
+//! client, never a game file.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output, Stdio};
 
 /// The synthetic game folder of `mrgl-core`.
 fn fixtures() -> PathBuf {
@@ -182,6 +185,7 @@ fn scan_json_is_one_document_with_the_fixed_kind() {
     assert_eq!(value["addons"].as_array().map(Vec::len), Some(14));
     assert_eq!(value["skipped"], serde_json::json!(["NoToc"]));
     assert_eq!(value["warnings"], serde_json::json!([]));
+    assert!(value["client_running"].is_null(), "{value}");
     let hinted = value["addons"]
         .as_array()
         .expect("addons")
@@ -438,6 +442,120 @@ fn an_unknown_flavor_id_is_a_warning_and_exit_code_zero() {
         stdout_last_line(&output),
         "1 addon in _unknown_ (wow_mrgl, build unknown)"
     );
+}
+
+/// A synthetic game folder under the temp dir with a `_forever_` flavor and no addons.
+fn temp_game_root(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("mrgl-cli-client-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("_forever_")).expect("the flavor folder");
+    std::fs::write(
+        root.join(".build.info"),
+        "Product!STRING:0|Version!STRING:0\nwowf|1.60.1.70245\n",
+    )
+    .expect(".build.info");
+    std::fs::write(
+        root.join("_forever_").join(".flavor.info"),
+        "Product Flavor!STRING:0\nwowf\n",
+    )
+    .expect(".flavor.info");
+    root
+}
+
+/// A copy of this test binary in the flavor folder, started as the stand-in client: it runs the
+/// `stand_in_client` test below, which waits for its stdin to close.
+fn spawn_stand_in(flavor_folder: &Path) -> Child {
+    let exe = std::env::current_exe().expect("this test binary");
+    let name = format!(
+        "client-stand-in{}",
+        exe.extension()
+            .map(|ext| format!(".{}", ext.to_string_lossy()))
+            .unwrap_or_default()
+    );
+    let copy = flavor_folder.join(name);
+    std::fs::copy(&exe, &copy).expect("the copy");
+    Command::new(&copy)
+        .args(["--exact", "stand_in_client", "--include-ignored"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the stand-in starts")
+}
+
+/// The stand-in client's body: it blocks until the parent closes its stdin or kills it. Ignored, so a
+/// plain `cargo test` never runs it; the copy runs it by name.
+#[test]
+#[ignore]
+fn stand_in_client() {
+    let mut sink = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut sink);
+}
+
+#[cfg(windows)]
+#[test]
+fn scan_and_list_name_the_running_client_in_the_summary_and_the_json() {
+    let root = temp_game_root("scan");
+    let folder = root.join("_forever_");
+    let mut child = spawn_stand_in(&folder);
+
+    let output = mrgl()
+        .args(["--serious", "scan"])
+        .arg(&folder)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "no addons in _forever_ (wowf 1.60.1.70245, client running)"
+    );
+
+    let output = mrgl()
+        .args(["--serious", "list", "--flavor", "forever", "--root"])
+        .arg(&root)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "no addons in _forever_ (wowf 1.60.1.70245, client running)"
+    );
+
+    let json = mrgl()
+        .args(["--json", "list", "--flavor", "forever", "--root"])
+        .arg(&root)
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "list");
+    assert_eq!(value["client_running"]["pid"], child.id());
+    assert!(
+        value["client_running"]["exe"]
+            .as_str()
+            .is_some_and(|exe| exe.ends_with("client-stand-in.exe")),
+        "{value}"
+    );
+    assert_eq!(value["warnings"], serde_json::json!([]));
+
+    child.kill().expect("killed");
+    child.wait().expect("waited");
+    let output = mrgl()
+        .args(["--serious", "scan"])
+        .arg(&folder)
+        .output()
+        .expect("run mrgl");
+    assert_eq!(
+        stdout_last_line(&output),
+        "no addons in _forever_ (wowf 1.60.1.70245)"
+    );
+    let json = mrgl()
+        .args(["--json", "scan"])
+        .arg(&folder)
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert!(value["client_running"].is_null(), "{value}");
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
