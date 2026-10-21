@@ -41,9 +41,39 @@ D-005.
 
 ## The UI
 
-The UI is plain HTML, CSS and JavaScript embedded in the exe: no Node toolchain, no bundler, no Tauri CLI. A
-change under `crates/mrgl-app/ui/` takes effect on the next `cargo run`. Pure modules get Node tests under
-`crates/mrgl-app/tests/ui/`, which `cargo test` runs through `tests/ui_smoke.rs` when `node` is on `PATH`.
+The UI is plain HTML, CSS and JavaScript embedded in the exe: no Node toolchain, no bundler, no Tauri CLI,
+no CDN (the content security policy in `tauri.conf.json` allows the embedded files only, so there is no inline
+script or style either). A change under `crates/mrgl-app/ui/` takes effect on the next `cargo run`. Pure
+modules get Node tests under `crates/mrgl-app/tests/ui/`, which `cargo test` runs through `tests/ui_smoke.rs`
+when `node` is on `PATH`.
+
+The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
+
+- `index.html` is the one page: a sidebar with the flavor navigation (the four flavors by their friendly
+  names, in the order retail, classic, era, forever, each with its addon count and its count of updates; the
+  window opens on Forever), the chosen flavor's header (name, folder, build, the CurseForge marker, the search
+  field, "Update all"), the addon list (one row per addon: name and folder, version and the version an update
+  brings, the source badge, the state pill, the Forever note slot of task 011, and a row menu for the actions
+  of tasks 010 and 021, with a progress slot per row), a legend, a status bar and the toast stack. The theme
+  toggle and the serious switch sit at the bottom of the sidebar.
+- `style.css` holds every color as a token on `:root`: the light set, the dark set under
+  `prefers-color-scheme: dark` (unless the toggle says light) and under `data-theme="dark"` (the toggle), one
+  token per state (managed, update available, linked, guess only, unmanaged) and per source badge (github,
+  wago, wowi, curseforge, zip, linked; a dashed badge is a source known only from a TOC hint).
+- `main.js` is the view: it reads `window.Data`, draws what it gets and never composes a murloc line. It does
+  not know whether the rows are made up.
+- `mock-data.js` is the data module of the sketch, made-up rows in the shape the core answers with; its header
+  comment is the contract (`Data.version()`, `Data.flavors()`, `Data.updateAll(flavorId, report)`, a flavor
+  as `flavor.rs` serializes it plus its friendly name and addons, an addon as `scan.rs` gives it plus the
+  facts of the sidecar, the sources, the update check, the Forever notes and pin / ignore). Task 009 adds the
+  module that invokes the Tauri commands behind the same `window.Data`, `index.html` loads that one instead,
+  and the layout stays; the mock stays for a look at the page without the core.
+- The pure modules, each with a test file of the same name under `tests/ui/`: `state.js` (an addon's one state
+  from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels),
+  `search.js` (every word of the query in the name, folder, source kind or source id), `theme.js` (auto,
+  light, dark), `flavors.js` (the navigation order and the friendly names) and `voice.js` (the two lines and
+  where a message goes, see [nerglish.md](nerglish.md), "The window").
+
 The application icon is generated once by `scripts\make-icon.py` (Pillow; run it as
 `uv run --with pillow python -I scripts\make-icon.py`) and committed: `icon.ico` for the
 Windows exe and `icon.png` for the window icon on the other targets. It is a glyph of our own, never Blizzard

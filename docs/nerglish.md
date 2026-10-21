@@ -60,4 +60,21 @@ reader learns the seven sounds in a day, and an error must never sound like a su
 3. Tests assert the plain line. The murloc line is the table's business, so a vocabulary change breaks no test.
 4. Nouns stay English in both lines: `addon`, `flavor`, `release`. The murloc line never carries a path, a
    count or a name, so it can never be the only place a fact lives.
-5. The window shows the same two lines in its status bar and its toasts; the serious setting is a preference.
+5. The window shows the same two lines in its status bar and its toasts (below); the serious setting is a
+   preference.
+
+## The window
+
+The window has two places for a message, and the message's kind decides (`ui/voice.js`, `placement`):
+
+- **The status bar** at the bottom shows the latest message, whatever its kind: a dot in the kind's color,
+  the murloc line, the plain line. Banner, progress and nothing-to-do live only here: they are the window's
+  quiet state, and a scan or a download in progress does not pop anything.
+- **A toast** at the bottom right, above the status bar, is added for a finished message: success and warning
+  go away by themselves, error and fatal stay until dismissed. The toast's headline is the murloc line, the
+  plain line is under it, so a reader who looks up from the list sees the mood first and the fact next to
+  it. The toasts sit where they cover no button.
+
+The serious preference drops the murloc line in both places: the status bar shows the plain line alone, the
+toast's headline is the plain line. The murloc line itself always arrives from Rust in the message, the view
+never composes one.

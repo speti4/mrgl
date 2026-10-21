@@ -6,14 +6,85 @@
     <title>mrgl</title>
     <link rel="stylesheet" href="style.css" />
     <script src="voice.js"></script>
+    <script src="state.js"></script>
+    <script src="search.js"></script>
+    <script src="theme.js"></script>
+    <script src="flavors.js"></script>
+    <script src="mock-data.js"></script>
     <script src="main.js" defer></script>
   </head>
   <body>
-    <main id="empty">
-      <p id="murloc" class="murloc"></p>
-      <p id="plain" class="plain"></p>
-      <p class="muted">The flavor list, the update-all button and the rest arrive with M2 (tasks 009–012).</p>
+    <nav id="sidebar" aria-label="Flavors">
+      <h1 class="brand">mrgl</h1>
+      <ul id="flavor-list" class="flavor-list"></ul>
+      <div class="sidebar-footer">
+        <button id="theme-toggle" type="button" class="ghost"></button>
+        <label class="check"><input id="serious-toggle" type="checkbox" /> serious: no murloc</label>
+      </div>
+    </nav>
+
+    <main id="main">
+      <section id="empty" class="empty" hidden>
+        <p id="empty-murloc" class="murloc"></p>
+        <p id="empty-plain" class="plain"></p>
+        <p class="muted">Choose the game folder to see its flavors. The chooser arrives with the shell.</p>
+      </section>
+
+      <section id="flavor" hidden>
+        <header class="flavor-header">
+          <div class="flavor-title">
+            <h2 id="flavor-name"></h2>
+            <p id="flavor-meta" class="muted"></p>
+          </div>
+          <input id="search" type="search" placeholder="Search name, folder or source" autocomplete="off" spellcheck="false" />
+          <button id="update-all" type="button" class="primary"></button>
+        </header>
+        <p id="flavor-warnings" class="warnings" hidden></p>
+        <div class="list-head" aria-hidden="true">
+          <span>Addon</span><span>Version</span><span>Source</span><span>State</span><span>Forever</span><span></span>
+        </div>
+        <ul id="addon-list" class="addon-list"></ul>
+        <p id="no-match" class="muted no-match" hidden></p>
+        <footer id="legend" class="legend" aria-label="Legend"></footer>
+      </section>
     </main>
-    <footer id="status"><span id="version"></span></footer>
+
+    <footer id="status" class="status" role="status">
+      <span id="status-dot" class="dot"></span>
+      <span id="status-murloc" class="status-murloc"></span>
+      <span id="status-plain" class="status-plain"></span>
+      <span id="version" class="version"></span>
+    </footer>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+
+    <template id="row-template">
+      <li class="row">
+        <div class="cell name-cell">
+          <span class="name"></span>
+          <span class="folder muted"></span>
+        </div>
+        <div class="cell version-cell">
+          <span class="version-now"></span>
+          <span class="version-next"></span>
+          <span class="version-note muted"></span>
+        </div>
+        <div class="cell source-cell"><span class="badge"></span></div>
+        <div class="cell state-cell"><span class="pill"></span></div>
+        <div class="cell forever-cell"><span class="forever"></span></div>
+        <div class="cell actions-cell">
+          <details class="row-menu">
+            <summary aria-label="Row actions">&#8943;</summary>
+            <div class="menu">
+              <button type="button" disabled>Update</button>
+              <button type="button" disabled>Pin</button>
+              <button type="button" disabled>Unpin</button>
+              <button type="button" disabled>Ignore</button>
+            </div>
+          </details>
+        </div>
+        <div class="progress" hidden><div class="progress-bar"></div></div>
+      </li>
+    </template>
   </body>
 </html>
