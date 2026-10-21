@@ -1,0 +1,182 @@
+# Tests on Windows, the format check and the changelog check on Linux, the oldest supported Rust on Windows, the
+# dependency policy and the workflow lint on every push to main and every pull request; the ruleset on `main`
+# requires them, so no path filter skips them (the commit rules have their own workflow, commit-rules.yml). The
+# repo is public from its first commit (D-004), so the Windows runners cost nothing and run on every change; a
+# macOS job joins with the macOS preview (M6). A tag also packs and publishes the portable Windows zip, its
+# checksum, its build provenance attestation and the notes from the changelog, with the license page inside the
+# zip. The toolchain is the stable version `rust-toolchain.toml` pins, installed by the runner's own rustup
+# through the local action .github/actions/install-rust-toolchain, not by a third-party action; every cargo
+# build runs `--locked`, so a stale `Cargo.lock` fails instead of being rewritten.
+# Actions are pinned by commit SHA and bumped by dependabot.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# No incremental build in CI (it only grows the target cache, and the Rust cache keys on it) and colored cargo
+# output in the log. The cargo-about of the license page is built from crates.io with its own lock file, in the
+# version scripts/cargo-about-version.txt names: the one place it is written, read here, by the release script
+# and by the commands of docs/development.md. Dependabot does not see that pin, so it is bumped by hand.
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push supersedes a pull request run; a running main or tag run is never cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The shipped platform: clippy and the tests on Windows.
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The toolchain and components rust-toolchain.toml pins, with the runner's own rustup.
+      - uses: $/.github/actions/install-rust-toolchain
+      # The cache only speeds up the tests; the release job builds without it, so nothing it holds is published.
+      # zizmor's cache-poisoning finding is accepted on this step by the comment on its name line (not on the
+      # `uses:` line, whose version comment dependabot rewrites), so a cache added anywhere else is flagged.
+      - name: Rust cache # zizmor: ignore[cache-poisoning]
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  # The format check, which no platform changes, and the changelog check, on the cheapest runner.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The whole history with the tags: scripts/changelog.py tells the tasks of a release by the tag trees.
+          fetch-depth: 0
+      - uses: $/.github/actions/install-rust-toolchain
+      - run: cargo fmt --check
+      # CHANGELOG.md matches tasks/done/ and the release tags, so a pull request that closes a task brings its
+      # changelog line along. Not on a tag: the new tag moves the Unreleased section under its version, which only
+      # a run after the tag writes (the first pull request after a release commits that stamp). Until that stamp,
+      # the check reads the newest tag without a section as not there yet.
+      - name: CHANGELOG.md is up to date
+        if: github.ref_type != 'tag'
+        run: python3 -I scripts/changelog.py --check
+
+  # The oldest Rust the workspace declares (`rust-version` in Cargo.toml), so a newer language or library feature
+  # cannot slip in unnoticed while every other job follows the latest stable. On Windows, because the Windows
+  # target pulls in tauri-build's resource compiler, which a Linux runner lacks. No Rust cache, so the
+  # cache-poisoning finding stays accepted on the one cache step of the test job.
+  msrv:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The version comes from Cargo.toml, the one place it is written.
+      - name: Install the rust-version toolchain
+        shell: bash
+        run: |
+          msrv="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+          test -n "$msrv"
+          rustup toolchain install --no-self-update --profile minimal "$msrv"
+          echo "MSRV=$msrv" >> "$GITHUB_ENV"
+      - name: cargo check with the rust-version toolchain
+        shell: bash
+        run: cargo "+$MSRV" check --all-targets --locked
+
+  # Advisories, licenses, bans and sources of the shipped graph (deny.toml).
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          # The default features, as the exes are built; the action's own default is --all-features.
+          arguments: ""
+          command: check
+      # The license page of the release zip (about.toml) accepts exactly the licenses deny.toml allows.
+      - name: about.toml accepts the licenses of deny.toml
+        run: |
+          python3 -I -c '
+          import tomllib
+          allow = sorted(tomllib.load(open("deny.toml", "rb"))["licenses"]["allow"])
+          accepted = sorted(tomllib.load(open("about.toml", "rb"))["accepted"])
+          raise SystemExit(0 if allow == accepted else f"deny.toml allows {allow}, about.toml accepts {accepted}")
+          '
+
+  # zizmor over the workflows, the local action and dependabot.yml; findings fail the job as annotations. No SARIF upload to code
+  # scanning: an uploaded finding would not fail this required check.
+  workflow-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          advanced-security: false
+
+  release:
+    needs: [test, lint, msrv, deny, workflow-lint]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write # creates the release and uploads the zip
+      id-token: write # the OIDC token that signs the build provenance attestation
+      attestations: write # stores the attestation with the repo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The whole history with the tags: scripts/changelog.py tells the tasks of a release by the tag trees.
+          fetch-depth: 0
+      # A release is cut from main only: the ruleset protects main, not every commit a tag could point at.
+      - name: The tag is on main
+        shell: bash
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main"; exit 1; }
+      # The same toolchain as the test job, from rust-toolchain.toml.
+      - uses: $/.github/actions/install-rust-toolchain
+      # The license page of the zip, with the cargo-about of scripts/cargo-about-version.txt.
+      - name: Install cargo-about
+        shell: pwsh
+        run: cargo install cargo-about --version (Get-Content scripts/cargo-about-version.txt -Raw).Trim() --locked --features cli
+      # No rust-cache here: a release is built from a clean target, never from a cache a pull request wrote.
+      - name: Build and pack
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release.ps1 -Tag $env:TAG
+      # Build provenance for every file SHA256SUMS.txt lists, signed through the job's OIDC token and checked
+      # with `gh attestation verify <zip> --repo speti4/mrgl`.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS.txt
+      # The runner's own gh CLI publishes the release: no third-party action holds the write token. The notes
+      # are the tag's section of the changelog, written by release.ps1 (scripts/changelog.py --notes).
+      - name: Publish the release
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = $env:TAG.Substring(1)
+          gh release create $env:TAG "dist/mrgl-$version.zip" dist/SHA256SUMS.txt `
+            --verify-tag --title "mrgl $version" --notes-file "dist/release-notes-$version.md"

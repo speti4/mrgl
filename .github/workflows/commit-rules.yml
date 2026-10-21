@@ -1,0 +1,62 @@
+# The commit rules of docs/git-workflow.md (scripts/check-commit.sh) for every pushed or
+# proposed commit and the pull request text, which a squash merge turns into the commit message: its first line,
+# the title, is held to the subject rule. The local hook can be skipped. Its own workflow, required by the ruleset
+# on `main` next to the ci.yml jobs. An edited title or description re-runs it. A tag or a
+# manual run has no commit range, so neither triggers it.
+# Actions are pinned by commit SHA and bumped by dependabot.
+name: commit-rules
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-rules-${{ github.ref }}
+  # A newer push supersedes a pull request run; a running main run is never cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  commit-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: The rules reject what they should
+        run: sh scripts/check-commit.sh --self-test
+      - name: Check the commits and the pull request text
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          failed=0
+          if [ "$EVENT" = pull_request ]; then
+            range="$BASE..$HEAD"
+            printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/pull-request.txt"
+            sh scripts/check-commit.sh --pull-request "$RUNNER_TEMP/pull-request.txt" || { echo "  in the pull request text"; failed=1; }
+          elif [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then
+            # The first push of the branch: every commit it brings.
+            range="$AFTER"
+          else
+            range="$BEFORE..$AFTER"
+          fi
+          for commit in $(git rev-list "$range"); do
+            git log -1 --format=%B "$commit" > "$RUNNER_TEMP/message.txt"
+            sh scripts/check-commit.sh "$RUNNER_TEMP/message.txt" \
+              "$(git log -1 --format=%an "$commit")" "$(git log -1 --format=%ae "$commit")" \
+              "$(git log -1 --format=%cn "$commit")" "$(git log -1 --format=%ce "$commit")" \
+              || { echo "  in $commit"; failed=1; }
+          done
+          exit "$failed"

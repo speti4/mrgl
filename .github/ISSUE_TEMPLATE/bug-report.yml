@@ -1,0 +1,85 @@
+name: Bug report
+description: Something in mrgl does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please keep your game data private: no account or character names, no API
+        keys, and no listing of a real AddOns folder beyond the addon the report is about. A made-up addon
+        (a folder with a TOC and a `release.json` of a few lines) reproduces almost anything. A security
+        problem goes to a [private report](https://github.com/speti4/mrgl/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see? Include the exact text of the plain English line of the message (the murloc line is optional).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. mrgl add github:owner/repo --flavor forever
+        2. mrgl update --all
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mrgl version
+      description: "`mrgl --version` prints it."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Windows version
+      description: "`winver` shows it, for example 24H2, build 26100."
+    validations:
+      required: true
+  - type: dropdown
+    id: flavor
+    attributes:
+      label: Game flavor
+      options:
+        - Forever (_forever_)
+        - Retail (_retail_)
+        - Classic (_classic_)
+        - Classic Era (_classic_era_)
+        - other or not related to a flavor
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Addon source
+      options:
+        - GitHub release
+        - Wago
+        - WoWInterface
+        - CurseForge (own key)
+        - a zip file
+        - not related to a source
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: A made-up reproducer (optional)
+      description: A synthetic TOC or `release.json`, or the `--json` output of the failing command.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: This report contains no account or character names, no API key and no real game data beyond the addon it is about.
+          required: true

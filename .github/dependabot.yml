@@ -1,0 +1,29 @@
+# Weekly dependency updates: the Cargo lock file and the SHA-pinned actions. A release is
+# proposed only after a week, so a compromised or broken version has time to be yanked first. Security
+# updates (a repository setting, docs/development.md) skip the cooldown.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: deps
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: deps
+    groups:
+      actions:
+        patterns: ["*"]

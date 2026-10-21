@@ -1,0 +1,29 @@
+# Rust / Tauri build output
+target/
+crates/mrgl-app/gen/
+node_modules/
+dist/
+
+# Game data and downloads never enter the repo: addon zips and release downloads, a copied AddOns or WTF
+# folder, the state sidecar
+*.zip
+AddOns/
+WTF/
+.mrgl/
+
+# local: editor folders, the anonymizer's token map
+.env
+*.log
+.DS_Store
+.vscode/
+.idea/
+.anonilm-map.json
+.claude/settings.local.json
+CLAUDE.local.md
+
+# synthetic test fixtures are the one exception to the zip and AddOns rule
+!crates/*/tests/fixtures/**
+__pycache__/
+
+# git worktrees that Claude Code creates under .claude/worktrees (docs/maintainer-sessions.md)
+.claude/worktrees/

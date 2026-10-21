@@ -1,0 +1,33 @@
+# cargo-deny policy (task 001): advisories, licenses, bans and sources of the crates that end up in the
+# exes. CI runs `cargo deny check` on every push to main, every pull request and every release tag; locally
+# the same command.
+
+[graph]
+# The shipped target: the Windows exe. The macOS targets join here with the macOS preview (M6).
+targets = ["x86_64-pc-windows-msvc"]
+all-features = false
+
+[advisories]
+# A yanked crate or a RustSec advisory fails the check. An ignore names the advisory id and the reason.
+yanked = "deny"
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Every license the exe may carry; about.toml accepts the same list for the third-party license page of the
+# release zip, so a license added here is added there. MPL-2.0 (cssparser, selectors, dtoa-short, option-ext
+# under Tauri and dirs) is file-level copyleft, used unmodified.
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "BSD-3-Clause", "Zlib", "MPL-2.0"]
+confidence-threshold = 0.9
+
+[bans]
+# Tauri and windows-rs pull several versions of the same crates; reported, not failed.
+multiple-versions = "warn"
+wildcards = "deny"
+# The workspace crates depend on each other by path; they are `publish = false`.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,8 @@
+# Text files are stored with LF whatever the contributor's core.autocrlf says; the lines below override this for
+# the files that need something else.
+* text=auto eol=lf
+# Test fixtures carry their own line endings (addon TOCs are often CRLF); git must never convert them.
+crates/*/tests/fixtures/** -text
+# Shell scripts and git hooks run under sh, which a CRLF line ending breaks.
+*.sh text eol=lf
+.githooks/* text eol=lf

@@ -1,0 +1,7 @@
+# The toolchain of every build here and in CI, pinned to a stable release so a new Rust version (and its new
+# clippy lints) arrives through a deliberate `chore:` pull request instead of turning CI red without a code
+# change. dependabot.yml does not watch this file: bumping it is a hand edit (docs/development.md, "The Rust
+# toolchain"). The oldest supported Rust is a separate number, `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Rejects a commit that breaks the commit rules (scripts/check-commit.sh, docs/git-workflow.md). Enabled once
+# per clone with `git config core.hooksPath .githooks`; the worktrees of the clone share the setting.
+set -eu
+
+author=$(git var GIT_AUTHOR_IDENT)
+committer=$(git var GIT_COMMITTER_IDENT)
+
+# An ident is "Name <email> timestamp zone".
+name_of() { printf '%s' "${1%% <*}"; }
+email_of() { email=${1#*<}; printf '%s' "${email%%>*}"; }
+
+exec sh "$(git rev-parse --show-toplevel)/scripts/check-commit.sh" "$1" \
+  "$(name_of "$author")" "$(email_of "$author")" \
+  "$(name_of "$committer")" "$(email_of "$committer")"

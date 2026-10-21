@@ -1,0 +1,11 @@
+# cargo-about configuration: scripts/release.ps1 renders THIRD-PARTY-LICENSES.html for the Windows zip from the
+# crates compiled into mrgl.exe and mrgl-app.exe, with scripts/third-party-licenses.hbs as the template. The
+# accepted licenses are deny.toml's allowlist; a license added there is added here in the same change.
+accepted = ["MIT", "Apache-2.0", "Unicode-3.0", "BSD-3-Clause", "Zlib", "MPL-2.0"]
+# The Windows target; deny.toml checks the same one.
+targets = ["x86_64-pc-windows-msvc"]
+# Build scripts, proc-macros' build helpers and test-only crates are not in the exe.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# The workspace crates are mrgl itself (MIT, LICENSE at the root), not third-party code.
+private = { ignore = true }

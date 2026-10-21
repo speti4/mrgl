@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = ["crates/mrgl-core", "crates/mrgl-cli", "crates/mrgl-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/speti4/mrgl"
+# Tauri 2.12 and tauri-plugin-dialog require 1.90 (task 001). The msrv job reads it from here; the local
+# command in CONTRIBUTING.md, "Checks before a commit", names it too.
+rust-version = "1.90"
+# Never published to crates.io; also lets cargo-deny accept the path dependencies.
+publish = false
+
+[workspace.dependencies]
+mrgl-core = { path = "crates/mrgl-core" }
+# Argument parsing for the `mrgl` command line (derive): subcommands, flags, help (task 001 / D-002).
+clap = { version = "4.5", features = ["derive"] }
+# The state sidecar's `state.json` (D-003), `release.json` from the sources, the `--json` output and the
+# app's IPC types (task 001).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# One error type per module with a `Display` that is the plain English line of the voice (task 001 / D-005).
+thiserror = "2"
+# The window, IPC, async runtime and asset embedding of the D-002 shell, on the system web view (WebView2 on
+# Windows 11): one portable zip with two exes, nothing to install (task 001).
+tauri = "2"
+# Build script: Windows icon/version resource, app manifest and capability schemas (task 001).
+tauri-build = "2"
+# The native folder picker for the game folder and the backup folder; registered in the shell, its first
+# command comes with the flavor list (task 009).
+tauri-plugin-dialog = "2"
+# Links to an addon's project page open in the system browser; registered in the shell, its first command
+# comes with the flavor list (task 009).
+tauri-plugin-opener = "2"
+
+# The release builds (the zip of task 001's release script): fat LTO and one codegen unit for size and speed,
+# symbols stripped. Panics keep unwinding (the default), so a panic in a command can be caught and reported
+# rather than aborting the process outright.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true

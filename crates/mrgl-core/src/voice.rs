@@ -1,0 +1,151 @@
+//! The voice table (D-005, `docs/nerglish.md`): every human-readable message is a murloc line and a plain
+//! English line. The murloc line is picked by the message's [`Kind`]; the plain line is the caller's and
+//! carries every fact. `serious` drops the murloc line. Nothing here prints: [`Voice::say`] returns the
+//! text and the caller decides where it goes, so the CLI, the window and the tests share one table.
+
+use std::fmt;
+
+/// What a message is about; it picks the murloc line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Kind {
+    /// `--version` and the greeting of the empty window (`--help` is clap's and stays plain).
+    Banner,
+    /// Something is running: a scan, a download, an install.
+    Progress,
+    /// A command finished and did what it said.
+    Success,
+    /// A command finished and found nothing to change.
+    Nothing,
+    /// Finished, but with something to look at.
+    Warning,
+    /// A command failed; the plain line says why.
+    Error,
+    /// mrgl itself is broken: a panic, a sidecar it cannot rebuild.
+    Fatal,
+}
+
+impl Kind {
+    /// The murloc line of this kind, from the table in `docs/nerglish.md`. A kind always sounds like itself:
+    /// an error never sounds like a success.
+    pub const fn murloc(self) -> &'static str {
+        match self {
+            Kind::Banner => "Mrglglgl.",
+            Kind::Progress => "Mrrrgl… mrgl mrgl.",
+            Kind::Success => "Mrglglglgl!",
+            Kind::Nothing => "Mrgl.",
+            Kind::Warning => "Mrgl? Mrgl…",
+            Kind::Error => "Rwlrwlrwlrwl?!",
+            Kind::Fatal => "Aaaaaughibbrgubugbugrguburgle!",
+        }
+    }
+
+    /// The kind's name in machine-readable output (`--json`), fixed here so a renamed variant cannot change it.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Kind::Banner => "banner",
+            Kind::Progress => "progress",
+            Kind::Success => "success",
+            Kind::Nothing => "nothing",
+            Kind::Warning => "warning",
+            Kind::Error => "error",
+            Kind::Fatal => "fatal",
+        }
+    }
+}
+
+/// The voice setting of one run: murloc on or off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Voice {
+    serious: bool,
+}
+
+/// The environment variable that turns the murloc off; any value but empty and `0` counts.
+pub const SERIOUS_ENV: &str = "MRGL_SERIOUS";
+
+impl Voice {
+    /// A voice that speaks murloc (`serious == false`) or plain English only.
+    pub const fn new(serious: bool) -> Self {
+        Self { serious }
+    }
+
+    /// The voice of a run: the `--serious` flag wins; otherwise `MRGL_SERIOUS` decides.
+    pub fn from_env(serious_flag: bool) -> Self {
+        Self::new(serious_flag || serious_env_set(std::env::var_os(SERIOUS_ENV).as_deref()))
+    }
+
+    /// Whether the murloc line is dropped.
+    pub const fn is_serious(self) -> bool {
+        self.serious
+    }
+
+    /// The message as it is printed: the murloc line, a newline and the plain line, or the plain line alone.
+    pub fn say(self, kind: Kind, plain: impl fmt::Display) -> String {
+        if self.serious {
+            plain.to_string()
+        } else {
+            format!("{}\n{}", kind.murloc(), plain)
+        }
+    }
+}
+
+/// `MRGL_SERIOUS` set to anything but empty or `0` means serious.
+fn serious_env_set(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|value| !value.is_empty() && value != "0")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_message_is_the_murloc_line_then_the_plain_line() {
+        let text = Voice::new(false).say(Kind::Success, "2 addons updated, 12 up to date");
+        let expected = format!(
+            "{}\n2 addons updated, 12 up to date",
+            Kind::Success.murloc()
+        );
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn serious_keeps_only_the_plain_line() {
+        let text = Voice::new(true).say(Kind::Error, "addon not found: Questie (flavor forever)");
+        assert_eq!(text, "addon not found: Questie (flavor forever)");
+    }
+
+    #[test]
+    fn every_kind_sounds_like_itself() {
+        let kinds = [
+            Kind::Banner,
+            Kind::Progress,
+            Kind::Success,
+            Kind::Nothing,
+            Kind::Warning,
+            Kind::Error,
+            Kind::Fatal,
+        ];
+        let lines: std::collections::HashSet<&str> =
+            kinds.iter().map(|kind| kind.murloc()).collect();
+        assert_eq!(lines.len(), kinds.len(), "two kinds share a murloc line");
+        let names: std::collections::HashSet<&str> =
+            kinds.iter().map(|kind| kind.as_str()).collect();
+        assert_eq!(names.len(), kinds.len(), "two kinds share a JSON name");
+        assert!(kinds.iter().all(|kind| !kind.murloc().is_empty()));
+    }
+
+    #[test]
+    fn the_environment_variable_counts_unless_empty_or_zero() {
+        use std::ffi::OsStr;
+        assert!(!serious_env_set(None));
+        assert!(!serious_env_set(Some(OsStr::new(""))));
+        assert!(!serious_env_set(Some(OsStr::new("0"))));
+        assert!(serious_env_set(Some(OsStr::new("1"))));
+        assert!(serious_env_set(Some(OsStr::new("true"))));
+    }
+
+    #[test]
+    fn the_flag_alone_makes_it_serious() {
+        // The environment case runs end to end in the CLI tests, where the variable can be set safely.
+        assert!(Voice::from_env(true).is_serious());
+    }
+}

@@ -1,0 +1,29 @@
+# The Rust toolchain of every CI job that builds with it: the version and the components that
+# rust-toolchain.toml pins, installed by the runner's own rustup, not by a third-party action. Without an
+# argument (rustup 1.28+) `rustup toolchain install` installs what the file names; the pin is an exact version,
+# so no preinstalled stable can stand in for it. The last two lines put the result in the log. The msrv job installs
+# its own toolchain (the `rust-version` of Cargo.toml) and does not use this action.
+name: Install the Rust toolchain
+description: Installs the toolchain and components of rust-toolchain.toml with the runner's rustup, plus extra targets.
+
+inputs:
+  targets:
+    description: Extra targets for `rustup target add`, separated by spaces; none by default.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install the Rust toolchain from rust-toolchain.toml
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        rustup toolchain install --no-self-update
+        if [ -n "$TARGETS" ]; then
+          read -r -a targets <<< "$TARGETS"
+          rustup target add "${targets[@]}"
+        fi
+        rustup show
+        rustup component list --installed
