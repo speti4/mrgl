@@ -12,7 +12,7 @@ drop is the only other exit. Closing a task files every follow-up as a `backlog/
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 16 backlog (5 ready · 0 blocked · 2 waiting · 9 ideas) · 0 in progress · 2 done · 0 dropped · 5 decisions
+**State:** 15 backlog (4 ready · 0 blocked · 2 waiting · 9 ideas) · 1 in progress · 2 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -20,7 +20,6 @@ _Generated 2026-10-21 — edit the files, not this section._
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 002 | [Flavor detection and the AddOns scan with TOC parsing; CLI scan and list](backlog/002-flavor-detection-and-addons-scan-with-toc-parsing.md) | M | 2026-10-21 |
 | 003 | [GitHub release source: release.json, flavor-correct asset pick, ETag cache; CLI…](backlog/003-github-release-source-with-release-json.md) | M | 2026-10-21 |
 | 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](backlog/004-install-engine-with-state-sidecar.md) | M | 2026-10-21 |
 | 006 | [Update check: installed state against the latest release per flavor; update --a…](backlog/006-update-check-and-update-all.md) | S | 2026-10-21 |
@@ -67,7 +66,11 @@ _none_
 
 ### In progress
 
-_none_
+#### M1 Core + CLI
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 002 | [Flavor detection and the AddOns scan with TOC parsing; CLI scan, list and root](wip/002-flavor-detection-and-addons-scan-with-toc-parsing.md) | 2026-10-21 | `none` |
 
 ### Closed – do not reopen
 
