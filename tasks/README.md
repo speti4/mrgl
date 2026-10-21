@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 31 backlog (2 ready · 0 blocked · 2 waiting · 27 ideas) · 0 in progress · 14 done · 0 dropped · 5 decisions
+**State:** 30 backlog (2 ready · 0 blocked · 2 waiting · 26 ideas) · 0 in progress · 15 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -69,7 +69,6 @@ _none_
 | 024 | [mrgl doctor: a diagnostic report for a bug report](backlog/024-doctor-diagnostic-report.md) | S | 2026-10-21 |
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](backlog/033-close-the-milestone-of-a-shipped-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
-| 038 | [The install engine warns when the client runs](backlog/038-install-warns-when-the-client-runs.md) | S | 2026-10-21 |
 | 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](backlog/043-second-registry-source-for-the-game-root.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
@@ -115,6 +114,7 @@ _none_
 | # | Task | Closed |
 |---|---|---|
 | 044 | [One zip-entry check for the install engine and the backup restore](done/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | 2026-10-21 |
+| 038 | [The install engine warns when the client runs](done/038-install-warns-when-the-client-runs.md) | 2026-10-21 |
 | 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](done/035-window-polish-forever-column-and-toast-cap.md) | 2026-10-21 |
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
 | 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
@@ -123,9 +123,8 @@ _none_
 | 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
 | 017 | [Window design sketch: the list view, the states and the voice's place, before t…](done/017-window-design-sketch-before-the-shell.md) | 2026-10-21 |
 | 016 | [Mirror the task files into GitHub issues and milestones](done/016-task-to-github-issue-mirror.md) | 2026-10-21 |
-| 013 | [WTF backup and restore](done/013-wtf-backup-and-restore.md) | 2026-10-21 |
 
-_4 more in `done/`._
+_5 more in `done/`._
 
 ### Decisions
 
