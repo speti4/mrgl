@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 30 backlog (3 ready · 0 blocked · 2 waiting · 25 ideas) · 0 in progress · 6 done · 0 dropped · 5 decisions
+**State:** 32 backlog (2 ready · 0 blocked · 2 waiting · 28 ideas) · 0 in progress · 7 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -23,7 +23,6 @@ _Generated 2026-10-21 — edit the files, not this section._
 | # | Task | Size | Created |
 |---|---|---|---|
 | 003 | [GitHub release source: release.json, flavor-correct asset pick, ETag cache; CLI…](backlog/003-github-release-source-with-release-json.md) | M | 2026-10-21 |
-| 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](backlog/004-install-engine-with-state-sidecar.md) | M | 2026-10-21 |
 | 006 | [Update check: installed state against the latest release per flavor; update --a…](backlog/006-update-check-and-update-all.md) | S | 2026-10-21 |
 
 ### Needs decision
@@ -56,6 +55,7 @@ _none_
 | 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](backlog/029-dependency-check-from-toc-and-nolib.md) | S | 2026-10-21 |
 | 030 | [Release notes before an update: the GitHub release body in one line](backlog/030-release-notes-before-an-update.md) | S | 2026-10-21 |
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](backlog/032-contributing-names-the-mirrored-issues.md) | S | 2026-10-21 |
+| 037 | [list reads the sidecar: managed (source, version) and unmanaged addons](backlog/037-list-reads-the-sidecar-managed-and-unmanaged.md) | S | 2026-10-21 |
 
 #### M2 Window MVP
 
@@ -70,6 +70,7 @@ _none_
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](backlog/033-close-the-milestone-of-a-shipped-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
 | 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](backlog/035-window-polish-forever-column-and-toast-cap.md) | S | 2026-10-21 |
+| 038 | [The install engine warns when the client runs](backlog/038-install-warns-when-the-client-runs.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
 
@@ -94,6 +95,7 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 031 | [Self-update of the portable zip with attestation verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | M | 2026-10-21 |
+| 039 | [A bound on the unpacked size of a zip](backlog/039-bound-on-the-unpacked-size-of-a-zip.md) | S | 2026-10-21 |
 
 #### M6 macOS preview
 
@@ -117,6 +119,7 @@ _none_
 | 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
 | 017 | [Window design sketch: the list view, the states and the voice's place, before t…](done/017-window-design-sketch-before-the-shell.md) | 2026-10-21 |
 | 016 | [Mirror the task files into GitHub issues and milestones](done/016-task-to-github-issue-mirror.md) | 2026-10-21 |
+| 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](done/004-install-engine-with-state-sidecar.md) | 2026-10-21 |
 | 002 | [Flavor detection and the AddOns scan with TOC parsing; CLI scan, list and root](done/002-flavor-detection-and-addons-scan-with-toc-parsing.md) | 2026-10-21 |
 | 001 | [Project scaffolding: repo structure, task standard, decisions, origin and resea…](done/001-project-scaffolding.md) | 2026-10-21 |
 

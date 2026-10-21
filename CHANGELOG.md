@@ -14,6 +14,7 @@ The repository, the task standard and the empty workspace: no app yet.
 ### M1 Core + CLI
 
 - Flavor detection and the AddOns scan with TOC parsing; CLI `scan`, `list` and `root` ([002](https://github.com/speti4/mrgl/blob/main/tasks/done/002-flavor-detection-and-addons-scan-with-toc-parsing.md))
+- Install engine: zip to staging, addon-folder detection, atomic swap, rollback, the state sidecar; `add <zip>` and `remove` ([004](https://github.com/speti4/mrgl/blob/main/tasks/done/004-install-engine-with-state-sidecar.md))
 
 ### M2 Window MVP
 

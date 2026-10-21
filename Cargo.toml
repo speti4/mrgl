@@ -23,6 +23,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # One error type per module with a `Display` that is the plain English line of the voice (task 001 / D-005).
 thiserror = "2"
+# Reads the addon zips the install engine unpacks into staging (task 004): ZIP is the one container every
+# source ships, and std has no archive reader. Default features off; deflate comes through flate2 on the pure
+# Rust zlib-rs backend, so no C code, no AES, no bzip2 or zstd the addon zips never use.
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# SHA-256 of every installed file for the state sidecar's file list (D-003, task 004): a stable hash the
+# repair and rollback of later tasks can compare against; std has no hash function meant for files.
+sha2 = "0.10"
 # The window, IPC, async runtime and asset embedding of the D-002 shell, on the system web view (WebView2 on
 # Windows 11): one portable zip with two exes, nothing to install (task 001).
 tauri = "2"

@@ -10,7 +10,8 @@ milestone: M1 Core + CLI
 
 What: `mrgl rollback <name>` installs the previous version's zip the install engine (004) kept in the cache
 (`%LOCALAPPDATA%\mrgl\<flavor-id>\cache\<addon>\<version>.zip`, one previous version per addon) with the same
-atomic swap, and pins the addon at that version (021). Decided 2026-10-21: a rollback pins, so the next
+atomic swap (the engine's install call with the cached zip and the previous version as the metadata), and
+pins the addon at that version (021). Decided 2026-10-21: a rollback pins, so the next
 `update --all` does not reinstall the broken build; `unpin` is the deliberate step back. The swap's own revert
 on a failed install in 004 is not this command.
 Why: with daily broken builds after launch, "put yesterday's back" is one command instead of a hunt for a zip.

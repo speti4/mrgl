@@ -50,6 +50,42 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+
+    /// A file the install engine was given is not a zip it can read (task 004).
+    #[error("not a readable zip: {path} ({reason})")]
+    ZipUnreadable { path: PathBuf, reason: String },
+
+    /// A zip entry would land outside the staging folder: `..`, an absolute path, a drive letter (task 004).
+    #[error("refused {path}: the entry `{entry}` would land outside the staging folder")]
+    ZipEntryEscapes { path: PathBuf, entry: String },
+
+    /// A zip with no addon folder in it: nothing with a `.toc` at the root or one level down (task 004).
+    #[error("no addon in {path}: no folder with a .toc at the root or one level down")]
+    NoAddonInZip { path: PathBuf },
+
+    /// A name that is neither a managed addon nor a folder of the flavor (task 004).
+    #[error("addon not found: {name} (flavor {flavor})")]
+    AddonNotFound { name: String, flavor: String },
+
+    /// A folder the sidecar does not know: installed by hand or by another manager (task 004).
+    #[error(
+        "addon not managed by mrgl: {name} (flavor {flavor}); it was installed by hand or by another manager, so its folder is yours to delete"
+    )]
+    NotManaged { name: String, flavor: String },
+
+    /// A folder swap failed and the AddOns folder was put back as it was (task 004).
+    #[error("installing {folder} failed and the AddOns folder is as it was: {reason}")]
+    SwapFailed { folder: String, reason: String },
+
+    /// A folder swap failed and the revert failed too; the previous folders wait under the staging path.
+    #[error(
+        "installing {folder} failed and the revert failed too: {reason}; the previous folders are under {staging}"
+    )]
+    SwapRevertFailed {
+        folder: String,
+        reason: String,
+        staging: PathBuf,
+    },
 }
 
 /// The crate's result type.
