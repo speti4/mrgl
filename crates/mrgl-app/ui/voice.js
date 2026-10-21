@@ -28,7 +28,6 @@
   function placement(kind) {
     switch (kind) {
       case "success":
-        return { status: true, toast: true, sticky: false };
       case "warning":
         return { status: true, toast: true, sticky: false };
       case "error":
