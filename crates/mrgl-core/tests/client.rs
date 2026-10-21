@@ -83,8 +83,12 @@ fn a_process_started_from_the_flavor_folder_is_the_client_until_it_ends() {
         .expect("the stand-in is the client");
     assert_eq!(client.pid, child.id());
     assert_eq!(client.exe_name(), "client-stand-in.exe");
-    assert!(
-        client.exe.starts_with(&flavor.folder),
+    // The reported path may carry 8.3 components (a `RUNNER~1` temp folder on a CI runner), so the
+    // folder is compared by its canonical form only.
+    let reported = std::fs::canonicalize(client.exe.parent().expect("a parent")).expect("exists");
+    assert_eq!(
+        reported,
+        std::fs::canonicalize(&flavor.folder).expect("exists"),
         "{}",
         client.exe.display()
     );

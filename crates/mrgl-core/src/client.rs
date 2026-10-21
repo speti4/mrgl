@@ -108,20 +108,21 @@ impl RunningClient {
     }
 }
 
-/// The first process of a list whose executable lives under a folder. The folder is canonicalized once
-/// (a missing folder is taken as given, absolute); the process paths are compared as they are, since the
-/// kernel reports the resolved path of an image and a file lookup per process would cost what the check
-/// must not.
+/// The first process of a list whose executable lives under a folder. The folder is resolved once, into
+/// its canonical form and, on Windows, its 8.3 short form (a missing folder is taken as given, absolute);
+/// the process paths are compared as they are, since the kernel reports an image's path as the process
+/// was started (a short-name component stays short) and a file lookup per process would cost what the
+/// check must not.
 pub fn client_running_among(
     processes: &dyn ProcessList,
     folder: &Path,
 ) -> Result<Option<RunningClient>> {
-    let folder = resolved(folder);
+    let forms = resolved(folder);
     let found = processes
         .executables()
         .map_err(|source| Error::ProcessList { source })?
         .into_iter()
-        .find(|process| is_under(&process.exe, &folder))
+        .find(|process| is_under(&process.exe, &forms))
         .map(|process| RunningClient {
             pid: process.pid,
             exe: process.exe,
@@ -156,13 +157,21 @@ pub fn warn_if_client_running(flavor: &Flavor) -> Option<String> {
     }
 }
 
-/// The folder as the kernel would report it: canonical when it exists, absolute otherwise, without the
-/// `\\?\` prefix either way.
-fn resolved(folder: &Path) -> PathBuf {
+/// The forms a process path under the folder may take: the canonical (long-name) form when the folder
+/// exists, absolute otherwise, and on Windows the 8.3 short form when the volume keeps one and it
+/// differs; both without the `\\?\` prefix.
+fn resolved(folder: &Path) -> Vec<PathBuf> {
     let path = std::fs::canonicalize(folder)
         .or_else(|_| std::path::absolute(folder))
         .unwrap_or_else(|_| folder.to_path_buf());
-    strip_verbatim(&path)
+    let long = strip_verbatim(&path);
+    let mut forms = vec![long];
+    if let Some(short) = system::short_form(&path).map(|short| strip_verbatim(&short))
+        && short != forms[0]
+    {
+        forms.push(short);
+    }
+    forms
 }
 
 /// `\\?\C:\x` as `C:\x` and `\\?\UNC\server\share` as `\\server\share`, so a canonical path and a
@@ -190,13 +199,31 @@ fn strip_verbatim(path: &Path) -> PathBuf {
     result
 }
 
-/// Whether `exe` lies strictly under `folder`, component by component; the folder itself does not count.
-fn is_under(exe: &Path, folder: &Path) -> bool {
+/// Whether `exe` lies strictly under the folder, component by component, each component matching the
+/// same component of any of the folder's forms (long or short names mixed, as a path may carry them); the
+/// folder itself does not count. A form with another number of components than the first is ignored.
+fn is_under(exe: &Path, forms: &[PathBuf]) -> bool {
+    let Some(first) = forms.first() else {
+        return false;
+    };
+    let wanted: Vec<Vec<Component<'_>>> = forms
+        .iter()
+        .map(|form| form.components().collect())
+        .collect();
+    let length = wanted[0].len();
+    let wanted: Vec<&Vec<Component<'_>>> =
+        wanted.iter().filter(|form| form.len() == length).collect();
+    debug_assert_eq!(first.components().count(), length);
     let mut found = exe.components();
-    for wanted in folder.components() {
-        match found.next() {
-            Some(component) if same_component(component.as_os_str(), wanted.as_os_str()) => {}
-            _ => return false,
+    for index in 0..length {
+        let Some(component) = found.next() else {
+            return false;
+        };
+        if !wanted
+            .iter()
+            .any(|form| same_component(component.as_os_str(), form[index].as_os_str()))
+        {
+            return false;
         }
     }
     found.next().is_some()
@@ -219,10 +246,11 @@ mod system {
     //! user's with no right to query it) is left out.
 
     use std::ffi::OsString;
-    use std::os::windows::ffi::OsStringExt;
-    use std::path::PathBuf;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Path, PathBuf};
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
@@ -233,6 +261,30 @@ mod system {
     };
 
     use super::RunningProcess;
+
+    /// The 8.3 short form of an existing path (`C:\Users\RUNNER~1\…`), as a process started through it
+    /// carries it; `None` when Windows has none to give (the volume keeps no short names, the path is
+    /// gone). One call for the flavor folder, never per process.
+    pub(super) fn short_form(path: &Path) -> Option<PathBuf> {
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let mut buffer = vec![0u16; 1024];
+        for _ in 0..2 {
+            // SAFETY: `wide` is NUL-terminated and the buffer is `buffer.len()` UTF-16 units long; the
+            // return value is the length written, or the length needed when the buffer is too small.
+            let length = unsafe {
+                GetShortPathNameW(wide.as_ptr(), buffer.as_mut_ptr(), buffer.len() as u32)
+            };
+            if length == 0 {
+                return None;
+            }
+            if (length as usize) <= buffer.len() {
+                buffer.truncate(length as usize);
+                return Some(PathBuf::from(OsString::from_wide(&buffer)));
+            }
+            buffer = vec![0u16; length as usize];
+        }
+        None
+    }
 
     /// A kernel handle closed on drop.
     struct Handle(HANDLE);
@@ -313,10 +365,17 @@ mod system {
     //! The other targets list nothing yet: the check reports no client and the guard lets a write
     //! through. The macOS preview (M6) brings the macOS process list.
 
+    use std::path::{Path, PathBuf};
+
     use super::RunningProcess;
 
     pub(super) fn executables() -> std::io::Result<Vec<RunningProcess>> {
         Ok(Vec::new())
+    }
+
+    /// No second form of a path outside Windows.
+    pub(super) fn short_form(_path: &Path) -> Option<PathBuf> {
+        None
     }
 }
 
@@ -337,19 +396,14 @@ mod tests {
 
     #[test]
     fn a_process_under_the_folder_is_the_client() {
+        // Made-up paths on a drive that does not exist here: a missing folder is taken as given.
         let processes = FixedProcesses::new([
             (4, "C:\\Windows\\System32\\svchost.exe"),
-            (120, "C:\\games\\World of Warcraft\\_retail_\\Wow.exe"),
-            (
-                121,
-                "C:\\games\\World of Warcraft\\_forever_\\Launcher\\Helper.exe",
-            ),
-            (
-                122,
-                "C:\\games\\World of Warcraft\\_forever_\\WowForever.exe",
-            ),
+            (120, "Q:\\wow\\_retail_\\Wow.exe"),
+            (121, "Q:\\wow\\_forever_\\Launcher\\Helper.exe"),
+            (122, "Q:\\wow\\_forever_\\WowForever.exe"),
         ]);
-        let folder = Path::new("C:\\games\\World of Warcraft\\_forever_");
+        let folder = Path::new("Q:\\wow\\_forever_");
         let client = client_running_among(&processes, folder)
             .expect("a list")
             .expect("the client");
@@ -359,52 +413,91 @@ mod tests {
         );
         assert_eq!(client.exe_name(), "Helper.exe");
         assert_eq!(
-            client_running_among(
-                &processes,
-                Path::new("C:\\games\\World of Warcraft\\_classic_")
-            )
-            .expect("a list"),
+            client_running_among(&processes, Path::new("Q:\\wow\\_classic_")).expect("a list"),
             None
         );
     }
 
     #[test]
     fn a_sibling_folder_with_the_same_prefix_is_not_the_client() {
-        let processes =
-            FixedProcesses::new([(7, "C:\\games\\World of Warcraft\\_forever_2\\Wow.exe")]);
-        let folder = Path::new("C:\\games\\World of Warcraft\\_forever_");
+        let processes = FixedProcesses::new([(7, "Q:\\wow\\_forever_2\\Wow.exe")]);
+        let folder = Path::new("Q:\\wow\\_forever_");
         assert_eq!(
             client_running_among(&processes, folder).expect("a list"),
             None
         );
-        assert!(!is_under(
-            Path::new("C:\\games\\_forever_"),
-            Path::new("C:\\games\\_forever_")
+        let forms = [PathBuf::from("Q:\\wow\\_forever_")];
+        assert!(!is_under(Path::new("Q:\\wow\\_forever_"), &forms));
+        assert!(!is_under(Path::new("Q:\\wow"), &forms));
+        assert!(!is_under(Path::new("Q:\\wow\\_forever_\\Wow.exe"), &[]));
+    }
+
+    #[test]
+    fn a_component_matches_any_form_of_the_folder() {
+        let forms = [
+            PathBuf::from("C:\\Users\\runneradmin\\AppData\\Local\\Temp\\mrgl-test\\_forever_"),
+            PathBuf::from("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\MRGL-T~1\\_FOREV~1"),
+        ];
+        // Long and short components mixed, as a process started through a partly short path carries them.
+        assert!(is_under(
+            Path::new("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\mrgl-test\\_FOREV~1\\Wow.exe"),
+            &forms
         ));
         assert!(!is_under(
-            Path::new("C:\\games"),
-            Path::new("C:\\games\\_forever_")
+            Path::new("C:\\Users\\RUNNER~2\\AppData\\Local\\Temp\\mrgl-test\\_forever_\\Wow.exe"),
+            &forms
         ));
+        // A form with another number of components than the first is ignored, never a match.
+        let odd = [
+            PathBuf::from("Q:\\wow\\_forever_"),
+            PathBuf::from("Q:\\elsewhere\\_forever_\\extra"),
+        ];
+        assert!(is_under(Path::new("Q:\\wow\\_forever_\\Wow.exe"), &odd));
+        assert!(!is_under(
+            Path::new("Q:\\elsewhere\\_forever_\\extra\\Wow.exe"),
+            &odd
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_process_started_through_the_short_name_is_still_the_client() {
+        let root = std::env::temp_dir().join(format!(
+            "mrgl-client-short-name-test-{}",
+            std::process::id()
+        ));
+        let folder = root.join("a folder name long enough for a short one");
+        std::fs::create_dir_all(&folder).expect("the folder");
+        let canonical = std::fs::canonicalize(&folder).expect("canonical");
+        // With short names disabled on the volume the short form is the long one; the match still holds.
+        // A process path carries no `\\?\` prefix, so the stub's does not either.
+        let short = strip_verbatim(&system::short_form(&canonical).expect("a short form"));
+        let processes = FixedProcesses::new([(5, short.join("Wow.exe"))]);
+        let client = client_running_among(&processes, &folder)
+            .expect("a list")
+            .expect("the client");
+        assert_eq!(client.pid, 5);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[cfg(windows)]
     #[test]
     fn windows_paths_compare_case_insensitively_and_without_the_verbatim_prefix() {
         assert!(is_under(
-            Path::new("c:\\GAMES\\world of warcraft\\_FOREVER_\\wow.exe"),
-            Path::new("C:\\games\\World of Warcraft\\_forever_")
+            Path::new("q:\\WOW\\_FOREVER_\\wow.exe"),
+            &[PathBuf::from("Q:\\wow\\_forever_")]
         ));
         assert_eq!(
-            strip_verbatim(Path::new("\\\\?\\C:\\games\\_forever_")),
-            PathBuf::from("C:\\games\\_forever_")
+            strip_verbatim(Path::new("\\\\?\\Q:\\wow\\_forever_")),
+            PathBuf::from("Q:\\wow\\_forever_")
         );
         assert_eq!(
             strip_verbatim(Path::new("\\\\?\\UNC\\server\\share\\_forever_")),
             PathBuf::from("\\\\server\\share\\_forever_")
         );
         assert_eq!(
-            strip_verbatim(Path::new("C:\\games\\_forever_")),
-            PathBuf::from("C:\\games\\_forever_")
+            strip_verbatim(Path::new("Q:\\wow\\_forever_")),
+            PathBuf::from("Q:\\wow\\_forever_")
         );
     }
 
@@ -412,9 +505,9 @@ mod tests {
     fn the_refusal_and_the_warning_are_the_documented_lines() {
         let client = RunningClient {
             pid: 4242,
-            exe: PathBuf::from("C:\\games\\World of Warcraft\\_forever_\\WowForever.exe"),
+            exe: PathBuf::from("Q:\\wow\\_forever_\\WowForever.exe"),
         };
-        let flavor = flavor("C:\\games\\World of Warcraft\\_forever_");
+        let flavor = flavor("Q:\\wow\\_forever_");
         assert_eq!(
             client.refusal(&flavor).to_string(),
             "the client is running in _forever_ (WowForever.exe, pid 4242): close the game first, nothing under WTF is written while it runs"
@@ -435,6 +528,11 @@ mod tests {
     #[test]
     fn a_missing_folder_is_taken_as_given() {
         let folder = std::env::temp_dir().join("mrgl-client-test-no-such-folder");
+        assert_eq!(
+            resolved(&folder),
+            [std::path::absolute(&folder).expect("absolute")],
+            "one form only, as given"
+        );
         let processes = FixedProcesses::new([(9, folder.join("Wow.exe"))]);
         let client = client_running_among(&processes, &folder)
             .expect("a list")

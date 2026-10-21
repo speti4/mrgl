@@ -81,6 +81,14 @@ the next login`. Both use the existing error and warning kinds of the voice tabl
   `[target.'cfg(windows)'.dependencies]` of `mrgl-core`; `Cargo.lock` changes by one line (no new crate).
   `deny.toml` needs no change. `docs/nerglish.md` needs no change: the two lines use the error and the
   warning kind.
+- 2026-10-21 — CI's first run failed the CLI test: the runner's temp folder is an 8.3 short path
+  (`RUNNER~1`), and Windows reports an image path as the process was started, short components kept,
+  while the flavor folder was canonicalized to its long form. Reproduced locally by starting a process
+  through a short path. Fixed in core, since a client launched through such a path is the same case: the
+  flavor folder is resolved into both forms (`GetShortPathNameW`, one call, still no per-process I/O) and
+  each component of a process path matches either form; two unit tests cover mixed forms and a process
+  started through the short name. The unit tests' made-up paths moved to a drive letter that exists
+  nowhere, so no test resolves against a real folder.
 
 ## Deviations from the plan
 
@@ -99,7 +107,8 @@ the next login`. Both use the existing error and warning kinds of the voice tabl
   `python -I scripts/changelog.py --check`, all green locally on Windows 11.
 - 2026-10-21 — the real-process test: the stand-in started from the temp flavor folder is reported with
   its pid and `client-stand-in.exe` under the flavor folder; `ensure_client_not_running` returns the
-  documented refusal; after `kill` and `wait` the check is `None` and the guard passes.
+  documented refusal; after `kill` and `wait` the check is `None` and the guard passes. The same tests
+  pass with `TEMP` set to its 8.3 short form, the CI runner's case.
 
 ## Closing checklist
 
