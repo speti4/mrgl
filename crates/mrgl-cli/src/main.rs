@@ -11,7 +11,8 @@
 //! `unlink` (the dev addon junctions) are task 005; `export` and `import` (the addon list) and the
 //! interface warning of `list` and `add` are task 015; `pin`, `unpin`, `ignore`, `unignore` and
 //! `channel`, with their marks in `list`, are task 021; `rollback` (the previous version from the kept
-//! zip, then pinned) is task 022; the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer
+//! zip, then pinned) is task 022; `savedvars` (the SavedVariables sizes and the orphan cleanup) is task
+//! 025; the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer
 //! "not implemented yet" with their task id until that task lands, so the help text and the voice are
 //! testable from the first commit.
 
@@ -32,6 +33,7 @@ use mrgl_core::install::{Engine, Marked, Metadata, PickInstalled, PickStep};
 use mrgl_core::interface::{self, InterfaceMismatch};
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
+use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Pick, Source, SourceSpec, Target};
@@ -254,6 +256,19 @@ enum Command {
         #[arg(long)]
         flavor: Option<String>,
     },
+    /// List a flavor's SavedVariables files by size, per account and per character, and mark the
+    /// orphans: files whose addon folder is no longer under Interface\AddOns (a disabled addon keeps its
+    /// folder and is never one).
+    Savedvars {
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+        /// Move the orphans and their .bak files into backups\<flavor-id>\SavedVariables-<date>.zip under
+        /// the mrgl home (%LOCALAPPDATA%\mrgl); unzip it into WTF to put them back. Refused while the
+        /// client runs.
+        #[arg(long)]
+        clean: bool,
+    },
 }
 
 /// A channel name on the command line: `stable` or `prerelease` (also `beta`).
@@ -280,7 +295,8 @@ impl Command {
             | Command::Ignore { .. }
             | Command::Unignore { .. }
             | Command::Channel { .. }
-            | Command::Rollback { .. } => return None,
+            | Command::Rollback { .. }
+            | Command::Savedvars { .. } => return None,
             Command::Doctor { .. } => return None,
             Command::Update { all: true, .. } => ("update --all", "006"),
             Command::Update { .. } => ("update", "006"),
@@ -439,6 +455,9 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             flavor,
         } => mark_command(reporter, &name, flavor.as_deref(), Mark::Channel(channel))?,
         Command::Rollback { name, flavor } => rollback_command(reporter, &name, flavor.as_deref())?,
+        Command::Savedvars { flavor, clean } => {
+            savedvars_command(reporter, flavor.as_deref(), clean)?
+        }
         _ => unreachable!("every other command answered with its task"),
     }
     Ok(())
@@ -2341,6 +2360,143 @@ fn doctor_command(
     let (kind, summary) = report.summary();
     reporter.say(kind, summary);
     Ok(())
+}
+
+/// `mrgl savedvars --flavor <id> [--clean]` (task 025): the flavor's SavedVariables files, the largest
+/// first, one data line each with the orphans marked, and a summary; `--clean` moves the orphans and their
+/// `.bak` files into `SavedVariables-<date>.zip` in the backups folder under the mrgl home, refused while
+/// the client runs (task 023).
+fn savedvars_command(reporter: &Reporter, spec: Option<&str>, clean: bool) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let folder = flavor_folder(spec, None, &mut warnings)?;
+    let flavor = flavor::read_flavor(&folder).map_err(|error| error.to_string())?;
+    warnings.extend(flavor.warnings.iter().cloned());
+    let folder_name = flavor.folder_name();
+
+    if clean {
+        let backups = backup::backups_dir(&flavor.id).map_err(|error| error.to_string())?;
+        let cleaned =
+            savedvars::clean_orphans(&flavor, &backups).map_err(|error| error.to_string())?;
+        warnings.extend(cleaned.warnings.iter().cloned());
+        if reporter.json {
+            reporter.document(serde_json::json!({
+                "kind": "savedvars-clean",
+                "flavor": &flavor,
+                "zip": &cleaned.zip,
+                "moved": &cleaned.moved,
+                "files": cleaned.files,
+                "bytes": cleaned.bytes,
+                "warnings": warnings,
+            }));
+            return Ok(());
+        }
+        for file in &cleaned.moved {
+            reporter.line(savedvars_line(file));
+        }
+        for warning in &warnings {
+            reporter.say(Kind::Warning, warning);
+        }
+        match &cleaned.zip {
+            None => reporter.say(
+                Kind::Nothing,
+                format!("no orphans in the SavedVariables of {folder_name}, nothing moved"),
+            ),
+            Some(zip) => reporter.say(
+                Kind::Success,
+                format!(
+                    "moved {} of {folder_name} ({}, {}) into {}; unzip it into the WTF folder to put them back",
+                    count_orphans(cleaned.moved.len()),
+                    count_files(cleaned.files),
+                    human_bytes(cleaned.bytes),
+                    zip.display()
+                ),
+            ),
+        }
+        return Ok(());
+    }
+
+    let listing = savedvars::list_saved_variables(&flavor).map_err(|error| error.to_string())?;
+    warnings.extend(listing.warnings.iter().cloned());
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "savedvars",
+            "flavor": &flavor,
+            "wtf": &listing.wtf,
+            "files": &listing.files,
+            "bytes": listing.bytes,
+            "orphans": listing.orphans,
+            "orphan_bytes": listing.orphan_bytes,
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    for file in &listing.files {
+        reporter.line(savedvars_line(file));
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let count = match listing.files.len() {
+        1 => "1 SavedVariables file".to_string(),
+        count => format!("{count} SavedVariables files"),
+    };
+    if listing.files.is_empty() {
+        reporter.say(
+            Kind::Nothing,
+            format!("no SavedVariables files in the WTF folder of {folder_name}"),
+        );
+    } else if listing.orphans == 0 {
+        reporter.say(
+            Kind::Success,
+            format!(
+                "{count} of {folder_name}, {} in all, no orphans",
+                human_bytes(listing.bytes)
+            ),
+        );
+    } else {
+        reporter.say(
+            Kind::Warning,
+            format!(
+                "{count} of {folder_name}, {} in all; {} ({}) have no addon folder: `mrgl savedvars --clean` moves them into a backup zip",
+                human_bytes(listing.bytes),
+                count_orphans(listing.orphans),
+                human_bytes(listing.orphan_bytes)
+            ),
+        );
+    }
+    Ok(())
+}
+
+/// One data line of `savedvars`: the size (the `.lua` and its `.bak` together), the addon, where it is,
+/// and `orphan` or `client` (the client's own file) when it is one.
+fn savedvars_line(file: &SavedVariablesFile) -> String {
+    let mark = match file.status {
+        SavedStatus::Orphan => "  orphan",
+        SavedStatus::Client => "  client",
+        SavedStatus::Installed | SavedStatus::Unknown => "",
+    };
+    format!(
+        "{:>9}  {}  {}{mark}",
+        human_bytes(file.bytes),
+        file.addon,
+        file.place()
+    )
+}
+
+fn count_orphans(count: usize) -> String {
+    if count == 1 {
+        "1 orphan".to_string()
+    } else {
+        format!("{count} orphans")
+    }
+}
+
+fn count_files(count: usize) -> String {
+    if count == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{count} files")
+    }
 }
 
 #[cfg(test)]

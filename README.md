@@ -29,9 +29,11 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
   WoWInterface APIs and hand-picked zips; CurseForge with your own API key, within its terms, never scraped.
 - **Only `Interface\AddOns`.** mrgl writes addon folders and keeps its own state under `%LOCALAPPDATA%\mrgl\`;
   the AddOns folder stays the truth and the state is a cache you can delete any time. It touches `WTF` only
-  for a backup restore or an addon set you asked for. It lives next to the CurseForge app without a fight.
-- **A toolbox, not only a manager.** WTF backup and restore, addon sets, a junction link for the addons you
-  develop yourself, and a window on top of it all.
+  for a backup restore, an addon set or a SavedVariables cleanup you asked for. It lives next to the
+  CurseForge app without a fight.
+- **A toolbox, not only a manager.** WTF backup and restore, addon sets, the SavedVariables sizes with the
+  cleanup of files whose addon is gone, a junction link for the addons you develop yourself, and a window on
+  top of it all.
 - **A murloc voice.** Every message is a murloc line and a plain English line; `--serious` (or
   `MRGL_SERIOUS=1`) keeps only the English, and JSON output is always plain ([docs/nerglish.md](docs/nerglish.md)).
 
@@ -60,6 +62,8 @@ target\release\mrgl.exe channel SomeAddon prerelease --flavor forever       # fo
 target\release\mrgl.exe backup --flavor forever                             # the WTF folder into a dated zip
 target\release\mrgl.exe backup --list --flavor forever                      # the backups so far
 target\release\mrgl.exe backup --restore WTF-2026-10-21-193605.zip --flavor forever   # one back, asks first
+target\release\mrgl.exe savedvars --flavor forever                          # the SavedVariables by size, orphans marked
+target\release\mrgl.exe savedvars --clean --flavor forever                  # the orphans into a backup zip
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
 target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
 target\release\mrgl.exe import forever-addons.json --flavor forever --dry-run   # what installing that list would do
@@ -97,6 +101,14 @@ last `add` of the same source fetched, so before that the build is `unknown`. Th
 A backup is a plain zip under `%LOCALAPPDATA%\mrgl\backups\<flavor-id>\` (or the folder `--to` names), and a
 restore moves the current `WTF` folder aside into the same place before it writes, so it can be undone by
 hand; it is refused while the game client runs.
+
+`mrgl savedvars` lists every `SavedVariables\<Addon>.lua` of a flavor, account-wide and per character, the
+largest first with its `.bak`, and a total. A file is an orphan when no addon folder of its name is left under
+`Interface\AddOns`; a disabled addon keeps its folder, so its settings are never one, and the client's own
+`Blizzard_` files are not either. `savedvars --clean` moves the orphans and their `.bak` files into
+`%LOCALAPPDATA%\mrgl\backups\<flavor-id>\SavedVariables-<date>.zip`, next to the backups, and is refused while
+the game client runs: nothing is deleted, and unzipping that zip into the `WTF` folder puts every file back
+where it was (`backup --restore` does not take it, a restore replaces the whole `WTF` folder).
 
 `list` and `add` check every addon's required dependencies (the TOC's `## Dependencies` and
 `## RequiredDeps`) and name what the game will not find, as a warning, never a refusal:

@@ -226,6 +226,25 @@ pub enum Error {
         version: String,
         path: PathBuf,
     },
+
+    /// A SavedVariables cleanup stopped part way (task 025): every file it removed from `WTF` had its
+    /// copy in the zip read back and compared first; the others are still where they were.
+    #[error(
+        "cleaning the SavedVariables stopped: {reason}; {removed} of {total} files were removed from WTF after their copy in {zip} was checked, the others are still in WTF"
+    )]
+    CleanupIncomplete {
+        zip: PathBuf,
+        removed: usize,
+        total: usize,
+        reason: String,
+    },
+
+    /// A restore was given the zip of a SavedVariables cleanup (task 025): a restore replaces all of `WTF`,
+    /// and that zip holds a few files; it is unzipped into `WTF` by hand.
+    #[error(
+        "not a WTF backup: {path} holds the SavedVariables a cleanup moved; unzip it into the WTF folder by hand to put them back"
+    )]
+    NotAWtfBackup { path: PathBuf },
 }
 
 /// The crate's result type.
