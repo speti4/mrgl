@@ -81,7 +81,7 @@ enum Command {
         flavor: Option<String>,
         /// The World of Warcraft folder (the one with `_retail_`, `_forever_` …) for a flavor named by
         /// name or id; otherwise `MRGL_ROOT`, then the folder `mrgl root` remembered, then the
-        /// launcher's registry key and the usual install folders.
+        /// registry (the launcher's key, the game's Uninstall entry) and the usual install folders.
         #[arg(long)]
         root: Option<PathBuf>,
     },
@@ -89,8 +89,8 @@ enum Command {
     /// run would use and where it comes from.
     Root {
         /// The game folder to remember; without it, the one a run would use is printed: `MRGL_ROOT`, the
-        /// remembered one, or the one found in the launcher's registry key or the usual install folders
-        /// (found, not remembered).
+        /// remembered one, or the one found in the registry or the usual install folders (found, not
+        /// remembered).
         folder: Option<PathBuf>,
     },
     /// Install an addon from a source: the path of a zip in hand, or `github:<owner>/<repo>` (the current
@@ -191,7 +191,7 @@ enum Command {
         #[arg(long)]
         flavor: Option<String>,
         /// The World of Warcraft folder; otherwise the one every command resolves (`MRGL_ROOT`, the
-        /// remembered one, the launcher's registry key, the usual install folders).
+        /// remembered one, the registry, the usual install folders).
         #[arg(long)]
         root: Option<PathBuf>,
     },
@@ -532,7 +532,7 @@ fn flavor_folder_and_root(
         let folder_name = id.folder_name().unwrap_or_default();
         let root = game_root(root_flag, warnings)?.ok_or_else(|| {
             format!(
-                "no game root for flavor {spec}: none in the launcher's registry key or the usual install folders; pass --root <folder>, set {ROOT_ENV} or run `mrgl root <folder>`"
+                "no game root for flavor {spec}: none in the registry or the usual install folders; pass --root <folder>, set {ROOT_ENV} or run `mrgl root <folder>`"
             )
         })?;
         if root.origin.is_discovered() {
@@ -550,8 +550,8 @@ fn flavor_folder_and_root(
 }
 
 /// The game root every command resolves the same way (task 020, `discover::resolve_root_of_process`):
-/// the flag, then `MRGL_ROOT`, then the remembered one, then the launcher's registry key and the usual
-/// install folders; `None` when nothing names it. A config warning is pushed; a discovered root carries
+/// the flag, then `MRGL_ROOT`, then the remembered one, then the registry (the launcher's key, the
+/// game's Uninstall entry) and the usual install folders; `None` when nothing names it. A config warning is pushed; a discovered root carries
 /// its origin for the caller to report.
 fn game_root(
     root_flag: Option<PathBuf>,
@@ -1431,7 +1431,7 @@ fn root_command(reporter: &Reporter, folder: Option<PathBuf>) -> Result<(), Stri
                     ),
                     None => reporter.say(
                         Kind::Nothing,
-                        "no game root: none remembered, none in the launcher's registry key or the usual install folders; run `mrgl root <folder>`",
+                        "no game root: none remembered, none in the registry or the usual install folders; run `mrgl root <folder>`",
                     ),
                 }
             }

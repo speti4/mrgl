@@ -38,7 +38,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
   calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
   D-003), the game root resolution (`discover`, task 020: the flag, `MRGL_ROOT`, the remembered root, then
-  the launcher's registry key and the usual install folders, behind a lookup trait with a stub), the
+  the launcher's registry key, the game's Uninstall entry (task 043) and the usual install folders, behind
+  a lookup trait with a stub), the
   dependency check (`dependencies`, task 029: every required name of the TOC the flavor loads, `## Dependencies`,
   `## RequiredDeps` and the other `## Dep…` lines, ASCII case-insensitive, is *met* when an addon folder of
   that name is in the scan, *embedded* when a folder of that name sits inside the addon's own folder, at
@@ -186,9 +187,10 @@ The lines, with the JSON field in brackets:
   (`Windows 11, build 26100`) or `build unknown`, `null` in the JSON, and with none of them the line is
   `windows: unknown`.
 - `root: <folder> (<origin>)` (`root`, `root_origin`): the game root the run resolved, as every command does,
-  and how: `from --root`, `from MRGL_ROOT`, `remembered`, `found in the launcher's registry key`, `found in a
-  usual install folder` (`flag`, `environment`, `remembered`, `registry`, `common_folder`); `none found` when
-  nothing names or finds one.
+  and how: `from --root`, `from MRGL_ROOT`, `remembered`, `found in the launcher's registry key`, `found in
+  the game's Uninstall registry entry`, `found in a usual install folder` (`flag`, `environment`,
+  `remembered`, `registry`, `uninstall_entry`, `common_folder`); `none found` when nothing names or finds
+  one.
 - `home: <folder>` (`home`): the mrgl home folder (`MRGL_HOME`, else `%LOCALAPPDATA%\mrgl`).
 - `webview2: <version> (per-machine)` or `(per-user)` (`webview2`: `version`, `scope`): the WebView2 runtime
   the window runs on, the `pv` value under `Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}`,
@@ -516,7 +518,8 @@ run's game folder is resolved in one order by
 every command (`discover::resolve_root_of_process`, task 020): the `--root` flag, then `MRGL_ROOT`, then the
 remembered one, then the discovery: the launcher's registry value (`HKLM\SOFTWARE\WOW6432Node\Blizzard
 Entertainment\World of Warcraft`, `InstallPath`; a value that names a flavor folder counts for its parent),
-then `Program Files (x86)\World of Warcraft` and the same under `Program Files`. A discovered hit counts only
+then the game's Uninstall entry (below), then `Program Files (x86)\World of Warcraft` and the same under
+`Program Files`. A discovered hit counts only
 when it is a game root (a `.build.info` and at least one flavor folder); it is used for the run and reported
 with its origin (a plain line in `list`, the answer of `mrgl root` with no argument, `root_origin` in
 `--json`), and never written to `config.json`: `mrgl root <folder>` is the one place that remembers it.
@@ -530,6 +533,18 @@ The same `backups\<flavor-id>\` folder takes the zips of `mrgl savedvars --clean
 any case, under `Interface\AddOns`; a disabled addon keeps its folder) and their `.bak` files, each under its
 path relative to `WTF`, so unzipping it into `WTF` by hand puts every file back. `backup --list` shows it
 among the zips; `backup --restore` refuses it, since a restore replaces the whole `WTF` folder.
+
+The game's Uninstall entry (task 043) is the `InstallLocation` value of the `World of Warcraft` key under
+`Microsoft\Windows\CurrentVersion\Uninstall`, read in the 32-bit view of `HKLM` first
+(`HKLM\SOFTWARE\WOW6432Node\…`, where the installer writes it as it writes the launcher's key), then in the
+native `HKLM\SOFTWARE\…`, then in `HKCU\Software\…`: an install moved or restored by hand may carry it
+without the launcher's key. Its origin is `the game's Uninstall registry entry` (`uninstall_entry` in
+`--json`). A value of the type `REG_EXPAND_SZ`, from the launcher's key or the Uninstall entry, is expanded
+from the environment (`ExpandEnvironmentStringsW`; a variable that is not set stays as written) before it is
+tried; a `REG_SZ` value is taken as written, `%` and all (`discover::registry_path`). The stub takes
+`uninstall=<path>` for an Uninstall value, and `registry-expand=<text>` and `uninstall-expand=<text>` for an
+expandable value, which go through the same environment call, so the end-to-end tests cover the expansion
+without a registry.
 
 ## Forever notes
 

@@ -1034,6 +1034,7 @@ impl Report {
                     RootOrigin::Environment => "from MRGL_ROOT",
                     RootOrigin::Remembered => "remembered",
                     RootOrigin::Registry => "found in the launcher's registry key",
+                    RootOrigin::UninstallEntry => "found in the game's Uninstall registry entry",
                     RootOrigin::CommonFolder => "found in a usual install folder",
                 };
                 format!("root: {root} ({how})")
