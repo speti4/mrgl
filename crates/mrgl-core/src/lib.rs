@@ -11,6 +11,7 @@
 pub mod backup;
 pub mod error;
 pub mod flavor;
+pub mod home;
 pub mod install;
 pub mod scan;
 pub mod sources;

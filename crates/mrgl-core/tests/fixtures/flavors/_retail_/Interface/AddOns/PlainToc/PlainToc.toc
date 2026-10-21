@@ -1,0 +1,9 @@
+## Interface: 120105
+## Title: Plain Toc
+## Notes: One base file, nothing else
+## Author: A. Fixture
+## Version: 1.0.0
+# a comment line the client ignores
+
+PlainToc.lua
+core/init.lua
