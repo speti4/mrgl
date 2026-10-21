@@ -432,9 +432,14 @@ development folder for the junction links (`dev/`: two addons with a TOC and a f
 005; the tests copy it into a temporary folder and make their junctions there). A real addon zip, a real
 AddOns folder or a `WTF` folder never enters the
 repo; a manual round on a real game folder is a task of its own, and its result is a dated line in that
-task's Verification. The running-client tests copy their own test binary into a temporary flavor folder and
-start it as a stand-in client (it waits for its stdin to close), so no game file and no committed
-executable is involved; the backup tests copy the fixture `WTF` tree into such a folder.
+task's Verification. The running-client tests copy the system's signed `ping.exe`
+(`%SystemRoot%\System32\ping.exe`) into a temporary flavor folder as `client-stand-in.exe` and start it
+against the loopback address with a count of an hour, so it runs until the test kills it (a drop guard kills
+it on a failed assertion too); no game file and no committed executable is involved, and where no `ping.exe`
+is found the test is skipped with a message. The stand-in is never a copy of the test binary itself: a
+binary that copies itself and runs the copy is the pattern an antivirus heuristic reads as a dropper, and
+Windows Defender quarantined the test binaries for it (task 063). The backup tests copy the fixture `WTF`
+tree into such a folder.
 
 The sources talk to the network through the `Http` trait of `mrgl_core::sources`. `MRGL_HTTP_STUB=<folder>`
 makes the command line answer every request from that folder instead (the URL's host and path under it,
