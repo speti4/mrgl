@@ -23,13 +23,28 @@
 //!   entry, so such an entry passed the check and failed half way through the unpack, after `WTF` had
 //!   moved aside. Now the check opens every entry for reading: an entry mrgl cannot unpack makes the zip
 //!   unreadable before anything moves.
+//!
+//! The check also bounds what a zip unpacks to (task 039), so a zip bomb from a compromised source cannot
+//! fill the disk from the staging folder or from `WTF`. The bound is [`MAX_UNPACKED`] (2 GiB) unless the
+//! caller raises it (`--max-unpacked <size>` on `add`, `rollback` and `backup --restore`), and it holds
+//! twice: [`checked_entries`] sums the uncompressed sizes the file entries declare and refuses the zip
+//! before anything is written when the sum passes the bound, and the caller reads every entry it writes
+//! through [`Unpacked::entry`], which counts the bytes and refuses once they pass the bound or once an
+//! entry outgrows the size it declared (a zip that lies about its sizes). The zip crate itself stops an
+//! entry at its declared size, and that refusal is reported as the same lie. Either way the error is
+//! [`Error::ZipTooLarge`], naming the zip, the bound and, for a refusal while writing, the bytes written;
+//! the caller removes what was written (the engine its staging folder, the restore its half-written `WTF`).
 
-use std::io::{Read, Seek};
-use std::path::Path;
+use std::io::{self, Read, Seek};
+use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
 
 use crate::error::{Error, Result};
+
+/// The bound on what one zip unpacks to unless the caller raises it (task 039): 2 GiB, far above any addon
+/// or `WTF` folder, far below a full disk.
+pub const MAX_UNPACKED: u64 = 2 * 1024 * 1024 * 1024;
 
 /// What a zip is to its caller: the noun its unreadable message names and the folder its entries must stay
 /// under. The messages of the two commands are written once, in [`Error`], with these words in them.
@@ -59,23 +74,75 @@ impl ZipRole {
     }
 }
 
+/// How a zip passed the bound on what it unpacks to (task 039): the clause [`Error::ZipTooLarge`] prints
+/// after the zip's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Excess {
+    /// Its file entries declare more than the bound together, found before anything was written.
+    Declared { declared: u64, limit: u64 },
+    /// What its entries wrote passed the bound while every entry kept to its declared size.
+    Written { written: u64, limit: u64 },
+    /// An entry unpacked to more than it declares, so the sum the bound was checked against is a lie.
+    Entry {
+        entry: String,
+        declared: u64,
+        written: u64,
+        limit: u64,
+    },
+}
+
+impl std::fmt::Display for Excess {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Excess::Declared { declared, limit } => write!(
+                formatter,
+                "it declares {} unpacked, more than the bound of {}; nothing was written, and `--max-unpacked <size>` raises the bound for a zip you trust",
+                size_text(*declared),
+                size_text(*limit)
+            ),
+            Excess::Written { written, limit } => write!(
+                formatter,
+                "it unpacked past the bound of {} ({} written, then removed)",
+                size_text(*limit),
+                size_text(*written)
+            ),
+            Excess::Entry {
+                entry,
+                declared,
+                written,
+                limit,
+            } => write!(
+                formatter,
+                "the entry `{entry}` unpacks to more than the {} it declares, so the bound of {} cannot hold ({} written, then removed)",
+                size_text(*declared),
+                size_text(*limit),
+                size_text(*written)
+            ),
+        }
+    }
+}
+
 /// One entry that passed the check: its index in the zip, its path components under the target folder
-/// (never empty) and whether it is a folder.
+/// (never empty), whether it is a folder and the uncompressed size it declares (task 039).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedEntry {
     pub index: usize,
     pub parts: Vec<String>,
     pub is_dir: bool,
+    pub size: u64,
 }
 
 /// Checks every entry of an open zip before anything is written and returns the ones to write, in the
 /// zip's order. The first entry that fails refuses the whole zip: [`Error::ZipEntryEscapes`] for a name
 /// outside the target folder or a symbolic link, [`Error::ZipUnreadable`] for an entry that cannot be
-/// opened for reading or whose name cannot be read. `zip` is the path the errors name.
+/// opened for reading or whose name cannot be read. Once every entry passed, the uncompressed sizes the
+/// file entries declare are summed and a sum past `max_unpacked` refuses the zip with
+/// [`Error::ZipTooLarge`] (task 039). `zip` is the path the errors name.
 pub fn checked_entries<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     zip: &Path,
     role: ZipRole,
+    max_unpacked: u64,
 ) -> Result<Vec<CheckedEntry>> {
     let unreadable = |reason: String| Error::ZipUnreadable {
         role,
@@ -103,13 +170,178 @@ pub fn checked_entries<R: Read + Seek>(
         if parts.is_empty() {
             continue;
         }
+        let is_dir = entry.is_dir();
         entries.push(CheckedEntry {
             index,
             parts,
-            is_dir: entry.is_dir(),
+            is_dir,
+            size: if is_dir { 0 } else { entry.size() },
+        });
+    }
+    let declared = entries
+        .iter()
+        .fold(0u64, |sum, entry| sum.saturating_add(entry.size));
+    if declared > max_unpacked {
+        return Err(Error::ZipTooLarge {
+            role,
+            path: zip.to_path_buf(),
+            excess: Excess::Declared {
+                declared,
+                limit: max_unpacked,
+            },
         });
     }
     Ok(entries)
+}
+
+/// The bytes a zip's entries have unpacked to so far, against the bound (task 039): the caller reads every
+/// entry it writes through [`Unpacked::entry`].
+#[derive(Debug)]
+pub struct Unpacked {
+    zip: PathBuf,
+    role: ZipRole,
+    limit: u64,
+    written: u64,
+}
+
+impl Unpacked {
+    /// Nothing unpacked yet from `zip`, with `limit` as the bound (the one [`checked_entries`] was given).
+    pub fn new(zip: &Path, role: ZipRole, limit: u64) -> Unpacked {
+        Unpacked {
+            zip: zip.to_path_buf(),
+            role,
+            limit,
+            written: 0,
+        }
+    }
+
+    /// The bytes read through [`Unpacked::entry`] so far.
+    pub fn written(&self) -> u64 {
+        self.written
+    }
+
+    /// A reader over one checked entry's content that counts what it hands over. A read that would take
+    /// the zip past the bound or the entry past its declared size fails with an I/O error that carries
+    /// [`Error::ZipTooLarge`]; [`refusal`] gets it back out. The zip crate's own refusal of an entry
+    /// that outgrows its declared size becomes the same error.
+    pub fn entry<'a, R: Read>(
+        &'a mut self,
+        checked: &'a CheckedEntry,
+        reader: R,
+    ) -> Counted<'a, R> {
+        Counted {
+            unpacked: self,
+            checked,
+            reader,
+            read: 0,
+        }
+    }
+
+    fn refuse(&self, excess: Excess) -> io::Error {
+        io::Error::other(Error::ZipTooLarge {
+            role: self.role,
+            path: self.zip.clone(),
+            excess,
+        })
+    }
+}
+
+/// One entry's content read through [`Unpacked::entry`].
+#[derive(Debug)]
+pub struct Counted<'a, R> {
+    unpacked: &'a mut Unpacked,
+    checked: &'a CheckedEntry,
+    reader: R,
+    read: u64,
+}
+
+impl<R> Counted<'_, R> {
+    fn entry_lies(&self) -> io::Error {
+        self.unpacked.refuse(Excess::Entry {
+            entry: self.checked.parts.join("/"),
+            declared: self.checked.size,
+            written: self.unpacked.written,
+            limit: self.unpacked.limit,
+        })
+    }
+}
+
+impl<R: Read> Read for Counted<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let count = match self.reader.read(buf) {
+            Ok(count) => count as u64,
+            Err(error) if outgrew_its_declared_size(&error) => return Err(self.entry_lies()),
+            Err(error) => return Err(error),
+        };
+        if self.read.saturating_add(count) > self.checked.size {
+            return Err(self.entry_lies());
+        }
+        if self.unpacked.written.saturating_add(count) > self.unpacked.limit {
+            return Err(self.unpacked.refuse(Excess::Written {
+                written: self.unpacked.written,
+                limit: self.unpacked.limit,
+            }));
+        }
+        self.read += count;
+        self.unpacked.written += count;
+        Ok(count as usize)
+    }
+}
+
+/// The zip crate's refusal of an entry that hands over more than its declared uncompressed size (zip 9:
+/// the entry reader stops there with this `InvalidData` error). Matched by its text, so a crate update
+/// that rewords it turns the lie back into a plain I/O failure, still refused, and the fixture test
+/// `a_zip_that_lies_about_its_size_is_refused_while_writing` says so.
+fn outgrew_its_declared_size(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::InvalidData
+        && error
+            .to_string()
+            .contains("larger than its declared uncompressed size")
+}
+
+/// The [`Error::ZipTooLarge`] an I/O error from a [`Counted`] reader carries, or the I/O error as it was.
+pub fn refusal(error: io::Error) -> std::result::Result<Error, io::Error> {
+    error.downcast::<Error>()
+}
+
+/// A byte count in a message: `512 B`, `16.0 KB`, `2.0 GB`, in steps of 1024 as the CLI's listings write
+/// them.
+pub fn size_text(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1024.0;
+    let mut unit = UNITS[0];
+    for next in &UNITS[1..] {
+        if value < 1024.0 {
+            break;
+        }
+        value /= 1024.0;
+        unit = next;
+    }
+    format!("{value:.1} {unit}")
+}
+
+/// A size as `--max-unpacked` takes it: a whole number of bytes, or one with `K`, `M`, `G` or `T` in
+/// steps of 1024 (`KB` and `KiB` the same, any case): `3G`, `500M`, `1048576`. `None` for anything
+/// else, zero and a size past `u64`.
+pub fn parse_size(text: &str) -> Option<u64> {
+    let text = text.trim();
+    let digits = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    let (number, unit) = text.split_at(digits);
+    let number: u64 = number.parse().ok()?;
+    let shift = match unit.trim_start().to_ascii_lowercase().as_str() {
+        "" | "b" => 0,
+        "k" | "kb" | "kib" => 10,
+        "m" | "mb" | "mib" => 20,
+        "g" | "gb" | "gib" => 30,
+        "t" | "tb" | "tib" => 40,
+        _ => return None,
+    };
+    number.checked_mul(1u64 << shift).filter(|size| *size > 0)
 }
 
 /// A zip entry name as path components under the target folder, or `None` when it would land outside it
@@ -240,8 +472,13 @@ mod tests {
             ("Foo/", b"", false),
             ("Foo/Foo.toc", b"## Title: Foo", false),
         ]);
-        let entries =
-            checked_entries(&mut archive, Path::new("foo.zip"), ZipRole::Addon).expect("checked");
+        let entries = checked_entries(
+            &mut archive,
+            Path::new("foo.zip"),
+            ZipRole::Addon,
+            MAX_UNPACKED,
+        )
+        .expect("checked");
         assert_eq!(
             entries,
             [
@@ -249,11 +486,13 @@ mod tests {
                     index: 1,
                     parts: vec!["Foo".into()],
                     is_dir: true,
+                    size: 0,
                 },
                 CheckedEntry {
                     index: 2,
                     parts: vec!["Foo".into(), "Foo.toc".into()],
                     is_dir: false,
+                    size: 13,
                 },
             ]
         );
@@ -269,7 +508,8 @@ mod tests {
             ("Escape/../../Outside.lua", b"-- escapes", false),
         ]);
         let zip = PathBuf::from("escape.zip");
-        let error = checked_entries(&mut archive, &zip, ZipRole::Addon).expect_err("refused");
+        let error =
+            checked_entries(&mut archive, &zip, ZipRole::Addon, MAX_UNPACKED).expect_err("refused");
         match &error {
             Error::ZipEntryEscapes { role, path, entry } => {
                 assert_eq!(*role, ZipRole::Addon);
@@ -289,7 +529,8 @@ mod tests {
             ("Account/secret.lua", b"-- encrypted", true),
         ]);
         let zip = PathBuf::from("WTF-encrypted.zip");
-        let error = checked_entries(&mut archive, &zip, ZipRole::Backup).expect_err("refused");
+        let error = checked_entries(&mut archive, &zip, ZipRole::Backup, MAX_UNPACKED)
+            .expect_err("refused");
         match &error {
             Error::ZipUnreadable { role, path, reason } => {
                 assert_eq!(*role, ZipRole::Backup);
@@ -346,11 +587,216 @@ mod tests {
             .expect("a link entry");
         let bytes = writer.finish().expect("finished").into_inner();
         let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("readable");
-        let error = checked_entries(&mut archive, Path::new("link.zip"), ZipRole::Backup)
-            .expect_err("refused");
+        let error = checked_entries(
+            &mut archive,
+            Path::new("link.zip"),
+            ZipRole::Backup,
+            MAX_UNPACKED,
+        )
+        .expect_err("refused");
         assert!(
             matches!(&error, Error::ZipEntryEscapes { entry, .. } if entry == "Foo/link"),
             "{error}"
         );
+    }
+
+    // --- task 039: the bound on the unpacked size ---
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/zips")
+            .join(name)
+    }
+
+    fn excess(error: &Error) -> &Excess {
+        match error {
+            Error::ZipTooLarge { excess, .. } => excess,
+            other => panic!("{other}"),
+        }
+    }
+
+    /// Reads a checked entry through the counter in reads of at most `chunk` bytes, as a writer would.
+    fn drain<R: Read>(mut reader: R, chunk: usize) -> io::Result<u64> {
+        let mut buffer = vec![0u8; chunk];
+        let mut total = 0;
+        loop {
+            match reader.read(&mut buffer)? {
+                0 => return Ok(total),
+                count => total += count as u64,
+            }
+        }
+    }
+
+    #[test]
+    fn the_declared_sizes_of_the_files_are_summed_against_the_bound() {
+        let entries = [
+            ("Foo/", &b""[..], false),
+            ("Foo/a.lua", &b"0123456789"[..], false),
+            ("Foo/b.lua", &b"0123456789"[..], false),
+        ];
+        let zip = PathBuf::from("foo.zip");
+        let checked =
+            checked_entries(&mut zip_of(&entries), &zip, ZipRole::Addon, 20).expect("at the bound");
+        assert_eq!(
+            checked.iter().map(|entry| entry.size).collect::<Vec<_>>(),
+            [0, 10, 10]
+        );
+        let error = checked_entries(&mut zip_of(&entries), &zip, ZipRole::Addon, 19)
+            .expect_err("past the bound");
+        assert_eq!(
+            excess(&error),
+            &Excess::Declared {
+                declared: 20,
+                limit: 19
+            }
+        );
+        assert!(
+            matches!(&error, Error::ZipTooLarge { role: ZipRole::Addon, path, .. } if path == &zip),
+            "{error}"
+        );
+    }
+
+    /// The fixture declares 3 GiB in a few hundred bytes: the default bound refuses it from the central
+    /// directory alone, a higher one lets it through.
+    #[test]
+    fn a_zip_declaring_more_than_the_default_bound_is_refused_before_writing() {
+        let zip = fixture("declares-too-much-1.0.0.zip");
+        let open =
+            || ZipArchive::new(std::fs::File::open(&zip).expect("the fixture")).expect("readable");
+        let error =
+            checked_entries(&mut open(), &zip, ZipRole::Addon, MAX_UNPACKED).expect_err("refused");
+        assert!(
+            matches!(excess(&error), Excess::Declared { declared, limit: MAX_UNPACKED } if *declared > 3 << 30),
+            "{error}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "refused {}: it declares 3.0 GB unpacked, more than the bound of 2.0 GB; nothing was written, and `--max-unpacked <size>` raises the bound for a zip you trust",
+                zip.display()
+            )
+        );
+        let checked =
+            checked_entries(&mut open(), &zip, ZipRole::Addon, 4 << 30).expect("under 4 GiB");
+        assert_eq!(checked.len(), 2);
+    }
+
+    /// The counter on its own, over a plain reader: an entry that outgrows its declared size, and a zip
+    /// whose entries keep to their sizes but pass the bound together.
+    #[test]
+    fn the_counter_refuses_an_entry_past_its_size_and_a_zip_past_the_bound() {
+        let zip = PathBuf::from("counted.zip");
+        let entry = |name: &str, size| CheckedEntry {
+            index: 0,
+            parts: vec![name.to_string()],
+            is_dir: false,
+            size,
+        };
+        let mut unpacked = Unpacked::new(&zip, ZipRole::Backup, 50);
+        let small = entry("small.txt", 30);
+        assert_eq!(
+            drain(unpacked.entry(&small, &[7u8; 30][..]), 8).expect("within its size"),
+            30
+        );
+        let liar = entry("liar.txt", 10);
+        let error = drain(unpacked.entry(&liar, &[7u8; 40][..]), 4).expect_err("past its size");
+        let error = refusal(error).expect("the bound's refusal");
+        assert_eq!(
+            excess(&error),
+            &Excess::Entry {
+                entry: "liar.txt".into(),
+                declared: 10,
+                written: 38,
+                limit: 50,
+            }
+        );
+        assert!(
+            matches!(
+                &error,
+                Error::ZipTooLarge {
+                    role: ZipRole::Backup,
+                    ..
+                }
+            ),
+            "{error}"
+        );
+
+        let mut unpacked = Unpacked::new(&zip, ZipRole::Addon, 50);
+        let first = entry("first.txt", 30);
+        drain(unpacked.entry(&first, &[7u8; 30][..]), 8).expect("within the bound");
+        let second = entry("second.txt", 30);
+        let error = drain(unpacked.entry(&second, &[7u8; 30][..]), 8).expect_err("past the bound");
+        let error = refusal(error).expect("the bound's refusal");
+        assert_eq!(
+            excess(&error),
+            &Excess::Written {
+                written: 46,
+                limit: 50
+            }
+        );
+        assert_eq!(unpacked.written(), 46);
+        assert_eq!(
+            error.to_string(),
+            "refused counted.zip: it unpacked past the bound of 50 B (46 B written, then removed)"
+        );
+    }
+
+    /// The fixture declares 16 bytes for 66 000: the zip crate refuses the read that takes the entry past
+    /// 16 (here the first one) and the counter reports that as the lie, with the bytes written so far (the
+    /// TOC before it).
+    #[test]
+    fn a_zip_that_lies_about_its_size_is_refused_while_writing() {
+        let zip = fixture("lies-about-its-size-1.0.0.zip");
+        let mut archive =
+            ZipArchive::new(std::fs::File::open(&zip).expect("the fixture")).expect("readable");
+        let entries = checked_entries(&mut archive, &zip, ZipRole::Addon, MAX_UNPACKED)
+            .expect("declares 125 bytes");
+        let mut unpacked = Unpacked::new(&zip, ZipRole::Addon, MAX_UNPACKED);
+        let mut outcome = Ok(0);
+        for checked in &entries {
+            let entry = archive.by_index(checked.index).expect("an entry");
+            outcome = drain(unpacked.entry(checked, entry), 64 * 1024);
+            if outcome.is_err() {
+                break;
+            }
+        }
+        let error = refusal(outcome.expect_err("refused")).expect("the bound's refusal");
+        let toc = entries[0].size;
+        assert_eq!(
+            excess(&error),
+            &Excess::Entry {
+                entry: "LiesAboutItsSize/core.lua".into(),
+                declared: 16,
+                written: toc,
+                limit: MAX_UNPACKED,
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "refused {}: the entry `LiesAboutItsSize/core.lua` unpacks to more than the 16 B it declares, so the bound of 2.0 GB cannot hold ({} B written, then removed)",
+                zip.display(),
+                toc
+            )
+        );
+    }
+
+    #[test]
+    fn sizes_parse_and_print_in_steps_of_1024() {
+        assert_eq!(parse_size("3G"), Some(3 << 30));
+        assert_eq!(parse_size("500M"), Some(500 << 20));
+        assert_eq!(parse_size("500mb"), Some(500 << 20));
+        assert_eq!(parse_size("2GiB"), Some(MAX_UNPACKED));
+        assert_eq!(parse_size("64k"), Some(64 << 10));
+        assert_eq!(parse_size("1T"), Some(1 << 40));
+        assert_eq!(parse_size("1048576"), Some(1 << 20));
+        assert_eq!(parse_size(" 10 B "), Some(10));
+        for bad in ["", "G", "0", "0G", "1.5G", "-1G", "3X", "99999999999T"] {
+            assert_eq!(parse_size(bad), None, "{bad}");
+        }
+        assert_eq!(size_text(512), "512 B");
+        assert_eq!(size_text(16 * 1024), "16.0 KB");
+        assert_eq!(size_text(MAX_UNPACKED), "2.0 GB");
+        assert_eq!(size_text(3 << 30), "3.0 GB");
     }
 }

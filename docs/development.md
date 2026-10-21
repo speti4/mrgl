@@ -123,6 +123,35 @@ line, their JSON carries `interface_mismatches`, and `add <file.zip>` and `impor
 install (`interface_mismatch` in their JSON). An unknown build, a TOC without an `## Interface` line and a
 folder the flavor loads no TOC from give no warning.
 
+## The unpacked-size bound
+
+The shared zip-entry check (`zip_entry`) also bounds what one zip unpacks to (task 039), so a zip bomb from a
+compromised source cannot fill the disk from the install engine's staging folder or from `WTF`. The bound is
+`zip_entry::MAX_UNPACKED`, 2 GiB; `--max-unpacked <size>` on `add`, `rollback` and `backup --restore` raises
+or lowers it for one run (`3G`, `500M`, `64K` or a number of bytes, in steps of 1024; a size that does not
+parse, zero, or the flag without `--restore` on `backup` is a usage error). In the core the bound is
+`Engine::with_max_unpacked` for every stage of that engine (an install, a pick, a rollback) and
+`backup::restore_wtf_bounded` for a restore. It holds twice:
+
+- **Declared.** `checked_entries` sums the uncompressed sizes the file entries declare once every entry
+  passed its name check, and a sum past the bound refuses the zip before anything is written:
+  ``refused <zip>: it declares 3.0 GB unpacked, more than the bound of 2.0 GB; nothing was written, and
+  `--max-unpacked <size>` raises the bound for a zip you trust``.
+- **Written.** Each caller reads every entry it writes through `Unpacked::entry`, which counts the bytes and
+  refuses once they pass the bound or once an entry outgrows the size it declared (a zip that lies about
+  its sizes). The zip crate itself stops an entry at its declared size; the counter reports that refusal
+  as the same lie: ``refused <zip>: the entry `<name>` unpacks to more than the 16 B it declares, so the
+  bound of 2.0 GB cannot hold (109 B written, then removed)``. The engine removes its staging folder, as
+  after every failed stage; the restore removes the half-written `WTF`, puts the previous one back and
+  reports `restoring <zip> failed and WTF is as it was: ` with the same clause.
+
+Both are `Error::ZipTooLarge` (the restore's write-time refusal is wrapped in `Error::RestoreFailed`, as
+every failure after `WTF` moved aside is), exit code 1 on the CLI and the `message` of the JSON error
+document. Sizes in these messages are written in steps of 1024, as the `backup --list` sizes are. The
+fixtures under `zips/` that test it, written by `make-zips.py`: `declares-too-much-1.0.0.zip` and
+`wtf-declares-too-much.zip` declare 3 GiB for a few bytes, `lies-about-its-size-1.0.0.zip` and
+`wtf-lies-about-its-size.zip` declare 16 bytes for about 64 KB of padding; each is a few hundred bytes.
+
 ## The voice
 
 Every human-readable message of the CLI and the window goes through `mrgl_core::voice`: a murloc line and a

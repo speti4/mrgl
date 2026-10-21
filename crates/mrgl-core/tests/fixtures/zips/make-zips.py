@@ -30,6 +30,25 @@ def write(file_name, entries):
     print(path.name, [name for name, _ in entries])
 
 
+def declare_size(file_name, entry, declared):
+    """Rewrites the uncompressed size one entry declares, in its local header and in the central directory,
+    and leaves its data and its CRC as they are: a zip that lies about its size (task 039)."""
+    path = HERE / file_name
+    data = bytearray(path.read_bytes())
+    with zipfile.ZipFile(path) as archive:
+        local = archive.getinfo(entry).header_offset
+    assert data[local:local + 4] == b"PK\x03\x04"
+    data[local + 22:local + 26] = declared.to_bytes(4, "little")
+    central = data.find(b"PK\x01\x02")
+    while central != -1:
+        name_length = int.from_bytes(data[central + 28:central + 30], "little")
+        if data[central + 46:central + 46 + name_length] == entry.encode():
+            data[central + 24:central + 28] = declared.to_bytes(4, "little")
+        central = data.find(b"PK\x01\x02", central + 46)
+    path.write_bytes(bytes(data))
+    print(" ", entry, "declares", declared, "bytes")
+
+
 write("one-folder-1.0.0.zip", [
     ("OneFolder/", ""),
     ("OneFolder/OneFolder.toc", toc("One Folder", "1.0.0", extra="## Notes: one folder, version 1.0.0\r\n")),
@@ -117,3 +136,29 @@ write(RELEASES / "github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1
     ("Questie/Questie.toc", toc("Questie", "v1.2.3", extra="## Notes: a made-up stand-in, no real addon\r\n")),
     ("Questie/core.lua", "-- Questie fixture 1.2.3\n"),
 ])
+
+# Task 039, the bound on the unpacked size. A zip that declares 3 GiB in a few hundred bytes: refused by the
+# bound (2 GiB) before anything is written, installed under a higher one (its data is a few bytes).
+write("declares-too-much-1.0.0.zip", [
+    ("DeclaresTooMuch/DeclaresTooMuch.toc", toc("Declares Too Much", "1.0.0")),
+    ("DeclaresTooMuch/core.lua", "-- DeclaresTooMuch 1.0.0\n"),
+])
+declare_size("declares-too-much-1.0.0.zip", "DeclaresTooMuch/core.lua", 3 * 1024 ** 3)
+
+# A zip that declares 16 bytes for a file that unpacks to 66 000: refused while it is written.
+write("lies-about-its-size-1.0.0.zip", [
+    ("LiesAboutItsSize/LiesAboutItsSize.toc", toc("Lies About Its Size", "1.0.0")),
+    ("LiesAboutItsSize/core.lua", "-- padding\n" * 6000),
+])
+declare_size("lies-about-its-size-1.0.0.zip", "LiesAboutItsSize/core.lua", 16)
+
+# The same two shapes as WTF backups, for the restore.
+write("wtf-declares-too-much.zip", [
+    ("Config.wtf", 'SET portal "EU"\r\n'),
+])
+declare_size("wtf-declares-too-much.zip", "Config.wtf", 3 * 1024 ** 3)
+
+write("wtf-lies-about-its-size.zip", [
+    ("Config.wtf", 'SET portal "EU"\r\n' * 4000),
+])
+declare_size("wtf-lies-about-its-size.zip", "Config.wtf", 16)

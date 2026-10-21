@@ -4397,3 +4397,200 @@ fn savedvars_clean_is_refused_while_the_client_runs() {
     assert!(!home.join("backups").exists(), "no zip either");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// --- task 039: the bound on the unpacked size of a zip, and `--max-unpacked` ---
+
+/// A fixture zip by its absolute path without `..`, as the messages name it.
+fn fixture_zip(name: &str) -> PathBuf {
+    std::path::absolute(zips().join(name)).expect("an absolute path")
+}
+
+#[test]
+fn add_refuses_a_zip_past_the_bound_and_max_unpacked_raises_it() {
+    let game = Game::new("max-unpacked");
+    let zip = fixture_zip("declares-too-much-1.0.0.zip");
+    let output = game
+        .mrgl()
+        .arg("add")
+        .arg(&zip)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "refused {}: it declares 3.0 GB unpacked, more than the bound of 2.0 GB; nothing was written, and `--max-unpacked <size>` raises the bound for a zip you trust",
+            zip.display()
+        )
+    );
+    assert!(!game.addon("DeclaresTooMuch").exists());
+    assert!(staging_entries(&game).is_empty());
+    assert!(!game.state_path().exists());
+
+    // The dry run stages the zip, so the bound refuses it there too.
+    let output = game
+        .mrgl()
+        .arg("add")
+        .arg(&zip)
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_last_line(&output).contains("more than the bound of 2.0 GB"),
+        "{}",
+        stderr_last_line(&output)
+    );
+
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(&zip)
+        .args(["--flavor", "forever", "--max-unpacked", "4G"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout(&output)
+            .lines()
+            .any(|line| line.starts_with("installed DeclaresTooMuch 1.0.0 (1 folder")),
+        "{}",
+        stdout(&output)
+    );
+    assert!(game.addon("DeclaresTooMuch").join("core.lua").is_file());
+}
+
+#[test]
+fn add_refuses_a_zip_that_lies_about_its_size_and_leaves_staging_empty() {
+    let game = Game::new("lies-about-its-size");
+    let zip = fixture_zip("lies-about-its-size-1.0.0.zip");
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(&zip)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("one JSON error document");
+    assert_eq!(value["kind"], "error");
+    assert_eq!(
+        value["message"],
+        format!(
+            "refused {}: the entry `LiesAboutItsSize/core.lua` unpacks to more than the 16 B it declares, so the bound of 2.0 GB cannot hold (109 B written, then removed)",
+            zip.display()
+        )
+    );
+    assert!(!game.addon("LiesAboutItsSize").exists());
+    assert!(
+        staging_entries(&game).is_empty(),
+        "the staging folder is clean"
+    );
+    assert!(!game.state_path().exists());
+}
+
+#[test]
+fn rollback_takes_max_unpacked_and_refuses_past_it_changing_nothing() {
+    let game = Game::new("rollback-max-unpacked");
+    add_in(&game, &["one-folder-1.0.0.zip", "one-folder-1.1.0.zip"]);
+    let before = std::fs::read(game.state_path()).expect("the sidecar");
+    let output = run_in(&game, &["rollback", "OneFolder", "--max-unpacked", "100"]);
+    assert_eq!(output.status.code(), Some(1));
+    let plain = stderr_last_line(&output);
+    assert!(
+        plain.starts_with("refused ") && plain.contains("more than the bound of 100 B"),
+        "{plain}"
+    );
+    assert_eq!(
+        std::fs::read(game.state_path()).expect("the sidecar"),
+        before
+    );
+    assert_eq!(
+        std::fs::read(game.addon("OneFolder").join("core.lua")).expect("core.lua"),
+        b"-- OneFolder 1.1.0\n"
+    );
+    assert!(staging_entries(&game).is_empty());
+
+    let output = run_in(&game, &["rollback", "OneFolder", "--max-unpacked", "1M"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(stdout_last_line(&output).starts_with("rolled back OneFolder from 1.1.0 to 1.0.0"));
+}
+
+#[test]
+fn restore_refuses_a_backup_past_the_bound_and_max_unpacked_raises_it() {
+    let root = temp_game_root_with_wtf("restore-max-unpacked");
+    let flavor = root.join("_forever_");
+    let wtf = flavor.join("WTF");
+    let backups = root.join("backups");
+    let before = snapshot(&wtf);
+    let zip = fixture_zip("wtf-declares-too-much.zip");
+    let restore = |extra: &[&str]| {
+        mrgl()
+            .args(["--serious", "backup", "--yes", "--restore"])
+            .arg(&zip)
+            .arg("--flavor")
+            .arg(&flavor)
+            .arg("--to")
+            .arg(&backups)
+            .args(extra)
+            .output()
+            .expect("run mrgl")
+    };
+    let output = restore(&[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "refused {}: it declares 3.0 GB unpacked, more than the bound of 2.0 GB; nothing was written, and `--max-unpacked <size>` raises the bound for a zip you trust",
+            zip.display()
+        )
+    );
+    assert_eq!(snapshot(&wtf), before, "nothing moved");
+    assert!(!backups.exists(), "nothing moved aside");
+
+    let output = restore(&["--max-unpacked", "4G"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        std::fs::read(wtf.join("Config.wtf")).expect("Config.wtf"),
+        b"SET portal \"EU\"\r\n"
+    );
+
+    // The lie fails the restore while writing, and the WTF folder the last restore wrote comes back.
+    let restored = snapshot(&wtf);
+    let liar = fixture_zip("wtf-lies-about-its-size.zip");
+    let output = mrgl()
+        .args(["--serious", "backup", "--yes", "--restore"])
+        .arg(&liar)
+        .arg("--flavor")
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "restoring {} failed and WTF is as it was: the entry `Config.wtf` unpacks to more than the 16 B it declares, so the bound of 2.0 GB cannot hold (0 B written, then removed)",
+            liar.display()
+        )
+    );
+    assert_eq!(snapshot(&wtf), restored);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn max_unpacked_is_a_usage_error_when_it_is_not_a_size_or_has_nothing_to_bound() {
+    for args in [
+        vec!["add", "x.zip", "--max-unpacked", "lots"],
+        vec!["add", "x.zip", "--max-unpacked", "0"],
+        vec!["rollback", "OneFolder", "--max-unpacked", "1.5G"],
+        vec!["backup", "--max-unpacked", "3G"],
+        vec!["backup", "--list", "--max-unpacked", "3G"],
+    ] {
+        let output = mrgl().args(&args).output().expect("run mrgl");
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    }
+}
