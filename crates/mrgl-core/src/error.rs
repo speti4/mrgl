@@ -193,6 +193,17 @@ pub enum Error {
     /// (task 015).
     #[error("not a readable addon list: {path} ({reason})")]
     ListUnreadable { path: PathBuf, reason: String },
+
+    /// A pin, an ignore or a channel change on a folder the sidecar does not know (task 021): only an
+    /// addon mrgl installed carries these marks.
+    #[error(
+        "addon not managed by mrgl: {name} (flavor {flavor}); it was installed by hand or by another manager, and only an addon mrgl installed can be {action}"
+    )]
+    NotManagedToMark {
+        name: String,
+        flavor: String,
+        action: &'static str,
+    },
 }
 
 /// The crate's result type.

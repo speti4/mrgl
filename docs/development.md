@@ -11,8 +11,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
   home folder, task 003; the pick carries `notes`, the release body's first line with text once its
   Markdown markers are stripped, cut at `NOTES_MAX_CHARS` (120) with an ellipsis by `sources::notes_line`,
-  and `page`, the release's page, both left out when absent, task 030; later Wago, WoWInterface and
-  CurseForge), the install engine (`install`: a zip into
+  and `page`, the release's page, both left out when absent, task 030; the `Target` carries the addon's
+  channel, and on `prerelease` the newest release that is not a draft is current, a prerelease or not,
+  task 021; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
@@ -21,7 +22,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   addon of a development folder, a mount-point reparse point made through the Windows API, recorded in the
   sidecar with the source `link:<development folder>`, the TOC's version and no file list; `unlink` removes
   exactly those junctions, never a real folder or a junction mrgl did not make; Windows-only), the state
-  sidecar (`state`, D-003), the toolbox (`backup`: the `WTF`
+  sidecar (`state`, D-003; an entry's optional `pinned` version, `ignored` flag and release `channel`,
+  `stable` or `prerelease`, with the queries and setters the update check and the CLI call, task 021; absent
+  fields read as unpinned, not ignored, stable, and a reinstall keeps them), the toolbox (`backup`: the `WTF`
   backup into a dated zip, the listing and the restore that checks every entry through `zip_entry`, moves
   the current `WTF` aside and reverts on a failure, task 013; later the addon sets), the zip entry check
   both of them call (`zip_entry`, task 044: every entry readable, inside its folder and no link, checked
@@ -49,8 +52,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
   task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
   (task 024), `link <folder>` and `unlink <folder>` (task 005), `export --flavor <flavor> [--to <file>]`
-  and `import <file> --flavor <flavor> [--dry-run]` (task 015), `update` (a stub that answers with the task
-  that builds it until that task lands), with `--json` for machines and `--serious` for the
+  and `import <file> --flavor <flavor> [--dry-run]` (task 015), `pin <name> [version]`, `unpin`, `ignore`,
+  `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
+  `update` (a stub that answers with the task that builds it until that task lands), with `--json` for
+  machines and `--serious` for the
   murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use mrgl_core::flavor::{BuildVersion, FlavorId};
 use mrgl_core::forever::ForeverBuild;
 use mrgl_core::sources::github::{GitHub, current_release, forever_build};
-use mrgl_core::sources::{FolderHttp, Source, SourceSpec, Target};
+use mrgl_core::sources::{Channel, FolderHttp, Source, SourceSpec, Target};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/releases")
@@ -23,8 +23,8 @@ fn spec(text: &str) -> SourceSpec {
 
 fn target(flavor: FlavorId, version: Option<&str>) -> Target {
     Target {
-        flavor,
         version: version.and_then(BuildVersion::parse),
+        ..Target::new(flavor)
     }
 }
 
@@ -212,6 +212,33 @@ fn the_stable_release_wins_over_a_draft_and_a_prerelease() {
         "{}",
         beta.summary()
     );
+}
+
+#[test]
+fn the_prerelease_channel_takes_the_newest_release_that_is_not_a_draft() {
+    let github = github();
+    let beta = github
+        .resolve(
+            &spec("github:Example/Prerelease"),
+            &target(FlavorId::Forever, None).with_channel(Channel::Prerelease),
+        )
+        .expect("the prerelease");
+    assert_eq!(
+        beta.release, "v1.1.0-beta",
+        "the draft above it does not count"
+    );
+    assert_eq!(beta.version, "1.1.0-beta");
+    assert_eq!(beta.asset, "Pre-v1.1.0-beta-forever.zip");
+    assert!(beta.prerelease);
+    // A repository whose newest release is stable gives that one on either channel.
+    let stable = github
+        .resolve(
+            &spec("github:Questie/Questie"),
+            &target(FlavorId::Forever, Some("1.60.1.70245")).with_channel(Channel::Prerelease),
+        )
+        .expect("the stable one");
+    assert_eq!(stable.release, "v1.2.3");
+    assert!(!stable.prerelease);
 }
 
 #[test]

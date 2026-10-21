@@ -27,6 +27,7 @@ use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
 use crate::scan;
+use crate::sources::Channel;
 use crate::state::{self, Entry, FlavorHome, LoadedState, State};
 use crate::toc::{self, TocName};
 use crate::zip_entry::{self, ZipRole};
@@ -119,6 +120,22 @@ pub struct Installed {
     /// The plain warning line when the client ran from the flavor folder during the install (it loads the
     /// new folders at `/reload`), or when the process list could not be taken; `None` otherwise.
     pub client_warning: Option<String>,
+}
+
+/// What a pin, an unpin, an ignore, an unignore or a channel change did (task 021): the entry as it is
+/// now, and whether it changed (the sidecar is written only then).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marked {
+    /// The addon's name as the sidecar spells it.
+    pub name: String,
+    /// The installed version.
+    pub version: String,
+    pub pinned: Option<String>,
+    pub ignored: bool,
+    pub channel: Channel,
+    /// Whether the entry changed; `false` means it was so already and nothing was written.
+    pub changed: bool,
+    pub warnings: Vec<String>,
 }
 
 /// What a removal did.
@@ -322,7 +339,16 @@ impl Engine {
             files,
             installed_at: state::now_rfc3339(),
             nolib: staged.nolib,
+            pinned: None,
+            ignored: false,
+            channel: Channel::Stable,
         };
+        let entry = keep_marks(
+            entry,
+            &staged.name,
+            previous.as_ref().map(|(_, entry)| entry),
+            &mut warnings,
+        );
         if let Some((old_name, _)) = &previous {
             state.addons.remove(old_name);
         }
@@ -417,6 +443,73 @@ impl Engine {
         })
     }
 
+    /// Pins a managed addon at a version, or at the installed one when none is given (task 021; the
+    /// rollback of task 022 pins the version it rolls back to).
+    pub fn pin(&self, name: &str, version: Option<&str>) -> Result<Marked> {
+        self.mark(name, "pinned", |entry| entry.pin(version))
+    }
+
+    /// Unpins a managed addon.
+    pub fn unpin(&self, name: &str) -> Result<Marked> {
+        self.mark(name, "unpinned", Entry::unpin)
+    }
+
+    /// Marks a managed addon ignored: the update check skips it.
+    pub fn ignore(&self, name: &str) -> Result<Marked> {
+        self.mark(name, "ignored", Entry::ignore)
+    }
+
+    /// Clears the ignored mark of a managed addon.
+    pub fn unignore(&self, name: &str) -> Result<Marked> {
+        self.mark(name, "unignored", Entry::unignore)
+    }
+
+    /// Puts a managed addon on a release channel.
+    pub fn set_channel(&self, name: &str, channel: Channel) -> Result<Marked> {
+        self.mark(name, "put on a channel", |entry| entry.set_channel(channel))
+    }
+
+    /// Reads the sidecar, applies one change to the entry a name means (by name, else by folder) and
+    /// writes the sidecar when the change moved something. A name the sidecar does not know is an error
+    /// that says whether the folder exists. Nothing in the game folder is touched.
+    fn mark(
+        &self,
+        name: &str,
+        action: &'static str,
+        change: impl FnOnce(&mut Entry) -> bool,
+    ) -> Result<Marked> {
+        let loaded = self.load_state()?;
+        let mut state = loaded.state;
+        let warnings: Vec<String> = loaded.warning.into_iter().collect();
+        let Some((known, entry)) = state.find_mut(name) else {
+            let flavor = flavor_label(&self.flavor.id);
+            let name = name.to_string();
+            return Err(if self.addons_dir().join(&name).is_dir() {
+                Error::NotManagedToMark {
+                    name,
+                    flavor,
+                    action,
+                }
+            } else {
+                Error::AddonNotFound { name, flavor }
+            });
+        };
+        let changed = change(entry);
+        let marked = Marked {
+            name: known,
+            version: entry.version.clone(),
+            pinned: entry.pinned.clone(),
+            ignored: entry.ignored,
+            channel: entry.channel,
+            changed,
+            warnings,
+        };
+        if changed {
+            self.home.write_state(&state)?;
+        }
+        Ok(marked)
+    }
+
     /// Copies the zip into `cache\<addon>\<version>.zip` and prunes the folder to this version and the
     /// previous one. Best effort: a failure is a warning, the install stands.
     fn cache_zip(
@@ -492,6 +585,32 @@ fn swap_all(
         move_away(folder, journal)?;
     }
     Ok(())
+}
+
+/// A reinstall keeps the pin, the ignored mark and the channel of the entry it replaces (task 021): they
+/// are the user's word about the addon, not about one version. A pin at another version than the one just
+/// installed stays, with a warning that names it.
+fn keep_marks(
+    mut entry: Entry,
+    name: &str,
+    previous: Option<&Entry>,
+    warnings: &mut Vec<String>,
+) -> Entry {
+    let Some(previous) = previous else {
+        return entry;
+    };
+    entry.pinned = previous.pinned.clone();
+    entry.ignored = previous.ignored;
+    entry.channel = previous.channel;
+    if let Some(pinned) = entry.pinned.as_deref()
+        && pinned != entry.version
+    {
+        warnings.push(format!(
+            "{name} is pinned at {pinned} and {} is installed now; the pin stays until `mrgl unpin {name}`",
+            entry.version
+        ));
+    }
+    entry
 }
 
 /// Folders of other managed addons that the new install now owns leave those entries; an entry left with

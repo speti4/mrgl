@@ -62,6 +62,9 @@ fn the_sidecars_nolib_flag_turns_the_folder_inside_into_a_missing_dependency() {
             files: BTreeMap::new(),
             installed_at: "2026-10-21T14:03:05Z".to_string(),
             nolib: Some(true),
+            pinned: None,
+            ignored: false,
+            channel: mrgl_core::sources::Channel::Stable,
         },
     );
     let checks = dependencies::check(&scan, Some(&state));

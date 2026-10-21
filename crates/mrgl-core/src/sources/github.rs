@@ -1,7 +1,8 @@
 //! The GitHub release source (task 003). The releases come from the REST API
 //! (`GET /repos/{owner}/{repo}/releases`, an optional token from `MRGL_GITHUB_TOKEN` against the rate limit),
-//! the current release is the newest one that is neither a draft nor a prerelease, and its asset for the
-//! flavor is picked from the release's `release.json`, the file the BigWigs packager uploads next to the
+//! the current release is the newest one that is neither a draft nor a prerelease (on an addon's
+//! `prerelease` channel the newest one that is not a draft, task 021), and its asset for the flavor is
+//! picked from the release's `release.json`, the file the BigWigs packager uploads next to the
 //! zips:
 //!
 //! ```json
@@ -26,7 +27,9 @@ use crate::error::{Error, Result};
 use crate::flavor::FlavorId;
 use crate::forever::ForeverBuild;
 use crate::home;
-use crate::sources::{Http, Pick, Request, Response, Source, SourceSpec, Target, notes_line};
+use crate::sources::{
+    Channel, Http, Pick, Request, Response, Source, SourceSpec, Target, notes_line,
+};
 
 /// The environment variable with a personal access token; without one the API allows 60 requests an hour.
 pub const TOKEN_ENV: &str = "MRGL_GITHUB_TOKEN";
@@ -124,13 +127,24 @@ pub struct Metadata {
 }
 
 /// The newest release that is neither a draft nor a prerelease; a prerelease only when there is nothing
-/// else. The API lists the newest first.
+/// else. The API lists the newest first. This is the stable channel's rule, [`current_release_on`] with
+/// [`Channel::Stable`].
 pub fn current_release(releases: &[Release]) -> Option<&Release> {
-    let published = releases.iter().filter(|release| !release.draft);
-    published
-        .clone()
-        .find(|release| !release.prerelease)
-        .or_else(|| published.into_iter().next())
+    current_release_on(releases, Channel::Stable)
+}
+
+/// The current release on a channel (task 021): on the stable one the newest release that is neither a
+/// draft nor a prerelease, a prerelease only when there is nothing else; on the prerelease one the newest
+/// release that is not a draft, prerelease or not. The API lists the newest first.
+pub fn current_release_on(releases: &[Release], channel: Channel) -> Option<&Release> {
+    let mut published = releases.iter().filter(|release| !release.draft);
+    match channel {
+        Channel::Prerelease => published.next(),
+        Channel::Stable => published
+            .clone()
+            .find(|release| !release.prerelease)
+            .or_else(|| published.next()),
+    }
 }
 
 /// The `release.json` flavor keys (and asset-name suffixes) a target accepts, best first: the packager's
@@ -560,9 +574,10 @@ impl<H: Http> Source for GitHub<H> {
     fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
         let SourceSpec::GitHub { owner, repo } = spec;
         let releases = self.releases(owner, repo)?;
-        let release = current_release(&releases).ok_or_else(|| Error::NoRelease {
-            spec: spec.to_string(),
-        })?;
+        let release =
+            current_release_on(&releases, target.channel).ok_or_else(|| Error::NoRelease {
+                spec: spec.to_string(),
+            })?;
         let (release_json, mut notes) = match self.release_json(spec, release)? {
             Some(Ok(release_json)) => (Some(release_json), None),
             Some(Err(reason)) => (None, Some(reason)),
@@ -687,8 +702,8 @@ mod tests {
 
     fn classic(major: u32) -> Target {
         Target {
-            flavor: FlavorId::Classic,
             version: BuildVersion::parse(&format!("{major}.0.0.1")),
+            ..Target::new(FlavorId::Classic)
         }
     }
 
@@ -710,8 +725,24 @@ mod tests {
         let releases = vec![draft.clone(), beta.clone(), stable.clone()];
         assert_eq!(current_release(&releases), Some(&stable));
         assert_eq!(current_release(&[draft.clone(), beta.clone()]), Some(&beta));
-        assert_eq!(current_release(&[draft]), None);
+        assert_eq!(current_release(&[draft.clone()]), None);
         assert_eq!(current_release(&[]), None);
+
+        // The prerelease channel takes the newest release that is not a draft, prerelease or not.
+        let prerelease = Channel::Prerelease;
+        assert_eq!(current_release_on(&releases, prerelease), Some(&beta));
+        let newer_stable = release("v4", &[]);
+        let releases = vec![newer_stable.clone(), beta.clone(), stable.clone()];
+        assert_eq!(
+            current_release_on(&releases, prerelease),
+            Some(&newer_stable)
+        );
+        assert_eq!(current_release_on(&[draft.clone()], prerelease), None);
+        assert_eq!(current_release_on(&[], prerelease), None);
+        assert_eq!(
+            current_release_on(&[draft, stable.clone()], Channel::Stable),
+            Some(&stable)
+        );
     }
 
     #[test]

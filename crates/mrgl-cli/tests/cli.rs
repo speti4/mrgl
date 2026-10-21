@@ -3241,3 +3241,277 @@ fn the_interface_warning_fires_after_an_install_and_in_list() {
         }])
     );
 }
+
+// --- task 021: `pin`, `unpin`, `ignore`, `unignore`, `channel` and their marks in `list` ---
+
+/// Runs `mrgl --serious <args> --flavor forever` in a game and returns the output.
+fn run_in(game: &Game, args: &[&str]) -> Output {
+    game.mrgl()
+        .arg("--serious")
+        .args(args)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl")
+}
+
+/// An addon folder with a TOC, made by hand in a game.
+fn addon_by_hand(game: &Game, folder: &str, version: &str) {
+    std::fs::create_dir_all(game.addon(folder)).expect("the folder");
+    std::fs::write(
+        game.addon(folder).join(format!("{folder}.toc")),
+        format!("## Interface: 16001\n## Title: {folder}\n## Version: {version}\n"),
+    )
+    .expect("the TOC");
+}
+
+#[test]
+fn list_marks_a_pinned_an_ignored_and_a_prerelease_addon_of_a_fixture_sidecar() {
+    let game = Game::new("marks-list");
+    for (folder, version) in [
+        ("Beta", "0.9.0-beta"),
+        ("ByHand", "0.1"),
+        ("Ignored", "2.0.0"),
+        ("Pinned", "1.3.0"),
+        ("Plain", "1.0.0"),
+    ] {
+        addon_by_hand(&game, folder, version);
+    }
+    // A sidecar as a user's could look: three marked entries and one written before task 021, without
+    // the fields; ByHand has no entry.
+    let entry = |version: &str, folder: &str, marks: &str| {
+        format!(
+            r#""{folder}": {{ "source": "github:example/{folder}", "version": "{version}", "folders": ["{folder}"], "files": {{}}, "installed_at": "2026-10-21T14:03:05Z"{marks} }}"#
+        )
+    };
+    let sidecar = format!(
+        r#"{{ "schema": 1, "flavor": "wowf", "addons": {{ {}, {}, {}, {} }} }}"#,
+        entry("1.3.0", "Pinned", r#", "pinned": "1.2.0""#),
+        entry("2.0.0", "Ignored", r#", "ignored": true"#),
+        entry("0.9.0-beta", "Beta", r#", "channel": "prerelease""#),
+        entry("1.0.0", "Plain", ""),
+    );
+    std::fs::create_dir_all(game.home.join("wowf")).expect("the flavor home");
+    std::fs::write(game.state_path(), &sidecar).expect("the sidecar");
+
+    let output = run_in(&game, &["list"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            // A managed addon of a Forever listing also carries the Forever mark of task 011.
+            "Beta  0.9.0-beta  16001  prerelease  forever:unknown",
+            "ByHand  0.1  16001",
+            "Ignored  2.0.0  16001  ignored  forever:unknown",
+            "Pinned  1.3.0  16001  pinned at 1.2.0  forever:unknown",
+            "Plain  1.0.0  16001  forever:unknown",
+            "5 addons in _forever_ (wowf 1.60.1.70245), 1 pinned, 1 ignored, 1 on the prerelease channel",
+        ]
+    );
+
+    let output = game
+        .mrgl()
+        .args(["--json", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let marks: Vec<serde_json::Value> = value["addons"]
+        .as_array()
+        .expect("the addons")
+        .iter()
+        .map(|addon| {
+            serde_json::json!([
+                addon["folder"],
+                addon["pinned"],
+                addon["ignored"],
+                addon["channel"]
+            ])
+        })
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            serde_json::json!(["Beta", null, false, "prerelease"]),
+            serde_json::json!(["ByHand", null, false, null]),
+            serde_json::json!(["Ignored", null, true, "stable"]),
+            serde_json::json!(["Pinned", "1.2.0", false, "stable"]),
+            serde_json::json!(["Plain", null, false, "stable"]),
+        ]
+    );
+    assert_eq!(
+        std::fs::read_to_string(game.state_path()).expect("the sidecar"),
+        sidecar,
+        "list writes nothing"
+    );
+}
+
+#[test]
+fn pin_unpin_ignore_unignore_and_channel_round_trip_through_the_sidecar() {
+    let game = Game::new("marks-commands");
+    for zip in ["one-folder-1.0.0.zip", "several-folders-2.0.0.zip"] {
+        let output = game
+            .mrgl()
+            .arg("add")
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+    }
+    let before = std::fs::read(game.state_path()).expect("the sidecar");
+
+    let steps: [(&[&str], &str); 11] = [
+        (
+            &["pin", "OneFolder"],
+            "pinned OneFolder at 1.0.0 in _forever_",
+        ),
+        (
+            &["pin", "onefolder"],
+            "OneFolder is already pinned at 1.0.0 in _forever_",
+        ),
+        (
+            &["pin", "OneFolder", "0.9.0"],
+            "pinned OneFolder at 0.9.0 in _forever_ (1.0.0 is installed)",
+        ),
+        (
+            &["ignore", "SeveralFolders_Options"],
+            "ignoring SeveralFolders in _forever_",
+        ),
+        (
+            &["ignore", "SeveralFolders"],
+            "SeveralFolders is already ignored in _forever_",
+        ),
+        (
+            &["channel", "SeveralFolders", "prerelease"],
+            "SeveralFolders follows the prerelease channel in _forever_",
+        ),
+        (&["unpin", "OneFolder"], "unpinned OneFolder in _forever_"),
+        (
+            &["unpin", "OneFolder"],
+            "OneFolder is not pinned in _forever_",
+        ),
+        (
+            &["unignore", "SeveralFolders"],
+            "SeveralFolders is no longer ignored in _forever_",
+        ),
+        (
+            &["unignore", "SeveralFolders"],
+            "SeveralFolders is not ignored in _forever_",
+        ),
+        (
+            &["channel", "SeveralFolders", "stable"],
+            "SeveralFolders follows the stable channel in _forever_",
+        ),
+    ];
+    for (args, plain) in steps {
+        let output = run_in(&game, args);
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            stderr_last_line(&output)
+        );
+        assert_eq!(stdout(&output), format!("{plain}\n"), "{args:?}");
+    }
+    assert_eq!(
+        std::fs::read(game.state_path()).expect("the sidecar"),
+        before,
+        "every mark undone leaves the sidecar as it was"
+    );
+
+    // The murloc speaks on a change; JSON is one plain document.
+    let output = game
+        .mrgl()
+        .args(["ignore", "OneFolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(stdout(&output).lines().count(), 2, "{}", stdout(&output));
+    assert_eq!(stdout_last_line(&output), "ignoring OneFolder in _forever_");
+    let output = game
+        .mrgl()
+        .args(["--json", "pin", "OneFolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "pin");
+    assert_eq!(value["flavor"]["id"], "wowf");
+    assert_eq!(
+        value["addon"],
+        serde_json::json!({
+            "name": "OneFolder",
+            "version": "1.0.0",
+            "pinned": "1.0.0",
+            "ignored": true,
+            "channel": "stable",
+        })
+    );
+    assert_eq!(value["changed"], true);
+    assert_eq!(value["warnings"], serde_json::json!([]));
+
+    // A reinstall keeps the marks and says the pin differs from the new version.
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(zips().join("one-folder-1.1.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout(&output).contains(
+            "OneFolder is pinned at 1.0.0 and 1.1.0 is installed now; the pin stays until `mrgl unpin OneFolder`"
+        ),
+        "{}",
+        stdout(&output)
+    );
+    let output = run_in(&game, &["list"]);
+    assert!(
+        stdout(&output)
+            .contains("OneFolder  1.1.0  16001  pinned at 1.0.0  ignored  forever:unknown\n"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout_last_line(&output).ends_with(", 1 pinned, 1 ignored"),
+        "{}",
+        stdout_last_line(&output)
+    );
+}
+
+#[test]
+fn a_mark_on_an_unknown_or_unmanaged_addon_is_exit_code_one_and_writes_nothing() {
+    let game = Game::new("marks-unmanaged");
+    addon_by_hand(&game, "ByHand", "0.1");
+    let unmanaged = "addon not managed by mrgl: ByHand (flavor forever); it was installed by hand or by another manager, and only an addon mrgl installed can be";
+    let cases: [(&[&str], String); 6] = [
+        (
+            &["pin", "Nope"],
+            "addon not found: Nope (flavor forever)".to_string(),
+        ),
+        (&["pin", "ByHand", "1.0"], format!("{unmanaged} pinned")),
+        (&["unpin", "ByHand"], format!("{unmanaged} unpinned")),
+        (&["ignore", "ByHand"], format!("{unmanaged} ignored")),
+        (&["unignore", "ByHand"], format!("{unmanaged} unignored")),
+        (
+            &["channel", "ByHand", "prerelease"],
+            format!("{unmanaged} put on a channel"),
+        ),
+    ];
+    for (args, plain) in cases {
+        let output = run_in(&game, args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert_eq!(stderr_last_line(&output), plain, "{args:?}");
+    }
+    assert!(!game.state_path().exists(), "nothing was written");
+
+    let output = run_in(&game, &["channel", "ByHand", "nightly"]);
+    assert_eq!(output.status.code(), Some(2), "a usage error");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown channel nightly: stable or prerelease"),
+        "{stderr}"
+    );
+}

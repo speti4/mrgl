@@ -7,7 +7,8 @@
 //! (the install engine); `backup` (the WTF backup, the listing and the restore) is task 013; the Forever
 //! notes on `add` and on `list` (the derived build signal and the curated note) are task 011; `link` and
 //! `unlink` (the dev addon junctions) are task 005; `export` and `import` (the addon list) and the
-//! interface warning of `list` and `add` are task 015; the other subcommands follow the M1 plan
+//! interface warning of `list` and `add` are task 015; `pin`, `unpin`, `ignore`, `unignore` and
+//! `channel`, with their marks in `list`, are task 021; the other subcommands follow the M1 plan
 //! (`tasks/roadmap.md`) and answer "not implemented yet" with their task id until that task lands, so the
 //! help text and the voice are testable from the first commit.
 
@@ -24,14 +25,14 @@ use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
 use mrgl_core::flavor::{self, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
-use mrgl_core::install::{Engine, Metadata};
+use mrgl_core::install::{Engine, Marked, Metadata};
 use mrgl_core::interface::{self, InterfaceMismatch};
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
-use mrgl_core::sources::{self, Source, SourceSpec, Target};
-use mrgl_core::state::FlavorHome;
+use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
+use mrgl_core::state::{Entry, FlavorHome, State};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::{Error, VERSION};
 
@@ -194,6 +195,57 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Pin a managed addon at a version: the update check reports newer releases and leaves it alone.
+    Pin {
+        /// The addon by name, or one of its folders.
+        name: String,
+        /// The version to pin at; without it, the installed version.
+        version: Option<String>,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Unpin a managed addon: updates reach it again.
+    Unpin {
+        /// The addon by name, or one of its folders.
+        name: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Ignore a managed addon: the update check skips it and counts it.
+    Ignore {
+        /// The addon by name, or one of its folders.
+        name: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Stop ignoring a managed addon.
+    Unignore {
+        /// The addon by name, or one of its folders.
+        name: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Put a managed addon on a release channel: `prerelease` follows the beta builds of its GitHub
+    /// releases, `stable` (the default) takes a prerelease only when there is nothing else.
+    Channel {
+        /// The addon by name, or one of its folders.
+        name: String,
+        /// `stable` or `prerelease`.
+        #[arg(value_parser = parse_channel)]
+        channel: Channel,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+}
+
+/// A channel name on the command line: `stable` or `prerelease` (also `beta`).
+fn parse_channel(text: &str) -> Result<Channel, String> {
+    Channel::parse(text).ok_or_else(|| format!("unknown channel {text}: stable or prerelease"))
 }
 
 impl Command {
@@ -209,7 +261,12 @@ impl Command {
             | Command::Unlink { .. }
             | Command::Backup { .. }
             | Command::Export { .. }
-            | Command::Import { .. } => return None,
+            | Command::Import { .. }
+            | Command::Pin { .. }
+            | Command::Unpin { .. }
+            | Command::Ignore { .. }
+            | Command::Unignore { .. }
+            | Command::Channel { .. } => return None,
             Command::Doctor { .. } => return None,
             Command::Update { all: true, .. } => ("update --all", "006"),
             Command::Update { .. } => ("update", "006"),
@@ -297,7 +354,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
     match command {
         Command::Scan { folder } => {
             let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
-            report_scan(reporter, "scan", &scan, Vec::new(), &[], None);
+            report_scan(reporter, "scan", &scan, Vec::new(), &[], None, None);
         }
         Command::List { flavor, root } => {
             let mut warnings = Vec::new();
@@ -305,6 +362,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
             let dependencies = check_dependencies(&scan, &mut warnings);
             let forever = forever_statuses(&scan, &mut warnings);
+            let state = sidecar_of(&scan, &mut warnings);
             report_scan(
                 reporter,
                 "list",
@@ -312,6 +370,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
                 warnings,
                 &dependencies,
                 forever.as_ref(),
+                state.as_ref(),
             );
         }
         Command::Root { folder } => root_command(reporter, folder)?,
@@ -342,6 +401,25 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             flavor,
             dry_run,
         } => import_command(reporter, &file, flavor.as_deref(), dry_run)?,
+        Command::Pin {
+            name,
+            version,
+            flavor,
+        } => mark_command(reporter, &name, flavor.as_deref(), Mark::Pin(version))?,
+        Command::Unpin { name, flavor } => {
+            mark_command(reporter, &name, flavor.as_deref(), Mark::Unpin)?
+        }
+        Command::Ignore { name, flavor } => {
+            mark_command(reporter, &name, flavor.as_deref(), Mark::Ignore)?
+        }
+        Command::Unignore { name, flavor } => {
+            mark_command(reporter, &name, flavor.as_deref(), Mark::Unignore)?
+        }
+        Command::Channel {
+            name,
+            channel,
+            flavor,
+        } => mark_command(reporter, &name, flavor.as_deref(), Mark::Channel(channel))?,
         _ => unreachable!("every other command answered with its task"),
     }
     Ok(())
@@ -398,6 +476,8 @@ fn game_root(
 /// running from the flavor folder (task 023) is named in the summary and is `client_running` in the JSON.
 /// `dependencies` is the dependency check of the scan (task 029; empty for `scan`, which reads the folder
 /// only). A Forever listing (task 011) marks every addon through [`mark_forever`].
+/// With the flavor's sidecar (`list`), a pinned, an ignored and a prerelease addon carry their marks
+/// (task 021).
 fn report_scan(
     reporter: &Reporter,
     kind: &str,
@@ -405,6 +485,7 @@ fn report_scan(
     mut warnings: Vec<String>,
     dependencies: &[AddonDependencies],
     forever: Option<&BTreeMap<String, ForeverStatus>>,
+    state: Option<&State>,
 ) {
     warnings.extend(scan.flavor.warnings.iter().cloned());
     warnings.extend(scan.warnings.iter().cloned());
@@ -421,6 +502,17 @@ fn report_scan(
     for addon in &scan.addons {
         let mut line = addon_line(addon);
         let mut object = serde_json::to_value(addon).unwrap_or_default();
+        // The marks of task 021 (pinned, ignored, prerelease) come first, from the sidecar entry.
+        if let Some(state) = state {
+            let entry = state
+                .entry_for_folder(&addon.folder)
+                .map(|(_, entry)| entry);
+            let (suffix, fields) = marks(entry);
+            line.push_str(&suffix);
+            if let Some(object) = object.as_object_mut() {
+                object.extend(fields);
+            }
+        }
         mark_dependencies(dependencies, &addon.folder, &mut line, &mut object);
         mark_forever(forever, addon, Some(&mut line), Some(&mut object));
         lines.push(with_interface_note(line, addon, &mismatches));
@@ -484,12 +576,99 @@ fn report_scan(
         1 => summary.push_str(", 1 folder without a TOC skipped"),
         count => summary.push_str(&format!(", {count} folders without a TOC skipped")),
     }
+    if let Some(state) = state {
+        summary.push_str(&marks_summary(scan, state));
+    }
     let kind = if scan.addons.is_empty() {
         Kind::Nothing
     } else {
         Kind::Success
     };
     reporter.say(kind, summary);
+}
+
+/// The flavor's sidecar for `list`'s marks: a missing one is empty, a corrupt one or no home folder is a
+/// warning and no marks.
+fn sidecar_of(scan: &Scan, warnings: &mut Vec<String>) -> Option<State> {
+    let id = &scan.flavor.id;
+    match FlavorHome::new(id).and_then(|home| home.read_state(id)) {
+        Ok(loaded) => {
+            warnings.extend(loaded.warning);
+            Some(loaded.state)
+        }
+        Err(error) => {
+            warnings.push(error.to_string());
+            None
+        }
+    }
+}
+
+/// The marks of task 021 on one addon of `list`, the one place they are spelled: the suffix of its line
+/// (`pinned at 1.2.0`, `ignored`, `prerelease`, each after two spaces like the line's other parts; empty
+/// for an unmarked or unmanaged addon) and the fields of its JSON object (`pinned`, a version or null;
+/// `ignored`; `channel`, null for an unmanaged addon).
+fn marks(entry: Option<&Entry>) -> (String, serde_json::Map<String, serde_json::Value>) {
+    let mut suffix = String::new();
+    if let Some(pinned) = entry.and_then(Entry::pinned) {
+        suffix.push_str(&format!("  pinned at {pinned}"));
+    }
+    if entry.is_some_and(Entry::ignored) {
+        suffix.push_str("  ignored");
+    }
+    if entry.map(Entry::channel) == Some(Channel::Prerelease) {
+        suffix.push_str("  prerelease");
+    }
+    let mut fields = serde_json::Map::new();
+    fields.insert(
+        "pinned".into(),
+        serde_json::json!(entry.and_then(Entry::pinned)),
+    );
+    fields.insert(
+        "ignored".into(),
+        serde_json::json!(entry.is_some_and(Entry::ignored)),
+    );
+    fields.insert(
+        "channel".into(),
+        serde_json::json!(entry.map(Entry::channel)),
+    );
+    (suffix, fields)
+}
+
+/// The counts of task 021 for `list`'s summary, one per managed addon whatever its folder count:
+/// `, 1 pinned, 1 ignored, 1 on the prerelease channel`, each only when it is not zero.
+fn marks_summary(scan: &Scan, state: &State) -> String {
+    let mut names: Vec<&str> = scan
+        .addons
+        .iter()
+        .filter_map(|addon| state.entry_for_folder(&addon.folder))
+        .map(|(name, _)| name)
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    let entries: Vec<&Entry> = names
+        .iter()
+        .filter_map(|name| state.entry(name).map(|(_, entry)| entry))
+        .collect();
+    let pinned = entries
+        .iter()
+        .filter(|entry| entry.pinned().is_some())
+        .count();
+    let ignored = entries.iter().filter(|entry| entry.ignored()).count();
+    let prerelease = entries
+        .iter()
+        .filter(|entry| entry.channel() == Channel::Prerelease)
+        .count();
+    let mut summary = String::new();
+    if pinned > 0 {
+        summary.push_str(&format!(", {pinned} pinned"));
+    }
+    if ignored > 0 {
+        summary.push_str(&format!(", {ignored} ignored"));
+    }
+    if prerelease > 0 {
+        summary.push_str(&format!(", {prerelease} on the prerelease channel"));
+    }
+    summary
 }
 
 /// One addon as a plain line: folder, version, interface list, the source hints and the flags.
@@ -1286,6 +1465,93 @@ fn count_addons(count: usize) -> String {
     } else {
         format!("{count} addons")
     }
+}
+
+/// One change of `mrgl pin`, `unpin`, `ignore`, `unignore` or `channel` (task 021).
+#[derive(Debug)]
+enum Mark {
+    Pin(Option<String>),
+    Unpin,
+    Ignore,
+    Unignore,
+    Channel(Channel),
+}
+
+/// `mrgl pin <name> [version]`, `unpin`, `ignore`, `unignore` and `channel <name> <channel>`, each with
+/// `--flavor`: one mark on a managed addon's sidecar entry. A mark that is set already writes nothing and
+/// says so; a name the sidecar does not know is an error. Nothing in the game folder changes.
+fn mark_command(
+    reporter: &Reporter,
+    name: &str,
+    flavor: Option<&str>,
+    mark: Mark,
+) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let (kind, marked) = match &mark {
+        Mark::Pin(version) => ("pin", engine.pin(name, version.as_deref())),
+        Mark::Unpin => ("unpin", engine.unpin(name)),
+        Mark::Ignore => ("ignore", engine.ignore(name)),
+        Mark::Unignore => ("unignore", engine.unignore(name)),
+        Mark::Channel(channel) => ("channel", engine.set_channel(name, *channel)),
+    };
+    let marked = marked.map_err(|error| error.to_string())?;
+    warnings.extend(marked.warnings.iter().cloned());
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": kind,
+            "flavor": &engine.flavor,
+            "addon": {
+                "name": marked.name,
+                "version": marked.version,
+                "pinned": marked.pinned,
+                "ignored": marked.ignored,
+                "channel": marked.channel,
+            },
+            "changed": marked.changed,
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let (kind, plain) = mark_line(&mark, &marked, &engine.flavor.folder_name());
+    reporter.say(kind, plain);
+    Ok(())
+}
+
+/// The message of a mark: a success when it changed the entry, nothing to do when it was so already.
+fn mark_line(mark: &Mark, marked: &Marked, folder_name: &str) -> (Kind, String) {
+    let name = &marked.name;
+    let pinned = marked.pinned.as_deref().unwrap_or_default();
+    let channel = marked.channel;
+    let plain = match (mark, marked.changed) {
+        (Mark::Pin(_), true) if pinned != marked.version => format!(
+            "pinned {name} at {pinned} in {folder_name} ({} is installed)",
+            marked.version
+        ),
+        (Mark::Pin(_), true) => format!("pinned {name} at {pinned} in {folder_name}"),
+        (Mark::Pin(_), false) => format!("{name} is already pinned at {pinned} in {folder_name}"),
+        (Mark::Unpin, true) => format!("unpinned {name} in {folder_name}"),
+        (Mark::Unpin, false) => format!("{name} is not pinned in {folder_name}"),
+        (Mark::Ignore, true) => format!("ignoring {name} in {folder_name}"),
+        (Mark::Ignore, false) => format!("{name} is already ignored in {folder_name}"),
+        (Mark::Unignore, true) => format!("{name} is no longer ignored in {folder_name}"),
+        (Mark::Unignore, false) => format!("{name} is not ignored in {folder_name}"),
+        (Mark::Channel(_), true) => {
+            format!("{name} follows the {channel} channel in {folder_name}")
+        }
+        (Mark::Channel(_), false) => {
+            format!("{name} is already on the {channel} channel in {folder_name}")
+        }
+    };
+    let kind = if marked.changed {
+        Kind::Success
+    } else {
+        Kind::Nothing
+    };
+    (kind, plain)
 }
 
 fn count_folders(count: usize) -> String {

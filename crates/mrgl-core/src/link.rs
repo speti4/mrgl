@@ -381,6 +381,9 @@ pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
                 files: BTreeMap::new(),
                 installed_at,
                 nolib: None,
+                pinned: None,
+                ignored: false,
+                channel: crate::sources::Channel::Stable,
             },
         );
         linked.push(LinkedAddon {

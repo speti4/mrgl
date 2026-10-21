@@ -11,6 +11,7 @@ use mrgl_core::Error;
 use mrgl_core::client::{FixedProcesses, ProcessList, RunningProcess};
 use mrgl_core::flavor::{self, FlavorId};
 use mrgl_core::install::{Engine, Metadata};
+use mrgl_core::sources::Channel;
 use mrgl_core::state::{self, STATE_FILE, State};
 
 fn zips() -> PathBuf {
@@ -843,6 +844,117 @@ fn a_process_list_that_cannot_be_taken_is_a_warning_and_the_install_goes_on() {
     let removed = sandbox.engine.remove("OneFolder").expect("removes");
     assert!(removed.client_warning.is_some());
     assert!(sandbox.folders().is_empty());
+}
+
+// --- task 021: pin, ignore and the channel, through the engine ---
+
+#[test]
+fn pin_ignore_and_the_channel_round_trip_through_the_sidecar() {
+    let sandbox = Sandbox::new("marks");
+    sandbox.install("one-folder-1.0.0.zip");
+    sandbox.install("several-folders-2.0.0.zip");
+    let before = std::fs::read(sandbox.engine.home.state_path()).expect("the sidecar");
+
+    let pinned = sandbox.engine.pin("onefolder", None).expect("pins");
+    assert_eq!(pinned.name, "OneFolder");
+    assert_eq!(
+        pinned.pinned.as_deref(),
+        Some("1.0.0"),
+        "the installed version"
+    );
+    assert!(pinned.changed);
+    let again = sandbox
+        .engine
+        .pin("OneFolder", Some("1.0.0"))
+        .expect("pins");
+    assert!(!again.changed, "the same pin writes nothing");
+    let other = sandbox
+        .engine
+        .pin("OneFolder", Some("0.9.0"))
+        .expect("pins");
+    assert_eq!(other.pinned.as_deref(), Some("0.9.0"));
+    assert!(other.changed);
+
+    // A folder of a several-folder addon names the addon.
+    let ignored = sandbox
+        .engine
+        .ignore("SeveralFolders_Options")
+        .expect("ignores");
+    assert_eq!(ignored.name, "SeveralFolders");
+    assert!(ignored.ignored && ignored.changed);
+    let beta = sandbox
+        .engine
+        .set_channel("SeveralFolders", Channel::Prerelease)
+        .expect("a channel");
+    assert_eq!(beta.channel, Channel::Prerelease);
+
+    let state = sandbox.state();
+    let (_, one) = state.entry("OneFolder").expect("OneFolder");
+    assert_eq!(one.pinned(), Some("0.9.0"));
+    assert!(!one.ignored());
+    let (_, several) = state.entry("SeveralFolders").expect("SeveralFolders");
+    assert_eq!(several.pinned(), None);
+    assert!(several.ignored());
+    assert_eq!(several.channel(), Channel::Prerelease);
+
+    assert!(sandbox.engine.unpin("OneFolder").expect("unpins").changed);
+    assert!(!sandbox.engine.unpin("OneFolder").expect("unpins").changed);
+    assert!(
+        sandbox
+            .engine
+            .unignore("SeveralFolders")
+            .expect("unignores")
+            .changed
+    );
+    sandbox
+        .engine
+        .set_channel("SeveralFolders", Channel::Stable)
+        .expect("a channel");
+    let after = std::fs::read(sandbox.engine.home.state_path()).expect("the sidecar");
+    assert_eq!(
+        after, before,
+        "every mark undone leaves the sidecar as it was"
+    );
+}
+
+#[test]
+fn a_reinstall_keeps_the_marks_and_warns_when_the_pin_differs() {
+    let sandbox = Sandbox::new("marks-kept");
+    sandbox.install("one-folder-1.0.0.zip");
+    sandbox.engine.pin("OneFolder", None).expect("pins");
+    sandbox.engine.ignore("OneFolder").expect("ignores");
+    sandbox
+        .engine
+        .set_channel("OneFolder", Channel::Prerelease)
+        .expect("a channel");
+    let updated = sandbox.install("one-folder-1.1.0.zip");
+    assert_eq!(
+        updated.warnings,
+        [
+            "OneFolder is pinned at 1.0.0 and 1.1.0 is installed now; the pin stays until `mrgl unpin OneFolder`"
+        ]
+    );
+    let state = sandbox.state();
+    let (_, entry) = state.entry("OneFolder").expect("the entry");
+    assert_eq!(entry.version, "1.1.0");
+    assert_eq!(entry.pinned(), Some("1.0.0"));
+    assert!(entry.ignored());
+    assert_eq!(entry.channel(), Channel::Prerelease);
+}
+
+#[test]
+fn a_mark_on_an_unknown_or_unmanaged_addon_is_an_error_and_writes_nothing() {
+    let sandbox = Sandbox::new("marks-unmanaged");
+    let error = sandbox.engine.pin("Nope", None).expect_err("unknown");
+    assert_eq!(error.to_string(), "addon not found: Nope (flavor forever)");
+    std::fs::create_dir_all(sandbox.addon("ByHand")).expect("a folder by hand");
+    let error = sandbox.engine.ignore("ByHand").expect_err("not managed");
+    assert!(matches!(error, Error::NotManagedToMark { .. }), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "addon not managed by mrgl: ByHand (flavor forever); it was installed by hand or by another manager, and only an addon mrgl installed can be ignored"
+    );
+    assert!(!sandbox.engine.home.state_path().exists());
 }
 
 /// A zip written by the test itself, stored entries only.

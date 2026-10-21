@@ -11,7 +11,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::flavor::{BuildVersion, Flavor, FlavorId};
@@ -87,29 +87,84 @@ impl Serialize for SourceSpec {
     }
 }
 
-/// What a release is picked for: the flavor, and the installed build when it is known. The build decides
-/// between the game types of the progressing classic (Cataclysm, Mists, …), which share one flavor id.
+/// The release channel an addon follows (task 021): `stable` takes the newest release that is not a
+/// prerelease (a prerelease only when nothing else exists), `prerelease` takes the newest release whether
+/// it is a prerelease or not, so one addon can follow the beta builds. The GitHub `prerelease` flag
+/// decides what a prerelease is. The sidecar records it per addon; absent means `stable`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Channel {
+    #[default]
+    Stable,
+    Prerelease,
+}
+
+impl Channel {
+    /// The channel's name as the sidecar, the JSON and the command line spell it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Channel::Stable => "stable",
+            Channel::Prerelease => "prerelease",
+        }
+    }
+
+    /// Reads a channel name, ASCII case-insensitive: `stable`, `prerelease` (also `beta`).
+    pub fn parse(text: &str) -> Option<Channel> {
+        let text = text.trim();
+        if text.eq_ignore_ascii_case("stable") {
+            Some(Channel::Stable)
+        } else if text.eq_ignore_ascii_case("prerelease") || text.eq_ignore_ascii_case("beta") {
+            Some(Channel::Prerelease)
+        } else {
+            None
+        }
+    }
+
+    /// Whether this is the default channel (the sidecar leaves it out).
+    pub fn is_stable(&self) -> bool {
+        *self == Channel::Stable
+    }
+}
+
+impl fmt::Display for Channel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What a release is picked for: the flavor, the installed build when it is known, and the channel. The
+/// build decides between the game types of the progressing classic (Cataclysm, Mists, …), which share one
+/// flavor id; the channel decides whether a prerelease can be the current release (task 021).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub flavor: FlavorId,
     pub version: Option<BuildVersion>,
+    pub channel: Channel,
 }
 
 impl Target {
-    /// A target with the flavor alone; the build is unknown.
+    /// A target with the flavor alone; the build is unknown, the channel stable.
     pub fn new(flavor: FlavorId) -> Target {
         Target {
             flavor,
             version: None,
+            channel: Channel::Stable,
         }
     }
 
-    /// The target of a flavor folder read from disk.
+    /// The target of a flavor folder read from disk, on the stable channel.
     pub fn from_flavor(flavor: &Flavor) -> Target {
         Target {
             flavor: flavor.id.clone(),
             version: flavor.version,
+            channel: Channel::Stable,
         }
+    }
+
+    /// The same target on another channel: an addon's own, from its sidecar entry.
+    pub fn with_channel(mut self, channel: Channel) -> Target {
+        self.channel = channel;
+        self
     }
 
     /// The major version of the installed build, when known (`5` for Mists of Pandaria Classic).
@@ -136,7 +191,8 @@ pub struct Pick {
     pub version: String,
     /// When the release was published, as the source writes it (RFC 3339), when it says.
     pub published: Option<String>,
-    /// The release is marked a prerelease (alpha, beta); picked only when no other release exists.
+    /// The release is marked a prerelease (alpha, beta); picked on the `prerelease` channel, or on the
+    /// stable one when no other release exists.
     pub prerelease: bool,
     /// The asset's file name.
     pub asset: String,
@@ -600,15 +656,38 @@ mod tests {
     }
 
     #[test]
+    fn a_channel_reads_and_writes_its_name() {
+        assert_eq!(Channel::default(), Channel::Stable);
+        assert_eq!(Channel::parse("stable"), Some(Channel::Stable));
+        assert_eq!(Channel::parse(" PreRelease "), Some(Channel::Prerelease));
+        assert_eq!(Channel::parse("beta"), Some(Channel::Prerelease));
+        assert_eq!(Channel::parse("nightly"), None);
+        assert_eq!(Channel::Prerelease.to_string(), "prerelease");
+        assert_eq!(
+            serde_json::to_string(&Channel::Prerelease).expect("json"),
+            "\"prerelease\""
+        );
+        assert_eq!(
+            serde_json::from_str::<Channel>("\"stable\"").expect("json"),
+            Channel::Stable
+        );
+        assert!(Channel::Stable.is_stable() && !Channel::Prerelease.is_stable());
+    }
+
+    #[test]
     fn a_target_knows_its_name_and_major() {
         let target = Target::new(FlavorId::Forever);
         assert_eq!(target.flavor_name(), "forever");
         assert_eq!(target.major(), None);
         let target = Target {
-            flavor: FlavorId::Classic,
             version: BuildVersion::parse("5.5.4.70531"),
+            ..Target::new(FlavorId::Classic)
         };
         assert_eq!(target.major(), Some(5));
+        assert_eq!(target.channel, Channel::Stable);
+        let beta = target.with_channel(Channel::Prerelease);
+        assert_eq!(beta.channel, Channel::Prerelease);
+        assert_eq!(beta.major(), Some(5));
         assert_eq!(
             Target::new(FlavorId::Other("wow_x".into())).flavor_name(),
             "wow_x"

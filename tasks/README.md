@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 31 backlog (2 ready · 0 blocked · 2 waiting · 27 ideas) · 0 in progress · 21 done · 3 dropped · 5 decisions
+**State:** 31 backlog (2 ready · 0 blocked · 2 waiting · 27 ideas) · 0 in progress · 22 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -49,12 +49,12 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 021 | [Pin, ignore and the pre-release channel per addon; CLI pin, unpin, ignore and u…](backlog/021-pin-ignore-and-prerelease-channel.md) | S | 2026-10-21 |
 | 022 | [Rollback to the previous version from the kept zip; CLI rollback](backlog/022-rollback-from-the-kept-zip.md) | S | 2026-10-21 |
 | 037 | [list reads the sidecar: managed (source, version) and unmanaged addons](backlog/037-list-reads-the-sidecar-managed-and-unmanaged.md) | S | 2026-10-21 |
 | 040 | [add github:<owner>/<repo> installs the pick through the engine](backlog/040-add-github-installs-the-pick-through-the-engine.md) | S | 2026-10-21 |
 | 041 | [Offline resolve from the cached release list, with a warning](backlog/041-offline-resolve-from-the-cached-release-list.md) | S | 2026-10-21 |
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
+| 054 | [add github: resolves a managed addon on its own channel](backlog/054-add-github-resolves-a-managed-addon-on-its-channel.md) | S | 2026-10-21 |
 | 055 | [One install path: a core helper for resolve, download and install, the link ref…](backlog/055-one-core-helper-for-resolve-download-and-install.md) | M | 2026-10-21 |
 | 061 | [CI compiles the non-Windows paths of the core](backlog/061-ci-compiles-the-non-windows-paths.md) | S | 2026-10-21 |
 
@@ -126,10 +126,10 @@ _none_
 | 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](done/029-dependency-check-from-toc-and-nolib.md) | 2026-10-21 |
 | 024 | [mrgl doctor: a diagnostic report for a bug report](done/024-doctor-diagnostic-report.md) | 2026-10-21 |
 | 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
+| 021 | [Pin, ignore and the pre-release channel per addon; CLI pin, unpin, ignore and u…](done/021-pin-ignore-and-prerelease-channel.md) | 2026-10-21 |
 | 020 | [Game root auto-discovery: the launcher's registry key and the common install fo…](done/020-game-root-auto-discovery.md) | 2026-10-21 |
-| 019 | [Build version fallback from the client exe when .build.info has no row for the …](done/019-build-version-fallback-from-the-client-exe.md) | 2026-10-21 |
 
-_11 more in `done/`._
+_12 more in `done/`._
 
 ### Decisions
 
