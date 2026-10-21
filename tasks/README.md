@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 29 backlog (2 ready · 0 blocked · 2 waiting · 25 ideas) · 0 in progress · 23 done · 3 dropped · 5 decisions
+**State:** 31 backlog (2 ready · 0 blocked · 2 waiting · 27 ideas) · 0 in progress · 24 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -50,9 +50,10 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 022 | [Rollback to the previous version from the kept zip; CLI rollback](backlog/022-rollback-from-the-kept-zip.md) | S | 2026-10-21 |
-| 040 | [add github:<owner>/<repo> installs the pick through the engine](backlog/040-add-github-installs-the-pick-through-the-engine.md) | S | 2026-10-21 |
 | 041 | [Offline resolve from the cached release list, with a warning](backlog/041-offline-resolve-from-the-cached-release-list.md) | S | 2026-10-21 |
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
+| 046 | [An asset download that returns 404 names the missing asset](backlog/046-asset-download-404-names-the-missing-asset.md) | S | 2026-10-21 |
+| 047 | [One install summary helper for add <file.zip> and add github:](backlog/047-one-install-summary-helper-for-add-zip-and-add-github.md) | S | 2026-10-21 |
 | 055 | [One install path: a core helper for resolve, download and install, the link ref…](backlog/055-one-core-helper-for-resolve-download-and-install.md) | M | 2026-10-21 |
 | 061 | [CI compiles the non-Windows paths of the core](backlog/061-ci-compiles-the-non-windows-paths.md) | S | 2026-10-21 |
 
@@ -93,6 +94,7 @@ _none_
 |---|---|---|---|
 | 031 | [Self-update of the portable zip with attestation verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | M | 2026-10-21 |
 | 039 | [A bound on the unpacked size of a zip](backlog/039-bound-on-the-unpacked-size-of-a-zip.md) | S | 2026-10-21 |
+| 048 | [The asset download is checked against the release's size](backlog/048-asset-download-checked-against-the-release-size.md) | S | 2026-10-21 |
 
 #### M6 macOS preview
 
@@ -117,6 +119,7 @@ _none_
 | # | Task | Closed |
 |---|---|---|
 | 044 | [One zip-entry check for the install engine and the backup restore](done/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | 2026-10-21 |
+| 040 | [add github:<owner>/<repo> installs the pick through the engine](done/040-add-github-installs-the-pick-through-the-engine.md) | 2026-10-21 |
 | 038 | [The install engine warns when the client runs](done/038-install-warns-when-the-client-runs.md) | 2026-10-21 |
 | 037 | [list reads the sidecar: managed (source, version) and unmanaged addons](done/037-list-reads-the-sidecar-managed-and-unmanaged.md) | 2026-10-21 |
 | 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](done/035-window-polish-forever-column-and-toast-cap.md) | 2026-10-21 |
@@ -125,9 +128,8 @@ _none_
 | 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](done/029-dependency-check-from-toc-and-nolib.md) | 2026-10-21 |
 | 024 | [mrgl doctor: a diagnostic report for a bug report](done/024-doctor-diagnostic-report.md) | 2026-10-21 |
 | 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
-| 021 | [Pin, ignore and the pre-release channel per addon; CLI pin, unpin, ignore and u…](done/021-pin-ignore-and-prerelease-channel.md) | 2026-10-21 |
 
-_13 more in `done/`._
+_14 more in `done/`._
 
 ### Decisions
 
