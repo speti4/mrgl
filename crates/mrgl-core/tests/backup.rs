@@ -6,7 +6,7 @@
 //! line.
 
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, UNIX_EPOCH};
@@ -391,34 +391,63 @@ fn the_default_backups_folder_is_under_the_home() {
     );
 }
 
-/// A copy of this test binary in the flavor folder, started as the stand-in client: it runs the
-/// `stand_in_client` test below, which waits for its stdin to close.
-fn spawn_stand_in(flavor_folder: &Path) -> Child {
-    let exe = std::env::current_exe().expect("this test binary");
-    let name = format!(
-        "client-stand-in{}",
-        exe.extension()
-            .map(|ext| format!(".{}", ext.to_string_lossy()))
-            .unwrap_or_default()
-    );
-    let copy = flavor_folder.join(name);
-    std::fs::copy(&exe, &copy).expect("the copy");
-    Command::new(&copy)
-        .args(["--exact", "stand_in_client", "--include-ignored"])
-        .stdin(Stdio::piped())
+/// The stand-in client (task 063): a copy of the signed `ping.exe` of the system folder, named
+/// `client-stand-in.exe` in the flavor folder and pinging the loopback address for an hour, so it runs
+/// until the test stops it. Never a copy of this test binary: a binary that copies itself and runs the
+/// copy is what an antivirus heuristic reads as a dropper. `None` when the system folder has no
+/// `ping.exe`; the test is then skipped with a message.
+#[cfg(windows)]
+fn spawn_stand_in(flavor_folder: &Path) -> Option<StandIn> {
+    let ping = PathBuf::from(std::env::var_os("SystemRoot")?)
+        .join("System32")
+        .join("ping.exe");
+    if !ping.is_file() {
+        return None;
+    }
+    let copy = flavor_folder.join("client-stand-in.exe");
+    std::fs::copy(&ping, &copy).expect("the copy");
+    let child = Command::new(&copy)
+        .args(["-n", "3600", "127.0.0.1"])
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("the stand-in starts")
+        .expect("the stand-in starts");
+    Some(StandIn {
+        child,
+        stopped: false,
+    })
 }
 
-/// The stand-in client's body: it blocks until the parent closes its stdin or kills it. Ignored, so a
-/// plain `cargo test` never runs it; the copy runs it by name.
-#[test]
-#[ignore]
-fn stand_in_client() {
-    let mut sink = Vec::new();
-    let _ = std::io::stdin().read_to_end(&mut sink);
+/// The running stand-in client: `stop` kills and waits for it, and so does a drop, so a failing
+/// assertion leaves no process behind.
+#[cfg(windows)]
+struct StandIn {
+    child: Child,
+    stopped: bool,
+}
+
+#[cfg(windows)]
+impl StandIn {
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    fn stop(&mut self) {
+        self.child.kill().expect("killed");
+        self.child.wait().expect("waited");
+        self.stopped = true;
+    }
+}
+
+#[cfg(windows)]
+impl Drop for StandIn {
+    fn drop(&mut self) {
+        if !self.stopped {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -431,7 +460,10 @@ fn a_restore_is_refused_while_the_client_runs_and_a_backup_is_not() {
     let wtf = root.join("_forever_").join(WTF_DIR);
     let before = snapshot(&wtf);
 
-    let mut child = spawn_stand_in(&flavor.folder);
+    let Some(mut child) = spawn_stand_in(&flavor.folder) else {
+        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        return;
+    };
     let error = backup::restore_wtf(&flavor, &backup.zip, &backups).expect_err("refused");
     assert!(
         matches!(&error, Error::ClientRunning { flavor, client } if flavor == "_forever_" && client.pid == child.id()),
@@ -455,8 +487,7 @@ fn a_restore_is_refused_while_the_client_runs_and_a_backup_is_not() {
     let second = backup::backup_wtf(&flavor, &backups).expect("a backup while the client runs");
     assert_ne!(second.zip, backup.zip);
 
-    child.kill().expect("killed");
-    child.wait().expect("waited");
+    child.stop();
     let restored = backup::restore_wtf(&flavor, &backup.zip, &backups).expect("restored");
     assert!(restored.aside.is_some());
     let _ = std::fs::remove_dir_all(&root);

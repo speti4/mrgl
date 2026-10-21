@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 25 backlog (2 ready · 0 blocked · 2 waiting · 21 ideas) · 0 in progress · 28 done · 3 dropped · 5 decisions
+**State:** 25 backlog (2 ready · 0 blocked · 2 waiting · 21 ideas) · 0 in progress · 29 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -112,6 +112,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
 | 061 | [CI compiles the non-Windows paths of the core](done/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 |
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](done/033-close-the-milestone-of-a-shipped-release.md) | 2026-10-22 |
 | 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](done/025-savedvariables-size-and-orphan-cleanup.md) | 2026-10-22 |
@@ -121,9 +122,8 @@ _none_
 | 037 | [list reads the sidecar: managed (source, version) and unmanaged addons](done/037-list-reads-the-sidecar-managed-and-unmanaged.md) | 2026-10-21 |
 | 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](done/035-window-polish-forever-column-and-toast-cap.md) | 2026-10-21 |
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
-| 030 | [Release notes before an update: the GitHub release body in one line](done/030-release-notes-before-an-update.md) | 2026-10-21 |
 
-_18 more in `done/`._
+_19 more in `done/`._
 
 ### Decisions
 
