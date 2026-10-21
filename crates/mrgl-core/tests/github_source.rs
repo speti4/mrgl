@@ -55,7 +55,8 @@ fn questie_resolves_every_flavor_from_release_json() {
     );
     assert_eq!(forever.flavor, "forever");
     assert_eq!(forever.interface, Some(16001));
-    assert_eq!(forever.size, Some(2048));
+    // The Forever asset lists no size, so any zip a test puts behind it installs (task 046).
+    assert_eq!(forever.size, None);
     assert!(!forever.guess);
     assert!(!forever.prerelease);
     assert_eq!(
@@ -772,4 +773,98 @@ fn a_second_resolve_of_a_tag_reads_release_json_from_the_cache() {
     assert_eq!(requests.len(), 5);
     assert!(requests[4].url.ends_with("/v1.2.3/release.json"));
     let _ = std::fs::remove_dir_all(&cache);
+}
+
+// --- task 046: the asset download's 404 names the asset, the size is checked ---
+
+#[test]
+fn a_missing_asset_names_the_asset_and_the_release() {
+    let github = github();
+    let pick = github
+        .resolve(
+            &spec("github:Example/NoReleaseJson"),
+            &target(FlavorId::Forever, None),
+        )
+        .expect("a pick by name");
+    let to = temp_cache("missing-asset").join(&pick.asset);
+    let error = github.fetch(&pick, &to).unwrap_err();
+    assert!(
+        matches!(error, mrgl_core::error::Error::AssetMissing { .. }),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "the asset Thing-3.0.0-forever.zip of github:Example/NoReleaseJson 3.0.0 is missing: GitHub answered 404 for https://github.com/Example/NoReleaseJson/releases/download/3.0.0/Thing-3.0.0-forever.zip (removed or renamed after the release was listed)"
+    );
+    assert!(!to.exists());
+    // The release list's own 404 keeps its hint.
+    let missing = github
+        .resolve(
+            &spec("github:Example/Missing"),
+            &target(FlavorId::Forever, None),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        missing.ends_with(": no such repository, or it is private"),
+        "{missing}"
+    );
+}
+
+#[test]
+fn the_downloaded_size_is_checked_against_the_listed_one() {
+    let asset = |size: &str| {
+        format!(
+            r#"[{{"tag_name":"v1","assets":[{{"name":"A-forever.zip",{size}"browser_download_url":"https://github.com/o/r/releases/download/v1/A-forever.zip"}}]}}]"#
+        )
+    };
+    let fetch = |name: &str, size: &str| {
+        let list = asset(size);
+        let stub = stub_with(
+            name,
+            &[
+                ("api.github.com/repos/o/r/releases.json", list.as_str()),
+                (
+                    "github.com/o/r/releases/download/v1/A-forever.zip",
+                    "nine byte",
+                ),
+            ],
+        );
+        let github = GitHub::new(FolderHttp::new(&stub), None, None);
+        let pick = github
+            .resolve(&spec("github:o/r"), &target(FlavorId::Forever, None))
+            .expect("a pick");
+        let to = stub.join("downloads").join(&pick.asset);
+        let result = github
+            .fetch(&pick, &to)
+            .map(|()| std::fs::read(&to).expect("written"));
+        let written = to.exists();
+        let _ = std::fs::remove_dir_all(&stub);
+        (result, written)
+    };
+    let (short, written) = fetch("short-asset", r#""size":2048,"#);
+    let error = short.unwrap_err();
+    assert!(
+        matches!(
+            error,
+            mrgl_core::error::Error::AssetSizeMismatch {
+                expected: 2048,
+                got: 9,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "refused A-forever.zip of github:o/r v1: 9 bytes downloaded, the release list names 2048; the download was cut short or the asset changed, try again"
+    );
+    assert!(!written, "nothing is written for the engine to open");
+
+    let (exact, _) = fetch("exact-asset", r#""size":9,"#);
+    assert_eq!(exact.expect("the listed size"), b"nine byte");
+    let (no_size, _) = fetch("unsized-asset", "");
+    assert_eq!(no_size.expect("no size: as before"), b"nine byte");
+    let (null, _) = fetch("null-size-asset", r#""size":null,"#);
+    assert_eq!(null.expect("a null size: as before"), b"nine byte");
 }

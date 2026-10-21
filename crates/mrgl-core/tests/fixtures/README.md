@@ -30,7 +30,8 @@ BOM in a fixture survives every checkout.
   `github.com/Questie/Questie/releases/download/v1.2.3/` (task 040: one `Questie` folder whose TOC says
   `v1.2.3` while the pick says `1.2.3`), written by `zips/make-zips.py`; every other asset is a 404, the
   fetch test serves a text file from a temporary folder, and the import test of task 015 copies this tree
-  into a temporary folder with a fixture zip of `zips/` behind the Forever asset of `Questie/Questie`.
+  into a temporary folder with a fixture zip of `zips/` behind the Forever asset of `Questie/Questie`; that
+  asset lists no `size`, so the size check of task 046 lets any zip behind it through.
   `Example/Nightly` is paged (task 042): `releases.json` holds 30 nightly prereleases and, in
   `releases.json.headers`, the `Link` header to `releases.page-2.json`, whose first release is the stable
   `v1.0.0` with a `release.json` that names `forever`; the folder stub serves a `page` above 1 from

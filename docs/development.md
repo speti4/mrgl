@@ -509,6 +509,15 @@ adds its `Name: value` lines to the headers, a `Status: <code>` line setting the
 paged fixture `Example/Nightly` (30 nightly prereleases, the stable release on page two) and the rate-limit
 tests are served.
 
+An asset download has its own errors (task 046). A 404 on an asset the release list names (a zip or
+`release.json`) is `the asset <name> of <source> <tag> is missing: GitHub answered 404 for <url> (removed or
+renamed after the release was listed)`; the release list's own 404 keeps `no such repository, or it is
+private`. The downloaded byte count is compared with the asset's `size` in the release list before the file
+is written, so the engine never opens a cut download: a mismatch is `refused <asset> of <source> <tag>: <n>
+bytes downloaded, the release list names <size>; the download was cut short or the asset changed, try
+again`, and an asset the list gives no size installs as before (the Forever zip of the `Questie/Questie`
+fixture lists none, so a test can put any fixture zip behind it).
+
 The build version fallback (task 019: the client exe's version resource when `.build.info` has no row for
 the flavor) is tested against a second synthetic game folder, `client-exe/`: a `.build.info` with a row for
 retail only, and client exe stubs written by the deterministic `make-stubs.py` next to them (`python -I

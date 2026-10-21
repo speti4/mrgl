@@ -533,7 +533,12 @@ impl<H: Http> GitHub<H> {
         {
             return Ok(Some(Ok(release_json)));
         }
-        let response = self.download(&asset.browser_download_url)?;
+        let response = self.download_asset(
+            &spec.to_string(),
+            &release.tag_name,
+            &asset.name,
+            &asset.browser_download_url,
+        )?;
         let parsed = serde_json::from_slice::<serde_json::Value>(&response.body).and_then(|raw| {
             let release_json = ReleaseJson::deserialize(&raw)?;
             Ok((raw, release_json))
@@ -561,12 +566,27 @@ impl<H: Http> GitHub<H> {
     }
 
     /// A release asset's bytes: no token (the download hops to the object store, and the asset is public).
-    fn download(&self, url: &str) -> Result<Response> {
+    /// A 404 names the asset and the release (task 046): the list named it, so the repository is there and
+    /// the release changed after it was listed; any other status is the status error.
+    fn download_asset(
+        &self,
+        spec: &str,
+        release: &str,
+        asset: &str,
+        url: &str,
+    ) -> Result<Response> {
         let response = self.http.get(&Request::get(url))?;
-        if response.status != 200 {
-            return Err(status_error(response.status, url, &response));
+        match response.status {
+            200 => Ok(response),
+            404 => Err(Error::AssetMissing {
+                host: "GitHub",
+                spec: spec.to_string(),
+                release: release.to_string(),
+                asset: asset.to_string(),
+                url: url.to_string(),
+            }),
+            status => Err(status_error(status, url, &response)),
         }
-        Ok(response)
     }
 }
 
@@ -756,8 +776,22 @@ impl<H: Http> Source for GitHub<H> {
         })
     }
 
+    /// Downloads the picked asset; a byte count other than the size the release list names is refused
+    /// before the file is written (task 046), a pick without a size is written as it came.
     fn fetch(&self, pick: &Pick, to: &Path) -> Result<()> {
-        let response = self.download(&pick.url)?;
+        let response = self.download_asset(&pick.source, &pick.release, &pick.asset, &pick.url)?;
+        let got = response.body.len() as u64;
+        if let Some(expected) = pick.size
+            && got != expected
+        {
+            return Err(Error::AssetSizeMismatch {
+                spec: pick.source.clone(),
+                release: pick.release.clone(),
+                asset: pick.asset.clone(),
+                expected,
+                got,
+            });
+        }
         if let Some(parent) = to.parent() {
             std::fs::create_dir_all(parent).map_err(|source| Error::Io {
                 context: "creating the download folder",
@@ -1195,14 +1229,26 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_release_json_download_is_a_status_error() {
+    fn a_missing_release_json_download_names_the_asset() {
         let http = MapHttp::new().answer(RELEASES_URL, 200, &releases_body(&["release.json"]));
         let error = GitHub::new(http, None, None)
             .resolve(&spec(), &Target::new(FlavorId::Forever))
             .unwrap_err()
             .to_string();
+        assert_eq!(
+            error,
+            "the asset release.json of github:o/r v1.0.0 is missing: GitHub answered 404 for https://dl.test/release.json (removed or renamed after the release was listed)"
+        );
+        // Another status of a download stays the status error with its hint.
+        let http = MapHttp::new()
+            .answer(RELEASES_URL, 200, &releases_body(&["release.json"]))
+            .answer("https://dl.test/release.json", 503, "");
+        let error = GitHub::new(http, None, None)
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .unwrap_err()
+            .to_string();
         assert!(
-            error.starts_with("GitHub answered 404 for https://dl.test/release.json"),
+            error.starts_with("GitHub answered 503 for https://dl.test/release.json: "),
             "{error}"
         );
     }

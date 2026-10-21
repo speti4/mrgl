@@ -1889,7 +1889,8 @@ fn add_github_without_dry_run_needs_the_game_folder_and_the_asset() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),
-        "GitHub answered 404 for https://github.com/Example/NoReleaseJson/releases/download/3.0.0/Thing-3.0.0-forever.zip: no such repository, or it is private"
+        // The asset's 404 names the asset and the release (task 046), not the release list's hint.
+        "the asset Thing-3.0.0-forever.zip of github:Example/NoReleaseJson 3.0.0 is missing: GitHub answered 404 for https://github.com/Example/NoReleaseJson/releases/download/3.0.0/Thing-3.0.0-forever.zip (removed or renamed after the release was listed)"
     );
     let text = stdout(&output);
     assert!(
@@ -4751,4 +4752,56 @@ fn an_expandable_registry_value_resolves_to_the_root_of_its_literal() {
         root_of("uninstall-expand=%MRGL_TEST_GAMES_043%\\flavors".to_string()),
         (literal, "uninstall_entry".into())
     );
+}
+
+// --- task 046: the asset download's 404 names the asset, a short download is refused ---
+
+#[test]
+fn add_refuses_an_asset_shorter_than_its_listed_size() {
+    let game = Game::new("short-asset");
+    let stub = game.root.parent().expect("the base folder").join("stub");
+    let list = stub.join("api.github.com/repos/Example/Short/releases.json");
+    std::fs::create_dir_all(list.parent().unwrap()).unwrap();
+    std::fs::write(
+        &list,
+        r#"[{"tag_name":"v1.0.0","assets":[{"name":"Short-v1.0.0-forever.zip","size":2048,"browser_download_url":"https://github.com/Example/Short/releases/download/v1.0.0/Short-v1.0.0-forever.zip"}]}]"#,
+    )
+    .unwrap();
+    let asset =
+        stub.join("github.com/Example/Short/releases/download/v1.0.0/Short-v1.0.0-forever.zip");
+    std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+    std::fs::write(&asset, b"PK cut short").unwrap();
+    let run = |json: bool| {
+        let mut command = game.mrgl();
+        command.env("MRGL_HTTP_STUB", &stub);
+        if json {
+            command.arg("--json");
+        } else {
+            command.arg("--serious");
+        }
+        command
+            .args(["add", "github:Example/Short", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl")
+    };
+    let plain = "refused Short-v1.0.0-forever.zip of github:Example/Short v1.0.0: 12 bytes downloaded, the release list names 2048; the download was cut short or the asset changed, try again";
+    let output = run(false);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stderr_last_line(&output), plain);
+    let text = stdout(&output);
+    assert!(
+        text.contains("downloading Short-v1.0.0-forever.zip"),
+        "{text}"
+    );
+    assert!(!text.contains("installing"), "{text}");
+    assert_eq!(staging_entries(&game), Vec::<String>::new());
+    assert!(!game.state_path().exists(), "nothing installed");
+    assert!(!game.addon("Short").exists());
+
+    let output = run(true);
+    assert_eq!(output.status.code(), Some(1));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("one JSON error document");
+    assert_eq!(value["kind"], "error");
+    assert_eq!(value["message"], plain);
 }
