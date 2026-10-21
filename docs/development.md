@@ -11,11 +11,13 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
   home folder, task 003; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
-  one at a time with a revert, the previous version's zip kept; task 004), the state sidecar (`state`,
-  D-003), the toolbox (`backup`: the `WTF` backup into a dated zip, the listing and the restore that checks
-  every entry through `zip_entry`, moves the current `WTF` aside and reverts on a failure, task 013; later
-  the addon sets), the zip entry check both of them call (`zip_entry`, task 044: every entry readable,
-  inside its folder and no link, checked before the first is written), the running-client check (`client`,
+  one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
+  the running-client check once before the first folder moves, and a running client is a warning on the
+  result, never a refusal, task 038), the state sidecar (`state`, D-003), the toolbox (`backup`: the `WTF`
+  backup into a dated zip, the listing and the restore that checks every entry through `zip_entry`, moves
+  the current `WTF` aside and reverts on a failure, task 013; later the addon sets), the zip entry check
+  both of them call (`zip_entry`, task 044: every entry readable, inside its folder and no link, checked
+  before the first is written), the running-client check (`client`,
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
   calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
   D-003), the game root resolution (`discover`, task 020: the flag, `MRGL_ROOT`, the remembered root, then
@@ -23,7 +25,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   voice table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick; the install from the pick is task
-  040), `add <file.zip>` and `remove` (task 004), `backup` with `--list`, `--restore` and `--yes` (task 013),
+  040), `add <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in
+  `--json`, task 038), `backup` with `--list`, `--restore` and `--yes` (task 013),
   `update`, `link`, `unlink` (stubs that answer with the task that builds them until that task lands), with
   `--json` for machines and `--serious` for the
   murloc-averse; its end-to-end tests under `tests/`.
