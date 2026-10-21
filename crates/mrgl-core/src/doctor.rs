@@ -1097,6 +1097,9 @@ mod tests {
                 files: Default::default(),
                 installed_at: "2026-10-21T12:00:00Z".to_string(),
                 nolib: None,
+                pinned: None,
+                ignored: false,
+                channel: crate::sources::Channel::Stable,
             },
         );
         forever.write_state(&state).expect("the sidecar");

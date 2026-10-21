@@ -51,6 +51,10 @@ target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # in
 target\release\mrgl.exe remove SomeAddon --flavor forever                   # remove an addon mrgl installed
 target\release\mrgl.exe link D:\dev\my-addons --flavor forever              # a junction per addon you develop
 target\release\mrgl.exe unlink D:\dev\my-addons --flavor forever            # exactly those junctions go again
+target\release\mrgl.exe pin SomeAddon 1.2.0 --flavor forever                # keep it at 1.2.0 (no version: the installed one)
+target\release\mrgl.exe unpin SomeAddon --flavor forever                    # let updates reach it again
+target\release\mrgl.exe ignore SomeAddon --flavor forever                   # updates skip it (unignore undoes it)
+target\release\mrgl.exe channel SomeAddon prerelease --flavor forever       # follow its beta builds (stable undoes it)
 target\release\mrgl.exe backup --flavor forever                             # the WTF folder into a dated zip
 target\release\mrgl.exe backup --list --flavor forever                      # the backups so far
 target\release\mrgl.exe backup --restore WTF-2026-10-21-193605.zip --flavor forever   # one back, asks first

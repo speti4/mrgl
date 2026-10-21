@@ -226,6 +226,9 @@ mod tests {
                 files: BTreeMap::new(),
                 installed_at: "2026-10-21T14:03:05Z".to_string(),
                 nolib,
+                pinned: None,
+                ignored: false,
+                channel: crate::sources::Channel::Stable,
             },
         );
         state

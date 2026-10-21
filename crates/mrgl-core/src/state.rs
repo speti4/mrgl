@@ -16,6 +16,7 @@ use crate::error::{Error, Result};
 use crate::flavor::FlavorId;
 use crate::home;
 use crate::scan::Scan;
+use crate::sources::Channel;
 
 /// The sidecar's file name under the flavor's folder.
 pub const STATE_FILE: &str = "state.json";
@@ -126,6 +127,72 @@ pub struct Entry {
     /// entry written before the flag existed. The dependency check reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nolib: Option<bool>,
+    /// The version the addon is pinned at (task 021): the update check reports a newer release and leaves
+    /// the addon alone. `None`, or absent in the file, is unpinned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<String>,
+    /// The addon is ignored (task 021): the update check skips it and counts it. Absent means `false`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ignored: bool,
+    /// The release channel the addon follows (task 021); absent means [`Channel::Stable`].
+    #[serde(default, skip_serializing_if = "Channel::is_stable")]
+    pub channel: Channel,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// The per-entry queries the update check calls, and the setters behind `mrgl pin`, `unpin`, `ignore`,
+/// `unignore` and `channel` (task 021). Every setter returns whether it changed the entry, so a caller
+/// writes the sidecar only when something moved.
+impl Entry {
+    /// The version the addon is pinned at, when it is.
+    pub fn pinned(&self) -> Option<&str> {
+        self.pinned.as_deref()
+    }
+
+    /// Whether the addon is ignored.
+    pub fn ignored(&self) -> bool {
+        self.ignored
+    }
+
+    /// The release channel the addon follows.
+    pub fn channel(&self) -> Channel {
+        self.channel
+    }
+
+    /// Pins the addon at a version, or at the installed one when none (or an empty one) is given.
+    pub fn pin(&mut self, version: Option<&str>) -> bool {
+        let version = version
+            .map(str::trim)
+            .filter(|version| !version.is_empty())
+            .unwrap_or(&self.version)
+            .to_string();
+        let changed = self.pinned.as_deref() != Some(version.as_str());
+        self.pinned = Some(version);
+        changed
+    }
+
+    /// Unpins the addon.
+    pub fn unpin(&mut self) -> bool {
+        self.pinned.take().is_some()
+    }
+
+    /// Marks the addon ignored.
+    pub fn ignore(&mut self) -> bool {
+        !std::mem::replace(&mut self.ignored, true)
+    }
+
+    /// Clears the ignored mark.
+    pub fn unignore(&mut self) -> bool {
+        std::mem::replace(&mut self.ignored, false)
+    }
+
+    /// Puts the addon on a release channel.
+    pub fn set_channel(&mut self, channel: Channel) -> bool {
+        std::mem::replace(&mut self.channel, channel) != channel
+    }
 }
 
 /// The sidecar of one flavor.
@@ -165,6 +232,20 @@ impl State {
             .iter()
             .find(|(known, _)| known.eq_ignore_ascii_case(name))
             .map(|(known, entry)| (known.as_str(), entry))
+    }
+
+    /// The entry a name on the command line means: the addon by name, else the addon that owns a folder of
+    /// that name (a `list` line shows folders), ASCII case-insensitive, with the name as the sidecar
+    /// spells it.
+    pub fn find(&self, name: &str) -> Option<(&str, &Entry)> {
+        self.entry(name).or_else(|| self.entry_for_folder(name))
+    }
+
+    /// [`State::find`] for a change: the sidecar's name and the entry to change.
+    pub fn find_mut(&mut self, name: &str) -> Option<(String, &mut Entry)> {
+        let known = self.find(name)?.0.to_string();
+        let entry = self.addons.get_mut(&known)?;
+        Some((known, entry))
     }
 
     /// The entry that owns a folder, ASCII case-insensitive.
@@ -364,6 +445,9 @@ mod tests {
             )]),
             installed_at: "2026-10-21T14:03:05Z".to_string(),
             nolib: None,
+            pinned: None,
+            ignored: false,
+            channel: Channel::Stable,
         }
     }
 
@@ -454,6 +538,106 @@ mod tests {
                 .nolib,
             None
         );
+    }
+
+    #[test]
+    fn pin_ignore_and_channel_round_trip_and_stay_out_of_the_file_when_unset() {
+        let home = temp_home("holds");
+        let path = home.join("wowf").join(STATE_FILE);
+        let mut state = State::new(&FlavorId::Forever);
+        let mut pinned = entry(&["Pinned"]);
+        assert!(pinned.pin(None), "pins the installed version");
+        assert_eq!(pinned.pinned(), Some("1.0.0"));
+        let mut ignored = entry(&["Ignored"]);
+        assert!(ignored.ignore());
+        let mut beta = entry(&["Beta"]);
+        assert!(beta.set_channel(Channel::Prerelease));
+        state.addons.insert("Pinned".to_string(), pinned);
+        state.addons.insert("Ignored".to_string(), ignored);
+        state.addons.insert("Beta".to_string(), beta);
+        state.addons.insert("Plain".to_string(), entry(&["Plain"]));
+        write_state_at(&path, &state).expect("writes");
+        let text = std::fs::read_to_string(&path).expect("the file");
+        assert_eq!(text.matches(r#""pinned": "1.0.0""#).count(), 1, "{text}");
+        assert_eq!(text.matches(r#""ignored": true"#).count(), 1, "{text}");
+        assert_eq!(
+            text.matches(r#""channel": "prerelease""#).count(),
+            1,
+            "{text}"
+        );
+        assert!(!text.contains(r#""ignored": false"#), "{text}");
+        assert!(!text.contains(r#""stable""#), "{text}");
+        let loaded = read_state_at(&path, &FlavorId::Forever).expect("reads");
+        assert_eq!(loaded.state, state);
+        assert_eq!(loaded.warning, None);
+        let (_, plain) = loaded.state.entry("Plain").expect("plain");
+        assert_eq!(
+            (plain.pinned(), plain.ignored(), plain.channel()),
+            (None, false, Channel::Stable)
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_sidecar_without_the_fields_of_task_021_reads_unchanged() {
+        let home = temp_home("older");
+        let path = home.join(STATE_FILE);
+        std::fs::create_dir_all(&home).expect("home");
+        let older = r#"{
+  "schema": 1,
+  "flavor": "wowf",
+  "addons": {
+    "Foo": {
+      "source": "github:someone/something",
+      "version": "1.0.0",
+      "folders": ["Foo"],
+      "files": {},
+      "installed_at": "2026-10-21T14:03:05Z"
+    }
+  }
+}"#;
+        std::fs::write(&path, older).expect("write");
+        let loaded = read_state_at(&path, &FlavorId::Forever).expect("reads");
+        assert_eq!(loaded.warning, None);
+        let (_, foo) = loaded.state.entry("Foo").expect("the entry");
+        assert_eq!(foo.pinned(), None);
+        assert!(!foo.ignored());
+        assert_eq!(foo.channel(), Channel::Stable);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_setters_say_whether_they_changed_the_entry() {
+        let mut foo = entry(&["Foo"]);
+        assert!(foo.pin(Some(" 0.9.0 ")));
+        assert_eq!(foo.pinned(), Some("0.9.0"));
+        assert!(!foo.pin(Some("0.9.0")), "the same pin again");
+        assert!(foo.pin(Some("")), "an empty version pins the installed one");
+        assert_eq!(foo.pinned(), Some("1.0.0"));
+        assert!(foo.unpin());
+        assert!(!foo.unpin());
+        assert!(foo.ignore());
+        assert!(!foo.ignore());
+        assert!(foo.unignore());
+        assert!(!foo.unignore());
+        assert!(!foo.set_channel(Channel::Stable));
+        assert!(foo.set_channel(Channel::Prerelease));
+        assert!(!foo.set_channel(Channel::Prerelease));
+    }
+
+    #[test]
+    fn find_takes_a_name_or_a_folder() {
+        let mut state = State::new(&FlavorId::Forever);
+        state
+            .addons
+            .insert("Foo".to_string(), entry(&["Foo", "Foo_Options"]));
+        assert_eq!(state.find("foo").map(|(name, _)| name), Some("Foo"));
+        assert_eq!(state.find("FOO_OPTIONS").map(|(name, _)| name), Some("Foo"));
+        assert_eq!(state.find("Bar"), None);
+        let (name, foo) = state.find_mut("foo_options").expect("by folder");
+        assert_eq!(name, "Foo");
+        foo.ignore();
+        assert!(state.entry("Foo").expect("Foo").1.ignored());
     }
 
     #[test]
