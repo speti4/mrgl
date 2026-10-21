@@ -17,6 +17,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - GitHub release source: `release.json`, flavor-correct asset pick, ETag cache; CLI `add github:<owner>/<repo>` ([003](https://github.com/speti4/mrgl/blob/main/tasks/done/003-github-release-source-with-release-json.md))
 - Install engine: zip to staging, addon-folder detection, atomic swap, rollback, the state sidecar; `add <zip>` and `remove` ([004](https://github.com/speti4/mrgl/blob/main/tasks/done/004-install-engine-with-state-sidecar.md))
 - Build version fallback from the client exe when `.build.info` has no row for the flavor ([019](https://github.com/speti4/mrgl/blob/main/tasks/done/019-build-version-fallback-from-the-client-exe.md))
+- Release notes before an update: the GitHub release body in one line ([030](https://github.com/speti4/mrgl/blob/main/tasks/done/030-release-notes-before-an-update.md))
 
 ### M2 Window MVP
 
