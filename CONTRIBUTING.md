@@ -26,6 +26,14 @@ folders in one zip, a `release.json` with several flavors). `.gitignore` keeps `
 out of the repo, with the fixtures as the only exception. Blizzard audio and artwork never enter the repo
 either: the murloc voice is text only (decision D-005 in `tasks/decisions/`).
 
+## Forever notes
+
+A Forever note says why an addon that has a Forever build still only half works there. Add or update one in
+[`data/forever-notes.json`](data/forever-notes.json) through a pull request: the addon's source spec
+(`github:<owner>/<repo>`) as the key, the restriction it runs into (`kind`), a one-line `reason`, the date you
+`verified` it and the `source` URL that shows it. State the fact and its source, nothing more; `cargo test`
+checks the file's shape ([docs/development.md](docs/development.md#forever-notes)).
+
 ## Build prerequisites
 
 On Windows 11 you need:

@@ -15,6 +15,7 @@ use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::flavor::{BuildVersion, Flavor, FlavorId};
+use crate::forever::ForeverBuild;
 
 /// The environment variable that names a folder the command line answers every request from instead of
 /// the network (the end-to-end tests set it); see [`FolderHttp`].
@@ -163,6 +164,8 @@ pub struct Pick {
     /// The asset is a `nolib` build (`release.json`'s flag, or a `-nolib` name): its libraries are
     /// separate addons. The install records it on the sidecar entry for the dependency check (task 029).
     pub nolib: bool,
+    /// Whether the release publishes a `forever` build at all, whatever the target (task 011).
+    pub forever_build: ForeverBuild,
 }
 
 impl Pick {

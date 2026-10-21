@@ -68,6 +68,14 @@ under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no a
 run would use and where it came from, and `mrgl root <folder>` remembers one (also `--root <folder>` or
 `MRGL_ROOT` for one run).
 
+On Forever, `add --dry-run` and `list` show a Forever note for each addon. `forever build: yes`, `no` or
+`unknown` says whether the addon's source publishes a Forever build at all: its `release.json` names one,
+names other flavors only, or nothing says. A curated note, when there is one, says why an addon with a
+Forever build still only half works there (Forever hides combat values from addons), with the date it was
+verified and its source; a note older than 90 days is marked stale. `list` stays offline and reads what the
+last `add` of the same source fetched, so before that the build is `unknown`. The notes live in
+[`data/forever-notes.json`](data/forever-notes.json) and grow through pull requests.
+
 A backup is a plain zip under `%LOCALAPPDATA%\mrgl\backups\<flavor-id>\` (or the folder `--to` names), and a
 restore moves the current `WTF` folder aside into the same place before it writes, so it can be undone by
 hand; it is refused while the game client runs.

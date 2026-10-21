@@ -13,6 +13,10 @@
 //! asset names (`-forever`, `-classic`, `-mists`, …, the retail zip being the one with no suffix) and the
 //! pick says it is a guess. The release list is cached with its `ETag` under the mrgl home folder
 //! (`cache/github/<owner>/<repo>/`), so a second run costs one conditional request and no rate limit.
+//!
+//! The same release says whether the addon publishes a Forever build at all ([`forever_build`], task 011):
+//! the pick carries it, and the current release's `release.json` is cached next to the list, so `list` can
+//! answer from the cache alone ([`GitHub::cached_forever_build`]), offline.
 
 use std::path::{Path, PathBuf};
 
@@ -20,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::flavor::FlavorId;
+use crate::forever::ForeverBuild;
 use crate::home;
 use crate::sources::{Http, Pick, Request, Response, Source, SourceSpec, Target, notes_line};
 
@@ -33,6 +38,8 @@ pub const RELEASE_JSON: &str = "release.json";
 pub const CACHE_SUBDIR: &str = "cache/github";
 /// The cached release list of one repository, under `<cache>/<owner>/<repo>/`.
 pub const CACHE_FILE: &str = "releases.json";
+/// The cached `release.json` of a repository's current release, next to [`CACHE_FILE`] (task 011).
+pub const RELEASE_JSON_CACHE_FILE: &str = "release-json.json";
 /// How many releases one page lists; the current one is near the top.
 const PER_PAGE: u32 = 30;
 
@@ -226,6 +233,38 @@ pub fn pick_by_metadata<'a>(
     None
 }
 
+/// Whether a release publishes a `forever` build, whatever flavor is being picked for (task 011): `Yes` when
+/// its `release.json` names `forever` (or `camelot`) for a zip the release has; without a `release.json`
+/// (none, or an unreadable one) `Unknown`; with one that names no Forever zip, `Unknown` when an asset name
+/// still ends in `-forever` or `-camelot` (a pick by name, a guess either way) and `No` otherwise.
+pub fn forever_build(release: &Release, release_json: Option<&ReleaseJson>) -> ForeverBuild {
+    let Some(release_json) = release_json else {
+        return ForeverBuild::Unknown;
+    };
+    let forever = Target::new(FlavorId::Forever);
+    let keys = flavor_keys(&forever);
+    let has_asset = |filename: &str| {
+        release
+            .assets
+            .iter()
+            .any(|asset| asset.name.eq_ignore_ascii_case(filename))
+    };
+    let named = release_json.releases.iter().any(|entry| {
+        has_asset(&entry.filename)
+            && entry.metadata.iter().any(|metadata| {
+                keys.iter()
+                    .any(|key| metadata.flavor.eq_ignore_ascii_case(key))
+            })
+    });
+    if named {
+        ForeverBuild::Yes
+    } else if pick_by_name(release, &forever).is_some() {
+        ForeverBuild::Unknown
+    } else {
+        ForeverBuild::No
+    }
+}
+
 /// The asset whose name ends with one of the target's keys (`-forever`, `-mists`, …, before `.zip` and an
 /// optional `-nolib`), library-included first; for retail also the zip with no flavor suffix at all, which
 /// is how the packager names it. Always a guess: nothing but a file name says what the zip is for.
@@ -317,13 +356,49 @@ impl<H: Http> GitHub<H> {
 
     /// The cache file of a repository: the release list with its tag, one file so the two never disagree.
     fn cache_file(&self, owner: &str, repo: &str) -> Option<PathBuf> {
+        self.cache_path(owner, repo, CACHE_FILE)
+    }
+
+    /// A file of a repository's cache folder, `<cache>/<owner>/<repo>/<file>`, lower case.
+    fn cache_path(&self, owner: &str, repo: &str, file: &str) -> Option<PathBuf> {
         Some(
             self.cache_dir
                 .as_ref()?
                 .join(owner.to_ascii_lowercase())
                 .join(repo.to_ascii_lowercase())
-                .join(CACHE_FILE),
+                .join(file),
         )
+    }
+
+    /// Whether the repository publishes a `forever` build, from the cache alone (task 011): the cached
+    /// release list's current release and the `release.json` cached for it, never a request, so `list`
+    /// stays offline and fast. `Unknown` when nothing is cached, the cache is unreadable, the current
+    /// release has no `release.json`, or the cached one belongs to another release (the list moved on and
+    /// no `add` has fetched the new one yet).
+    pub fn cached_forever_build(&self, spec: &SourceSpec) -> ForeverBuild {
+        let SourceSpec::GitHub { owner, repo } = spec;
+        let read = |file: &str| {
+            self.cache_path(owner, repo, file)
+                .and_then(|path| std::fs::read(path).ok())
+        };
+        let Some(cached) = read(CACHE_FILE)
+            .and_then(|bytes| serde_json::from_slice::<CachedReleases<Vec<Release>>>(&bytes).ok())
+        else {
+            return ForeverBuild::Unknown;
+        };
+        let Some(release) = current_release(&cached.releases) else {
+            return ForeverBuild::Unknown;
+        };
+        let release_json = read(RELEASE_JSON_CACHE_FILE)
+            .and_then(|bytes| serde_json::from_slice::<CachedReleaseJson>(&bytes).ok())
+            .filter(|cached| cached.release == release.tag_name)
+            .and_then(|cached| serde_json::from_value::<ReleaseJson>(cached.release_json).ok());
+        match release_json {
+            Some(release_json) if release.release_json_asset().is_some() => {
+                forever_build(release, Some(&release_json))
+            }
+            _ => ForeverBuild::Unknown,
+        }
     }
 
     fn api_request(&self, url: String) -> Request {
@@ -390,14 +465,28 @@ impl<H: Http> GitHub<H> {
             return Ok(None);
         };
         let response = self.download(&asset.browser_download_url)?;
-        Ok(Some(serde_json::from_slice(&response.body).map_err(
-            |reason| {
-                format!(
-                    "unreadable {RELEASE_JSON} in {spec} {}: {reason}",
-                    release.tag_name
-                )
-            },
-        )))
+        let parsed = serde_json::from_slice::<serde_json::Value>(&response.body).and_then(|raw| {
+            let release_json = ReleaseJson::deserialize(&raw)?;
+            Ok((raw, release_json))
+        });
+        match parsed {
+            Ok((raw, release_json)) => {
+                let SourceSpec::GitHub { owner, repo } = spec;
+                if let Some(path) = self.cache_path(owner, repo, RELEASE_JSON_CACHE_FILE) {
+                    let cached = CachedReleaseJson {
+                        release: release.tag_name.clone(),
+                        release_json: raw,
+                    };
+                    // A convenience like the release list: without it, `list` says unknown.
+                    let _ = write_cache(&path, &cached);
+                }
+                Ok(Some(Ok(release_json)))
+            }
+            Err(reason) => Ok(Some(Err(format!(
+                "unreadable {RELEASE_JSON} in {spec} {}: {reason}",
+                release.tag_name
+            )))),
+        }
     }
 
     /// A release asset's bytes: no token (the download hops to the object store, and the asset is public).
@@ -418,14 +507,25 @@ struct CachedReleases<T> {
     releases: T,
 }
 
-/// Writes the cache through a temporary file and a rename, so a reader (another run at the same time)
+/// The cached `release.json` of the current release, with the tag of the release it belongs to.
+#[derive(Debug, Serialize, Deserialize)]
+struct CachedReleaseJson {
+    release: String,
+    release_json: serde_json::Value,
+}
+
+/// Writes a cache file through a temporary file and a rename, so a reader (another run at the same time)
 /// never sees a half-written file.
-fn write_cache(path: &Path, cached: &CachedReleases<&serde_json::Value>) -> std::io::Result<()> {
+fn write_cache<T: Serialize>(path: &Path, cached: &T) -> std::io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| std::io::Error::other("no parent folder"))?;
     std::fs::create_dir_all(parent)?;
-    let temp = parent.join(format!("{CACHE_FILE}.{}.tmp", std::process::id()));
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| CACHE_FILE.to_string());
+    let temp = parent.join(format!("{name}.{}.tmp", std::process::id()));
     std::fs::write(&temp, serde_json::to_vec(cached)?)?;
     std::fs::rename(&temp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&temp);
@@ -506,6 +606,7 @@ impl<H: Http> Source for GitHub<H> {
             Some(note) => format!("{note}; {}", chosen.reason),
             None => chosen.reason,
         };
+        let forever_build = forever_build(release, release_json.as_ref());
         Ok(Pick {
             source: spec.to_string(),
             release: release.tag_name.clone(),
@@ -522,6 +623,7 @@ impl<H: Http> Source for GitHub<H> {
             notes: release.body.as_deref().and_then(notes_line),
             page: release.html_url.clone().filter(|page| !page.is_empty()),
             nolib: chosen.nolib,
+            forever_build,
         })
     }
 
@@ -749,6 +851,52 @@ mod tests {
         assert!(pick_by_name(&only_suffixed, &Target::new(FlavorId::Retail)).is_none());
     }
 
+    #[test]
+    fn the_forever_build_is_yes_no_or_unknown() {
+        let release = release("v1", &["A-v1.zip", "A-v1-forever.zip", "A-v1-camelot.zip"]);
+        let named = |entries: Vec<ReleaseJsonEntry>| ReleaseJson { releases: entries };
+        // Without a release.json nothing says, whatever the asset names are.
+        assert_eq!(forever_build(&release, None), ForeverBuild::Unknown);
+        assert_eq!(
+            forever_build(
+                &release,
+                Some(&named(vec![entry(
+                    "A-v1-forever.zip",
+                    false,
+                    &[("forever", 16001)]
+                )]))
+            ),
+            ForeverBuild::Yes
+        );
+        assert_eq!(
+            forever_build(
+                &release,
+                Some(&named(vec![entry(
+                    "A-v1-camelot.zip",
+                    false,
+                    &[("Camelot", 16001)]
+                )]))
+            ),
+            ForeverBuild::Yes,
+            "the synonym, in any case"
+        );
+        // A release.json for other flavors with a -forever asset next to it: a pick by name, unknown.
+        let mainline = named(vec![entry("A-v1.zip", false, &[("mainline", 120105)])]);
+        assert_eq!(
+            forever_build(&release, Some(&mainline)),
+            ForeverBuild::Unknown
+        );
+        let plain = self::release("v1", &["A-v1.zip"]);
+        assert_eq!(forever_build(&plain, Some(&mainline)), ForeverBuild::No);
+        // An entry that names forever for a zip the release does not have does not count.
+        let missing = named(vec![entry(
+            "A-v1-forever.zip",
+            false,
+            &[("forever", 16001)],
+        )]);
+        assert_eq!(forever_build(&plain, Some(&missing)), ForeverBuild::No);
+    }
+
     const RELEASES_URL: &str = "https://api.github.com/repos/o/r/releases?per_page=30";
 
     fn releases_body(assets: &[&str]) -> String {
@@ -936,6 +1084,7 @@ mod tests {
             notes: None,
             page: None,
             nolib: false,
+            forever_build: ForeverBuild::Unknown,
         };
         let to = dir.join("nested").join("A.zip");
         github.fetch(&pick, &to).expect("fetched");

@@ -4,10 +4,12 @@
 //!
 //! `scan`, `list` and `root` are task 002, the game root discovery behind them is task 020;
 //! `add github:<owner>/<repo>` resolves a release (task 003); `add <file.zip>` and `remove` are task 004
-//! (the install engine); `backup` (the WTF backup, the listing and the restore) is task 013; the other
+//! (the install engine); `backup` (the WTF backup, the listing and the restore) is task 013; the Forever
+//! notes on `add` and on `list` (the derived build signal and the curated note) are task 011; the other
 //! subcommands follow the M1 plan (`tasks/roadmap.md`) and answer "not implemented yet" with their task id
 //! until that task lands, so the help text and the voice are testable from the first commit.
 
+use std::collections::BTreeMap;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -18,6 +20,7 @@ use mrgl_core::client;
 use mrgl_core::dependencies::{self, AddonDependencies};
 use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
 use mrgl_core::flavor::{self, FlavorId, VersionSource};
+use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{Engine, Metadata};
 use mrgl_core::scan::{self, Addon, Scan};
@@ -252,14 +255,22 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
     match command {
         Command::Scan { folder } => {
             let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
-            report_scan(reporter, "scan", &scan, Vec::new(), &[]);
+            report_scan(reporter, "scan", &scan, Vec::new(), &[], None);
         }
         Command::List { flavor, root } => {
             let mut warnings = Vec::new();
             let folder = flavor_folder(flavor.as_deref(), root, &mut warnings)?;
             let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
             let dependencies = check_dependencies(&scan, &mut warnings);
-            report_scan(reporter, "list", &scan, warnings, &dependencies);
+            let forever = forever_statuses(&scan, &mut warnings);
+            report_scan(
+                reporter,
+                "list",
+                &scan,
+                warnings,
+                &dependencies,
+                forever.as_ref(),
+            );
         }
         Command::Root { folder } => root_command(reporter, folder)?,
         Command::Add {
@@ -335,13 +346,14 @@ fn game_root(
 /// Prints a scan: the addon lines, the warnings and the summary, or the one JSON document. A client
 /// running from the flavor folder (task 023) is named in the summary and is `client_running` in the JSON.
 /// `dependencies` is the dependency check of the scan (task 029; empty for `scan`, which reads the folder
-/// only).
+/// only). A Forever listing (task 011) marks every addon through [`mark_forever`].
 fn report_scan(
     reporter: &Reporter,
     kind: &str,
     scan: &Scan,
     mut warnings: Vec<String>,
     dependencies: &[AddonDependencies],
+    forever: Option<&BTreeMap<String, ForeverStatus>>,
 ) {
     warnings.extend(scan.flavor.warnings.iter().cloned());
     warnings.extend(scan.warnings.iter().cloned());
@@ -358,6 +370,7 @@ fn report_scan(
         let mut line = addon_line(addon);
         let mut object = serde_json::to_value(addon).unwrap_or_default();
         mark_dependencies(dependencies, &addon.folder, &mut line, &mut object);
+        mark_forever(forever, addon, Some(&mut line), Some(&mut object));
         lines.push(line);
         objects.push(object);
     }
@@ -374,6 +387,18 @@ fn report_scan(
     }
     for line in lines {
         reporter.line(line);
+    }
+    for (folder, note) in forever
+        .into_iter()
+        .flatten()
+        .filter_map(|(folder, status)| Some((folder, forever_note(status)?)))
+    {
+        let folder = scan
+            .addons
+            .iter()
+            .find(|addon| addon.folder.eq_ignore_ascii_case(folder))
+            .map_or(folder.as_str(), |addon| addon.folder.as_str());
+        reporter.say(Kind::Warning, format!("forever note on {folder}: {note}"));
     }
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
@@ -516,6 +541,107 @@ fn installed_dependencies(
     checks
 }
 
+/// Task 011: the Forever status of every managed addon of a Forever listing, by its primary folder in lower
+/// case; `None` for another flavor. Offline: the build signal comes from the GitHub source's cache alone (the
+/// release list and the `release.json` the last `add` fetched), so without a cached list it is `unknown`.
+fn forever_statuses(
+    scan: &Scan,
+    warnings: &mut Vec<String>,
+) -> Option<BTreeMap<String, ForeverStatus>> {
+    if scan.flavor.id != FlavorId::Forever {
+        return None;
+    }
+    let mut statuses = BTreeMap::new();
+    let loaded =
+        match FlavorHome::new(&scan.flavor.id).and_then(|home| home.read_state(&scan.flavor.id)) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                warnings.push(error.to_string());
+                return Some(statuses);
+            }
+        };
+    warnings.extend(loaded.warning);
+    let github = GitHub::from_env(sources::http_from_env());
+    for entry in loaded.state.addons.values() {
+        let Some(folder) = entry.folders.first() else {
+            continue;
+        };
+        let build = match SourceSpec::parse(&entry.source) {
+            Ok(spec) => github.cached_forever_build(&spec),
+            Err(_) => ForeverBuild::Unknown,
+        };
+        statuses.insert(
+            folder.to_ascii_lowercase(),
+            ForeverStatus::for_source(&entry.source, build),
+        );
+    }
+    Some(statuses)
+}
+
+/// Task 011: the Forever mark of a listed addon, appended to its line (`forever:yes`, with `,note` and
+/// `,stale` when a curated note applies) or set as the `forever` field of its JSON object (`null` for an
+/// unmanaged addon). Nothing outside a Forever listing (`forever` is `None`).
+fn mark_forever(
+    forever: Option<&BTreeMap<String, ForeverStatus>>,
+    addon: &Addon,
+    line: Option<&mut String>,
+    object: Option<&mut serde_json::Value>,
+) {
+    let Some(forever) = forever else {
+        return;
+    };
+    let status = forever.get(&addon.folder.to_ascii_lowercase());
+    if let (Some(line), Some(status)) = (line, status) {
+        line.push_str(&format!("  forever:{}", status.build));
+        if status.note.is_some() {
+            line.push_str(",note");
+        }
+        if status.stale {
+            line.push_str(",stale");
+        }
+    }
+    if let Some(serde_json::Value::Object(object)) = object {
+        object.insert(
+            "forever".to_string(),
+            serde_json::to_value(status).unwrap_or_default(),
+        );
+    }
+}
+
+/// Task 011: the curated note as a plain clause, `<reason> (verified <date>, <source>)`, with the stale
+/// warning when the date is older than the age; `None` without a note.
+fn forever_note(status: &ForeverStatus) -> Option<String> {
+    let reason = status.note.as_deref()?;
+    let verified = status.verified.as_deref().unwrap_or("-");
+    let stale = if status.stale {
+        format!(", stale: older than {STALE_AFTER_DAYS} days")
+    } else {
+        String::new()
+    };
+    let source = status.source.as_deref().unwrap_or("-");
+    Some(format!("{reason} (verified {verified}{stale}, {source})"))
+}
+
+/// Task 011: the Forever line of an `add`, after the pick: the derived build signal and the curated note.
+/// A success when the source publishes a Forever build and no note applies, a warning otherwise.
+fn forever_message(status: &ForeverStatus) -> (Kind, String) {
+    let why = match status.build {
+        ForeverBuild::Yes => "release.json names forever",
+        ForeverBuild::No => "release.json names no forever flavor",
+        ForeverBuild::Unknown => "no release.json says",
+    };
+    let mut text = format!("forever build: {} ({why})", status.build);
+    if let Some(note) = forever_note(status) {
+        text.push_str(&format!("; note: {note}"));
+    }
+    let kind = if status.build == ForeverBuild::Yes && status.note.is_none() {
+        Kind::Success
+    } else {
+        Kind::Warning
+    };
+    (kind, text)
+}
+
 /// The target of an `add`: the flavor the spec names and, when a game folder is known and holds that
 /// flavor, its installed build. A flavor folder path gives both; a name or an id alone gives the flavor
 /// only, so the pick for the progressing classic is a guess.
@@ -569,6 +695,8 @@ fn add_command(
     let pick = github
         .resolve(&spec, &target)
         .map_err(|error| error.to_string())?;
+    let forever = (target.flavor == FlavorId::Forever)
+        .then(|| ForeverStatus::for_source(&pick.source, pick.forever_build));
     if reporter.json {
         reporter.document(serde_json::json!({
             "kind": "add",
@@ -577,6 +705,7 @@ fn add_command(
             "build": target.version.map(|version| version.to_string()),
             "dry_run": dry_run,
             "pick": &pick,
+            "forever": forever,
             "installed": false,
             "warnings": warnings,
         }));
@@ -596,6 +725,10 @@ fn add_command(
             );
         }
         say_release_notes(reporter, &pick);
+        if let Some(status) = forever.as_ref().filter(|_| dry_run) {
+            let (kind, text) = forever_message(status);
+            reporter.say(kind, text);
+        }
         if dry_run {
             reporter.say(Kind::Nothing, "dry run: nothing installed");
         }
@@ -1110,4 +1243,84 @@ fn human_bytes(bytes: u64) -> String {
         unit = next;
     }
     format!("{value:.1} {unit}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(build: ForeverBuild, note: bool, stale: bool) -> ForeverStatus {
+        ForeverStatus {
+            build,
+            note: note.then(|| "threat colors are off".to_string()),
+            kind: note.then(|| "combat-log-events".to_string()),
+            verified: note.then(|| "2026-06-01".to_string()),
+            source: note.then(|| "https://example.test/note".to_string()),
+            stale,
+        }
+    }
+
+    #[test]
+    fn the_forever_line_names_the_build_and_the_note() {
+        assert_eq!(
+            forever_message(&status(ForeverBuild::Yes, false, false)),
+            (
+                Kind::Success,
+                "forever build: yes (release.json names forever)".to_string()
+            )
+        );
+        assert_eq!(
+            forever_message(&status(ForeverBuild::Unknown, false, false)),
+            (
+                Kind::Warning,
+                "forever build: unknown (no release.json says)".to_string()
+            )
+        );
+        assert_eq!(
+            forever_message(&status(ForeverBuild::Yes, true, false)),
+            (
+                Kind::Warning,
+                "forever build: yes (release.json names forever); note: threat colors are off (verified 2026-06-01, https://example.test/note)".to_string()
+            )
+        );
+        assert_eq!(
+            forever_message(&status(ForeverBuild::No, true, true)).1,
+            "forever build: no (release.json names no forever flavor); note: threat colors are off (verified 2026-06-01, stale: older than 90 days, https://example.test/note)"
+        );
+    }
+
+    #[test]
+    fn a_listed_addon_carries_its_mark_on_the_line_and_in_the_json() {
+        let scan = scan::scan(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../mrgl-core/tests/fixtures/flavors/_retail_"),
+        )
+        .expect("a fixture flavor folder");
+        let addon = scan.addons.first().expect("an addon in the fixture");
+        let mut forever = BTreeMap::new();
+        forever.insert(
+            addon.folder.to_ascii_lowercase(),
+            status(ForeverBuild::Yes, true, true),
+        );
+        let mut line = "Line".to_string();
+        let mut object = serde_json::json!({ "folder": addon.folder });
+        mark_forever(Some(&forever), addon, Some(&mut line), Some(&mut object));
+        assert_eq!(line, "Line  forever:yes,note,stale");
+        assert_eq!(object["forever"]["build"], "yes");
+        assert_eq!(object["forever"]["note"], "threat colors are off");
+        assert_eq!(object["forever"]["stale"], true);
+
+        // An unmanaged addon of a Forever listing: no mark on the line, `null` in the JSON.
+        let empty = BTreeMap::new();
+        let mut line = "Line".to_string();
+        let mut object = serde_json::json!({});
+        mark_forever(Some(&empty), addon, Some(&mut line), Some(&mut object));
+        assert_eq!(line, "Line");
+        assert_eq!(object["forever"], serde_json::Value::Null);
+        assert!(object.as_object().unwrap().contains_key("forever"));
+        // Another flavor: nothing at all.
+        let mut object = serde_json::json!({});
+        mark_forever(None, addon, None, Some(&mut object));
+        assert!(!object.as_object().unwrap().contains_key("forever"));
+    }
 }
