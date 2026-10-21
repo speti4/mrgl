@@ -21,7 +21,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   make; `Engine::install_pick` takes a source's pick to it, task 040: the sidecar is checked for the addon
   from that source at that version, else the asset is downloaded through the source's `Http` into the
   staging folder and goes through the same install call with the pick's source and version, and the
-  download is removed once the call returns), the dev addon links (`link`, task 005: a directory junction under `Interface\AddOns` for every
+  download is removed once the call returns; the rollback, `Engine::rollback`, sends the entry's previous
+  version and its zip from the cache through the same stage and swap with the entry's source, pins the
+  addon there and leaves both zips in the cache, so a second rollback goes forward again, task 022), the
+  dev addon links (`link`, task 005: a directory junction under `Interface\AddOns` for every
   addon of a development folder, a mount-point reparse point made through the Windows API, recorded in the
   sidecar with the source `link:<development folder>`, the TOC's version and no file list; `unlink` removes
   exactly those junctions, never a real folder or a junction mrgl did not make; Windows-only), the state
@@ -60,7 +63,7 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   (task 024), `link <folder>` and `unlink <folder>` (task 005), `export --flavor <flavor> [--to <file>]`
   and `import <file> --flavor <flavor> [--dry-run]` (task 015), `pin <name> [version]`, `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
-  `update` (a stub that answers with the task that builds it until that task lands), with `--json` for
+  `rollback <name>` (task 022), `update` (a stub that answers with the task that builds it until that task lands), with `--json` for
   machines and `--serious` for the
   murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
@@ -424,7 +427,7 @@ The command line keeps `config.json` (the remembered game folder) under the mrgl
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
 sidecar `state.json`, the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves; emptied after every install) and `cache\<addon>\<version>.zip` (the current and the previous
-version's zip for a later rollback; never required, deleting it only disables the rollback), and the `WTF`
+version's zip for `mrgl rollback`; never required, deleting it only disables the rollback), and the `WTF`
 backups under `backups\<flavor-id>\`: `WTF-<date>.zip` per backup (a plain zip, the date local, so the
 names sort by age) and `WTF-before-restore-<date>\` for every `WTF` folder a restore moved aside; nothing
 prunes that folder, deleting a zip or an aside folder by hand is fine. `MRGL_HOME` overrides the home

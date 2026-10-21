@@ -54,6 +54,7 @@ target\release\mrgl.exe link D:\dev\my-addons --flavor forever              # a 
 target\release\mrgl.exe unlink D:\dev\my-addons --flavor forever            # exactly those junctions go again
 target\release\mrgl.exe pin SomeAddon 1.2.0 --flavor forever                # keep it at 1.2.0 (no version: the installed one)
 target\release\mrgl.exe unpin SomeAddon --flavor forever                    # let updates reach it again
+target\release\mrgl.exe rollback SomeAddon --flavor forever                 # the previous version back from the kept zip, pinned
 target\release\mrgl.exe ignore SomeAddon --flavor forever                   # updates skip it (unignore undoes it)
 target\release\mrgl.exe channel SomeAddon prerelease --flavor forever       # follow its beta builds (stable undoes it)
 target\release\mrgl.exe backup --flavor forever                             # the WTF folder into a dated zip

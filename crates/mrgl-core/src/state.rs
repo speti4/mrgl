@@ -5,7 +5,7 @@
 //!
 //! The flavor's folder under the mrgl home also holds the install engine's `staging\` (where a zip is
 //! unpacked and checked before anything moves) and `cache\<addon>\<version>.zip` (the current and the
-//! previous version's zip, for the rollback of a later task; never required).
+//! previous version's zip, for the rollback of task 022; never required).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -10,9 +10,10 @@
 //! notes on `add` and on `list` (the derived build signal and the curated note) are task 011; `link` and
 //! `unlink` (the dev addon junctions) are task 005; `export` and `import` (the addon list) and the
 //! interface warning of `list` and `add` are task 015; `pin`, `unpin`, `ignore`, `unignore` and
-//! `channel`, with their marks in `list`, are task 021; the other subcommands follow the M1 plan
-//! (`tasks/roadmap.md`) and answer "not implemented yet" with their task id until that task lands, so the
-//! help text and the voice are testable from the first commit.
+//! `channel`, with their marks in `list`, are task 021; `rollback` (the previous version from the kept
+//! zip, then pinned) is task 022; the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer
+//! "not implemented yet" with their task id until that task lands, so the help text and the voice are
+//! testable from the first commit.
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
@@ -244,6 +245,15 @@ enum Command {
         #[arg(long)]
         flavor: Option<String>,
     },
+    /// Roll a managed addon back to its previous version from the zip mrgl kept, and pin it there
+    /// (`unpin` lets updates reach it again; a second rollback goes forward again).
+    Rollback {
+        /// The addon by name, or one of its folders.
+        name: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
 }
 
 /// A channel name on the command line: `stable` or `prerelease` (also `beta`).
@@ -269,7 +279,8 @@ impl Command {
             | Command::Unpin { .. }
             | Command::Ignore { .. }
             | Command::Unignore { .. }
-            | Command::Channel { .. } => return None,
+            | Command::Channel { .. }
+            | Command::Rollback { .. } => return None,
             Command::Doctor { .. } => return None,
             Command::Update { all: true, .. } => ("update --all", "006"),
             Command::Update { .. } => ("update", "006"),
@@ -427,6 +438,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             channel,
             flavor,
         } => mark_command(reporter, &name, flavor.as_deref(), Mark::Channel(channel))?,
+        Command::Rollback { name, flavor } => rollback_command(reporter, &name, flavor.as_deref())?,
         _ => unreachable!("every other command answered with its task"),
     }
     Ok(())
@@ -1800,6 +1812,65 @@ fn mark_line(mark: &Mark, marked: &Marked, folder_name: &str) -> (Kind, String) 
         Kind::Nothing
     };
     (kind, plain)
+}
+
+/// `mrgl rollback <name> --flavor <id>` (task 022): the previous version's zip from the cache through the
+/// install engine, then a pin at that version. The JSON document carries the addon as it is now: the
+/// version rolled back to, the version rolled back from as the previous one, and the pin.
+fn rollback_command(reporter: &Reporter, name: &str, flavor: Option<&str>) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let folder_name = engine.flavor.folder_name();
+    if !reporter.json {
+        reporter.say(
+            Kind::Progress,
+            format!("rolling back {name} in {folder_name} from the kept zip"),
+        );
+    }
+    let rolled = engine.rollback(name).map_err(|error| error.to_string())?;
+    warnings.extend(rolled.warnings.iter().cloned());
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "rollback",
+            "flavor": &engine.flavor,
+            "addon": {
+                "name": rolled.name,
+                "version": rolled.version,
+                "previous_version": rolled.previous_version,
+                "pinned": rolled.pinned,
+                "source": rolled.source,
+                "folders": rolled.folders,
+                "removed_folders": rolled.removed_folders,
+            },
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let mut summary = format!(
+        "rolled back {} from {} to {} ({}: {}) in {folder_name}",
+        rolled.name,
+        rolled.previous_version,
+        rolled.version,
+        count_folders(rolled.folders.len()),
+        rolled.folders.join(", ")
+    );
+    if !rolled.removed_folders.is_empty() {
+        summary.push_str(&format!(
+            ", {} of {} removed ({})",
+            count_folders(rolled.removed_folders.len()),
+            rolled.previous_version,
+            rolled.removed_folders.join(", ")
+        ));
+    }
+    summary.push_str(&format!(
+        "; pinned at {}, `mrgl unpin {}` lets updates reach it again",
+        rolled.pinned, rolled.name
+    ));
+    reporter.say(Kind::Success, summary);
+    Ok(())
 }
 
 fn count_folders(count: usize) -> String {

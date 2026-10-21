@@ -204,6 +204,28 @@ pub enum Error {
         flavor: String,
         action: &'static str,
     },
+
+    /// A rollback of an addon that has no previous version: installed once and not updated through mrgl
+    /// since (task 022).
+    #[error(
+        "nothing to roll back to: {name} {version} has no previous version (flavor {flavor}); mrgl keeps the version an update replaces"
+    )]
+    NoPreviousVersion {
+        name: String,
+        version: String,
+        flavor: String,
+    },
+
+    /// The cached zip of the version a rollback goes to is gone: deleted by hand, or never written (task
+    /// 022). Nothing was changed.
+    #[error(
+        "cannot roll back {name} to {version}: its zip is not in the cache ({path}); install that version again with `mrgl add <zip>`"
+    )]
+    RollbackZipMissing {
+        name: String,
+        version: String,
+        path: PathBuf,
+    },
 }
 
 /// The crate's result type.

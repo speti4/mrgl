@@ -1,9 +1,9 @@
 //! The install engine over the fixture zips under `tests/fixtures/zips/`, in a temporary game folder with
 //! a temporary mrgl home: install, update (a second version over the first), the folders a version drops,
 //! the escaping path, the failed swap that leaves the folder as it was, remove, the sidecar round trip, the
-//! running client as a warning (task 038, through a stub process list) and the install of a GitHub pick
-//! (task 040) through the folder stub over `tests/fixtures/releases/`. No real game folder and no network
-//! anywhere.
+//! running client as a warning (task 038, through a stub process list), the install of a GitHub pick
+//! (task 040) through the folder stub over `tests/fixtures/releases/`, the marks of task 021 and the
+//! rollback from the kept zip (task 022). No real game folder and no network anywhere.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1094,4 +1094,236 @@ fn write_zip(path: &Path, entries: &BTreeMap<&str, &str>) {
         writer.write_all(content.as_bytes()).expect("its bytes");
     }
     writer.finish().expect("the central directory");
+}
+
+// --- task 022: the rollback to the previous version from the kept zip ---
+
+/// Every file under a folder, relative with `/` separators, and its SHA-256.
+fn tree_hashes(dir: &Path) -> BTreeMap<String, String> {
+    fn walk(base: &Path, dir: &Path, into: &mut BTreeMap<String, String>) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|error| panic!("{}: {error}", dir.display()));
+        for entry in entries {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                walk(base, &path, into);
+            } else {
+                let relative = path
+                    .strip_prefix(base)
+                    .expect("under the base")
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let hash = mrgl_core::install::sha256_of(&path).expect("hashes");
+                into.insert(relative, hash);
+            }
+        }
+    }
+    let mut hashes = BTreeMap::new();
+    walk(dir, dir, &mut hashes);
+    hashes
+}
+
+/// A fresh unpack of a fixture zip into a folder of the sandbox, independent of the engine.
+fn fresh_unpack(sandbox: &Sandbox, zip_name: &str) -> PathBuf {
+    let into = sandbox.root.join("fresh").join(zip_name);
+    let _ = std::fs::remove_dir_all(&into);
+    let file = std::fs::File::open(zip(zip_name)).expect("the fixture");
+    zip::ZipArchive::new(file)
+        .expect("a zip")
+        .extract(&into)
+        .expect("unpacks");
+    into
+}
+
+#[test]
+fn a_rollback_puts_the_previous_version_back_byte_for_byte_and_pins_it() {
+    let sandbox = Sandbox::new("rollback");
+    sandbox.install("one-folder-1.0.0.zip");
+    sandbox.install("one-folder-1.1.0.zip");
+    let source = sandbox
+        .state()
+        .entry("OneFolder")
+        .expect("the entry")
+        .1
+        .source
+        .clone();
+
+    let rolled = sandbox.engine.rollback("onefolder").expect("rolls back");
+    assert_eq!(rolled.name, "OneFolder");
+    assert_eq!(rolled.version, "1.0.0");
+    assert_eq!(rolled.previous_version, "1.1.0");
+    assert_eq!(rolled.pinned, "1.0.0");
+    assert_eq!(rolled.source, source, "the source is kept");
+    assert_eq!(rolled.folders, ["OneFolder"]);
+    assert!(rolled.removed_folders.is_empty());
+    assert!(rolled.warnings.is_empty(), "{:?}", rolled.warnings);
+
+    // The files are 1.0.0's, byte for byte: old.lua is back, new.lua is gone.
+    let first = tree_hashes(&fresh_unpack(&sandbox, "one-folder-1.0.0.zip").join("OneFolder"));
+    assert_eq!(tree_hashes(&sandbox.addon("OneFolder")), first);
+    assert!(sandbox.addon("OneFolder/old.lua").is_file());
+    assert!(!sandbox.addon("OneFolder/new.lua").exists());
+
+    let state = sandbox.state();
+    let (_, entry) = state.entry("OneFolder").expect("the entry");
+    assert_eq!(entry.version, "1.0.0");
+    assert_eq!(entry.previous_version.as_deref(), Some("1.1.0"));
+    assert_eq!(entry.pinned(), Some("1.0.0"));
+    assert_eq!(entry.source, source);
+    let recorded: BTreeMap<String, String> = entry
+        .files
+        .iter()
+        .map(|(path, hash)| {
+            (
+                path.trim_start_matches("OneFolder/").to_string(),
+                hash.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(recorded, first, "the sidecar records 1.0.0's hashes");
+
+    // The cache holds both zips, unchanged; the staging folder is empty.
+    assert_eq!(
+        sandbox.cache_entries("OneFolder"),
+        ["1.0.0.zip", "1.1.0.zip"]
+    );
+    for version in ["1.0.0", "1.1.0"] {
+        assert_eq!(
+            std::fs::read(sandbox.engine.home.cached_zip("OneFolder", version)).expect("cached"),
+            std::fs::read(zip(&format!("one-folder-{version}.zip"))).expect("the fixture"),
+            "{version}"
+        );
+    }
+    assert!(sandbox.staging_entries().is_empty());
+
+    // A second rollback goes forward again, and pins there.
+    let forward = sandbox.engine.rollback("OneFolder").expect("rolls forward");
+    assert_eq!(forward.version, "1.1.0");
+    assert_eq!(forward.previous_version, "1.0.0");
+    assert_eq!(forward.pinned, "1.1.0");
+    let second = tree_hashes(&fresh_unpack(&sandbox, "one-folder-1.1.0.zip").join("OneFolder"));
+    assert_eq!(tree_hashes(&sandbox.addon("OneFolder")), second);
+    let state = sandbox.state();
+    let (_, entry) = state.entry("OneFolder").expect("the entry");
+    assert_eq!(entry.pinned(), Some("1.1.0"));
+    assert_eq!(entry.previous_version.as_deref(), Some("1.0.0"));
+    assert_eq!(
+        sandbox.cache_entries("OneFolder"),
+        ["1.0.0.zip", "1.1.0.zip"]
+    );
+}
+
+#[test]
+fn a_rollback_brings_back_a_dropped_folder_and_keeps_the_other_marks() {
+    let sandbox = Sandbox::new("rollback-folders");
+    sandbox.install("several-folders-2.0.0.zip");
+    let updated = sandbox.install("several-folders-2.1.0.zip");
+    assert_eq!(updated.removed_folders, ["SeveralFolders_Data"]);
+    sandbox
+        .engine
+        .pin("SeveralFolders", None)
+        .expect("pins at 2.1.0");
+    sandbox.engine.ignore("SeveralFolders").expect("ignores");
+    sandbox
+        .engine
+        .set_channel("SeveralFolders", Channel::Prerelease)
+        .expect("a channel");
+
+    let rolled = sandbox
+        .engine
+        .rollback("SeveralFolders_Options")
+        .expect("a folder names the addon");
+    assert_eq!(rolled.name, "SeveralFolders");
+    assert_eq!(rolled.version, "2.0.0");
+    assert_eq!(
+        rolled.folders,
+        [
+            "SeveralFolders",
+            "SeveralFolders_Data",
+            "SeveralFolders_Options"
+        ]
+    );
+    assert!(rolled.warnings.is_empty(), "{:?}", rolled.warnings);
+    let fresh = fresh_unpack(&sandbox, "several-folders-2.0.0.zip");
+    for folder in &rolled.folders {
+        assert_eq!(
+            tree_hashes(&sandbox.addon(folder)),
+            tree_hashes(&fresh.join(folder)),
+            "{folder}"
+        );
+    }
+    let state = sandbox.state();
+    let (_, entry) = state.entry("SeveralFolders").expect("the entry");
+    assert_eq!(
+        entry.pinned(),
+        Some("2.0.0"),
+        "the pin moves to the rolled-back version"
+    );
+    assert!(entry.ignored());
+    assert_eq!(entry.channel(), Channel::Prerelease);
+
+    let forward = sandbox
+        .engine
+        .rollback("SeveralFolders")
+        .expect("rolls forward");
+    assert_eq!(forward.version, "2.1.0");
+    assert_eq!(forward.removed_folders, ["SeveralFolders_Data"]);
+    assert!(!sandbox.addon("SeveralFolders_Data").exists());
+}
+
+#[test]
+fn a_rollback_without_a_previous_version_or_its_zip_is_an_error_and_changes_nothing() {
+    let sandbox = Sandbox::new("rollback-errors");
+    let error = sandbox.engine.rollback("Nope").expect_err("unknown");
+    assert_eq!(error.to_string(), "addon not found: Nope (flavor forever)");
+    std::fs::create_dir_all(sandbox.addon("ByHand")).expect("a folder by hand");
+    let error = sandbox.engine.rollback("ByHand").expect_err("not managed");
+    assert_eq!(
+        error.to_string(),
+        "addon not managed by mrgl: ByHand (flavor forever); it was installed by hand or by another manager, and only an addon mrgl installed can be rolled back"
+    );
+    assert!(!sandbox.engine.home.state_path().exists());
+
+    sandbox.install("one-folder-1.0.0.zip");
+    let before = std::fs::read(sandbox.engine.home.state_path()).expect("the sidecar");
+    let error = sandbox
+        .engine
+        .rollback("OneFolder")
+        .expect_err("no previous");
+    assert!(matches!(error, Error::NoPreviousVersion { .. }), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "nothing to roll back to: OneFolder 1.0.0 has no previous version (flavor forever); mrgl keeps the version an update replaces"
+    );
+    assert_eq!(
+        std::fs::read(sandbox.engine.home.state_path()).expect("the sidecar"),
+        before
+    );
+
+    sandbox.install("one-folder-1.1.0.zip");
+    let kept = sandbox.engine.home.cached_zip("OneFolder", "1.0.0");
+    std::fs::remove_file(&kept).expect("the kept zip deleted by hand");
+    let before = std::fs::read(sandbox.engine.home.state_path()).expect("the sidecar");
+    let addon_before = tree_hashes(&sandbox.addon("OneFolder"));
+    let error = sandbox
+        .engine
+        .rollback("OneFolder")
+        .expect_err("no kept zip");
+    assert!(matches!(error, Error::RollbackZipMissing { .. }), "{error}");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "cannot roll back OneFolder to 1.0.0: its zip is not in the cache ({}); install that version again with `mrgl add <zip>`",
+            kept.display()
+        )
+    );
+    assert_eq!(
+        std::fs::read(sandbox.engine.home.state_path()).expect("the sidecar"),
+        before,
+        "the sidecar is untouched"
+    );
+    assert_eq!(tree_hashes(&sandbox.addon("OneFolder")), addon_before);
+    assert!(sandbox.staging_entries().is_empty());
 }
