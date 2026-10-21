@@ -9,7 +9,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `toc`), the sources (`sources`: the `Source` trait, the `Pick` it hands to the install engine, the `Http`
   trait with the real `ureq` client and the folder-backed stub; `sources::github` reads the releases API,
   the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
-  home folder, task 003; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
+  home folder, task 003; the pick carries `notes`, the release body's first line with text once its
+  Markdown markers are stripped, cut at `NOTES_MAX_CHARS` (120) with an ellipsis by `sources::notes_line`,
+  and `page`, the release's page, both left out when absent, task 030; later Wago, WoWInterface and
+  CurseForge), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
@@ -24,9 +27,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the launcher's registry key and the usual install folders, behind a lookup trait with a stub) and the
   voice table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
-  --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick; the install from the pick is task
-  040), `add <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in
-  `--json`, task 038), `backup` with `--list`, `--restore` and `--yes` (task 013),
+  --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick, with the release notes' line and
+  link under it when the release has notes, task 030; the install from the pick is task 040), `add
+  <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
+  task 038), `backup` with `--list`, `--restore` and `--yes` (task 013),
   `update`, `link`, `unlink` (stubs that answer with the task that builds them until that task lands), with
   `--json` for machines and `--serious` for the
   murloc-averse; its end-to-end tests under `tests/`.

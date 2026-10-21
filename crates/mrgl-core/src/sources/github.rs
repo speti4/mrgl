@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::flavor::FlavorId;
 use crate::home;
-use crate::sources::{Http, Pick, Request, Response, Source, SourceSpec, Target};
+use crate::sources::{Http, Pick, Request, Response, Source, SourceSpec, Target, notes_line};
 
 /// The environment variable with a personal access token; without one the API allows 60 requests an hour.
 pub const TOKEN_ENV: &str = "MRGL_GITHUB_TOKEN";
@@ -57,6 +57,12 @@ pub struct Release {
     pub published_at: Option<String>,
     #[serde(default)]
     pub assets: Vec<Asset>,
+    /// The release notes as the author wrote them (Markdown); missing or `null` when there are none.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The release's page on GitHub.
+    #[serde(default)]
+    pub html_url: Option<String>,
 }
 
 impl Release {
@@ -507,6 +513,8 @@ impl<H: Http> Source for GitHub<H> {
             interface: chosen.interface,
             guess: chosen.guess,
             reason,
+            notes: release.body.as_deref().and_then(notes_line),
+            page: release.html_url.clone().filter(|page| !page.is_empty()),
         })
     }
 
@@ -549,6 +557,8 @@ mod tests {
             prerelease: false,
             published_at: None,
             assets: assets.iter().map(|name| asset(name)).collect(),
+            body: None,
+            html_url: None,
         }
     }
 
@@ -897,6 +907,8 @@ mod tests {
             interface: None,
             guess: false,
             reason: String::new(),
+            notes: None,
+            page: None,
         };
         let to = dir.join("nested").join("A.zip");
         github.fetch(&pick, &to).expect("fetched");
@@ -907,5 +919,33 @@ mod tests {
             None
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_pick_carries_the_notes_line_and_the_page() {
+        let with_body = |body: &str| {
+            format!(
+                "[{{\"tag_name\":\"v1.0.0\",\"html_url\":\"https://github.test/o/r/releases/tag/v1.0.0\",\"body\":{body},\"assets\":[{{\"name\":\"A-forever.zip\",\"browser_download_url\":\"https://dl.test/A-forever.zip\"}}]}}]"
+            )
+        };
+        let resolve = |list: &str| {
+            GitHub::new(MapHttp::new().answer(RELEASES_URL, 200, list), None, None)
+                .resolve(&spec(), &Target::new(FlavorId::Forever))
+                .expect("a pick")
+        };
+        let pick = resolve(&with_body(r#""\r\n## Faster scans\r\n\r\n- one\r\n- two""#));
+        assert_eq!(pick.notes.as_deref(), Some("Faster scans"));
+        assert_eq!(
+            pick.page.as_deref(),
+            Some("https://github.test/o/r/releases/tag/v1.0.0")
+        );
+        for empty in [r#""""#, "null", r#""\r\n#\r\n""#] {
+            let pick = resolve(&with_body(empty));
+            assert_eq!(pick.notes, None, "{empty}");
+            assert!(pick.page.is_some(), "{empty}");
+        }
+        // A release list without the two fields at all, as the older fixtures have it.
+        let pick = resolve(&releases_body(&["A-forever.zip"]));
+        assert_eq!((pick.notes, pick.page), (None, None));
     }
 }

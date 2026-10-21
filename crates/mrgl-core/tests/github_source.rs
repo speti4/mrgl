@@ -327,3 +327,64 @@ fn fetch_writes_the_picked_asset() {
     assert_eq!(std::fs::read(&to).unwrap(), b"not really a zip");
     let _ = std::fs::remove_dir_all(&stub);
 }
+
+#[test]
+fn the_release_body_gives_the_notes_line_and_the_page() {
+    let github = github();
+    let notes = github
+        .resolve(
+            &spec("github:Example/Notes"),
+            &target(FlavorId::Forever, None),
+        )
+        .expect("a pick");
+    assert_eq!(notes.asset, "Notes-v2.1.0-forever.zip");
+    assert_eq!(
+        notes.notes.as_deref(),
+        Some("Quest arrows point the right way again")
+    );
+    assert_eq!(
+        notes.page.as_deref(),
+        Some("https://github.com/Example/Notes/releases/tag/v2.1.0")
+    );
+    let json = serde_json::to_value(&notes).expect("JSON");
+    assert_eq!(json["notes"], "Quest arrows point the right way again");
+
+    // An empty body has no notes, and the JSON leaves the field out; the page stays.
+    let silent = github
+        .resolve(
+            &spec("github:Example/NoNotes"),
+            &target(FlavorId::Forever, None),
+        )
+        .expect("a pick");
+    assert_eq!(silent.notes, None);
+    assert_eq!(
+        silent.page.as_deref(),
+        Some("https://github.com/Example/NoNotes/releases/tag/v1.0.0")
+    );
+    let json = serde_json::to_value(&silent).expect("JSON");
+    assert!(json.get("notes").is_none(), "{json}");
+}
+
+#[test]
+fn the_cached_release_list_keeps_the_body() {
+    let cache = temp_cache("body");
+    let github = GitHub::new(FolderHttp::new(fixtures()), None, Some(cache.clone()));
+    let spec = spec("github:Example/Notes");
+    let target = target(FlavorId::Forever, None);
+    let first = github.resolve(&spec, &target).expect("first");
+    let file = cache.join("example").join("notes").join("releases.json");
+    let cached: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).expect("the release list is cached"))
+            .expect("the cache is JSON");
+    assert!(
+        cached["releases"][0]["body"]
+            .as_str()
+            .is_some_and(|body| body.contains("Quest arrows")),
+        "{cached}"
+    );
+    // The second run reads the list from the cache (a 304): the notes are the same, nothing is fetched twice.
+    let second = github.resolve(&spec, &target).expect("second");
+    assert_eq!(second.notes, first.notes);
+    assert_eq!(second.page, first.page);
+    let _ = std::fs::remove_dir_all(&cache);
+}

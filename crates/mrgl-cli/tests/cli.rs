@@ -1996,3 +1996,105 @@ fn restore_is_refused_while_the_client_runs() {
     assert!(stdout_last_line(&output).starts_with("restored WTF of _forever_ from "));
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn add_dry_run_shows_the_release_notes_line_and_the_page() {
+    let output = mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Example/Notes",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let serious = stdout(&output);
+    let lines: Vec<&str> = serious.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "resolving github:Example/Notes for forever",
+            "pick for forever: github:Example/Notes v2.1.0 (Notes-v2.1.0-forever.zip, flavor forever, interface 16001): release.json names forever (interface 16001)",
+            "release notes: Quest arrows point the right way again (https://github.com/Example/Notes/releases/tag/v2.1.0)",
+            "dry run: nothing installed",
+        ],
+        "{serious}"
+    );
+    // The murloc speaks the notes line too: four two-line messages.
+    let output = mrgl()
+        .args([
+            "add",
+            "github:Example/Notes",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(stdout(&output).lines().count(), 8, "{}", stdout(&output));
+    let json = mrgl()
+        .args([
+            "--json",
+            "add",
+            "github:Example/Notes",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(
+        value["pick"]["notes"],
+        "Quest arrows point the right way again"
+    );
+    assert_eq!(
+        value["pick"]["page"],
+        "https://github.com/Example/Notes/releases/tag/v2.1.0"
+    );
+}
+
+#[test]
+fn add_dry_run_of_a_release_with_an_empty_body_shows_no_notes() {
+    let output = mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Example/NoNotes",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "no notes line and no empty line: {stdout}");
+    assert!(
+        lines[1].starts_with("pick for forever, a guess: github:Example/NoNotes v1.0.0"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("release notes"), "{stdout}");
+    assert_eq!(lines[2], "dry run: nothing installed");
+    let json = mrgl()
+        .args([
+            "--json",
+            "add",
+            "github:Example/NoNotes",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert!(value["pick"].get("notes").is_none(), "{value}");
+    assert_eq!(
+        value["pick"]["page"],
+        "https://github.com/Example/NoNotes/releases/tag/v1.0.0"
+    );
+}
