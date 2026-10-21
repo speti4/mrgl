@@ -12,7 +12,7 @@ drop is the only other exit. Closing a task files every follow-up as a `backlog/
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 16 backlog (5 ready · 0 blocked · 2 waiting · 9 ideas) · 1 in progress · 1 done · 0 dropped · 5 decisions
+**State:** 16 backlog (5 ready · 0 blocked · 2 waiting · 9 ideas) · 0 in progress · 2 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -67,11 +67,7 @@ _none_
 
 ### In progress
 
-#### M1 Core + CLI
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](wip/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 | `none` |
+_none_
 
 ### Closed – do not reopen
 
@@ -81,6 +77,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
 | 001 | [Project scaffolding: repo structure, task standard, decisions, origin and resea…](done/001-project-scaffolding.md) | 2026-10-21 |
 
 ### Decisions
