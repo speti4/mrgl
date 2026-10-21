@@ -46,7 +46,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   list (`list_file`, task 015: the export from the sidecar and the import through the source and the engine,
   below), the interface check (`interface`, task 015, below) and the voice table (`voice`, D-005). Synthetic
   fixtures are under `tests/fixtures/`.
-- `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
+- `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002; `list` reads the flavor's
+  sidecar through the install engine and marks every addon managed or unmanaged with `state::classify`,
+  task 037, while `scan` stays the raw folder view), `add github:<owner>/<repo>
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick, with the release notes' line and
   link under it when the release has notes, task 030; the install from the pick is task 040), `add
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,

@@ -20,6 +20,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - Pin, ignore and the pre-release channel per addon; CLI `pin`, `unpin`, `ignore` and `unignore` ([021](https://github.com/speti4/mrgl/blob/main/tasks/done/021-pin-ignore-and-prerelease-channel.md))
 - Dependency check from the TOC `## Dependencies` and `## RequiredDeps` and the `release.json` `nolib` flag ([029](https://github.com/speti4/mrgl/blob/main/tasks/done/029-dependency-check-from-toc-and-nolib.md))
 - Release notes before an update: the GitHub release body in one line ([030](https://github.com/speti4/mrgl/blob/main/tasks/done/030-release-notes-before-an-update.md))
+- `list` reads the sidecar: managed (source, version) and unmanaged addons ([037](https://github.com/speti4/mrgl/blob/main/tasks/done/037-list-reads-the-sidecar-managed-and-unmanaged.md))
 
 ### M2 Window MVP
 

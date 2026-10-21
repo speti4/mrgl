@@ -5,7 +5,8 @@
 //! `MRGL_DISCOVERY` is `off` or a stub (task 020), so no test reads the real registry or looks under
 //! `Program Files`. The running-client tests (task 023) copy this test binary into a temporary flavor
 //! folder and start it as a stand-in client, never a game file. The `backup` tests (task 013) copy the
-//! synthetic fixture `WTF` tree into a temporary flavor folder and never touch a real one.
+//! synthetic fixture `WTF` tree into a temporary flavor folder and never touch a real one. The managed and
+//! unmanaged `list` tests (task 037) install a fixture zip through the engine into a temporary game folder.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -259,7 +260,7 @@ fn list_resolves_an_id_against_mrgl_root() {
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     assert_eq!(
         stdout_last_line(&output),
-        "1 addon in _classic_era_ (wow_classic_era 1.15.9.70000)"
+        "1 addon in _classic_era_ (wow_classic_era 1.15.9.70000): 0 managed by mrgl, 1 unmanaged"
     );
 }
 
@@ -273,7 +274,7 @@ fn list_takes_a_flavor_folder_path() {
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     assert_eq!(
         stdout_last_line(&output),
-        "1 addon in _classic_ (wow_classic 5.5.4.70531)"
+        "1 addon in _classic_ (wow_classic 5.5.4.70531): 0 managed by mrgl, 1 unmanaged"
     );
     let line = stdout(&output);
     assert!(line.starts_with("ClassicPick  mists  50504"), "{line}");
@@ -407,6 +408,7 @@ fn list_finds_the_root_in_the_launchers_registry_key() {
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
     assert_eq!(value["kind"], "list");
     assert_eq!(value["flavor"]["id"], "wowf");
+    assert_eq!(value["root_origin"], "registry");
     let warnings = value["warnings"].as_array().expect("warnings");
     assert_eq!(warnings.len(), 1, "{value}");
     assert!(
@@ -463,7 +465,7 @@ fn the_usual_folders_are_tried_in_order_after_the_registry() {
     );
     assert_eq!(
         stdout_last_line(&output),
-        "1 addon in _classic_ (wow_classic 5.5.4.70531)"
+        "1 addon in _classic_ (wow_classic 5.5.4.70531): 0 managed by mrgl, 1 unmanaged"
     );
 }
 
@@ -926,6 +928,232 @@ impl Game {
 impl Drop for Game {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(self.root.parent().expect("the base folder"));
+    }
+}
+
+// --- task 037: `list` reads the sidecar, managed and unmanaged addons ---
+
+impl Game {
+    /// An addon folder put there by hand, with a CurseForge hint in its TOC: unmanaged.
+    fn by_hand(&self, folder: &str) {
+        let dir = self.addon(folder);
+        std::fs::create_dir_all(&dir).expect("the addon folder");
+        std::fs::write(
+            dir.join(format!("{folder}.toc")),
+            "## Interface: 16001\r\n## Title: By Hand\r\n## Version: 0.1\r\n## X-Curse-Project-ID: 4242\r\n\r\ncore.lua\r\n",
+        )
+        .expect("the TOC");
+    }
+
+    /// Installs a fixture zip through the engine (`mrgl add <zip>`).
+    fn install(&self, zip: &str) {
+        let output = self
+            .mrgl()
+            .arg("add")
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+    }
+
+    fn list_json(&self) -> serde_json::Value {
+        let output = self
+            .mrgl()
+            .args(["--json", "list", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        serde_json::from_slice(&output.stdout).expect("one JSON document")
+    }
+}
+
+/// The addon object of a folder in a `list` document.
+fn listed<'a>(value: &'a serde_json::Value, folder: &str) -> &'a serde_json::Value {
+    value["addons"]
+        .as_array()
+        .expect("addons")
+        .iter()
+        .find(|addon| addon["folder"] == folder)
+        .unwrap_or_else(|| panic!("{folder} in {value}"))
+}
+
+#[test]
+fn list_shows_the_installed_addon_as_managed_and_the_rest_unmanaged() {
+    let game = Game::new("list-managed");
+    game.by_hand("ByHand");
+
+    // No sidecar yet: every addon is unmanaged, without a word about the missing file, and list writes none.
+    let output = game
+        .mrgl()
+        .args(["--serious", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output),
+        "ByHand  0.1  16001  unmanaged  curse\n1 addon in _forever_ (wowf 1.60.1.70245): 0 managed by mrgl, 1 unmanaged\n"
+    );
+    assert!(!game.state_path().exists(), "list writes no sidecar");
+
+    game.install("one-folder-1.0.0.zip");
+    let zip = std::path::absolute(zips().join("one-folder-1.0.0.zip")).expect("the zip path");
+    let output = game
+        .mrgl()
+        .args(["--serious", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "two addon lines and the summary: {text}");
+    assert_eq!(lines[0], "ByHand  0.1  16001  unmanaged  curse");
+    assert_eq!(
+        lines[1],
+        format!(
+            "OneFolder  1.0.0  16001  managed  {}  forever:unknown",
+            zip.display()
+        )
+    );
+    assert_eq!(
+        lines[2],
+        "2 addons in _forever_ (wowf 1.60.1.70245): 1 managed by mrgl, 1 unmanaged"
+    );
+
+    let value = game.list_json();
+    assert_eq!(value["kind"], "list");
+    assert_eq!(
+        value["counts"],
+        serde_json::json!({ "addons": 2, "managed": 1, "unmanaged": 1 })
+    );
+    assert_eq!(value["root_origin"], "environment");
+    assert_eq!(value["root"], game.root.display().to_string());
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    let one = listed(&value, "OneFolder");
+    assert_eq!(one["managed"], true);
+    assert_eq!(one["name"], "OneFolder");
+    assert_eq!(one["source"], zip.display().to_string());
+    assert_eq!(one["version"], "1.0.0");
+    assert_eq!(one["chosen"], "OneFolder.toc", "the scan's fields stay");
+    let by_hand = listed(&value, "ByHand");
+    assert_eq!(by_hand["managed"], false);
+    assert!(by_hand["name"].is_null() && by_hand["source"].is_null());
+    assert_eq!(by_hand["version"], "0.1");
+    assert_eq!(by_hand["tocs"][0]["toc"]["curse_project_id"], "4242");
+
+    // The version of a managed addon is the installed one, whatever its TOC says now.
+    let toc = game.addon("OneFolder").join("OneFolder.toc");
+    let edited = std::fs::read_to_string(&toc)
+        .expect("the TOC")
+        .replace("## Version: 1.0.0", "## Version: 9.9.9");
+    std::fs::write(&toc, edited).expect("the TOC");
+    assert_eq!(listed(&game.list_json(), "OneFolder")["version"], "1.0.0");
+}
+
+#[test]
+fn list_names_the_owner_of_a_secondary_folder() {
+    let game = Game::new("list-owner");
+    game.install("several-folders-2.0.0.zip");
+    let output = game
+        .mrgl()
+        .args(["--serious", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 4, "{text}");
+    assert!(
+        lines[0].starts_with("SeveralFolders  2.0.0  16001  managed  "),
+        "{text}"
+    );
+    assert!(
+        lines[1].starts_with("SeveralFolders_Data  2.0.0  16001  managed by SeveralFolders  "),
+        "{text}"
+    );
+    assert!(
+        lines[2].starts_with("SeveralFolders_Options  2.0.0  16001  managed by SeveralFolders  "),
+        "{text}"
+    );
+    assert_eq!(
+        lines[3],
+        "3 addons in _forever_ (wowf 1.60.1.70245): 3 managed by mrgl, 0 unmanaged"
+    );
+    let value = game.list_json();
+    let options = listed(&value, "SeveralFolders_Options");
+    assert_eq!(options["managed"], true);
+    assert_eq!(options["name"], "SeveralFolders");
+}
+
+#[test]
+fn list_rebuilds_a_corrupt_sidecar_without_a_word() {
+    let game = Game::new("list-corrupt");
+    game.install("one-folder-1.0.0.zip");
+    std::fs::write(game.state_path(), "{ not json").expect("the corrupt sidecar");
+    let output = game
+        .mrgl()
+        .args(["--serious", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output),
+        "OneFolder  1.0.0  16001  unmanaged\n1 addon in _forever_ (wowf 1.60.1.70245): 0 managed by mrgl, 1 unmanaged\n",
+        "no warning line"
+    );
+    assert!(output.stderr.is_empty(), "{}", stderr_last_line(&output));
+    let value = game.list_json();
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    assert_eq!(listed(&value, "OneFolder")["managed"], false);
+    assert_eq!(
+        std::fs::read_to_string(game.state_path()).expect("the sidecar"),
+        "{ not json",
+        "list writes nothing; the next install rewrites the sidecar"
+    );
+}
+
+#[test]
+fn list_json_names_the_root_origin_or_null_for_a_flavor_folder() {
+    let output = mrgl()
+        .args(["--json", "list", "--flavor", "era", "--root"])
+        .arg(fixtures())
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["root_origin"], "flag");
+    assert_eq!(value["root"], fixtures().display().to_string());
+
+    let output = mrgl()
+        .args(["--json", "list", "--flavor"])
+        .arg(fixtures().join("_classic_era_"))
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert!(value["root_origin"].is_null(), "{value}");
+    assert!(value["root"].is_null(), "{value}");
+    assert_eq!(
+        value["counts"],
+        serde_json::json!({ "addons": 1, "managed": 0, "unmanaged": 1 })
+    );
+
+    // `scan` stays the raw folder view: no sidecar fields, no counts, no root.
+    let output = mrgl()
+        .args(["--json", "scan"])
+        .arg(fixtures().join("_classic_era_"))
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    for field in ["counts", "root", "root_origin"] {
+        assert!(value.get(field).is_none(), "{field} in {value}");
+    }
+    for field in ["managed", "name", "source", "version"] {
+        assert!(
+            value["addons"][0].get(field).is_none(),
+            "{field} in {value}"
+        );
     }
 }
 
@@ -2131,11 +2359,11 @@ fn list_warns_about_a_missing_dependency_and_marks_the_line() {
     assert_eq!(
         lines,
         [
-            "LibMet  1.0.0  16001",
-            "Needy  1.0.0  16001  missing: LibMissing",
-            "NolibBuild  1.0.0  16001",
+            "LibMet  1.0.0  16001  unmanaged",
+            "Needy  1.0.0  16001  unmanaged  missing: LibMissing",
+            "NolibBuild  1.0.0  16001  unmanaged",
             "Needy needs the missing dependency LibMissing: install it or the addon does not load",
-            "3 addons in _forever_ (wowf 1.60.1.70245)",
+            "3 addons in _forever_ (wowf 1.60.1.70245): 0 managed by mrgl, 3 unmanaged",
         ],
         "{text}"
     );
@@ -2204,7 +2432,7 @@ fn list_reads_the_nolib_flag_from_the_sidecar() {
     let text = stdout(&output);
     assert!(
         text.lines()
-            .any(|line| line == "NolibBuild  1.0.0  16001  missing: LibEmbedded  forever:unknown"),
+            .any(|line| line == "NolibBuild  1.0.0  16001  managed  github:someone/nolib-build  missing: LibEmbedded  forever:unknown"),
         "{text}"
     );
     assert!(
@@ -3215,11 +3443,21 @@ fn the_interface_warning_fires_after_an_install_and_in_list() {
     assert_eq!(
         lines,
         [
-            // The Forever mark of task 011 sits between the flags and the interface note.
-            "OneFolder  1.0.0  16001  forever:unknown",
-            "StaleInterface  1.0.0  110207  forever:unknown  interface mismatch",
-            "1 addon names no interface of the build 1.60.1.70245: StaleInterface (110207); made for another flavor or an older version of the game?",
-            "2 addons in _forever_ (wowf 1.60.1.70245)",
+            // The managed part (task 037) and the Forever mark (task 011) sit before the interface note.
+            format!(
+                "OneFolder  1.0.0  16001  managed  {}  forever:unknown",
+                std::path::absolute(zips().join("one-folder-1.0.0.zip"))
+                    .expect("the zip path")
+                    .display()
+            ),
+            format!(
+                "StaleInterface  1.0.0  110207  managed  {}  forever:unknown  interface mismatch",
+                std::path::absolute(zips().join("stale-interface-1.0.0.zip"))
+                    .expect("the zip path")
+                    .display()
+            ),
+            "1 addon names no interface of the build 1.60.1.70245: StaleInterface (110207); made for another flavor or an older version of the game?".to_string(),
+            "2 addons in _forever_ (wowf 1.60.1.70245): 2 managed by mrgl, 0 unmanaged".to_string(),
         ],
         "{text}"
     );
@@ -3301,12 +3539,12 @@ fn list_marks_a_pinned_an_ignored_and_a_prerelease_addon_of_a_fixture_sidecar() 
         lines,
         [
             // A managed addon of a Forever listing also carries the Forever mark of task 011.
-            "Beta  0.9.0-beta  16001  prerelease  forever:unknown",
-            "ByHand  0.1  16001",
-            "Ignored  2.0.0  16001  ignored  forever:unknown",
-            "Pinned  1.3.0  16001  pinned at 1.2.0  forever:unknown",
-            "Plain  1.0.0  16001  forever:unknown",
-            "5 addons in _forever_ (wowf 1.60.1.70245), 1 pinned, 1 ignored, 1 on the prerelease channel",
+            "Beta  0.9.0-beta  16001  managed  github:example/Beta  prerelease  forever:unknown",
+            "ByHand  0.1  16001  unmanaged",
+            "Ignored  2.0.0  16001  managed  github:example/Ignored  ignored  forever:unknown",
+            "Pinned  1.3.0  16001  managed  github:example/Pinned  pinned at 1.2.0  forever:unknown",
+            "Plain  1.0.0  16001  managed  github:example/Plain  forever:unknown",
+            "5 addons in _forever_ (wowf 1.60.1.70245): 4 managed by mrgl, 1 unmanaged, 1 pinned, 1 ignored, 1 on the prerelease channel",
         ]
     );
 
@@ -3469,8 +3707,10 @@ fn pin_unpin_ignore_unignore_and_channel_round_trip_through_the_sidecar() {
     );
     let output = run_in(&game, &["list"]);
     assert!(
-        stdout(&output)
-            .contains("OneFolder  1.1.0  16001  pinned at 1.0.0  ignored  forever:unknown\n"),
+        stdout(&output).lines().any(
+            |line| line.starts_with("OneFolder  1.1.0  16001  managed  ")
+                && line.ends_with("  pinned at 1.0.0  ignored  forever:unknown")
+        ),
         "{}",
         stdout(&output)
     );
