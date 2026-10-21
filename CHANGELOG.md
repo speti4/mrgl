@@ -50,3 +50,4 @@ The repository, the task standard and the empty workspace: no app yet.
 - Close the GitHub milestone a release ships: a step in the release checklist ([033](https://github.com/speti4/mrgl/blob/main/tasks/done/033-close-the-milestone-of-a-shipped-release.md))
 - One zip-entry check for the install engine and the backup restore ([044](https://github.com/speti4/mrgl/blob/main/tasks/done/044-one-zip-entry-check-for-the-engine-and-the-backup.md))
 - CI compiles the non-Windows paths of the core ([061](https://github.com/speti4/mrgl/blob/main/tasks/done/061-ci-compiles-the-non-windows-paths.md))
+- The stand-in client of the tests is a copy of a signed system executable, not of the test binary ([063](https://github.com/speti4/mrgl/blob/main/tasks/done/063-stand-in-client-from-a-signed-system-exe.md))
