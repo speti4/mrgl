@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 32 backlog (2 ready · 0 blocked · 2 waiting · 28 ideas) · 0 in progress · 13 done · 0 dropped · 5 decisions
+**State:** 31 backlog (2 ready · 0 blocked · 2 waiting · 27 ideas) · 0 in progress · 14 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -82,7 +82,6 @@ _none_
 | 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](backlog/025-savedvariables-size-and-orphan-cleanup.md) | S | 2026-10-21 |
 | 027 | [Per-character addon sets](backlog/027-per-character-addon-sets.md) | S | 2026-10-21 |
 | 028 | [Lists as discovery: a shareable list format and a Forever starter list in the r…](backlog/028-lists-as-discovery-and-forever-starter-list.md) | S | 2026-10-21 |
-| 044 | [One zip-entry check for the install engine and the backup restore](backlog/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | S | 2026-10-21 |
 
 #### M4 Sources
 
@@ -115,6 +114,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 044 | [One zip-entry check for the install engine and the backup restore](done/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | 2026-10-21 |
 | 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](done/035-window-polish-forever-column-and-toast-cap.md) | 2026-10-21 |
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
 | 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
@@ -124,9 +124,8 @@ _none_
 | 017 | [Window design sketch: the list view, the states and the voice's place, before t…](done/017-window-design-sketch-before-the-shell.md) | 2026-10-21 |
 | 016 | [Mirror the task files into GitHub issues and milestones](done/016-task-to-github-issue-mirror.md) | 2026-10-21 |
 | 013 | [WTF backup and restore](done/013-wtf-backup-and-restore.md) | 2026-10-21 |
-| 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](done/004-install-engine-with-state-sidecar.md) | 2026-10-21 |
 
-_3 more in `done/`._
+_4 more in `done/`._
 
 ### Decisions
 

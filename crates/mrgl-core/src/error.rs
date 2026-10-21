@@ -51,13 +51,25 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    /// A file the install engine was given is not a zip it can read (task 004).
-    #[error("not a readable zip: {path} ({reason})")]
-    ZipUnreadable { path: PathBuf, reason: String },
+    /// A zip the install engine or a restore was given cannot be read: not a zip, a damaged one, or an
+    /// entry that cannot be opened for reading (encrypted, a compression method this build does not read);
+    /// the role names it a zip or a backup (tasks 004, 013, 044: [`crate::zip_entry`]).
+    #[error("not a readable {}: {path} ({reason})", .role.noun())]
+    ZipUnreadable {
+        role: crate::zip_entry::ZipRole,
+        path: PathBuf,
+        reason: String,
+    },
 
-    /// A zip entry would land outside the staging folder: `..`, an absolute path, a drive letter (task 004).
-    #[error("refused {path}: the entry `{entry}` would land outside the staging folder")]
-    ZipEntryEscapes { path: PathBuf, entry: String },
+    /// A zip entry would land outside the folder it is unpacked under (the staging folder, `WTF`): `..`,
+    /// an absolute path, a drive letter, a character or a device name Windows refuses, a symbolic link
+    /// (tasks 004, 013, 044: [`crate::zip_entry`]). Nothing of the zip is written when one is found.
+    #[error("refused {path}: the entry `{entry}` would land outside {}", .role.folder())]
+    ZipEntryEscapes {
+        role: crate::zip_entry::ZipRole,
+        path: PathBuf,
+        entry: String,
+    },
 
     /// A zip with no addon folder in it: nothing with a `.toc` at the root or one level down (task 004).
     #[error("no addon in {path}: no folder with a .toc at the root or one level down")]
@@ -132,15 +144,6 @@ pub enum Error {
     /// The backup zip a restore was given does not exist (task 013).
     #[error("backup not found: {path}")]
     BackupNotFound { path: PathBuf },
-
-    /// A file a restore was given is not a zip it can read (task 013).
-    #[error("not a readable backup: {path} ({reason})")]
-    BackupUnreadable { path: PathBuf, reason: String },
-
-    /// An entry of a backup would land outside `WTF`: `..`, an absolute path, a drive letter, a symbolic
-    /// link (task 013). Nothing is written when one is found.
-    #[error("refused {path}: the entry `{entry}` would land outside WTF")]
-    BackupEntryEscapes { path: PathBuf, entry: String },
 
     /// A restore failed and the previous `WTF` is back as it was (task 013).
     #[error("restoring {path} failed and WTF is as it was: {reason}")]

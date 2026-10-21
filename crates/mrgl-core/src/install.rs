@@ -20,6 +20,7 @@ use crate::flavor::{Flavor, FlavorId};
 use crate::scan;
 use crate::state::{self, Entry, FlavorHome, LoadedState, State};
 use crate::toc::{self, TocName};
+use crate::zip_entry::{self, ZipRole};
 
 /// What is known about a zip before it is installed; the engine fills what is missing from the zip.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -498,16 +499,18 @@ fn fresh_staging_dir(staging: &Path, stem: &str) -> Result<PathBuf> {
     unreachable!("the attempts never run out")
 }
 
-/// Unpacks a zip under a folder, every entry checked by [`safe_relative_path`]; a symbolic link entry is
-/// refused too. Returns every file as its relative path with `/` separators and its SHA-256.
+/// Unpacks a zip under a folder once [`zip_entry::checked_entries`] has passed every entry. Returns every
+/// file as its relative path with `/` separators and its SHA-256.
 fn unpack(zip: &Path, into: &Path) -> Result<BTreeMap<String, String>> {
     let unreadable = |reason: String| Error::ZipUnreadable {
+        role: ZipRole::Addon,
         path: zip.to_path_buf(),
         reason,
     };
     let file = std::fs::File::open(zip).map_err(|source| unreadable(source.to_string()))?;
     let mut archive = zip::ZipArchive::new(io::BufReader::new(file))
         .map_err(|reason| unreadable(reason.to_string()))?;
+    let entries = zip_entry::checked_entries(&mut archive, zip, ZipRole::Addon)?;
     let io = |context: &'static str, path: &Path, source| Error::Io {
         context,
         path: path.to_path_buf(),
@@ -516,29 +519,11 @@ fn unpack(zip: &Path, into: &Path) -> Result<BTreeMap<String, String>> {
     std::fs::create_dir_all(into)
         .map_err(|source| io("creating the staging folder", into, source))?;
     let mut files = BTreeMap::new();
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|reason| unreadable(format!("entry {index}: {reason}")))?;
-        let raw = entry
-            .name()
-            .map_err(|reason| unreadable(format!("entry {index}: {reason}")))?
-            .into_owned();
-        let escapes = || Error::ZipEntryEscapes {
-            path: zip.to_path_buf(),
-            entry: raw.clone(),
-        };
-        let parts = safe_relative_path(&raw).ok_or_else(escapes)?;
-        if entry.is_symlink() {
-            return Err(escapes());
-        }
-        if parts.is_empty() {
-            continue;
-        }
-        let relative = parts.join("/");
+    for checked in entries {
+        let relative = checked.parts.join("/");
         let mut path = into.to_path_buf();
-        path.extend(&parts);
-        if entry.is_dir() {
+        path.extend(&checked.parts);
+        if checked.is_dir {
             std::fs::create_dir_all(&path)
                 .map_err(|source| io("creating a staged folder", &path, source))?;
             continue;
@@ -547,6 +532,9 @@ fn unpack(zip: &Path, into: &Path) -> Result<BTreeMap<String, String>> {
             std::fs::create_dir_all(parent)
                 .map_err(|source| io("creating a staged folder", parent, source))?;
         }
+        let mut entry = archive
+            .by_index(checked.index)
+            .map_err(|reason| unreadable(format!("entry {}: {reason}", checked.index)))?;
         let output = std::fs::File::create(&path)
             .map_err(|source| io("writing a staged file", &path, source))?;
         let hash = copy_hashing(&mut entry, io::BufWriter::new(output))
@@ -554,52 +542,6 @@ fn unpack(zip: &Path, into: &Path) -> Result<BTreeMap<String, String>> {
         files.insert(relative, hash);
     }
     Ok(files)
-}
-
-/// A zip entry name as path components under the staging folder, or `None` when it would land outside it:
-/// an absolute path, a drive letter, a `..` component, a component with a character Windows refuses or a
-/// reserved device name. `\` counts as a separator, `.` and empty components are dropped.
-pub fn safe_relative_path(name: &str) -> Option<Vec<String>> {
-    let name = name.replace('\\', "/");
-    if name.starts_with('/') {
-        return None;
-    }
-    let mut parts = Vec::new();
-    for part in name.split('/') {
-        match part {
-            "" | "." => continue,
-            ".." => return None,
-            part => {
-                if part
-                    .chars()
-                    .any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
-                    || is_reserved_device_name(part)
-                {
-                    return None;
-                }
-                parts.push(part.to_string());
-            }
-        }
-    }
-    Some(parts)
-}
-
-/// `CON`, `NUL`, `COM1` … `LPT9`, with or without an extension: a file Windows will not create.
-fn is_reserved_device_name(part: &str) -> bool {
-    let stem = part
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_uppercase();
-    match stem.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" => true,
-        _ => {
-            (stem.starts_with("COM") || stem.starts_with("LPT"))
-                && stem.len() == 4
-                && stem.as_bytes()[3].is_ascii_digit()
-                && stem.as_bytes()[3] != b'0'
-        }
-    }
 }
 
 /// Copies a reader into a writer and returns the SHA-256 of what went through, as hex.
@@ -841,41 +783,26 @@ fn copy_dir_all(from: &Path, to: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    /// The first rule difference of [`crate::zip_entry`]: the escape fixture's TOC comes before the
+    /// escaping entry, and the engine used to write it into staging before the refusal. Now nothing is.
     #[test]
-    fn a_safe_path_is_components_under_the_staging_folder() {
-        let parts = |name: &str| safe_relative_path(name);
-        assert_eq!(
-            parts("Foo/core.lua"),
-            Some(vec!["Foo".to_string(), "core.lua".to_string()])
+    fn an_escaping_zip_unpacks_nothing() {
+        let zip =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/zips/escaping-path.zip");
+        let into = std::env::temp_dir().join(format!("mrgl-unpack-escape-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&into);
+        let error = unpack(&zip, &into).expect_err("refused");
+        assert!(
+            matches!(
+                &error,
+                Error::ZipEntryEscapes {
+                    role: ZipRole::Addon,
+                    ..
+                }
+            ),
+            "{error}"
         );
-        assert_eq!(
-            parts("Foo\\sub\\x.lua"),
-            Some(vec!["Foo".into(), "sub".into(), "x.lua".into()])
-        );
-        assert_eq!(
-            parts("./Foo//./x.lua"),
-            Some(vec!["Foo".into(), "x.lua".into()])
-        );
-        assert_eq!(parts("Foo/"), Some(vec!["Foo".into()]));
-        assert_eq!(parts(""), Some(Vec::new()));
-        assert_eq!(parts("../x.lua"), None);
-        assert_eq!(parts("Foo/../../x.lua"), None);
-        assert_eq!(parts("/abs/x.lua"), None);
-        assert_eq!(parts("\\abs\\x.lua"), None);
-        assert_eq!(parts("C:/x.lua"), None);
-        assert_eq!(parts("C:\\x.lua"), None);
-        assert_eq!(parts("Foo/a?b.lua"), None);
-        assert_eq!(parts("Foo/NUL.lua"), None);
-        assert_eq!(parts("Foo/COM1"), None);
-        assert_eq!(
-            parts("Foo/COM0.lua"),
-            Some(vec!["Foo".into(), "COM0.lua".into()])
-        );
-        assert_eq!(
-            parts("Foo/Console.lua"),
-            Some(vec!["Foo".into(), "Console.lua".into()])
-        );
-        assert_eq!(parts("Foo/a\u{7}b"), None);
+        assert!(!into.exists(), "nothing was unpacked");
     }
 
     #[test]
@@ -928,8 +855,6 @@ mod tests {
             hash,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        assert!(is_reserved_device_name("lpt9.txt"));
-        assert!(!is_reserved_device_name("lpt10"));
         assert_eq!(plural(1, "folder"), "1 folder");
         assert_eq!(plural(3, "folder"), "3 folders");
         assert_eq!(flavor_label(&FlavorId::Forever), "forever");
