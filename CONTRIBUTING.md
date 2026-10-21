@@ -12,6 +12,10 @@ or a [feature request](https://github.com/speti4/mrgl/issues/new?template=featur
 exchange about the approach saves a rewrite. Security problems go to a private report instead
 ([SECURITY.md](SECURITY.md)).
 
+The issues labeled `mirrored` are the task files' public face: every numbered file under `tasks/` is one
+issue, mirrored one way, and a comment on it is welcome. The file is what the maintainer edits; the next sync
+overwrites the issue body.
+
 ## No game data, no Blizzard assets
 
 Nothing from a game install enters the repo: no real addon zip, no `WTF` folder, no account or character
@@ -100,7 +104,10 @@ has to be crates.io; `cargo deny check` says so before CI does.
 
 The plan lives in `tasks/`: one file per item under `backlog/`, `wip/`, `done/` and `dropped/`, decisions
 under `decisions/`, milestones in `tasks/roadmap.md`, and a generated index in `tasks/README.md`. The
-maintainer turns an accepted issue into a task file.
+maintainer turns an accepted issue into a task file. `scripts/sync-issues.py` mirrors every numbered task and
+decision into a GitHub issue labeled `mirrored`, one way
+([docs/development.md](docs/development.md#the-issue-mirror)): edit the file, never the issue; the next sync
+overwrites the issue body.
 
 ## Conventions
 
