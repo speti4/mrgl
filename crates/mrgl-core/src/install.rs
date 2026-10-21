@@ -8,13 +8,22 @@
 //!
 //! The entry takes a zip path and the install metadata (source, version): a source such as GitHub hands
 //! over a downloaded file and nothing else, and a zip in hand is the same call with its path as the source.
+//!
+//! A running game client is a warning, never a refusal (task 038): the commit and the removal ask the
+//! running-client check of [`crate::client`] once, before the first folder moves, and a client running from
+//! the flavor folder (or a process list that cannot be taken) becomes [`Installed::client_warning`] or
+//! [`Removed::client_warning`]. The client reads the addon folders again at `/reload` or the next login, so
+//! the write goes on; only a `WTF` write is refused while it runs. The engine asks the system's process list
+//! unless [`Engine::with_processes`] hands it another (the tests' stand-in client).
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
+use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
 use crate::scan;
@@ -102,6 +111,9 @@ pub struct Installed {
     /// Plain lines about what went on around the install: a rebuilt sidecar, a cache that could not be
     /// written, a folder taken over from another managed addon.
     pub warnings: Vec<String>,
+    /// The plain warning line when the client ran from the flavor folder during the install (it loads the
+    /// new folders at `/reload`), or when the process list could not be taken; `None` otherwise.
+    pub client_warning: Option<String>,
 }
 
 /// What a removal did.
@@ -111,6 +123,25 @@ pub struct Removed {
     pub version: String,
     pub folders: Vec<String>,
     pub warnings: Vec<String>,
+    /// The plain warning line when the client ran from the flavor folder during the removal (the removed
+    /// addons stay loaded until `/reload`), or when the process list could not be taken; `None` otherwise.
+    pub client_warning: Option<String>,
+}
+
+/// The process list the engine asks for a running client: the system's by default, a stub in tests.
+#[derive(Clone)]
+struct Processes(Arc<dyn ProcessList + Send + Sync>);
+
+impl std::fmt::Debug for Processes {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Processes")
+    }
+}
+
+impl Default for Processes {
+    fn default() -> Self {
+        Processes(Arc::new(SystemProcesses))
+    }
 }
 
 /// The engine for one flavor: its game folder and its folder under the mrgl home.
@@ -118,19 +149,46 @@ pub struct Removed {
 pub struct Engine {
     pub flavor: Flavor,
     pub home: FlavorHome,
+    processes: Processes,
 }
 
 impl Engine {
     /// The engine of a flavor, with the mrgl home of this process (`MRGL_HOME`, else `LOCALAPPDATA\mrgl`).
     pub fn new(flavor: Flavor) -> Result<Engine> {
         let home = FlavorHome::new(&flavor.id)?;
-        Ok(Engine { flavor, home })
+        Ok(Engine {
+            flavor,
+            home,
+            processes: Processes::default(),
+        })
     }
 
     /// The engine of a flavor with an explicit mrgl home folder (the tests' temporary one).
     pub fn with_home(flavor: Flavor, home: &Path) -> Engine {
         let home = FlavorHome::at(home, &flavor.id);
-        Engine { flavor, home }
+        Engine {
+            flavor,
+            home,
+            processes: Processes::default(),
+        }
+    }
+
+    /// The same engine asking another process list for a running client (task 038): a
+    /// [`client::FixedProcesses`] stub in tests, so a stand-in client needs no real process.
+    pub fn with_processes(mut self, processes: impl ProcessList + Send + Sync + 'static) -> Engine {
+        self.processes = Processes(Arc::new(processes));
+        self
+    }
+
+    /// The running-client check before a write under `Interface\AddOns`, once per call: the line `line`
+    /// writes for a client running from the flavor folder, the process-list error as a line when the list
+    /// cannot be taken (the write goes on either way), `None` when no client runs.
+    fn client_warning(&self, line: impl Fn(&RunningClient, &Flavor) -> String) -> Option<String> {
+        match client::client_running_among(self.processes.0.as_ref(), &self.flavor.folder) {
+            Ok(Some(running)) => Some(line(&running, &self.flavor)),
+            Ok(None) => None,
+            Err(error) => Some(error.to_string()),
+        }
     }
 
     /// The flavor's `Interface\AddOns`.
@@ -212,8 +270,9 @@ impl Engine {
             .cloned()
             .collect();
 
-        // Task 023 adds the game-running check here, before the first folder moves: the client keeps its
-        // addon files open, and a swap under a running client is refused rather than half done.
+        // The running-client check (task 023), once per commit and before the first folder moves: a running
+        // client loads the new folders at `/reload`, so it is a warning, never a refusal (task 038).
+        let client_warning = self.client_warning(RunningClient::install_warning);
 
         let previous_dir = staged.dir.join("previous");
         let mut journal: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -271,6 +330,7 @@ impl Engine {
             folders: new_folders,
             removed_folders: stale,
             warnings,
+            client_warning,
         })
     }
 
@@ -310,6 +370,7 @@ impl Engine {
                 Error::AddonNotFound { name, flavor }
             });
         };
+        let client_warning = self.client_warning(RunningClient::remove_warning);
         let addons_dir = self.addons_dir();
         for folder in &entry.folders {
             let path = addons_dir.join(folder);
@@ -341,6 +402,7 @@ impl Engine {
             version: entry.version,
             folders: entry.folders,
             warnings,
+            client_warning,
         })
     }
 

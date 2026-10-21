@@ -1,12 +1,14 @@
 //! The install engine over the fixture zips under `tests/fixtures/zips/`, in a temporary game folder with
 //! a temporary mrgl home: install, update (a second version over the first), the folders a version drops,
-//! the escaping path, the failed swap that leaves the folder as it was, remove, and the sidecar round trip.
-//! No real game folder and no network anywhere.
+//! the escaping path, the failed swap that leaves the folder as it was, remove, the sidecar round trip, and
+//! the running client as a warning (task 038, through a stub process list). No real game folder and no
+//! network anywhere.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use mrgl_core::Error;
+use mrgl_core::client::{FixedProcesses, ProcessList, RunningProcess};
 use mrgl_core::flavor::{self, FlavorId};
 use mrgl_core::install::{Engine, Metadata};
 use mrgl_core::state::{self, STATE_FILE, State};
@@ -734,6 +736,106 @@ fn the_sidecar_round_trips_through_the_engine_and_the_state_module() {
         Some(3)
     );
     assert!(value["addons"]["SeveralFolders"]["files"]["SeveralFolders/core.lua"].is_string());
+}
+
+// --- task 038: a running client is a warning on the install and the removal, never a refusal ---
+
+/// The stand-in client of task 023 as the engine's process list sees it: a process whose executable
+/// lives in the flavor folder, next to an unrelated one; no real process is started.
+fn stand_in_running(sandbox: &Sandbox) -> FixedProcesses {
+    FixedProcesses::new([
+        (4, PathBuf::from("Q:\\Windows\\System32\\svchost.exe")),
+        (
+            4242,
+            sandbox.engine.flavor.folder.join("client-stand-in.exe"),
+        ),
+    ])
+}
+
+/// A process list that cannot be taken at all.
+struct BrokenProcesses;
+
+impl ProcessList for BrokenProcesses {
+    fn executables(&self) -> std::io::Result<Vec<RunningProcess>> {
+        Err(std::io::Error::other("no snapshot"))
+    }
+}
+
+#[test]
+fn an_install_and_a_removal_with_the_client_running_warn_and_still_write() {
+    let mut sandbox = Sandbox::new("client-running");
+    let processes = stand_in_running(&sandbox);
+    sandbox.engine = sandbox.engine.clone().with_processes(processes);
+
+    let installed = sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(
+        installed.client_warning.as_deref(),
+        Some(
+            "the client is running in _forever_ (client-stand-in.exe, pid 4242): the installed addons load at /reload or the next login"
+        )
+    );
+    assert!(installed.warnings.is_empty(), "{:?}", installed.warnings);
+    assert_eq!(
+        sandbox.folders(),
+        ["OneFolder"],
+        "the install still happens"
+    );
+    assert!(sandbox.state().entry("OneFolder").is_some());
+
+    let updated = sandbox.install("one-folder-1.1.0.zip");
+    assert!(updated.client_warning.is_some());
+    assert!(sandbox.addon("OneFolder/new.lua").is_file());
+
+    let removed = sandbox.engine.remove("OneFolder").expect("removes");
+    assert_eq!(
+        removed.client_warning.as_deref(),
+        Some(
+            "the client is running in _forever_ (client-stand-in.exe, pid 4242): the removed addons stay loaded until /reload or the next login"
+        )
+    );
+    assert!(removed.warnings.is_empty(), "{:?}", removed.warnings);
+    assert!(sandbox.folders().is_empty(), "the removal still happens");
+}
+
+#[test]
+fn without_the_client_nothing_is_reported() {
+    let mut sandbox = Sandbox::new("client-not-running");
+    // A client of another flavor and one in a sibling folder with the same prefix are not this flavor's.
+    let game = sandbox
+        .engine
+        .flavor
+        .folder
+        .parent()
+        .expect("the game folder");
+    let processes = FixedProcesses::new([
+        (7, game.join("_retail_").join("Wow.exe")),
+        (8, game.join("_forever_2").join("Wow.exe")),
+    ]);
+    sandbox.engine = sandbox.engine.clone().with_processes(processes);
+    let installed = sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(installed.client_warning, None);
+    let removed = sandbox.engine.remove("OneFolder").expect("removes");
+    assert_eq!(removed.client_warning, None);
+
+    // The default engine asks the system's list, where no process runs from the temporary folder.
+    let sandbox = Sandbox::new("client-system-list");
+    let installed = sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(installed.client_warning, None);
+}
+
+#[test]
+fn a_process_list_that_cannot_be_taken_is_a_warning_and_the_install_goes_on() {
+    let mut sandbox = Sandbox::new("client-unknown");
+    sandbox.engine = sandbox.engine.clone().with_processes(BrokenProcesses);
+    let installed = sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(
+        installed.client_warning.as_deref(),
+        Some("cannot list the running processes: no snapshot")
+    );
+    assert_eq!(sandbox.folders(), ["OneFolder"]);
+    let removed = sandbox.engine.remove("OneFolder").expect("removes");
+    assert!(removed.client_warning.is_some());
+    assert!(sandbox.folders().is_empty());
 }
 
 /// A zip written by the test itself, stored entries only.

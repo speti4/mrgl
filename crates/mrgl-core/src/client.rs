@@ -3,9 +3,10 @@
 //! rewrites `AddOns.txt` on logout and holds `WTF` files open, so every `WTF` write (a backup restore, an
 //! addon set, a SavedVariables cleanup; D-002, D-003) calls [`ensure_client_not_running`] first and refuses
 //! with the documented line while the client runs. A write under `Interface\AddOns` is safe, the client
-//! reads the folders again at `/reload` or the next login, so the install engine turns
-//! [`warn_if_client_running`] into a warning instead. `scan` and `list` report [`client_running`] in their
-//! summary and in `--json`.
+//! reads the folders again at `/reload` or the next login, so the install engine turns a running client
+//! into a warning instead ([`RunningClient::install_warning`], [`RunningClient::remove_warning`]; task 038),
+//! asking the process list it was given, and [`warn_if_client_running`] is the same check on the system's
+//! list. `scan` and `list` report [`client_running`] in their summary and in `--json`.
 //!
 //! Behind the three calls, [`ProcessList`] lists the running processes with their executable paths:
 //! [`SystemProcesses`] asks the operating system (on Windows one Toolhelp snapshot and one handle per
@@ -101,6 +102,16 @@ impl RunningClient {
     pub fn install_warning(&self, flavor: &Flavor) -> String {
         format!(
             "the client is running in {} ({}, pid {}): the installed addons load at /reload or the next login",
+            flavor.folder_name(),
+            self.exe_name(),
+            self.pid
+        )
+    }
+
+    /// The plain warning line of an addon removal under `Interface\AddOns` while this client runs.
+    pub fn remove_warning(&self, flavor: &Flavor) -> String {
+        format!(
+            "the client is running in {} ({}, pid {}): the removed addons stay loaded until /reload or the next login",
             flavor.folder_name(),
             self.exe_name(),
             self.pid
@@ -516,6 +527,10 @@ mod tests {
         assert_eq!(
             client.install_warning(&flavor),
             "the client is running in _forever_ (WowForever.exe, pid 4242): the installed addons load at /reload or the next login"
+        );
+        assert_eq!(
+            client.remove_warning(&flavor),
+            "the client is running in _forever_ (WowForever.exe, pid 4242): the removed addons stay loaded until /reload or the next login"
         );
         let json = serde_json::to_value(&client).expect("serializes");
         assert_eq!(json["pid"], 4242);

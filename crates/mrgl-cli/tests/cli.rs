@@ -1052,6 +1052,96 @@ fn add_and_remove_json_are_one_document_each() {
     );
 }
 
+/// Task 038: with the stand-in client of task 023 running from the flavor folder, `add <file.zip>` and
+/// `remove` warn through the voice and in `--json` and still write; once it ends, nothing is said.
+#[cfg(windows)]
+#[test]
+fn add_and_remove_warn_while_the_client_runs_and_still_write() {
+    let game = Game::new("client-running");
+    let mut child = spawn_stand_in(&game.root.join("_forever_"));
+    let install_line = format!(
+        "the client is running in _forever_ (client-stand-in.exe, pid {}): the installed addons load at /reload or the next login",
+        child.id()
+    );
+
+    let output = game
+        .mrgl()
+        .arg("add")
+        .arg(zips().join("one-folder-1.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines.len(),
+        6,
+        "progress, the warning, the summary, two lines each: {text}"
+    );
+    assert_eq!(lines[3], install_line, "{text}");
+    assert_eq!(
+        lines[5],
+        "installed OneFolder 1.0.0 (1 folder: OneFolder) into _forever_"
+    );
+    assert!(game.addon("OneFolder").join("OneFolder.toc").is_file());
+
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(zips().join("one-folder-1.1.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["client_warning"], install_line.as_str());
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    assert!(game.addon("OneFolder").join("new.lua").is_file());
+
+    let output = game
+        .mrgl()
+        .args(["--serious", "remove", "OneFolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            format!(
+                "the client is running in _forever_ (client-stand-in.exe, pid {}): the removed addons stay loaded until /reload or the next login",
+                child.id()
+            )
+            .as_str(),
+            "removed OneFolder 1.1.0 (1 folder: OneFolder) from _forever_",
+        ]
+    );
+    assert!(!game.addon("OneFolder").exists());
+
+    child.kill().expect("killed");
+    child.wait().expect("waited");
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(zips().join("one-folder-1.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert!(value["client_warning"].is_null(), "{value}");
+    let output = game
+        .mrgl()
+        .args(["--json", "remove", "OneFolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert!(value["client_warning"].is_null(), "{value}");
+}
+
 #[test]
 fn add_dry_run_says_what_it_would_do_and_writes_nothing() {
     let game = Game::new("dry-run");

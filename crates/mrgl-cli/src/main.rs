@@ -611,7 +611,8 @@ fn engine_for(spec: Option<&str>, warnings: &mut Vec<String>) -> Result<Engine, 
 }
 
 /// `mrgl add <file.zip> --flavor <id>`: the fourth source of D-002, a zip in hand, through the install
-/// engine; `--dry-run` stages the zip, says what it would install and writes nothing.
+/// engine; `--dry-run` stages the zip, says what it would install and writes nothing. A client running from
+/// the flavor folder is a warning line and `client_warning` in the JSON (task 038), never a refusal.
 fn add_zip(
     reporter: &Reporter,
     source: &str,
@@ -706,11 +707,12 @@ fn add_zip(
                 "folders": installed.folders,
                 "removed_folders": installed.removed_folders,
             },
+            "client_warning": installed.client_warning,
             "warnings": warnings,
         }));
         return Ok(());
     }
-    for warning in &warnings {
+    for warning in installed.client_warning.iter().chain(&warnings) {
         reporter.say(Kind::Warning, warning);
     }
     let mut summary = match &installed.previous_version {
@@ -740,7 +742,8 @@ fn add_zip(
     Ok(())
 }
 
-/// `mrgl remove <name> --flavor <id>`: a managed addon's folders, its entry and its cache go.
+/// `mrgl remove <name> --flavor <id>`: a managed addon's folders, its entry and its cache go; a running
+/// client is a warning, as for `add`.
 fn remove_command(reporter: &Reporter, name: &str, flavor: Option<&str>) -> Result<(), String> {
     let mut warnings = Vec::new();
     let engine = engine_for(flavor, &mut warnings)?;
@@ -755,11 +758,12 @@ fn remove_command(reporter: &Reporter, name: &str, flavor: Option<&str>) -> Resu
                 "version": removed.version,
                 "folders": removed.folders,
             },
+            "client_warning": removed.client_warning,
             "warnings": warnings,
         }));
         return Ok(());
     }
-    for warning in &warnings {
+    for warning in removed.client_warning.iter().chain(&warnings) {
         reporter.say(Kind::Warning, warning);
     }
     reporter.say(
