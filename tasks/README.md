@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 32 backlog (1 ready · 0 blocked · 2 waiting · 29 ideas) · 0 in progress · 11 done · 0 dropped · 5 decisions
+**State:** 31 backlog (1 ready · 0 blocked · 2 waiting · 28 ideas) · 0 in progress · 12 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -48,7 +48,6 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 019 | [Build version fallback from the client exe when .build.info has no row for the …](backlog/019-build-version-fallback-from-the-client-exe.md) | S | 2026-10-21 |
 | 021 | [Pin, ignore and the pre-release channel per addon; CLI pin, unpin, ignore and u…](backlog/021-pin-ignore-and-prerelease-channel.md) | S | 2026-10-21 |
 | 022 | [Rollback to the previous version from the kept zip; CLI rollback](backlog/022-rollback-from-the-kept-zip.md) | S | 2026-10-21 |
 | 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](backlog/029-dependency-check-from-toc-and-nolib.md) | S | 2026-10-21 |
@@ -119,14 +118,14 @@ _none_
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
 | 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
 | 020 | [Game root auto-discovery: the launcher's registry key and the common install fo…](done/020-game-root-auto-discovery.md) | 2026-10-21 |
+| 019 | [Build version fallback from the client exe when .build.info has no row for the …](done/019-build-version-fallback-from-the-client-exe.md) | 2026-10-21 |
 | 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
 | 017 | [Window design sketch: the list view, the states and the voice's place, before t…](done/017-window-design-sketch-before-the-shell.md) | 2026-10-21 |
 | 016 | [Mirror the task files into GitHub issues and milestones](done/016-task-to-github-issue-mirror.md) | 2026-10-21 |
 | 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](done/004-install-engine-with-state-sidecar.md) | 2026-10-21 |
 | 003 | [GitHub release source: release.json, flavor-correct asset pick, ETag cache; CLI…](done/003-github-release-source-with-release-json.md) | 2026-10-21 |
-| 002 | [Flavor detection and the AddOns scan with TOC parsing; CLI scan, list and root](done/002-flavor-detection-and-addons-scan-with-toc-parsing.md) | 2026-10-21 |
 
-_1 more in `done/`._
+_2 more in `done/`._
 
 ### Decisions
 
