@@ -17,7 +17,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - GitHub release source: `release.json`, flavor-correct asset pick, ETag cache; CLI `add github:<owner>/<repo>` ([003](https://github.com/speti4/mrgl/blob/main/tasks/done/003-github-release-source-with-release-json.md))
 - Install engine: zip to staging, addon-folder detection, atomic swap, rollback, the state sidecar; `add <zip>` and `remove` ([004](https://github.com/speti4/mrgl/blob/main/tasks/done/004-install-engine-with-state-sidecar.md))
 - Build version fallback from the client exe when `.build.info` has no row for the flavor ([019](https://github.com/speti4/mrgl/blob/main/tasks/done/019-build-version-fallback-from-the-client-exe.md))
-- Release notes before an update: the GitHub release body in one line ([030](https://github.com/speti4/mrgl/blob/main/tasks/done/030-release-notes-before-an-update.md))
+- Dependency check from the TOC `## Dependencies` and `## RequiredDeps` and the `release.json` `nolib` flag ([029](https://github.com/speti4/mrgl/blob/main/tasks/done/029-dependency-check-from-toc-and-nolib.md))
 
 ### M2 Window MVP
 
@@ -25,7 +25,6 @@ The repository, the task standard and the empty workspace: no app yet.
 - Game root auto-discovery: the launcher's registry key and the common install folders ([020](https://github.com/speti4/mrgl/blob/main/tasks/done/020-game-root-auto-discovery.md))
 - Game-running detection: no `WTF` write while the client runs ([023](https://github.com/speti4/mrgl/blob/main/tasks/done/023-game-running-detection.md))
 - Window polish: hide the Forever note column without notes, cap the toast stack ([035](https://github.com/speti4/mrgl/blob/main/tasks/done/035-window-polish-forever-column-and-toast-cap.md))
-- The install engine warns when the client runs ([038](https://github.com/speti4/mrgl/blob/main/tasks/done/038-install-warns-when-the-client-runs.md))
 
 ### M3 Toolbox
 
@@ -37,4 +36,3 @@ The repository, the task standard and the empty workspace: no app yet.
 - Mirror the task files into GitHub issues and milestones ([016](https://github.com/speti4/mrgl/blob/main/tasks/done/016-task-to-github-issue-mirror.md))
 - GitHub repository settings after the first push: rulesets, CodeQL, private reporting, security updates ([018](https://github.com/speti4/mrgl/blob/main/tasks/done/018-github-repository-settings-after-the-first-push.md))
 - CONTRIBUTING.md names the mirrored issues as the task files' public face ([032](https://github.com/speti4/mrgl/blob/main/tasks/done/032-contributing-names-the-mirrored-issues.md))
-- One zip-entry check for the install engine and the backup restore ([044](https://github.com/speti4/mrgl/blob/main/tasks/done/044-one-zip-entry-check-for-the-engine-and-the-backup.md))
