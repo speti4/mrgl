@@ -84,6 +84,11 @@ write("no-version.zip", [
     ("NoVersion/core.lua", "-- no ## Version line\n"),
 ])
 
+write("stale-interface-1.0.0.zip", [
+    ("StaleInterface/StaleInterface.toc", toc("Stale Interface", "1.0.0", interface="110207")),
+    ("StaleInterface/core.lua", "-- an interface of another major than the fixture builds (task 015)\n"),
+])
+
 write("escaping-path.zip", [
     ("Escape/Escape.toc", toc("Escape", "0.1.0")),
     ("Escape/../../Outside.lua", "-- must never be written\n"),

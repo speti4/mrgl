@@ -1244,9 +1244,16 @@ fn add_takes_a_flavor_folder_path_and_needs_a_flavor() {
         .output()
         .expect("run mrgl");
     assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line == "installed RootToc 3.0.0 (1 folder: RootToc) into _forever_"),
+        "{text}"
+    );
+    // RootToc.toc names the retail interface 120105, which a Forever build does not load (task 015).
     assert_eq!(
         stdout_last_line(&output),
-        "installed RootToc 3.0.0 (1 folder: RootToc) into _forever_"
+        "RootToc: interface 120105 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor"
     );
 
     let output = game
@@ -2879,4 +2886,358 @@ fn link_and_unlink_say_junctions_are_windows_only() {
             "junctions are Windows-only: link and unlink work on Windows"
         );
     }
+}
+
+// --- task 015: `export` and `import` of the addon list, and the interface warning ---
+
+/// A copy of the fixture answers with a zip behind the Forever asset of `Questie/Questie` v1.2.3 (the
+/// fixture tree has none: its asset names are made up), so an import downloads and installs offline.
+fn stub_with_forever_zip(base: &Path, zip: &str) -> PathBuf {
+    let stub = base.join("stub");
+    let _ = std::fs::remove_dir_all(&stub);
+    copy_tree(&releases(), &stub);
+    std::fs::copy(
+        zips().join(zip),
+        stub.join("github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-forever.zip"),
+    )
+    .expect("the asset");
+    stub
+}
+
+/// The sidecar entries without their install time, which differs by design between two installs.
+fn entries_without_time(state: &Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(state).expect("the sidecar");
+    let mut value: serde_json::Value = serde_json::from_str(&text).expect("the sidecar is JSON");
+    for entry in value["addons"]
+        .as_object_mut()
+        .expect("the addons")
+        .values_mut()
+    {
+        let entry = entry.as_object_mut().expect("an entry");
+        entry.remove("installed_at");
+        // The `nolib` flag (task 029) comes with a pick: an import from GitHub records it, a zip in hand
+        // does not, so it is not part of "the same entry".
+        entry.remove("nolib");
+    }
+    value["addons"].clone()
+}
+
+#[test]
+fn export_then_import_gives_an_empty_flavor_the_same_sidecar_entries() {
+    // The fixture sidecar: a real install of two zips, then one entry turned into a `github:` one (the
+    // source and version the stub's Questie/Questie release carries) and a linked entry added.
+    let from = Game::new("export");
+    for zip in ["several-folders-2.0.0.zip", "one-folder-1.0.0.zip"] {
+        let output = from
+            .mrgl()
+            .arg("add")
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+    }
+    let text = std::fs::read_to_string(from.state_path()).expect("the sidecar");
+    let mut state: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    state["addons"]["SeveralFolders"]["source"] = "github:Questie/Questie".into();
+    state["addons"]["SeveralFolders"]["version"] = "1.2.3".into();
+    state["addons"]["DevAddon"] = serde_json::json!({
+        "source": "link:D:\\dev\\DevAddon",
+        "version": "dev",
+        "folders": ["DevAddon"],
+        "files": {},
+        "installed_at": "2026-10-21T14:03:05Z",
+    });
+    std::fs::write(from.state_path(), state.to_string()).expect("the fixture sidecar");
+    std::fs::create_dir_all(from.addon("DevAddon")).expect("the linked folder");
+    std::fs::write(
+        from.addon("DevAddon").join("DevAddon.toc"),
+        "## Interface: 16001\n",
+    )
+    .expect("its TOC");
+
+    let base = from.root.parent().expect("the base").to_path_buf();
+    let list = base.join("lists").join("forever.json");
+    let output = from
+        .mrgl()
+        .args(["--serious", "export", "--flavor", "forever", "--to"])
+        .arg(&list)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        format!(
+            "exported 3 managed addons of _forever_ to {}",
+            list.display()
+        )
+    );
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&list).expect("the list")).expect("JSON");
+    assert_eq!(written["format"], "mrgl-list");
+    assert_eq!(written["schema"], 1);
+    assert_eq!(written["flavor"], "wowf");
+    let names: Vec<&str> = written["addons"]
+        .as_array()
+        .expect("the addons")
+        .iter()
+        .map(|addon| addon["name"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["DevAddon", "OneFolder", "SeveralFolders"]);
+    assert_eq!(
+        written["addons"][2],
+        serde_json::json!({
+            "name": "SeveralFolders",
+            "source": "github:Questie/Questie",
+            "version": "1.2.3",
+            "folders": ["SeveralFolders", "SeveralFolders_Data", "SeveralFolders_Options"],
+        })
+    );
+
+    // Without --to the list is the standard output and the message goes to the standard error.
+    let output = from
+        .mrgl()
+        .args(["--serious", "export", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let printed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("the list alone on stdout");
+    assert_eq!(printed["addons"], written["addons"]);
+    assert_eq!(
+        stderr_last_line(&output),
+        "exported 3 managed addons of _forever_"
+    );
+
+    let to = Game::new("import");
+    let stub = stub_with_forever_zip(&base, "several-folders-2.0.0.zip");
+    let output = to
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let mut lines: Vec<&str> = text.lines().collect();
+    // The zip in hand is named by the absolute path the first install recorded.
+    let zip_line = lines.remove(2);
+    assert!(
+        zip_line.starts_with("OneFolder  not importable (")
+            && zip_line.ends_with(
+                "one-folder-1.0.0.zip): a zip in hand on the machine of the export; add it again with mrgl add <zip>"
+            ),
+        "{zip_line}"
+    );
+    assert_eq!(
+        lines,
+        [
+            "dry run: reading 3 addons from forever.json into _forever_",
+            "DevAddon  skipped (link:D:\\dev\\DevAddon): a linked development folder; link it again with mrgl link",
+            "SeveralFolders  would install 1.2.3 from github:Questie/Questie",
+            "dry run: 3 addons of forever.json for _forever_: 1 to install, 1 not importable, 1 skipped; nothing written",
+        ],
+        "{text}"
+    );
+    assert!(!to.state_path().exists(), "a dry run writes no sidecar");
+    assert!(!to.addon("SeveralFolders").exists(), "nor an addon");
+
+    let output = to
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line == "SeveralFolders  installed 1.2.3 from github:Questie/Questie"),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "imported 3 addons of forever.json into _forever_: 1 installed, 1 not importable, 1 skipped"
+    );
+    assert!(
+        to.addon("SeveralFolders_Options")
+            .join("core.lua")
+            .is_file()
+    );
+    let expected = &entries_without_time(&from.state_path())["SeveralFolders"];
+    let imported = entries_without_time(&to.state_path());
+    assert_eq!(&imported["SeveralFolders"], expected, "the same entry");
+    assert_eq!(
+        imported.as_object().map(|addons| addons.len()),
+        Some(1),
+        "the zip in hand and the linked folder stay behind: {imported}"
+    );
+
+    // A second import leaves the installed addon alone, at any version.
+    let output = to
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["--json", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "import");
+    assert_eq!(value["list_flavor"], "wowf");
+    assert_eq!(value["dry_run"], false);
+    let outcomes: Vec<&str> = value["addons"]
+        .as_array()
+        .expect("the addons")
+        .iter()
+        .map(|addon| addon["outcome"].as_str().expect("an outcome"))
+        .collect();
+    assert_eq!(outcomes, ["skipped", "not-importable", "already-installed"]);
+    assert_eq!(value["addons"][2]["version"], "1.2.3");
+}
+
+#[test]
+fn import_failures_and_unreadable_lists_are_exit_code_one() {
+    let game = Game::new("import-fail");
+    let base = game.root.parent().expect("the base").to_path_buf();
+    let list = base.join("list.json");
+    std::fs::write(
+        &list,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [
+                { "name": "Empty", "source": "github:Example/Empty", "version": "1.0.0", "folders": ["Empty"] },
+            ],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    let output = game
+        .mrgl()
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line == "Empty  failed: no release in github:Example/Empty"),
+        "{text}"
+    );
+    assert_eq!(
+        stderr_last_line(&output),
+        "1 addon of list.json failed: Empty; the other entries are done"
+    );
+
+    std::fs::write(
+        &list,
+        "{\"format\": \"something-else\", \"schema\": 1, \"flavor\": \"wowf\"}",
+    )
+    .expect("another format");
+    let output = game
+        .mrgl()
+        .arg("import")
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "not a readable addon list: {} (format something-else instead of mrgl-list)",
+            list.display()
+        )
+    );
+}
+
+#[test]
+fn the_interface_warning_fires_after_an_install_and_in_list() {
+    let game = Game::new("interface");
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(zips().join("stale-interface-1.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "StaleInterface: interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor"
+    );
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(zips().join("one-folder-1.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "installed OneFolder 1.0.0 (1 folder: OneFolder) into _forever_",
+        "16001 matches the Forever build: no warning"
+    );
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(zips().join("stale-interface-1.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["interface_mismatch"]["folder"], "StaleInterface");
+    assert_eq!(
+        value["interface_mismatch"]["interfaces"],
+        serde_json::json!([110207])
+    );
+
+    let output = game
+        .mrgl()
+        .args(["--serious", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            // The Forever mark of task 011 sits between the flags and the interface note.
+            "OneFolder  1.0.0  16001  forever:unknown",
+            "StaleInterface  1.0.0  110207  forever:unknown  interface mismatch",
+            "1 addon names no interface of the build 1.60.1.70245: StaleInterface (110207); made for another flavor or an older version of the game?",
+            "2 addons in _forever_ (wowf 1.60.1.70245)",
+        ],
+        "{text}"
+    );
+    let output = game
+        .mrgl()
+        .args(["--json", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(
+        value["interface_mismatches"],
+        serde_json::json!([{
+            "folder": "StaleInterface",
+            "toc": "StaleInterface.toc",
+            "interfaces": [110207],
+            "build": "1.60.1.70245",
+            "major": 1,
+        }])
+    );
 }

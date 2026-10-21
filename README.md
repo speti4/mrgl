@@ -55,6 +55,8 @@ target\release\mrgl.exe backup --flavor forever                             # th
 target\release\mrgl.exe backup --list --flavor forever                      # the backups so far
 target\release\mrgl.exe backup --restore WTF-2026-10-21-193605.zip --flavor forever   # one back, asks first
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
+target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
+target\release\mrgl.exe import forever-addons.json --flavor forever --dry-run   # what installing that list would do
 ```
 
 `add --dry-run` names the asset it picked and why; when the release has notes, the next line is their first
@@ -104,6 +106,11 @@ block into the [bug report](https://github.com/speti4/mrgl/issues/new?template=b
 has a TOC named after it (no admin rights needed), so the game loads your addons straight from your repo. A
 folder of the same name already there is skipped, never replaced; an install never writes over a linked
 addon, and `unlink` removes exactly the junctions `link` made, never a folder and never a file of yours.
+
+An exported list carries each managed addon's source and version; `import` installs the current release of
+every `github:` entry the flavor does not have yet, and leaves the others alone (a zip in hand stays on the
+machine it came from, a linked folder is linked again). `list` and an install warn when an addon's
+`## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor.
 
 ## Documentation
 

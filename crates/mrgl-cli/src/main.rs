@@ -6,7 +6,8 @@
 //! `add github:<owner>/<repo>` resolves a release (task 003); `add <file.zip>` and `remove` are task 004
 //! (the install engine); `backup` (the WTF backup, the listing and the restore) is task 013; the Forever
 //! notes on `add` and on `list` (the derived build signal and the curated note) are task 011; `link` and
-//! `unlink` (the dev addon junctions) are task 005; the other subcommands follow the M1 plan
+//! `unlink` (the dev addon junctions) are task 005; `export` and `import` (the addon list) and the
+//! interface warning of `list` and `add` are task 015; the other subcommands follow the M1 plan
 //! (`tasks/roadmap.md`) and answer "not implemented yet" with their task id until that task lands, so the
 //! help text and the voice are testable from the first commit.
 
@@ -24,7 +25,9 @@ use mrgl_core::flavor::{self, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{Engine, Metadata};
+use mrgl_core::interface::{self, InterfaceMismatch};
 use mrgl_core::link;
+use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Source, SourceSpec, Target};
@@ -170,6 +173,27 @@ enum Command {
         #[arg(long)]
         root: Option<PathBuf>,
     },
+    /// Write the flavor's managed addons (source and version of each) into a list file, or print it.
+    Export {
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+        /// The list file to write; without it the list is printed.
+        #[arg(long, value_name = "FILE")]
+        to: Option<PathBuf>,
+    },
+    /// Install the addons of a list file `export` wrote: every `github:` entry the flavor does not have
+    /// yet, at its current release.
+    Import {
+        /// The list file.
+        file: PathBuf,
+        /// The flavor id or folder to install into.
+        #[arg(long)]
+        flavor: Option<String>,
+        /// Resolve every entry and report what would happen, write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 impl Command {
@@ -183,7 +207,9 @@ impl Command {
             | Command::Remove { .. }
             | Command::Link { .. }
             | Command::Unlink { .. }
-            | Command::Backup { .. } => return None,
+            | Command::Backup { .. }
+            | Command::Export { .. }
+            | Command::Import { .. } => return None,
             Command::Doctor { .. } => return None,
             Command::Update { all: true, .. } => ("update --all", "006"),
             Command::Update { .. } => ("update", "006"),
@@ -310,6 +336,12 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
         Command::Doctor { flavor, root } => doctor_command(reporter, flavor.as_deref(), root)?,
         Command::Link { folder, flavor } => link_command(reporter, &folder, flavor.as_deref())?,
         Command::Unlink { folder, flavor } => unlink_command(reporter, &folder, flavor.as_deref())?,
+        Command::Export { flavor, to } => export_command(reporter, flavor.as_deref(), to)?,
+        Command::Import {
+            file,
+            flavor,
+            dry_run,
+        } => import_command(reporter, &file, flavor.as_deref(), dry_run)?,
         _ => unreachable!("every other command answered with its task"),
     }
     Ok(())
@@ -383,6 +415,7 @@ fn report_scan(
             None
         }
     };
+    let mismatches = interface::check_scan(scan);
     let mut lines = Vec::new();
     let mut objects = Vec::new();
     for addon in &scan.addons {
@@ -390,7 +423,7 @@ fn report_scan(
         let mut object = serde_json::to_value(addon).unwrap_or_default();
         mark_dependencies(dependencies, &addon.folder, &mut line, &mut object);
         mark_forever(forever, addon, Some(&mut line), Some(&mut object));
-        lines.push(line);
+        lines.push(with_interface_note(line, addon, &mismatches));
         objects.push(object);
     }
     if reporter.json {
@@ -400,6 +433,7 @@ fn report_scan(
             "addons": objects,
             "skipped": &scan.skipped,
             "client_running": client,
+            "interface_mismatches": &mismatches,
             "warnings": warnings,
         }));
         return;
@@ -420,6 +454,9 @@ fn report_scan(
         reporter.say(Kind::Warning, format!("forever note on {folder}: {note}"));
     }
     for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    if let Some(warning) = interface_summary(&mismatches) {
         reporter.say(Kind::Warning, warning);
     }
     let mut build = match scan.flavor.version {
@@ -659,6 +696,58 @@ fn forever_message(status: &ForeverStatus) -> (Kind, String) {
         Kind::Warning
     };
     (kind, text)
+}
+
+/// The interface check of task 015 on an addon line: `interface mismatch` appended when the addon's TOC
+/// names no interface of the flavor's build.
+fn with_interface_note(
+    mut line: String,
+    addon: &Addon,
+    mismatches: &[InterfaceMismatch],
+) -> String {
+    if mismatches
+        .iter()
+        .any(|mismatch| mismatch.folder == addon.folder)
+    {
+        line.push_str("  interface mismatch");
+    }
+    line
+}
+
+/// The warning under a listing with interface mismatches: how many, the build, each folder's numbers.
+fn interface_summary(mismatches: &[InterfaceMismatch]) -> Option<String> {
+    let first = mismatches.first()?;
+    let count = match mismatches.len() {
+        1 => "1 addon names".to_string(),
+        count => format!("{count} addons name"),
+    };
+    let each: Vec<String> = mismatches
+        .iter()
+        .map(|mismatch| format!("{} ({})", mismatch.folder, mismatch.interface_list()))
+        .collect();
+    Some(format!(
+        "{count} no interface of the build {}: {}; made for another flavor or an older version of the game?",
+        first.build,
+        each.join(", ")
+    ))
+}
+
+/// The warning after an install whose addon names no interface of the flavor's build.
+fn interface_after_install(mismatch: &InterfaceMismatch, folder_name: &str) -> String {
+    format!(
+        "{} of {folder_name}; the zip may be for another flavor",
+        mismatch.line()
+    )
+}
+
+/// The interface check of a freshly installed addon, by its primary folder; a scan that fails gives none.
+fn installed_mismatch(engine: &Engine, primary: Option<&String>) -> Option<InterfaceMismatch> {
+    let primary = primary?;
+    let scan = scan::scan_flavor(&engine.flavor).ok()?;
+    scan.addons
+        .iter()
+        .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
+        .and_then(|addon| interface::check_addon(addon, engine.flavor.version))
 }
 
 /// The target of an `add`: the flavor the spec names and, when a game folder is known and holds that
@@ -951,6 +1040,7 @@ fn add_zip(
         .map_err(|error| error.to_string())?;
     warnings.extend(installed.warnings.iter().cloned());
     let dependencies = installed_dependencies(&engine, &installed.folders, &mut warnings);
+    let mismatch = installed_mismatch(&engine, installed.folders.first());
     if reporter.json {
         reporter.document(serde_json::json!({
             "kind": "add",
@@ -966,6 +1056,7 @@ fn add_zip(
                 "dependencies": dependencies,
             },
             "client_warning": installed.client_warning,
+            "interface_mismatch": mismatch,
             "warnings": warnings,
         }));
         return Ok(());
@@ -997,6 +1088,12 @@ fn add_zip(
         ));
     }
     reporter.say(Kind::Success, summary);
+    if let Some(mismatch) = &mismatch {
+        reporter.say(
+            Kind::Warning,
+            interface_after_install(mismatch, &folder_name),
+        );
+    }
     Ok(())
 }
 
@@ -1418,6 +1515,217 @@ fn human_bytes(bytes: u64) -> String {
         unit = next;
     }
     format!("{value:.1} {unit}")
+}
+
+/// `mrgl export --flavor <id> [--to <file>]`: the flavor's managed addons as a list file (task 015).
+/// Without `--to` the list itself goes to the standard output, so it can be redirected, and the messages
+/// go to the standard error.
+fn export_command(
+    reporter: &Reporter,
+    flavor: Option<&str>,
+    to: Option<PathBuf>,
+) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let export = list_file::export(&engine).map_err(|error| error.to_string())?;
+    warnings.extend(export.warnings.iter().cloned());
+    let list = &export.list;
+    let file = match to {
+        Some(to) => {
+            let to = std::path::absolute(&to)
+                .map_err(|error| format!("resolving {}: {error}", to.display()))?;
+            list.write(&to).map_err(|error| error.to_string())?;
+            Some(to)
+        }
+        None => None,
+    };
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "export",
+            "flavor": &engine.flavor,
+            "file": file,
+            "list": list,
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    let folder_name = engine.flavor.folder_name();
+    let count = match list.addons.len() {
+        0 => "no managed addons".to_string(),
+        1 => "1 managed addon".to_string(),
+        count => format!("{count} managed addons"),
+    };
+    let kind = if list.addons.is_empty() {
+        Kind::Nothing
+    } else {
+        Kind::Success
+    };
+    let Some(file) = file else {
+        print!("{}", list.to_json());
+        for warning in &warnings {
+            eprintln!("{}", reporter.voice.say(Kind::Warning, warning));
+        }
+        eprintln!(
+            "{}",
+            reporter
+                .voice
+                .say(kind, format!("exported {count} of {folder_name}"))
+        );
+        return Ok(());
+    };
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    reporter.say(
+        kind,
+        format!("exported {count} of {folder_name} to {}", file.display()),
+    );
+    Ok(())
+}
+
+/// `mrgl import <file> --flavor <id> [--dry-run]`: every `github:` entry of a list file that the flavor
+/// does not have is resolved and installed (task 015); a zip in hand is not importable, a linked folder
+/// is skipped, an addon the flavor has is left alone. `--dry-run` resolves and reports, and writes
+/// nothing. An entry that fails does not stop the others; the command then ends with exit code 1.
+fn import_command(
+    reporter: &Reporter,
+    file: &Path,
+    flavor: Option<&str>,
+    dry_run: bool,
+) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let path = std::path::absolute(file)
+        .map_err(|error| format!("resolving {}: {error}", file.display()))?;
+    let list = ListFile::read(&path).map_err(|error| error.to_string())?;
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let folder_name = engine.flavor.folder_name();
+    let count = match list.addons.len() {
+        1 => "1 addon".to_string(),
+        count => format!("{count} addons"),
+    };
+    if !reporter.json {
+        let verb = if dry_run {
+            "dry run: reading"
+        } else {
+            "importing"
+        };
+        reporter.say(
+            Kind::Progress,
+            format!("{verb} {count} from {file_name} into {folder_name}"),
+        );
+    }
+    let github = GitHub::from_env(sources::http_from_env());
+    let report =
+        list_file::import(&engine, &github, &list, dry_run).map_err(|error| error.to_string())?;
+    warnings.extend(report.warnings.iter().cloned());
+    for item in &report.items {
+        warnings.extend(item.warnings.iter().cloned());
+    }
+    let failed: Vec<&str> = report
+        .items
+        .iter()
+        .filter(|item| item.outcome == Outcome::Failed)
+        .map(|item| item.name.as_str())
+        .collect();
+
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "import",
+            "flavor": &engine.flavor,
+            "file": &path,
+            "list_flavor": &list.flavor,
+            "dry_run": dry_run,
+            "addons": &report.items,
+            "warnings": warnings,
+        }));
+    } else {
+        for item in &report.items {
+            reporter.line(import_line(item));
+        }
+        for warning in &warnings {
+            reporter.say(Kind::Warning, warning);
+        }
+        for mismatch in report
+            .items
+            .iter()
+            .filter_map(|item| item.interface_mismatch.as_ref())
+        {
+            reporter.say(
+                Kind::Warning,
+                interface_after_install(mismatch, &folder_name),
+            );
+        }
+        let counts: Vec<String> = [
+            (Outcome::Installed, "installed"),
+            (Outcome::WouldInstall, "to install"),
+            (Outcome::AlreadyInstalled, "already installed"),
+            (Outcome::NotImportable, "not importable"),
+            (Outcome::Skipped, "skipped"),
+            (Outcome::Failed, "failed"),
+        ]
+        .into_iter()
+        .filter_map(|(outcome, label)| match report.count(outcome) {
+            0 => None,
+            count => Some(format!("{count} {label}")),
+        })
+        .collect();
+        let kind = if !failed.is_empty() {
+            Kind::Warning
+        } else if report.count(Outcome::Installed) + report.count(Outcome::WouldInstall) > 0 {
+            Kind::Success
+        } else {
+            Kind::Nothing
+        };
+        let summary = if list.addons.is_empty() {
+            format!("no addons in {file_name}, nothing to import")
+        } else if dry_run {
+            format!(
+                "dry run: {count} of {file_name} for {folder_name}: {}; nothing written",
+                counts.join(", ")
+            )
+        } else {
+            format!(
+                "imported {count} of {file_name} into {folder_name}: {}",
+                counts.join(", ")
+            )
+        };
+        reporter.say(kind, summary);
+    }
+    if failed.is_empty() {
+        return Ok(());
+    }
+    let count = match failed.len() {
+        1 => "1 addon".to_string(),
+        count => format!("{count} addons"),
+    };
+    Err(format!(
+        "{count} of {file_name} failed: {}; the other entries are done",
+        failed.join(", ")
+    ))
+}
+
+/// One entry of an import as a plain data line: the name, then what happened and why.
+fn import_line(item: &list_file::Imported) -> String {
+    let listed = match &item.version {
+        Some(version) if *version != item.listed_version => {
+            format!(", the list had {}", item.listed_version)
+        }
+        _ => String::new(),
+    };
+    let version = item.version.as_deref().unwrap_or("-");
+    let what = match item.outcome {
+        Outcome::Installed => format!("installed {version} from {}{listed}", item.source),
+        Outcome::WouldInstall => format!("would install {version} from {}{listed}", item.source),
+        Outcome::AlreadyInstalled => format!("already installed, left alone: {}", item.detail),
+        Outcome::NotImportable => format!("not importable ({}): {}", item.source, item.detail),
+        Outcome::Skipped => format!("skipped ({}): {}", item.source, item.detail),
+        Outcome::Failed => format!("failed: {}", item.detail),
+    };
+    format!("{}  {what}", item.name)
 }
 
 /// `mrgl doctor [--flavor <flavor>] [--root <folder>]`: the diagnostic report (task 024). The plain output

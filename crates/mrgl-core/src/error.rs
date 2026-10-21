@@ -188,6 +188,11 @@ pub enum Error {
         flavor: String,
         target: String,
     },
+
+    /// A file `import` was given is not a list file `export` wrote: not JSON, another format or schema
+    /// (task 015).
+    #[error("not a readable addon list: {path} ({reason})")]
+    ListUnreadable { path: PathBuf, reason: String },
 }
 
 /// The crate's result type.
