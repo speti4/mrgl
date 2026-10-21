@@ -58,3 +58,7 @@ BOM in a fixture survives every checkout.
   `SavedVariables/`. Every name and value is made up, a few hundred bytes in all; the tests copy the tree
   into a temporary flavor folder and never write here. `.gitignore` allows a `WTF` folder here and nowhere
   else.
+- `dev/` — a development folder for the junction links of task 005: `OneFolder` (a TOC with `## Version:
+  9.9.9-dev`, the same folder name as the `one-folder` zips, so an install over the linked addon can be
+  refused) and `DevAddon` (a TOC without a version) are addons, `Media` holds a text file and no TOC. The
+  tests copy the folder into a temporary one and make their junctions there, never here.

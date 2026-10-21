@@ -16,7 +16,12 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
-  result, never a refusal, task 038), the state sidecar (`state`, D-003), the toolbox (`backup`: the `WTF`
+  result, never a refusal, task 038; it refuses to install over a linked addon or a junction it did not
+  make), the dev addon links (`link`, task 005: a directory junction under `Interface\AddOns` for every
+  addon of a development folder, a mount-point reparse point made through the Windows API, recorded in the
+  sidecar with the source `link:<development folder>`, the TOC's version and no file list; `unlink` removes
+  exactly those junctions, never a real folder or a junction mrgl did not make; Windows-only), the state
+  sidecar (`state`, D-003), the toolbox (`backup`: the `WTF`
   backup into a dated zip, the listing and the restore that checks every entry through `zip_entry`, moves
   the current `WTF` aside and reverts on a failure, task 013; later the addon sets), the zip entry check
   both of them call (`zip_entry`, task 044: every entry readable, inside its folder and no link, checked
@@ -41,8 +46,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   link under it when the release has notes, task 030; the install from the pick is task 040), `add
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
   task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
-  (task 024), `update`, `link`, `unlink` (stubs that answer with the task that builds them until that task
-  lands), with `--json` for machines and `--serious` for the
+  (task 024), `link <folder>` and `unlink <folder>` (task 005), `update` (a stub that answers with the task
+  that builds it until that task lands), with `--json` for machines and `--serious` for the
   murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
@@ -346,9 +351,12 @@ folder, a path that tries to escape the staging folder, an addon with an embedde
 dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
 SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made
-up from the first line, task 013), and a third game folder for the dependency check (`dependencies/`, task
+up from the first line, task 013), a third game folder for the dependency check (`dependencies/`, task
 029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency, and a
-library folder inside an addon that a `nolib` entry in a test's sidecar turns into a missing one). A real addon zip, a real AddOns folder or a `WTF` folder never enters the
+library folder inside an addon that a `nolib` entry in a test's sidecar turns into a missing one), and a
+development folder for the junction links (`dev/`: two addons with a TOC and a folder without one, task
+005; the tests copy it into a temporary folder and make their junctions there). A real addon zip, a real
+AddOns folder or a `WTF` folder never enters the
 repo; a manual round on a real game folder is a task of its own, and its result is a dated line in that
 task's Verification. The running-client tests copy their own test binary into a temporary flavor folder and
 start it as a stand-in client (it waits for its stdin to close), so no game file and no committed

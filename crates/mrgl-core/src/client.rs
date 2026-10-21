@@ -193,8 +193,9 @@ pub(crate) fn short_form(path: &Path) -> Option<PathBuf> {
 }
 
 /// `\\?\C:\x` as `C:\x` and `\\?\UNC\server\share` as `\\server\share`, so a canonical path and a
-/// process's Win32 path compare component by component.
-fn strip_verbatim(path: &Path) -> PathBuf {
+/// process's Win32 path compare component by component; the dev addon links (task 005) name their
+/// folders the same way.
+pub(crate) fn strip_verbatim(path: &Path) -> PathBuf {
     let mut components = path.components();
     let Some(Component::Prefix(prefix)) = components.next() else {
         return path.to_path_buf();

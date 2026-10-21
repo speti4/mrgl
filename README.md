@@ -49,6 +49,8 @@ target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # re
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # which release asset is the Forever one
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe remove SomeAddon --flavor forever                   # remove an addon mrgl installed
+target\release\mrgl.exe link D:\dev\my-addons --flavor forever              # a junction per addon you develop
+target\release\mrgl.exe unlink D:\dev\my-addons --flavor forever            # exactly those junctions go again
 target\release\mrgl.exe backup --flavor forever                             # the WTF folder into a dated zip
 target\release\mrgl.exe backup --list --flavor forever                      # the backups so far
 target\release\mrgl.exe backup --restore WTF-2026-10-21-193605.zip --flavor forever   # one back, asks first
@@ -97,6 +99,11 @@ Something not working? `mrgl doctor` prints what a bug report needs: the game fo
 each flavor's build, AddOns folder, sidecar, cache and running client, the WebView2 version, the GitHub rate
 limit and which API keys are set (never their values). Paths under your profile folder show as `~`; paste the
 block into the [bug report](https://github.com/speti4/mrgl/issues/new?template=bug-report.yml).
+
+`link` makes a directory junction under `Interface\AddOns` for every subfolder of a development folder that
+has a TOC named after it (no admin rights needed), so the game loads your addons straight from your repo. A
+folder of the same name already there is skipped, never replaced; an install never writes over a linked
+addon, and `unlink` removes exactly the junctions `link` made, never a folder and never a file of yours.
 
 ## Documentation
 

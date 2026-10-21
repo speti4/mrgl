@@ -50,11 +50,15 @@ tauri-plugin-opener = "2"
 # crate would add a tree of crates for three calls. The game root discovery (task 020) reads the launcher's
 # `InstallPath` registry value through the same bindings (`Win32_System_Registry`: open, query, close), so
 # no registry crate joins for one string value. The time-zone conversion behind the dated backup names and
-# the zip timestamps (task 013) is two more calls from the same bindings, so no date crate either.
+# the zip timestamps (task 013) is two more calls from the same bindings, so no date crate either. The dev
+# addon junctions (task 005) are one `DeviceIoControl` with `FSCTL_SET_REPARSE_POINT` (`Win32_System_IO`,
+# `Win32_System_Ioctl`), so no junction crate either.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
     "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_System_Time",

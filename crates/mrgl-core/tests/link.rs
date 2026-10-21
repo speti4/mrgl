@@ -1,0 +1,441 @@
+//! Dev addon linking (task 005) over the synthetic development folder `tests/fixtures/dev/` (two addons
+//! with a TOC, `OneFolder` and `DevAddon`, and `Media` without one), copied into a temporary folder so a
+//! test can never touch the fixture, against a temporary game folder and mrgl home: link, the scan lists
+//! the junctions as linked, an install or a removal over a linked addon is refused, a real folder or a
+//! foreign junction in the way is skipped, unlink removes exactly the junctions and leaves the
+//! development folder byte for byte as it was. The junction tests are Windows-only; elsewhere the two
+//! calls answer that junctions are Windows-only.
+
+// The helpers serve the Windows tests; elsewhere only the Windows-only answer is tested.
+#![cfg_attr(not(windows), allow(dead_code, unused_imports))]
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use mrgl_core::Error;
+use mrgl_core::flavor;
+use mrgl_core::install::{Engine, Metadata};
+use mrgl_core::link;
+
+/// A temporary game folder with one `_forever_` flavor, a temporary mrgl home and a copy of the fixture
+/// development folder, all under one folder that the drop removes.
+struct Sandbox {
+    root: PathBuf,
+    dev: PathBuf,
+    engine: Engine,
+}
+
+impl Sandbox {
+    fn new(name: &str) -> Sandbox {
+        let root =
+            std::env::temp_dir().join(format!("mrgl-link-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let game = root.join("game");
+        let flavor_dir = game.join("_forever_");
+        std::fs::create_dir_all(&flavor_dir).expect("the flavor folder");
+        std::fs::write(
+            game.join(".build.info"),
+            "Version!STRING:0|Product!STRING:0\n1.60.1.70245|wowf\n",
+        )
+        .expect(".build.info");
+        std::fs::write(
+            flavor_dir.join(".flavor.info"),
+            "Product Flavor!STRING:0\nwowf\n",
+        )
+        .expect(".flavor.info");
+        let dev = root.join("dev");
+        copy_tree(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dev"),
+            &dev,
+        );
+        let flavor = flavor::read_flavor(&flavor_dir).expect("a flavor");
+        let engine = Engine::with_home(flavor, &root.join("home"));
+        Sandbox { root, dev, engine }
+    }
+
+    fn addon(&self, folder: &str) -> PathBuf {
+        self.engine.addons_dir().join(folder)
+    }
+
+    /// The names in the AddOns folder, sorted.
+    fn addons_listing(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.engine.addons_dir())
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("the folder");
+    for entry in std::fs::read_dir(from).expect("read") {
+        let entry = entry.expect("entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy");
+        }
+    }
+}
+
+/// A tree as relative paths to the bytes of every file, folders as names with a trailing `/`.
+fn snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+    fn walk(dir: &Path, prefix: &str, into: &mut BTreeMap<String, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).expect("read") {
+            let entry = entry.expect("entry");
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.file_type().expect("type").is_dir() {
+                into.insert(format!("{prefix}{name}/"), Vec::new());
+                walk(&entry.path(), &format!("{prefix}{name}/"), into);
+            } else {
+                into.insert(
+                    format!("{prefix}{name}"),
+                    std::fs::read(entry.path()).expect("bytes"),
+                );
+            }
+        }
+    }
+    let mut into = BTreeMap::new();
+    walk(dir, "", &mut into);
+    into
+}
+
+fn zip(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/zips")
+        .join(name)
+}
+
+fn metadata_for(zip: &Path) -> Metadata {
+    Metadata {
+        source: zip.display().to_string(),
+        version: None,
+        name: None,
+        nolib: None,
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn link_and_unlink_are_windows_only_elsewhere() {
+    let sandbox = Sandbox::new("elsewhere");
+    for result in [
+        link::link(&sandbox.engine, &sandbox.dev).map(|_| ()),
+        link::unlink(&sandbox.engine, &sandbox.dev).map(|_| ()),
+    ] {
+        let error = result.expect_err("refused");
+        assert!(matches!(error, Error::JunctionsWindowsOnly), "{error}");
+        assert_eq!(
+            error.to_string(),
+            "junctions are Windows-only: link and unlink work on Windows"
+        );
+    }
+    assert!(sandbox.addons_listing().is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn link_scan_refuse_and_unlink_leave_the_development_folder_untouched() {
+    let sandbox = Sandbox::new("round");
+    let before = snapshot(&sandbox.dev);
+
+    let linked = link::link(&sandbox.engine, &sandbox.dev).expect("links");
+    let dev = link::dev_folder(&sandbox.dev).expect("the folder");
+    assert_eq!(linked.folder, dev);
+    assert_eq!(linked.source, format!("link:{}", dev.display()));
+    let names: Vec<(&str, &str, bool)> = linked
+        .linked
+        .iter()
+        .map(|addon| {
+            (
+                addon.name.as_str(),
+                addon.version.as_str(),
+                addon.already_linked,
+            )
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("DevAddon", "unknown", false),
+            ("OneFolder", "9.9.9-dev", false)
+        ]
+    );
+    assert!(linked.skipped.is_empty(), "{:?}", linked.skipped);
+    assert_eq!(linked.without_toc, ["Media"]);
+    assert_eq!(sandbox.addons_listing(), ["DevAddon", "OneFolder"]);
+    assert!(link::is_link(&sandbox.addon("OneFolder")));
+    assert!(
+        link::same_path(
+            &link::link_target(&sandbox.addon("OneFolder")).expect("a target"),
+            &dev.join("OneFolder")
+        ),
+        "the junction points into the development folder"
+    );
+
+    // The scan reads through the junctions and flags them as linked (the `linked` flag of task 002).
+    let scan = mrgl_core::scan::scan_flavor(&sandbox.engine.flavor).expect("scans");
+    let flags: Vec<(&str, bool, Option<&str>)> = scan
+        .addons
+        .iter()
+        .map(|addon| (addon.folder.as_str(), addon.linked, addon.version()))
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            ("DevAddon", true, None),
+            ("OneFolder", true, Some("9.9.9-dev"))
+        ]
+    );
+
+    // The sidecar knows them by the `link:` source, with no file list.
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    let (_, entry) = state.entry("OneFolder").expect("an entry");
+    assert_eq!(entry.source, linked.source);
+    assert_eq!(entry.version, "9.9.9-dev");
+    assert_eq!(entry.folders, ["OneFolder"]);
+    assert!(entry.files.is_empty());
+
+    // A second link changes nothing and says so.
+    let again = link::link(&sandbox.engine, &sandbox.dev).expect("links again");
+    assert!(again.linked.iter().all(|addon| addon.already_linked));
+    assert_eq!(again.linked.len(), 2);
+
+    // An install over a linked addon is refused before anything moves, and so is a removal.
+    let zip = zip("one-folder-1.0.0.zip");
+    let error = sandbox
+        .engine
+        .install(&zip, &metadata_for(&zip))
+        .expect_err("refused");
+    assert!(
+        matches!(&error, Error::LinkedAddon { action: "install over", name, .. } if name == "OneFolder"),
+        "{error}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "refused to install over OneFolder (flavor forever): it is linked from {}; `mrgl unlink` with that folder removes the link",
+            dev.display()
+        )
+    );
+    let error = sandbox.engine.remove("onefolder").expect_err("refused");
+    assert!(
+        matches!(
+            &error,
+            Error::LinkedAddon {
+                action: "remove",
+                ..
+            }
+        ),
+        "{error}"
+    );
+    assert!(link::is_link(&sandbox.addon("OneFolder")));
+    assert_eq!(snapshot(&sandbox.dev), before);
+
+    // Unlink removes exactly the two junctions and their entries.
+    let unlinked = link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
+    assert_eq!(unlinked.unlinked, ["DevAddon", "OneFolder"]);
+    assert!(unlinked.kept.is_empty(), "{:?}", unlinked.kept);
+    assert!(sandbox.addons_listing().is_empty());
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert!(state.addons.is_empty(), "{state:?}");
+    assert_eq!(snapshot(&sandbox.dev), before, "the development folder");
+
+    // A second unlink finds nothing; the install that was refused now goes through.
+    let again = link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
+    assert!(again.unlinked.is_empty() && again.kept.is_empty());
+    sandbox
+        .engine
+        .install(&zip, &metadata_for(&zip))
+        .expect("installs");
+    assert!(!link::is_link(&sandbox.addon("OneFolder")));
+    assert_eq!(snapshot(&sandbox.dev), before);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_real_folder_or_a_foreign_junction_in_the_way_is_skipped_and_kept() {
+    let sandbox = Sandbox::new("in-the-way");
+    std::fs::create_dir_all(sandbox.addon("DevAddon")).expect("a real folder");
+    std::fs::write(sandbox.addon("DevAddon").join("mine.lua"), "-- mine\n").expect("a file");
+    let elsewhere = sandbox.root.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("another folder");
+    let elsewhere = link::dev_folder(&elsewhere).expect("canonical");
+    link::create_junction(&sandbox.addon("OneFolder"), &elsewhere).expect("a foreign junction");
+
+    let linked = link::link(&sandbox.engine, &sandbox.dev).expect("runs");
+    assert!(linked.linked.is_empty(), "{:?}", linked.linked);
+    let reasons: Vec<(&str, &str)> = linked
+        .skipped
+        .iter()
+        .map(|skipped| (skipped.name.as_str(), skipped.reason.as_str()))
+        .collect();
+    assert_eq!(reasons.len(), 2);
+    assert_eq!(
+        reasons[0],
+        (
+            "DevAddon",
+            "a folder of that name is in AddOns already and stays (not a junction)"
+        )
+    );
+    assert_eq!(reasons[1].0, "OneFolder");
+    assert_eq!(
+        reasons[1].1,
+        format!(
+            "a junction to {} is in the way and stays",
+            elsewhere.display()
+        )
+    );
+    assert_eq!(
+        std::fs::read(sandbox.addon("DevAddon").join("mine.lua")).expect("kept"),
+        b"-- mine\n"
+    );
+    assert!(link::is_link(&sandbox.addon("OneFolder")));
+    assert!(
+        sandbox
+            .engine
+            .load_state()
+            .expect("the sidecar")
+            .state
+            .addons
+            .is_empty()
+    );
+
+    // An install over a junction mrgl did not make is refused too.
+    let zip = zip("one-folder-1.0.0.zip");
+    let error = sandbox
+        .engine
+        .install(&zip, &metadata_for(&zip))
+        .expect_err("refused");
+    assert!(
+        matches!(&error, Error::ForeignJunction { folder, .. } if folder == "OneFolder"),
+        "{error}"
+    );
+
+    // A dangling junction is reported, not followed.
+    std::fs::remove_dir(&elsewhere).expect("the target goes");
+    let linked = link::link(&sandbox.engine, &sandbox.dev).expect("runs");
+    let one = linked
+        .skipped
+        .iter()
+        .find(|skipped| skipped.name == "OneFolder")
+        .expect("skipped");
+    assert_eq!(
+        one.reason,
+        format!(
+            "a dangling junction to {} (its target is gone) is in the way and stays",
+            elsewhere.display()
+        )
+    );
+    let scan = mrgl_core::scan::scan_flavor(&sandbox.engine.flavor).expect("scans");
+    assert!(scan.skipped.iter().any(|name| name == "OneFolder"));
+    assert!(
+        scan.warnings
+            .iter()
+            .any(|warning| warning.contains("OneFolder")),
+        "{:?}",
+        scan.warnings
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_made_by_hand_to_the_same_folder_is_taken_over() {
+    let sandbox = Sandbox::new("by-hand");
+    let dev = link::dev_folder(&sandbox.dev).expect("the folder");
+    std::fs::create_dir_all(sandbox.engine.addons_dir()).expect("AddOns");
+    link::create_junction(&sandbox.addon("OneFolder"), &dev.join("OneFolder"))
+        .expect("a junction by hand");
+    let linked = link::link(&sandbox.engine, &sandbox.dev).expect("links");
+    let flags: Vec<(&str, bool)> = linked
+        .linked
+        .iter()
+        .map(|addon| (addon.name.as_str(), addon.already_linked))
+        .collect();
+    assert_eq!(flags, [("DevAddon", false), ("OneFolder", true)]);
+    let unlinked = link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
+    assert_eq!(unlinked.unlinked.len(), 2);
+    assert!(sandbox.addons_listing().is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn unlink_leaves_a_real_folder_and_takes_a_dangling_junction_of_its_own() {
+    let sandbox = Sandbox::new("unlink-cases");
+    link::link(&sandbox.engine, &sandbox.dev).expect("links");
+
+    // DevAddon's junction is replaced by a real folder by hand: unlink leaves it and forgets it.
+    std::fs::remove_dir(sandbox.addon("DevAddon")).expect("the junction goes");
+    std::fs::create_dir(sandbox.addon("DevAddon")).expect("a real folder");
+    std::fs::write(sandbox.addon("DevAddon").join("copy.lua"), "-- a copy\n").expect("a file");
+    // The development folder is gone: OneFolder's junction dangles, and is still ours to remove.
+    std::fs::remove_dir_all(&sandbox.dev).expect("the development folder goes");
+
+    let unlinked = link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
+    assert_eq!(unlinked.unlinked, ["OneFolder"]);
+    assert_eq!(unlinked.kept.len(), 1);
+    assert_eq!(unlinked.kept[0].name, "DevAddon");
+    assert_eq!(
+        unlinked.kept[0].reason,
+        "DevAddon is a real folder now, not a junction; left in place and no longer managed"
+    );
+    assert_eq!(sandbox.addons_listing(), ["DevAddon"]);
+    assert!(sandbox.addon("DevAddon").join("copy.lua").is_file());
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert!(state.addons.is_empty(), "{state:?}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_folder_without_addons_and_a_missing_folder_are_errors() {
+    let sandbox = Sandbox::new("no-addons");
+    let error = link::link(&sandbox.engine, &sandbox.dev.join("Media")).expect_err("no addon");
+    assert!(matches!(error, Error::NoAddonInDevFolder { .. }), "{error}");
+    assert!(
+        error
+            .to_string()
+            .ends_with("Media: no subfolder with a TOC named after it"),
+        "{error}"
+    );
+    let error = link::link(&sandbox.engine, &sandbox.root.join("missing")).expect_err("missing");
+    assert!(
+        error
+            .to_string()
+            .starts_with("reading the development folder: "),
+        "{error}"
+    );
+    assert!(sandbox.addons_listing().is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_link_replaced_by_a_real_folder_is_forgotten_on_the_next_link() {
+    let sandbox = Sandbox::new("relink");
+    link::link(&sandbox.engine, &sandbox.dev).expect("links");
+    std::fs::remove_dir(sandbox.addon("DevAddon")).expect("the junction goes");
+    std::fs::create_dir(sandbox.addon("DevAddon")).expect("a real folder");
+    let linked = link::link(&sandbox.engine, &sandbox.dev).expect("links again");
+    assert_eq!(linked.linked.len(), 1);
+    assert!(linked.linked[0].already_linked);
+    assert_eq!(linked.skipped.len(), 1);
+    assert_eq!(
+        linked.skipped[0].reason,
+        "a folder of that name is in AddOns already and stays (not a junction); its link entry is forgotten"
+    );
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert!(state.entry("DevAddon").is_none());
+    assert!(state.entry("OneFolder").is_some());
+}
