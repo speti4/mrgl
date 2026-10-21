@@ -1,8 +1,10 @@
 ---
-status: idea
 size: S
 origin: done/029-dependency-check-from-toc-and-nolib.md
 created: 2026-10-21
+closed: 2026-10-21
+reason: folded into 045, the pre-launch manual round, as one check on the real client
+reopen-when: the client's behavior disagrees with the 029 rule; then the rule change is a task of its own
 milestone: M1 Core + CLI
 ---
 

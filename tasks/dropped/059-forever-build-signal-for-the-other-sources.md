@@ -1,8 +1,10 @@
 ---
-status: idea
 size: S
 origin: done/011-forever-notes-dataset.md
 created: 2026-10-21
+closed: 2026-10-21
+reason: folded into 056, what the Wago, WoWInterface and CurseForge sources owe the existing features
+reopen-when: never
 milestone: M4 Sources
 ---
 

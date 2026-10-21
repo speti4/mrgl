@@ -1,8 +1,10 @@
 ---
-status: idea
 size: S
 origin: done/029-dependency-check-from-toc-and-nolib.md
 created: 2026-10-21
+closed: 2026-10-21
+reason: folded into 009, the Tauri shell, whose rows carry the addon states from the core
+reopen-when: never
 milestone: M2 Window MVP
 ---
 
