@@ -264,6 +264,16 @@ sent to `api.github.com` only, never with an asset download. The release list of
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
 request; the cache can be deleted any time.
 
+The build version fallback (task 019: the client exe's version resource when `.build.info` has no row for
+the flavor) is tested against a second synthetic game folder, `client-exe/`: a `.build.info` with a row for
+retail only, and client exe stubs written by the deterministic `make-stubs.py` next to them (`python -I
+crates/mrgl-core/tests/fixtures/client-exe/make-stubs.py` rewrites the same bytes). A stub is a minimal
+PE file with one `.rsrc` section and no code: `_classic_era_\WowClassic.exe` carries a version resource
+(the fallback's happy path), `_retail_\Wow.exe` carries one the `.build.info` row wins over,
+`_classic_\WowClassic.exe` has no version resource (the build stays unknown), `_forever_` has no exe at
+all, and `stubs\` holds a 32-bit image and a resource without a string table for the parser's unit tests.
+No stub is a game executable or a copy of one.
+
 The command line keeps `config.json` (the remembered game folder) under the mrgl home folder,
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
 sidecar `state.json`, the install engine's `staging\` (a zip is unpacked and checked here before anything

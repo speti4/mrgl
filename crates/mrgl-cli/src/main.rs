@@ -14,7 +14,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use mrgl_core::client;
 use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
-use mrgl_core::flavor::{self, FlavorId};
+use mrgl_core::flavor::{self, FlavorId, VersionSource};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{Engine, Metadata};
 use mrgl_core::scan::{self, Addon, Scan};
@@ -345,6 +345,11 @@ fn report_scan(reporter: &Reporter, kind: &str, scan: &Scan, mut warnings: Vec<S
         Some(version) => format!("{} {version}", scan.flavor.id),
         None => format!("{}, build unknown", scan.flavor.id),
     };
+    // The version came from the client exe, not from `.build.info` (task 019): worth a word, since
+    // the two can disagree while the launcher updates.
+    if let Some(VersionSource::ClientExe(exe)) = &scan.flavor.version_source {
+        build.push_str(&format!(", version read from {exe}"));
+    }
     if scan.flavor.curse_client {
         build.push_str(", managed by the CurseForge app");
     }

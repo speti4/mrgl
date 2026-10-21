@@ -13,6 +13,11 @@
 //! `.build.info` is pipe-delimited with a typed header row (`Name!TYPE:n` per column) and one row per
 //! product; the columns are found by name, never by position. The interface number of a build is derived
 //! from its version: `12.1.5` is `120105`, `1.60.1` is `16001`.
+//!
+//! When `.build.info` has no row for the product (seen on a real install for Classic Era), the version
+//! is read from the client exe in the flavor folder (`Wow.exe` or `WowClassic.exe`, the version resource
+//! parsed by [`crate::pe`]; task 019). `.build.info` stays the first source, and [`Flavor::version_source`]
+//! says which one served; a flavor with neither keeps the warning.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -37,6 +42,9 @@ pub const FLAVOR_INFO: &str = ".flavor.info";
 pub const BUILD_INFO: &str = ".build.info";
 /// The CurseForge app's marker in a flavor folder it manages.
 pub const CURSE_CLIENT: &str = ".curseclient";
+/// The client executables whose version resource stands in for a missing `.build.info` row, in the order
+/// they are tried; any other name in a flavor folder is not read.
+pub const CLIENT_EXES: [&str; 2] = ["Wow.exe", "WowClassic.exe"];
 
 /// A flavor id as `.flavor.info` spells it; an id the manager does not know is carried as it is.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -186,14 +194,43 @@ impl fmt::Display for BuildVersion {
     }
 }
 
+/// Where a flavor's version was read from.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum VersionSource {
+    /// The product's row in the install root's `.build.info`.
+    BuildInfo,
+    /// The version resource of the client exe in the flavor folder, by file name (`WowClassic.exe`).
+    ClientExe(String),
+}
+
+impl VersionSource {
+    /// The source's name in machine-readable output: `build-info` or `client-exe`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            VersionSource::BuildInfo => "build-info",
+            VersionSource::ClientExe(_) => "client-exe",
+        }
+    }
+
+    /// The file the version was read from: `.build.info` or the exe's name.
+    pub fn file_name(&self) -> &str {
+        match self {
+            VersionSource::BuildInfo => BUILD_INFO,
+            VersionSource::ClientExe(name) => name,
+        }
+    }
+}
+
 /// A flavor folder, read from disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flavor {
     pub id: FlavorId,
     /// The flavor folder, absolute.
     pub folder: PathBuf,
-    /// The installed build, when `.build.info` had it.
+    /// The installed build, when `.build.info` or the client exe had it.
     pub version: Option<BuildVersion>,
+    /// Where `version` came from; `None` exactly when the version is unknown.
+    pub version_source: Option<VersionSource>,
     /// The CurseForge app manages this folder's addons: its `.curseclient` marker is in the flavor folder.
     pub curse_client: bool,
     /// Plain lines about what could not be read: an unknown id, a missing `.build.info` or row.
@@ -225,12 +262,20 @@ impl Serialize for Flavor {
         &self,
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("Flavor", 6)?;
+        let mut state = serializer.serialize_struct("Flavor", 8)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("folder", &self.folder)?;
         state.serialize_field("version", &self.version.map(|v| v.to_string()))?;
         state.serialize_field("interface", &self.interface())?;
         state.serialize_field("build", &self.version.map(|v| v.build))?;
+        state.serialize_field(
+            "version_source",
+            &self.version_source.as_ref().map(VersionSource::kind),
+        )?;
+        state.serialize_field(
+            "version_file",
+            &self.version_source.as_ref().map(VersionSource::file_name),
+        )?;
         state.serialize_field("curse_client", &self.curse_client)?;
         state.end()
     }
@@ -326,8 +371,33 @@ pub fn toc_chain(id: &FlavorId, version: Option<BuildVersion>) -> Vec<Option<Toc
     chain
 }
 
+/// The version of the client exe in a flavor folder, the first of [`CLIENT_EXES`] that is there, with
+/// its name; `Err(None)` when none is there, `Err(Some(reason))` when the ones there have no readable
+/// version resource.
+pub fn client_exe_version(
+    folder: &Path,
+) -> std::result::Result<(String, BuildVersion), Option<String>> {
+    let mut reasons = Vec::new();
+    for name in CLIENT_EXES {
+        let path = folder.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        match crate::pe::read_file_version(&path) {
+            Ok(version) => return Ok((name.to_string(), version)),
+            Err(reason) => reasons.push(format!("{name} has no readable version ({reason})")),
+        }
+    }
+    if reasons.is_empty() {
+        Err(None)
+    } else {
+        Err(Some(reasons.join("; ")))
+    }
+}
+
 /// Reads a flavor folder: its `.flavor.info` names the flavor (or the folder is not one), the install
-/// root's `.build.info` gives the build, and whatever cannot be read about the build is a warning.
+/// root's `.build.info` gives the build, the client exe's version resource stands in when it does not,
+/// and a build neither can give is a warning.
 pub fn read_flavor(folder: &Path) -> Result<Flavor> {
     let folder = std::path::absolute(folder).map_err(|source| Error::Io {
         context: "resolving the flavor folder",
@@ -362,37 +432,32 @@ pub fn read_flavor(folder: &Path) -> Result<Flavor> {
     if !id.is_known() {
         warnings.push(format!("unknown flavor id {id} in {}", folder.display()));
     }
-    let version = match folder.parent() {
+    let from_build_info: std::result::Result<BuildVersion, String> = match folder.parent() {
         Some(root) => match std::fs::read_to_string(root.join(BUILD_INFO)) {
-            Ok(text) => match build_version_of(&text, id.as_str()) {
-                Ok(version) => Some(version),
-                Err(reason) => {
-                    warnings.push(format!("build unknown: {reason}"));
-                    None
-                }
-            },
+            Ok(text) => build_version_of(&text, id.as_str()),
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                warnings.push(format!(
-                    "build unknown: no {BUILD_INFO} next to {}",
-                    folder.display()
-                ));
-                None
+                Err(format!("no {BUILD_INFO} next to {}", folder.display()))
             }
-            Err(source) => {
-                warnings.push(format!(
-                    "build unknown: cannot read {}: {source}",
-                    root.join(BUILD_INFO).display()
-                ));
-                None
+            Err(source) => Err(format!(
+                "cannot read {}: {source}",
+                root.join(BUILD_INFO).display()
+            )),
+        },
+        None => Err(format!("{} has no parent folder", folder.display())),
+    };
+    let (version, version_source) = match from_build_info {
+        Ok(version) => (Some(version), Some(VersionSource::BuildInfo)),
+        Err(reason) => match client_exe_version(&folder) {
+            Ok((name, version)) => (Some(version), Some(VersionSource::ClientExe(name))),
+            Err(None) => {
+                warnings.push(format!("build unknown: {reason}"));
+                (None, None)
+            }
+            Err(Some(exe_reason)) => {
+                warnings.push(format!("build unknown: {reason}; {exe_reason}"));
+                (None, None)
             }
         },
-        None => {
-            warnings.push(format!(
-                "build unknown: {} has no parent folder",
-                folder.display()
-            ));
-            None
-        }
     };
 
     let curse_client = folder.join(CURSE_CLIENT).is_file();
@@ -401,6 +466,7 @@ pub fn read_flavor(folder: &Path) -> Result<Flavor> {
         id,
         folder,
         version,
+        version_source,
         curse_client,
         warnings,
     })
@@ -570,6 +636,31 @@ us|1|e8c4ef4e67bd1d94d820254984258fa8|1.60.1.70245||wowf\n";
             toc_chain(&FlavorId::Other("wow_mrgl".into()), version(1)),
             [None]
         );
+    }
+
+    #[test]
+    fn a_version_source_names_its_kind_and_file() {
+        assert_eq!(VersionSource::BuildInfo.kind(), "build-info");
+        assert_eq!(VersionSource::BuildInfo.file_name(), ".build.info");
+        let exe = VersionSource::ClientExe("WowClassic.exe".to_string());
+        assert_eq!(exe.kind(), "client-exe");
+        assert_eq!(exe.file_name(), "WowClassic.exe");
+    }
+
+    #[test]
+    fn a_folder_without_a_client_exe_has_none_to_read() {
+        let folder =
+            std::env::temp_dir().join(format!("mrgl-flavor-no-exe-test-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).expect("the folder");
+        assert_eq!(client_exe_version(&folder), Err(None));
+        std::fs::write(folder.join("Wow.exe"), "not an executable").expect("a stand-in");
+        assert_eq!(
+            client_exe_version(&folder),
+            Err(Some(
+                "Wow.exe has no readable version (not an executable (no MZ header))".to_string()
+            ))
+        );
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

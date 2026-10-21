@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use mrgl_core::Error;
-use mrgl_core::flavor::{self, FlavorId};
+use mrgl_core::flavor::{self, FlavorId, VersionSource};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::toc::TocSuffix;
 
@@ -260,6 +260,78 @@ fn the_build_version_comes_from_the_root() {
     assert_eq!(json["version"], "12.1.5.70448");
     assert_eq!(json["interface"], 120105);
     assert_eq!(json["build"], 70448);
+}
+
+/// The synthetic game folder whose `.build.info` has a row for retail only, with client exe stubs
+/// (`client-exe/`, task 019).
+fn client_exe_fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/client-exe")
+}
+
+#[test]
+fn a_missing_build_info_row_falls_back_to_the_client_exe() {
+    let era = flavor::read_flavor(&client_exe_fixtures().join("_classic_era_")).expect("a flavor");
+    assert_eq!(era.id, FlavorId::ClassicEra);
+    assert_eq!(
+        era.version.map(|v| v.to_string()),
+        Some("1.15.7.70100".to_string())
+    );
+    assert_eq!(era.interface(), Some(11507));
+    assert_eq!(
+        era.version_source,
+        Some(VersionSource::ClientExe("WowClassic.exe".to_string()))
+    );
+    assert!(era.warnings.is_empty(), "{:?}", era.warnings);
+    let json = serde_json::to_value(&era).expect("serializes");
+    assert_eq!(json["version"], "1.15.7.70100");
+    assert_eq!(json["version_source"], "client-exe");
+    assert_eq!(json["version_file"], "WowClassic.exe");
+    let scan = scan::scan(&client_exe_fixtures().join("_classic_era_")).expect("scans");
+    assert!(scan.addons.is_empty());
+    assert_eq!(
+        scan.flavor.toc_chain(),
+        [Some(TocSuffix::Vanilla), Some(TocSuffix::Classic), None]
+    );
+}
+
+#[test]
+fn build_info_stays_the_first_source() {
+    let retail = flavor::read_flavor(&client_exe_fixtures().join("_retail_")).expect("a flavor");
+    assert_eq!(
+        retail.version.map(|v| v.to_string()),
+        Some("12.1.5.70448".to_string()),
+        "the row, not the exe's 12.1.0.70000"
+    );
+    assert_eq!(retail.version_source, Some(VersionSource::BuildInfo));
+    assert!(retail.warnings.is_empty(), "{:?}", retail.warnings);
+    let json = serde_json::to_value(&retail).expect("serializes");
+    assert_eq!(json["version_source"], "build-info");
+    assert_eq!(json["version_file"], ".build.info");
+}
+
+#[test]
+fn neither_source_keeps_the_warning() {
+    let forever = flavor::read_flavor(&client_exe_fixtures().join("_forever_")).expect("a flavor");
+    assert_eq!(forever.version, None);
+    assert_eq!(forever.version_source, None);
+    assert_eq!(
+        forever.warnings,
+        ["build unknown: no row for wowf in .build.info"],
+        "no exe in the folder: the warning as before"
+    );
+    let json = serde_json::to_value(&forever).expect("serializes");
+    assert!(json["version_source"].is_null());
+    assert!(json["version_file"].is_null());
+
+    let classic = flavor::read_flavor(&client_exe_fixtures().join("_classic_")).expect("a flavor");
+    assert_eq!(classic.version, None);
+    assert_eq!(
+        classic.warnings,
+        [
+            "build unknown: no row for wow_classic in .build.info; WowClassic.exe has no readable version (no version resource (RT_VERSION))"
+        ],
+        "an exe without a version resource is named in the warning"
+    );
 }
 
 #[test]

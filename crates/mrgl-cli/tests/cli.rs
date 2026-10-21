@@ -761,6 +761,89 @@ fn scan_and_list_name_the_running_client_in_the_summary_and_the_json() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The synthetic game folder of `mrgl-core` whose `.build.info` has a row for retail only, with client
+/// exe stubs (task 019).
+fn client_exe_fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/client-exe")
+}
+
+#[test]
+fn scan_and_list_say_when_the_version_comes_from_the_client_exe() {
+    let output = mrgl()
+        .args(["--serious", "scan"])
+        .arg(client_exe_fixtures().join("_classic_era_"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output).trim_end(),
+        "no addons in _classic_era_ (wow_classic_era 1.15.7.70100, version read from WowClassic.exe)",
+        "the summary alone: no warning"
+    );
+
+    let output = mrgl()
+        .args(["--serious", "list", "--flavor", "era", "--root"])
+        .arg(client_exe_fixtures())
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "no addons in _classic_era_ (wow_classic_era 1.15.7.70100, version read from WowClassic.exe)"
+    );
+
+    let json = mrgl()
+        .args(["--json", "list", "--flavor", "era", "--root"])
+        .arg(client_exe_fixtures())
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "list");
+    assert_eq!(value["flavor"]["version"], "1.15.7.70100");
+    assert_eq!(value["flavor"]["interface"], 11507);
+    assert_eq!(value["flavor"]["version_source"], "client-exe");
+    assert_eq!(value["flavor"]["version_file"], "WowClassic.exe");
+    assert_eq!(value["warnings"], serde_json::json!([]));
+
+    // The row wins over the exe, and the summary says nothing about where the version came from.
+    let output = mrgl()
+        .args(["--serious", "scan"])
+        .arg(client_exe_fixtures().join("_retail_"))
+        .output()
+        .expect("run mrgl");
+    assert_eq!(
+        stdout_last_line(&output),
+        "no addons in _retail_ (wow 12.1.5.70448)"
+    );
+    let json = mrgl()
+        .args(["--json", "scan"])
+        .arg(client_exe_fixtures().join("_retail_"))
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["flavor"]["version_source"], "build-info");
+    assert_eq!(value["flavor"]["version_file"], ".build.info");
+
+    // No row and an exe without a version resource: the build stays unknown, the warning names both.
+    let output = mrgl()
+        .args(["--serious", "scan"])
+        .arg(client_exe_fixtures().join("_classic_"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success());
+    let stdout = stdout(&output);
+    assert!(
+        stdout.contains(
+            "build unknown: no row for wow_classic in .build.info; WowClassic.exe has no readable version"
+        ),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "no addons in _classic_ (wow_classic, build unknown)"
+    );
+}
+
 #[test]
 fn a_folder_without_flavor_info_fails_with_exit_code_one() {
     let output = mrgl()

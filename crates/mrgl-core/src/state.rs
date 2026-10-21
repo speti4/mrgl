@@ -366,6 +366,7 @@ mod tests {
             id: FlavorId::Forever,
             folder: PathBuf::from("_forever_"),
             version: BuildVersion::parse("1.60.1.70245"),
+            version_source: None,
             curse_client: false,
             warnings: Vec::new(),
         };
