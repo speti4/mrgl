@@ -10,10 +10,12 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   trait with the real `ureq` client and the folder-backed stub; `sources::github` reads the releases API,
   the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
   home folder, task 003; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
-  a staging folder, its addon folders swapped into `Interface\AddOns` one at a time with a revert, the
-  previous version's zip kept; task 004), the state sidecar (`state`, D-003), the toolbox (`backup`: the
-  `WTF` backup into a dated zip, the listing and the restore that checks every entry, moves the current
-  `WTF` aside and reverts on a failure, task 013; later the addon sets), the running-client check (`client`,
+  a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
+  one at a time with a revert, the previous version's zip kept; task 004), the state sidecar (`state`,
+  D-003), the toolbox (`backup`: the `WTF` backup into a dated zip, the listing and the restore that checks
+  every entry through `zip_entry`, moves the current `WTF` aside and reverts on a failure, task 013; later
+  the addon sets), the zip entry check both of them call (`zip_entry`, task 044: every entry readable,
+  inside its folder and no link, checked before the first is written), the running-client check (`client`,
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
   calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
   D-003), the game root resolution (`discover`, task 020: the flag, `MRGL_ROOT`, the remembered root, then

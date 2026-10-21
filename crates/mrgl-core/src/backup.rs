@@ -28,6 +28,7 @@ use crate::client;
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
 use crate::home;
+use crate::zip_entry::{self, CheckedEntry, ZipRole};
 
 /// The settings folder of a flavor, under its folder.
 pub const WTF_DIR: &str = "WTF";
@@ -402,13 +403,6 @@ pub struct Restored {
     pub aside: Option<PathBuf>,
 }
 
-/// One checked entry of a backup: its index, its path components under `WTF` and whether it is a folder.
-struct CheckedEntry {
-    index: usize,
-    parts: Vec<String>,
-    is_dir: bool,
-}
-
 /// Puts a backup back as the flavor's `WTF` folder. In this order: the guard of task 023 (a running
 /// client refuses the restore before anything is touched), every entry checked (one that would land
 /// outside `WTF` refuses the whole zip), the current `WTF` moved aside into the backups folder as
@@ -462,10 +456,11 @@ pub fn restore_wtf(flavor: &Flavor, zip: &Path, backups: &Path) -> Result<Restor
     }
 }
 
-/// Opens a backup and checks every entry before anything is written: the name must be a relative path
-/// under `WTF` ([`safe_entry_path`]) and the entry must not be a symbolic link.
+/// Opens a backup and checks every entry before anything is written ([`zip_entry::checked_entries`]):
+/// every name a relative path under `WTF`, no symbolic link, every entry readable.
 fn checked_entries(zip: &Path) -> Result<(ZipArchive<BufReader<File>>, Vec<CheckedEntry>)> {
-    let unreadable = |reason: String| Error::BackupUnreadable {
+    let unreadable = |reason: String| Error::ZipUnreadable {
+        role: ZipRole::Backup,
         path: zip.to_path_buf(),
         reason,
     };
@@ -480,32 +475,7 @@ fn checked_entries(zip: &Path) -> Result<(ZipArchive<BufReader<File>>, Vec<Check
     };
     let mut archive =
         ZipArchive::new(BufReader::new(file)).map_err(|reason| unreadable(reason.to_string()))?;
-    let mut entries = Vec::with_capacity(archive.len());
-    for index in 0..archive.len() {
-        let entry = archive
-            .by_index_raw(index)
-            .map_err(|reason| unreadable(format!("entry {index}: {reason}")))?;
-        let raw = entry
-            .name()
-            .map_err(|reason| unreadable(format!("entry {index}: {reason}")))?
-            .into_owned();
-        let escapes = || Error::BackupEntryEscapes {
-            path: zip.to_path_buf(),
-            entry: raw.clone(),
-        };
-        let parts = safe_entry_path(&raw).ok_or_else(escapes)?;
-        if entry.is_symlink() {
-            return Err(escapes());
-        }
-        if parts.is_empty() {
-            continue;
-        }
-        entries.push(CheckedEntry {
-            index,
-            parts,
-            is_dir: entry.is_dir(),
-        });
-    }
+    let entries = zip_entry::checked_entries(&mut archive, zip, ZipRole::Backup)?;
     Ok((archive, entries))
 }
 
@@ -572,52 +542,6 @@ fn entry_modified<R: io::Read>(entry: &zip::read::ZipFile<'_, R>) -> Option<Syst
         minute: dos.minute(),
         second: dos.second(),
     }))
-}
-
-/// A zip entry name as path components under `WTF`, or `None` when it would land outside it: an
-/// absolute path, a drive letter, a `..` component, a component with a character Windows refuses or a
-/// reserved device name. `\` counts as a separator, `.` and empty components are dropped.
-pub fn safe_entry_path(name: &str) -> Option<Vec<String>> {
-    let name = name.replace('\\', "/");
-    if name.starts_with('/') {
-        return None;
-    }
-    let mut parts = Vec::new();
-    for part in name.split('/') {
-        match part {
-            "" | "." => continue,
-            ".." => return None,
-            part => {
-                if part
-                    .chars()
-                    .any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
-                    || is_reserved_device_name(part)
-                {
-                    return None;
-                }
-                parts.push(part.to_string());
-            }
-        }
-    }
-    Some(parts)
-}
-
-/// `CON`, `NUL`, `COM1` … `LPT9`, with or without an extension: a file Windows will not create.
-fn is_reserved_device_name(part: &str) -> bool {
-    let stem = part
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_uppercase();
-    match stem.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" => true,
-        _ => {
-            (stem.starts_with("COM") || stem.starts_with("LPT"))
-                && stem.len() == 4
-                && stem.as_bytes()[3].is_ascii_digit()
-                && stem.as_bytes()[3] != b'0'
-        }
-    }
 }
 
 /// Moves a folder: one rename on the same volume; across volumes (the game on one drive, the mrgl home
@@ -873,34 +797,6 @@ pub mod clock {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn an_entry_path_stays_under_wtf() {
-        assert_eq!(
-            safe_entry_path("Account/NAME/SavedVariables/X.lua").as_deref(),
-            Some(&["Account", "NAME", "SavedVariables", "X.lua"].map(String::from)[..])
-        );
-        assert_eq!(
-            safe_entry_path("Account\\NAME\\./AddOns.txt").as_deref(),
-            Some(&["Account", "NAME", "AddOns.txt"].map(String::from)[..])
-        );
-        assert_eq!(
-            safe_entry_path("Account/").as_deref(),
-            Some(&["Account".to_string()][..])
-        );
-        assert_eq!(safe_entry_path("").as_deref(), Some(&[][..]));
-        assert_eq!(safe_entry_path("../outside.txt"), None);
-        assert_eq!(safe_entry_path("Account/../../outside.txt"), None);
-        assert_eq!(safe_entry_path("/etc/passwd"), None);
-        assert_eq!(safe_entry_path("C:/Windows/x"), None);
-        assert_eq!(safe_entry_path("Account/NUL"), None);
-        assert_eq!(safe_entry_path("Account/com1.txt"), None);
-        assert_eq!(safe_entry_path("Account/bad<name>.lua"), None);
-        assert_eq!(
-            safe_entry_path("COM10").as_deref(),
-            Some(&["COM10".to_string()][..])
-        );
-    }
 
     #[test]
     fn the_extended_timestamp_is_flags_and_little_endian_seconds() {

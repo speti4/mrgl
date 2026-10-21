@@ -1,6 +1,6 @@
 //! The WTF backup and restore (task 013) over the synthetic fixture tree: a backup round-trips the
 //! folder byte for byte with the file times kept, a restore refuses an entry that would land outside
-//! `WTF` before anything moves, a failed restore puts the previous `WTF` back, the listing reads the
+//! `WTF` or that it cannot unpack before anything moves (the shared check of `zip_entry`), a failed restore puts the previous `WTF` back, the listing reads the
 //! backups folder, and a restore with the stand-in client running (the pattern of the 023 tests: this test
 //! binary copied into the flavor folder and started, never a game file) is refused with the documented
 //! line.
@@ -14,6 +14,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use mrgl_core::Error;
 use mrgl_core::backup::{self, ASIDE_PREFIX, BACKUP_PREFIX, WTF_DIR};
 use mrgl_core::flavor::{self, Flavor, FlavorId};
+use mrgl_core::zip_entry::ZipRole;
 
 fn fixture_wtf() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/wtf/WTF")
@@ -255,7 +256,10 @@ fn an_entry_that_would_escape_wtf_refuses_the_whole_zip_before_anything_moves() 
         write_zip(&zip, &entries);
         let error = backup::restore_wtf(&flavor, &zip, &backups).expect_err(file);
         assert!(
-            matches!(&error, Error::BackupEntryEscapes { path, .. } if path == &zip),
+            matches!(
+                &error,
+                Error::ZipEntryEscapes { role: ZipRole::Backup, path, .. } if path == &zip
+            ),
             "{file}: {error}"
         );
         let text = error.to_string();
@@ -273,7 +277,49 @@ fn an_entry_that_would_escape_wtf_refuses_the_whole_zip_before_anything_moves() 
     let not_a_zip = backups.join("not-a-zip.zip");
     std::fs::write(&not_a_zip, b"plain text").expect("written");
     let error = backup::restore_wtf(&flavor, &not_a_zip, &backups).expect_err("unreadable");
-    assert!(matches!(&error, Error::BackupUnreadable { .. }), "{error}");
+    assert!(
+        matches!(
+            &error,
+            Error::ZipUnreadable {
+                role: ZipRole::Backup,
+                ..
+            }
+        ),
+        "{error}"
+    );
+    assert!(
+        error.to_string().starts_with("not a readable backup: "),
+        "{error}"
+    );
+
+    // An entry the restore cannot unpack (encrypted) refuses the zip at the check, before WTF moves
+    // aside (task 044: the restore used to find it half way through the unpack).
+    let encrypted = backups.join("encrypted.zip");
+    {
+        use zip::unstable::write::FileOptionsExt;
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&encrypted).expect("the zip"));
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer
+            .start_file("Config.wtf", stored)
+            .expect("a file entry");
+        writer.write_all(b"fine").expect("content");
+        let locked = stored
+            .with_deprecated_encryption(b"password")
+            .expect("ZipCrypto");
+        writer
+            .start_file("Account/secret.lua", locked)
+            .expect("an encrypted entry");
+        writer.write_all(b"-- encrypted").expect("content");
+        writer.finish().expect("finished");
+    }
+    let error = backup::restore_wtf(&flavor, &encrypted, &backups).expect_err("encrypted");
+    assert!(
+        matches!(&error, Error::ZipUnreadable { role: ZipRole::Backup, path, .. } if path == &encrypted),
+        "{error}"
+    );
+    let listing = backup::list_backups(&backups).expect("a listing");
+    assert!(listing.aside.is_empty(), "nothing was moved aside");
     let missing = backups.join("no-such.zip");
     let error = backup::restore_wtf(&flavor, &missing, &backups).expect_err("missing");
     assert_eq!(
