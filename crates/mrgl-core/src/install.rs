@@ -228,6 +228,7 @@ pub struct Engine {
     pub flavor: Flavor,
     pub home: FlavorHome,
     processes: Processes,
+    max_unpacked: u64,
 }
 
 impl Engine {
@@ -238,6 +239,7 @@ impl Engine {
             flavor,
             home,
             processes: Processes::default(),
+            max_unpacked: zip_entry::MAX_UNPACKED,
         })
     }
 
@@ -248,7 +250,15 @@ impl Engine {
             flavor,
             home,
             processes: Processes::default(),
+            max_unpacked: zip_entry::MAX_UNPACKED,
         }
+    }
+
+    /// The same engine with another bound on what a zip unpacks to (task 039; `--max-unpacked`): every
+    /// stage of this engine, the rollback's included, refuses a zip past it ([`Error::ZipTooLarge`]).
+    pub fn with_max_unpacked(mut self, bytes: u64) -> Engine {
+        self.max_unpacked = bytes;
+        self
     }
 
     /// The same engine asking another process list for a running client (task 038): a
@@ -298,7 +308,7 @@ impl Engine {
             keep: false,
         };
         let unpacked = staged.dir.join("unpacked");
-        let files = unpack(zip, &unpacked)?;
+        let files = unpack(zip, &unpacked, self.max_unpacked)?;
         let mut addons = find_addons(&unpacked, &stem, &files)?;
         let name = match &metadata.name {
             Some(name) => name.clone(),
@@ -886,9 +896,10 @@ fn fresh_staging_dir(staging: &Path, stem: &str) -> Result<PathBuf> {
     unreachable!("the attempts never run out")
 }
 
-/// Unpacks a zip under a folder once [`zip_entry::checked_entries`] has passed every entry. Returns every
-/// file as its relative path with `/` separators and its SHA-256.
-fn unpack(zip: &Path, into: &Path) -> Result<BTreeMap<String, String>> {
+/// Unpacks a zip under a folder once [`zip_entry::checked_entries`] has passed every entry, every entry
+/// read through the bound's counter (task 039). Returns every file as its relative path with `/`
+/// separators and its SHA-256. On an error the caller removes the folder ([`Staged`]'s drop).
+fn unpack(zip: &Path, into: &Path, max_unpacked: u64) -> Result<BTreeMap<String, String>> {
     let unreadable = |reason: String| Error::ZipUnreadable {
         role: ZipRole::Addon,
         path: zip.to_path_buf(),
@@ -897,7 +908,8 @@ fn unpack(zip: &Path, into: &Path) -> Result<BTreeMap<String, String>> {
     let file = std::fs::File::open(zip).map_err(|source| unreadable(source.to_string()))?;
     let mut archive = zip::ZipArchive::new(io::BufReader::new(file))
         .map_err(|reason| unreadable(reason.to_string()))?;
-    let entries = zip_entry::checked_entries(&mut archive, zip, ZipRole::Addon)?;
+    let entries = zip_entry::checked_entries(&mut archive, zip, ZipRole::Addon, max_unpacked)?;
+    let mut unpacked = zip_entry::Unpacked::new(zip, ZipRole::Addon, max_unpacked);
     let io = |context: &'static str, path: &Path, source| Error::Io {
         context,
         path: path.to_path_buf(),
@@ -919,13 +931,19 @@ fn unpack(zip: &Path, into: &Path) -> Result<BTreeMap<String, String>> {
             std::fs::create_dir_all(parent)
                 .map_err(|source| io("creating a staged folder", parent, source))?;
         }
-        let mut entry = archive
+        let entry = archive
             .by_index(checked.index)
             .map_err(|reason| unreadable(format!("entry {}: {reason}", checked.index)))?;
         let output = std::fs::File::create(&path)
             .map_err(|source| io("writing a staged file", &path, source))?;
-        let hash = copy_hashing(&mut entry, io::BufWriter::new(output))
-            .map_err(|source| io("writing a staged file", &path, source))?;
+        let hash = copy_hashing(
+            &mut unpacked.entry(&checked, entry),
+            io::BufWriter::new(output),
+        )
+        .map_err(|source| {
+            zip_entry::refusal(source)
+                .unwrap_or_else(|source| io("writing a staged file", &path, source))
+        })?;
         files.insert(relative, hash);
     }
     Ok(files)
@@ -1178,7 +1196,7 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/zips/escaping-path.zip");
         let into = std::env::temp_dir().join(format!("mrgl-unpack-escape-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&into);
-        let error = unpack(&zip, &into).expect_err("refused");
+        let error = unpack(&zip, &into, zip_entry::MAX_UNPACKED).expect_err("refused");
         assert!(
             matches!(
                 &error,

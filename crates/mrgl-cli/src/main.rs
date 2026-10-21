@@ -39,6 +39,7 @@ use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Pick, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
 use mrgl_core::voice::{Kind, Voice};
+use mrgl_core::zip_entry;
 use mrgl_core::{Error, VERSION};
 
 #[derive(Parser, Debug)]
@@ -106,6 +107,10 @@ enum Command {
         /// Resolve the release and report the pick, write nothing.
         #[arg(long)]
         dry_run: bool,
+        /// The bound on what the zip unpacks to, `2G` unless given: `3G`, `500M` or a number of bytes
+        /// (steps of 1024), for a known large addon.
+        #[arg(long, value_name = "SIZE", value_parser = parse_max_unpacked)]
+        max_unpacked: Option<u64>,
     },
     /// Check the installed addons against their sources and update them.
     Update {
@@ -167,6 +172,16 @@ enum Command {
         /// Skip the restore's confirmation (scripts; required with --json).
         #[arg(short = 'y', long)]
         yes: bool,
+        /// The bound on what the restored backup unpacks to, `2G` unless given: `3G`, `500M` or a
+        /// number of bytes (steps of 1024).
+        #[arg(
+            long,
+            value_name = "SIZE",
+            value_parser = parse_max_unpacked,
+            requires = "restore",
+            conflicts_with = "list"
+        )]
+        max_unpacked: Option<u64>,
     },
     /// Print a diagnostic report for a bug report: the game root, each flavor's build, AddOns folder,
     /// sidecar, cache and client, the WebView2 version, the GitHub rate limit and which API keys are set
@@ -255,6 +270,10 @@ enum Command {
         /// The flavor id or folder.
         #[arg(long)]
         flavor: Option<String>,
+        /// The bound on what the kept zip unpacks to, `2G` unless given: `3G`, `500M` or a number of
+        /// bytes (steps of 1024), for a known large addon.
+        #[arg(long, value_name = "SIZE", value_parser = parse_max_unpacked)]
+        max_unpacked: Option<u64>,
     },
     /// List a flavor's SavedVariables files by size, per account and per character, and mark the
     /// orphans: files whose addon folder is no longer under Interface\AddOns (a disabled addon keeps its
@@ -269,6 +288,13 @@ enum Command {
         #[arg(long)]
         clean: bool,
     },
+}
+
+/// A `--max-unpacked` size (task 039): `3G`, `500M`, a number of bytes ([`zip_entry::parse_size`]).
+fn parse_max_unpacked(text: &str) -> Result<u64, String> {
+    zip_entry::parse_size(text).ok_or_else(|| {
+        format!("not a size: {text}: a whole number of bytes, or with K, M, G or T (3G, 500M)")
+    })
 }
 
 /// A channel name on the command line: `stable` or `prerelease` (also `beta`).
@@ -412,12 +438,16 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             source,
             flavor,
             dry_run,
-        } if is_zip_in_hand(&source) => add_zip(reporter, &source, flavor.as_deref(), dry_run)?,
+            max_unpacked,
+        } if is_zip_in_hand(&source) => {
+            add_zip(reporter, &source, flavor.as_deref(), dry_run, max_unpacked)?
+        }
         Command::Add {
             source,
             flavor,
             dry_run,
-        } => add_command(reporter, &source, flavor.as_deref(), dry_run)?,
+            max_unpacked,
+        } => add_command(reporter, &source, flavor.as_deref(), dry_run, max_unpacked)?,
         Command::Remove { name, flavor } => remove_command(reporter, &name, flavor.as_deref())?,
         Command::Backup {
             flavor,
@@ -425,7 +455,16 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             list,
             restore,
             yes,
-        } => backup_command(reporter, flavor.as_deref(), to, list, restore, yes)?,
+            max_unpacked,
+        } => backup_command(
+            reporter,
+            flavor.as_deref(),
+            to,
+            list,
+            restore,
+            yes,
+            max_unpacked,
+        )?,
         Command::Doctor { flavor, root } => doctor_command(reporter, flavor.as_deref(), root)?,
         Command::Link { folder, flavor } => link_command(reporter, &folder, flavor.as_deref())?,
         Command::Unlink { folder, flavor } => unlink_command(reporter, &folder, flavor.as_deref())?,
@@ -454,7 +493,11 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             channel,
             flavor,
         } => mark_command(reporter, &name, flavor.as_deref(), Mark::Channel(channel))?,
-        Command::Rollback { name, flavor } => rollback_command(reporter, &name, flavor.as_deref())?,
+        Command::Rollback {
+            name,
+            flavor,
+            max_unpacked,
+        } => rollback_command(reporter, &name, flavor.as_deref(), max_unpacked)?,
         Command::Savedvars { flavor, clean } => {
             savedvars_command(reporter, flavor.as_deref(), clean)?
         }
@@ -1103,11 +1146,12 @@ fn add_command(
     source: &str,
     flavor: Option<&str>,
     dry_run: bool,
+    max_unpacked: Option<u64>,
 ) -> Result<(), String> {
     let spec = SourceSpec::parse(source).map_err(|error| error.to_string())?;
     let mut warnings = Vec::new();
     if !dry_run {
-        let engine = engine_for(flavor, &mut warnings)?;
+        let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
         let folder_name = engine.flavor.folder_name();
         let (pick, outcome) = install_from_source(reporter, &engine, &spec, &mut warnings)?;
         // The same companions as `add <file.zip>`: the running-client warning (task 038), the
@@ -1409,6 +1453,14 @@ fn engine_for(spec: Option<&str>, warnings: &mut Vec<String>) -> Result<Engine, 
     Engine::new(flavor).map_err(|error| error.to_string())
 }
 
+/// The engine with the `--max-unpacked` bound when one was given (task 039), else as it is.
+fn with_bound(engine: Engine, max_unpacked: Option<u64>) -> Engine {
+    match max_unpacked {
+        Some(bytes) => engine.with_max_unpacked(bytes),
+        None => engine,
+    }
+}
+
 /// `mrgl add <file.zip> --flavor <id>`: the fourth source of D-002, a zip in hand, through the install
 /// engine; `--dry-run` stages the zip, says what it would install and writes nothing. A client running from
 /// the flavor folder is a warning line and `client_warning` in the JSON (task 038), never a refusal.
@@ -1417,9 +1469,10 @@ fn add_zip(
     source: &str,
     flavor: Option<&str>,
     dry_run: bool,
+    max_unpacked: Option<u64>,
 ) -> Result<(), String> {
     let mut warnings = Vec::new();
-    let engine = engine_for(flavor, &mut warnings)?;
+    let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
     let zip =
         std::path::absolute(source).map_err(|error| format!("resolving {source}: {error}"))?;
     let zip_name = zip
@@ -1836,9 +1889,14 @@ fn mark_line(mark: &Mark, marked: &Marked, folder_name: &str) -> (Kind, String) 
 /// `mrgl rollback <name> --flavor <id>` (task 022): the previous version's zip from the cache through the
 /// install engine, then a pin at that version. The JSON document carries the addon as it is now: the
 /// version rolled back to, the version rolled back from as the previous one, and the pin.
-fn rollback_command(reporter: &Reporter, name: &str, flavor: Option<&str>) -> Result<(), String> {
+fn rollback_command(
+    reporter: &Reporter,
+    name: &str,
+    flavor: Option<&str>,
+    max_unpacked: Option<u64>,
+) -> Result<(), String> {
     let mut warnings = Vec::new();
-    let engine = engine_for(flavor, &mut warnings)?;
+    let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
     let folder_name = engine.flavor.folder_name();
     if !reporter.json {
         reporter.say(
@@ -1911,6 +1969,7 @@ fn backup_command(
     list: bool,
     restore: Option<PathBuf>,
     yes: bool,
+    max_unpacked: Option<u64>,
 ) -> Result<(), String> {
     let mut warnings = Vec::new();
     let folder = flavor_folder(spec, None, &mut warnings)?;
@@ -2012,8 +2071,9 @@ fn backup_command(
                 return Ok(());
             }
         }
-        let restored =
-            backup::restore_wtf(&flavor, &zip, &backups).map_err(|error| error.to_string())?;
+        let bound = max_unpacked.unwrap_or(zip_entry::MAX_UNPACKED);
+        let restored = backup::restore_wtf_bounded(&flavor, &zip, &backups, bound)
+            .map_err(|error| error.to_string())?;
         if reporter.json {
             reporter.document(serde_json::json!({
                 "kind": "restore",

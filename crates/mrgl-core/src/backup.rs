@@ -463,7 +463,21 @@ pub struct Restored {
 /// aside folder stays where it is and the error names it ([`Error::RestoreRevertFailed`]). A cleanup zip of
 /// the SavedVariables (`SavedVariables-<date>.zip`, task 025) is refused before anything else: it holds a
 /// few files, not a `WTF` folder, and is unzipped into `WTF` by hand ([`Error::NotAWtfBackup`]).
+/// The zip is bounded by [`zip_entry::MAX_UNPACKED`]; [`restore_wtf_bounded`] takes another bound.
 pub fn restore_wtf(flavor: &Flavor, zip: &Path, backups: &Path) -> Result<Restored> {
+    restore_wtf_bounded(flavor, zip, backups, zip_entry::MAX_UNPACKED)
+}
+
+/// [`restore_wtf`] with a bound on what the zip unpacks to (task 039; `backup --restore
+/// --max-unpacked`): a zip whose entries declare more is refused with [`Error::ZipTooLarge`] before
+/// anything moves; one that unpacks past the bound or past an entry's declared size while it is written
+/// fails the restore like any other write ([`Error::RestoreFailed`], the bound's clause as the reason).
+pub fn restore_wtf_bounded(
+    flavor: &Flavor,
+    zip: &Path,
+    backups: &Path,
+    max_unpacked: u64,
+) -> Result<Restored> {
     if zip.file_name().is_some_and(|name| {
         name.to_string_lossy()
             .to_ascii_lowercase()
@@ -474,7 +488,7 @@ pub fn restore_wtf(flavor: &Flavor, zip: &Path, backups: &Path) -> Result<Restor
         });
     }
     client::ensure_client_not_running(flavor)?;
-    let (mut archive, entries) = checked_entries(zip)?;
+    let (mut archive, entries) = checked_entries(zip, max_unpacked)?;
     let wtf = wtf_dir(flavor);
     let io = |context: &'static str, path: &Path, source| Error::Io {
         context,
@@ -491,7 +505,8 @@ pub fn restore_wtf(flavor: &Flavor, zip: &Path, backups: &Path) -> Result<Restor
     } else {
         None
     };
-    match unpack(&mut archive, &entries, &wtf) {
+    let mut unpacked = zip_entry::Unpacked::new(zip, ZipRole::Backup, max_unpacked);
+    match unpack(&mut archive, &entries, &wtf, &mut unpacked) {
         Ok((files, folders)) => Ok(Restored {
             zip: zip.to_path_buf(),
             files,
@@ -499,6 +514,12 @@ pub fn restore_wtf(flavor: &Flavor, zip: &Path, backups: &Path) -> Result<Restor
             aside,
         }),
         Err(reason) => {
+            // The bound's refusal (task 039) gives its own clause; anything else is the I/O error.
+            let reason = match zip_entry::refusal(reason) {
+                Ok(Error::ZipTooLarge { excess, .. }) => excess.to_string(),
+                Ok(other) => other.to_string(),
+                Err(reason) => reason.to_string(),
+            };
             let _ = fs::remove_dir_all(&wtf);
             let reverted = match &aside {
                 Some(aside) => !wtf.exists() && move_tree(aside, &wtf).is_ok(),
@@ -521,7 +542,10 @@ pub fn restore_wtf(flavor: &Flavor, zip: &Path, backups: &Path) -> Result<Restor
 
 /// Opens a backup and checks every entry before anything is written ([`zip_entry::checked_entries`]):
 /// every name a relative path under `WTF`, no symbolic link, every entry readable.
-fn checked_entries(zip: &Path) -> Result<(ZipArchive<BufReader<File>>, Vec<CheckedEntry>)> {
+fn checked_entries(
+    zip: &Path,
+    max_unpacked: u64,
+) -> Result<(ZipArchive<BufReader<File>>, Vec<CheckedEntry>)> {
     let unreadable = |reason: String| Error::ZipUnreadable {
         role: ZipRole::Backup,
         path: zip.to_path_buf(),
@@ -538,16 +562,18 @@ fn checked_entries(zip: &Path) -> Result<(ZipArchive<BufReader<File>>, Vec<Check
     };
     let mut archive =
         ZipArchive::new(BufReader::new(file)).map_err(|reason| unreadable(reason.to_string()))?;
-    let entries = zip_entry::checked_entries(&mut archive, zip, ZipRole::Backup)?;
+    let entries = zip_entry::checked_entries(&mut archive, zip, ZipRole::Backup, max_unpacked)?;
     Ok((archive, entries))
 }
 
 /// Unpacks the checked entries under a fresh `WTF`: the folders, then every file with its modification
-/// time from the extended timestamp field, else from the zip's own date fields read as local time.
+/// time from the extended timestamp field, else from the zip's own date fields read as local time. Every
+/// file is read through the bound's counter (task 039).
 fn unpack(
     archive: &mut ZipArchive<BufReader<File>>,
     entries: &[CheckedEntry],
     wtf: &Path,
+    unpacked: &mut zip_entry::Unpacked,
 ) -> io::Result<(usize, usize)> {
     let context = |what: &str, path: &Path, error: io::Error| {
         io::Error::new(error.kind(), format!("{what} {}: {error}", path.display()))
@@ -566,11 +592,16 @@ fn unpack(
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| context("creating", parent, error))?;
         }
-        let mut entry = archive.by_index(checked.index).map_err(io::Error::other)?;
+        let entry = archive.by_index(checked.index).map_err(io::Error::other)?;
         let modified = entry_modified(&entry);
         let file = File::create(&path).map_err(|error| context("writing", &path, error))?;
         let mut output = BufWriter::new(file);
-        io::copy(&mut entry, &mut output).map_err(|error| context("writing", &path, error))?;
+        io::copy(&mut unpacked.entry(checked, entry), &mut output).map_err(|error| {
+            match zip_entry::refusal(error) {
+                Ok(refusal) => io::Error::other(refusal),
+                Err(error) => context("writing", &path, error),
+            }
+        })?;
         let file = output
             .into_inner()
             .map_err(|error| context("writing", &path, error.into_error()))?;

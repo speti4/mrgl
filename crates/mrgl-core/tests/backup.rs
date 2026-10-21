@@ -505,3 +505,99 @@ fn the_fixture_tree_is_synthetic_and_small() {
     assert!(snapshot.contains_key("Account/MRGLFIXTURE/Fixture Realm/Mrgltest/AddOns.txt"));
     assert!(snapshot.contains_key("Account/MRGLFIXTURE/SavedVariables/MrglFixture.lua"));
 }
+
+// --- task 039: the bound on the unpacked size of a zip ---
+
+use mrgl_core::zip_entry::Excess;
+
+fn fixture_zip(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/zips")
+        .join(name)
+}
+
+#[test]
+fn a_backup_declaring_more_than_the_bound_is_refused_before_anything_moves() {
+    let root = temp_game_root("declares-too-much", true);
+    let flavor = read(&root);
+    let wtf = root.join("_forever_").join(WTF_DIR);
+    let before = snapshot(&wtf);
+    let backups = backups_of(&root);
+    let zip = fixture_zip("wtf-declares-too-much.zip");
+    let error = backup::restore_wtf(&flavor, &zip, &backups).expect_err("refused");
+    assert!(
+        matches!(
+            &error,
+            Error::ZipTooLarge {
+                role: ZipRole::Backup,
+                path,
+                excess: Excess::Declared { .. },
+            } if path == &zip
+        ),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf), before, "nothing moved");
+    assert!(!backups.exists(), "nothing moved aside");
+
+    // The bound lowered under the fixture tree's own backup refuses it the same way.
+    let own = backup::backup_wtf(&flavor, &backups).expect("a backup");
+    let error = backup::restore_wtf_bounded(&flavor, &own.zip, &backups, own.bytes - 1)
+        .expect_err("one byte short");
+    assert!(
+        matches!(
+            &error,
+            Error::ZipTooLarge {
+                excess: Excess::Declared { declared, .. },
+                ..
+            } if *declared == own.bytes
+        ),
+        "{error}"
+    );
+    assert!(
+        backup::list_backups(&backups)
+            .expect("a listing")
+            .aside
+            .is_empty()
+    );
+    assert_eq!(snapshot(&wtf), before);
+
+    // A higher bound for a backup the user trusts: the real bytes are a few.
+    let restored = backup::restore_wtf_bounded(&flavor, &zip, &backups, 4 << 30)
+        .expect("restored under 4 GiB");
+    assert_eq!(restored.files, 1);
+    assert_eq!(
+        std::fs::read(wtf.join("Config.wtf")).expect("Config.wtf"),
+        b"SET portal \"EU\"\r\n"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_backup_that_lies_about_its_size_fails_the_restore_and_wtf_comes_back() {
+    let root = temp_game_root("lies-about-its-size", true);
+    let flavor = read(&root);
+    let wtf = root.join("_forever_").join(WTF_DIR);
+    let before = snapshot(&wtf);
+    let backups = backups_of(&root);
+    let zip = fixture_zip("wtf-lies-about-its-size.zip");
+    let error = backup::restore_wtf(&flavor, &zip, &backups).expect_err("refused");
+    assert!(
+        matches!(&error, Error::RestoreFailed { path, .. } if path == &zip),
+        "{error}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "restoring {} failed and WTF is as it was: the entry `Config.wtf` unpacks to more than the 16 B it declares, so the bound of 2.0 GB cannot hold (0 B written, then removed)",
+            zip.display()
+        )
+    );
+    assert_eq!(snapshot(&wtf), before, "the previous WTF is back");
+    assert!(
+        backup::list_backups(&backups)
+            .expect("a listing")
+            .aside
+            .is_empty()
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

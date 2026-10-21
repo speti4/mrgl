@@ -245,6 +245,17 @@ pub enum Error {
         "not a WTF backup: {path} holds the SavedVariables a cleanup moved; unzip it into the WTF folder by hand to put them back"
     )]
     NotAWtfBackup { path: PathBuf },
+
+    /// A zip that unpacks to more than the bound (task 039, [`crate::zip_entry::MAX_UNPACKED`] unless
+    /// `--max-unpacked` raises it): its entries declare more, found before anything is written, or it
+    /// unpacked past the bound or past an entry's declared size while being written, and what it wrote was
+    /// removed. The role says whose zip it is (the engine's, a restore's: [`crate::zip_entry`]).
+    #[error("refused {path}: {excess}")]
+    ZipTooLarge {
+        role: crate::zip_entry::ZipRole,
+        path: PathBuf,
+        excess: crate::zip_entry::Excess,
+    },
 }
 
 /// The crate's result type.

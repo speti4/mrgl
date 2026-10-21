@@ -1327,3 +1327,153 @@ fn a_rollback_without_a_previous_version_or_its_zip_is_an_error_and_changes_noth
     assert_eq!(tree_hashes(&sandbox.addon("OneFolder")), addon_before);
     assert!(sandbox.staging_entries().is_empty());
 }
+
+// --- task 039: the bound on the unpacked size of a zip ---
+
+use mrgl_core::zip_entry::Excess;
+
+/// The uncompressed sizes a fixture zip's files declare, summed.
+fn declared_size(zip_name: &str) -> u64 {
+    let file = std::fs::File::open(zip(zip_name)).expect("the fixture");
+    let mut archive = zip::ZipArchive::new(file).expect("a zip");
+    (0..archive.len())
+        .map(|index| archive.by_index(index).expect("an entry").size())
+        .sum()
+}
+
+#[test]
+fn a_zip_declaring_more_than_the_bound_is_refused_before_anything_is_written() {
+    let sandbox = Sandbox::new("declares-too-much");
+    let name = "declares-too-much-1.0.0.zip";
+    let error = sandbox
+        .engine
+        .install(&zip(name), &metadata(name))
+        .expect_err("refused");
+    assert!(
+        matches!(
+            &error,
+            Error::ZipTooLarge {
+                excess: Excess::Declared { .. },
+                ..
+            }
+        ),
+        "{error}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "refused {}: it declares 3.0 GB unpacked, more than the bound of 2.0 GB; nothing was written, and `--max-unpacked <size>` raises the bound for a zip you trust",
+            zip(name).display()
+        )
+    );
+    assert!(sandbox.folders().is_empty());
+    assert!(sandbox.staging_entries().is_empty());
+    assert!(!sandbox.engine.home.state_path().exists());
+
+    // A higher bound for a zip the user trusts: the declared size passes, the real bytes are a few.
+    let installed = sandbox
+        .engine
+        .clone()
+        .with_max_unpacked(4 << 30)
+        .install(&zip(name), &metadata(name))
+        .expect("installed under 4 GiB");
+    assert_eq!(installed.folders, ["DeclaresTooMuch"]);
+    assert_eq!(
+        read(&sandbox.addon("DeclaresTooMuch").join("core.lua")),
+        "-- DeclaresTooMuch 1.0.0\n"
+    );
+    assert!(sandbox.staging_entries().is_empty());
+}
+
+#[test]
+fn a_zip_that_lies_about_its_size_is_refused_while_writing_and_staging_stays_empty() {
+    let sandbox = Sandbox::new("lies-about-its-size");
+    let name = "lies-about-its-size-1.0.0.zip";
+    let error = sandbox
+        .engine
+        .install(&zip(name), &metadata(name))
+        .expect_err("refused");
+    match &error {
+        Error::ZipTooLarge {
+            excess: Excess::Entry {
+                entry, declared, ..
+            },
+            ..
+        } => {
+            assert_eq!(entry, "LiesAboutItsSize/core.lua");
+            assert_eq!(*declared, 16);
+        }
+        other => panic!("{other}"),
+    }
+    assert!(
+        error.to_string().ends_with(
+            "the entry `LiesAboutItsSize/core.lua` unpacks to more than the 16 B it declares, so the bound of 2.0 GB cannot hold (109 B written, then removed)"
+        ),
+        "{error}"
+    );
+    assert!(sandbox.folders().is_empty());
+    assert!(
+        sandbox.staging_entries().is_empty(),
+        "what was written is removed with the staging folder"
+    );
+    assert!(!sandbox.engine.home.state_path().exists());
+}
+
+#[test]
+fn a_normal_zip_installs_up_to_a_bound_of_exactly_its_size() {
+    let sandbox = Sandbox::new("bound-exact");
+    let name = "one-folder-1.0.0.zip";
+    let size = declared_size(name);
+    let error = sandbox
+        .engine
+        .clone()
+        .with_max_unpacked(size - 1)
+        .install(&zip(name), &metadata(name))
+        .expect_err("one byte short");
+    assert!(
+        matches!(
+            &error,
+            Error::ZipTooLarge {
+                excess: Excess::Declared { declared, limit },
+                ..
+            } if *declared == size && *limit == size - 1
+        ),
+        "{error}"
+    );
+    assert!(sandbox.staging_entries().is_empty());
+    let installed = sandbox
+        .engine
+        .clone()
+        .with_max_unpacked(size)
+        .install(&zip(name), &metadata(name))
+        .expect("at the bound");
+    assert_eq!(installed.version, "1.0.0");
+    // The default bound, as every other test here installs.
+    sandbox.install("one-folder-1.1.0.zip");
+}
+
+#[test]
+fn a_rollback_past_the_bound_is_refused_and_changes_nothing() {
+    let sandbox = Sandbox::new("rollback-bound");
+    sandbox.install("one-folder-1.0.0.zip");
+    sandbox.install("one-folder-1.1.0.zip");
+    let before = std::fs::read(sandbox.engine.home.state_path()).expect("the sidecar");
+    let addon_before = tree_hashes(&sandbox.addon("OneFolder"));
+    let kept = sandbox.engine.home.cached_zip("OneFolder", "1.0.0");
+    let error = sandbox
+        .engine
+        .clone()
+        .with_max_unpacked(100)
+        .rollback("OneFolder")
+        .expect_err("past a bound of 100 bytes");
+    assert!(
+        matches!(&error, Error::ZipTooLarge { path, .. } if path == &kept),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read(sandbox.engine.home.state_path()).expect("the sidecar"),
+        before
+    );
+    assert_eq!(tree_hashes(&sandbox.addon("OneFolder")), addon_before);
+    assert!(sandbox.staging_entries().is_empty());
+}
