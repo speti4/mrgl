@@ -1,6 +1,7 @@
 // The view (task 017): the flavor navigation, the addon list, the search, "update all", the voice's two
-// places and the theme. It reads `window.Data` and draws what it gets; it does not know whether the rows
-// are made up (`mock-data.js`) or the core's answers (task 009), and it never composes a murloc line.
+// places and the theme; the game folder chooser and "copy diagnostics" (task 009). It reads `window.Data`
+// and draws what it gets; it does not know whether the rows are made up (`mock-data.js`) or the core's
+// answers (`data.js`), and it never composes a murloc line.
 (function () {
   "use strict";
 
@@ -172,7 +173,9 @@
 
     $("flavor-name").textContent = flavor.name || Flavors.friendlyName(flavor.id);
     const meta = [flavor.folder];
-    if (flavor.version) meta.push(`build ${flavor.version}`);
+    // Where the build was read (task 019): `.build.info`, or the client exe when the file has no row.
+    if (flavor.version) meta.push(`build ${flavor.version}${flavor.version_file ? ` from ${flavor.version_file}` : ""}`);
+    else meta.push("build unknown");
     if (flavor.interface) meta.push(`interface ${flavor.interface}`);
     if (flavor.curse_client) meta.push("managed by the CurseForge app");
     $("flavor-meta").textContent = meta.join(" · ");
@@ -215,6 +218,8 @@
 
     row.querySelector(".name").textContent = addon.name || addon.folder;
     row.querySelector(".folder").textContent = addon.name && addon.name !== addon.folder ? addon.folder : "";
+    const missing = addon.missing || [];
+    row.querySelector(".missing").textContent = missing.length ? `missing: ${missing.join(", ")}` : "";
 
     row.querySelector(".version-now").textContent = addon.version || "—";
     row.querySelector(".version-next").textContent = addon.update ? `→ ${addon.update.version}` : "";
@@ -236,9 +241,14 @@
     const forever = row.querySelector(".forever");
     forever.className = "forever";
     if (addon.forever) {
-      forever.classList.add(`forever-${addon.forever.build}`);
-      forever.textContent = addon.forever.note ? `${addon.forever.build}: ${addon.forever.note}` : addon.forever.build;
-      forever.title = `Forever build: ${forever.textContent}`;
+      const info = addon.forever;
+      forever.classList.add(`forever-${info.build}`);
+      forever.classList.toggle("forever-stale", Boolean(info.stale));
+      forever.textContent = info.note ? `${info.build}: ${info.note}` : info.build;
+      const facts = [`Forever build: ${forever.textContent}`];
+      if (info.verified) facts.push(`verified ${info.verified}${info.stale ? ", stale" : ""}`);
+      if (info.source) facts.push(info.source);
+      forever.title = facts.join("\n");
     } else {
       forever.textContent = "";
     }
@@ -288,23 +298,86 @@
     }
   });
 
+  // ---- the game folder: the chooser, and the flavors of the folder it answers with
+
+  // Draws an answer of `Data.flavors()` or of a chosen folder: the root, the flavors, the banner. The chosen
+  // flavor stays when the new answer still has it.
+  function applyAnswer(answer) {
+    root = answer.root || null;
+    flavors = answer.flavors || [];
+    if (!flavors.some((flavor) => flavor.id === selectedId)) selectedId = Flavors.defaultId(flavors);
+    $("choose-root").title = root ? `Game folder: ${root}` : "No game folder yet";
+    if (answer.message) {
+      say(answer.message);
+      const shown = heard(answer.message);
+      $("empty-murloc").textContent = shown.murloc;
+      $("empty-plain").textContent = shown.plain;
+    }
+    renderNav();
+    renderFlavor();
+  }
+
+  async function chooseRoot() {
+    try {
+      const choice = await Data.chooseRoot();
+      if (choice && choice.flavors) applyAnswer(choice.flavors);
+      else if (choice && choice.message) say(choice.message);
+    } catch (error) {
+      say({ kind: "error", murloc: "", plain: `choosing the game folder failed: ${error}` });
+    }
+  }
+
+  $("choose-root").addEventListener("click", chooseRoot);
+  $("empty-choose").addEventListener("click", chooseRoot);
+
+  // ---- copy diagnostics: the doctor's report (task 024) onto the clipboard
+
+  async function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) {
+        // Falls through to the selection copy below.
+      }
+    }
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.className = "offscreen";
+    document.body.append(area);
+    area.select();
+    let copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } catch (_) {
+      copied = false;
+    }
+    area.remove();
+    return copied;
+  }
+
+  $("copy-diagnostics").addEventListener("click", async () => {
+    const button = $("copy-diagnostics");
+    button.disabled = true;
+    try {
+      const report = await Data.diagnostics();
+      const copied = report.text ? await copyText(report.text) : false;
+      say(copied ? report.copied : report.failed);
+    } catch (error) {
+      say({ kind: "error", murloc: "", plain: `the diagnostics failed: ${error}` });
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   // ---- start: the version, then the flavors and the banner
 
   async function start() {
     try {
       const [version, answer] = await Promise.all([Data.version(), Data.flavors()]);
       $("version").textContent = `mrgl ${version}`;
-      root = answer.root;
-      flavors = answer.flavors || [];
-      selectedId = Flavors.defaultId(flavors);
-      if (answer.message) {
-        say(answer.message);
-        const shown = heard(answer.message);
-        $("empty-murloc").textContent = shown.murloc;
-        $("empty-plain").textContent = shown.plain;
-      }
-      renderNav();
-      renderFlavor();
+      applyAnswer(answer);
     } catch (error) {
       // A failed answer still leaves a readable window: the plain line says what went wrong.
       say({ kind: "error", murloc: "", plain: `the window could not talk to mrgl: ${error}` });

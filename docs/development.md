@@ -86,8 +86,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   addon, `account-wide` or `realm / character`, never the account folder's name, which `--json` carries,
   `orphan` or `client`) and a summary, `--clean` moves the orphans; `--json` is the `savedvars` or the
   `savedvars-clean` document.
-- `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
-  capability file and the icon.
+- `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`: the IPC commands in
+  `commands.rs`, the flavor list in `list.rs`, task 009), the static UI under `ui/`, the capability file and
+  the icon; see [The UI](#the-ui).
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
   [Forever notes](#forever-notes)).
 - `lists/` — shareable addon lists in the format `mrgl export` writes (`list_file`, task 015), read by
@@ -352,17 +353,48 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   wago, wowi, curseforge, zip, linked; a dashed badge is a source known only from a TOC hint).
 - `main.js` is the view: it reads `window.Data`, draws what it gets and never composes a murloc line. It does
   not know whether the rows are made up.
+- `data.js` is the window's data module (task 009): the contract behind `window.Data`, each call one Tauri
+  command of `src/commands.rs` (below). `index.html` loads it and nothing else for the data.
 - `mock-data.js` is the data module of the sketch, made-up rows in the shape the core answers with; its header
-  comment is the contract (`Data.version()`, `Data.flavors()`, `Data.updateAll(flavorId, report)`, a flavor
-  as `flavor.rs` serializes it plus its friendly name and addons, an addon as `scan.rs` gives it plus the
-  facts of the sidecar, the sources, the update check, the Forever notes and pin / ignore). Task 009 adds the
-  module that invokes the Tauri commands behind the same `window.Data`, `index.html` loads that one instead,
-  and the layout stays; the mock stays for a look at the page without the core.
+  comment is the contract (`Data.version()`, `Data.flavors()`, `Data.chooseRoot()`, `Data.diagnostics()`,
+  `Data.resolve(flavorId, folder)`, `Data.updateAll(flavorId, report)`; a flavor as `flavor.rs` serializes
+  it plus its friendly name, the source of its build and its addons; an addon as `scan.rs` gives it plus the
+  facts of the sidecar, the sources, the cached release list, the Forever notes, pin / ignore and the
+  missing dependencies). For a look at the page without the core, open `crates/mrgl-app/ui/index.html` in a
+  browser: without the Tauri global, `data.js` writes the mock's script tag instead, and the made-up rows
+  show (the folder dialog and the clipboard need the window).
 - The pure modules, each with a test file of the same name under `tests/ui/`: `state.js` (an addon's one state
   from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels),
   `search.js` (every word of the query in the name, folder, source kind or source id), `theme.js` (auto,
   light, dark), `flavors.js` (the navigation order and the friendly names) and `voice.js` (the two lines and
   where a message goes, see [nerglish.md](nerglish.md), "The window").
+
+The IPC commands (`src/commands.rs`, task 009) are thin wrappers over the core and over the plain functions
+of `src/list.rs`, which take the game root and the mrgl home folder as arguments, so `tests/flavor_list.rs`
+checks the rows on a made-up game folder without a window. Every message they return is
+`{ kind, murloc, plain }`: the core's voice kind (`Kind::as_str`) picks the place in the window, and a
+serious voice sends the murloc line empty. Whatever reads the disk or the network runs on a blocking thread.
+
+- `app_version`: the version for the status bar.
+- `flavors`: the game root as every CLI command resolves it (`MRGL_ROOT`, the remembered root, then the
+  discovery; a discovered root is used and not remembered), its flavor folders and their rows, and a banner.
+  A row joins the scan (folder, the TOC's title without color escapes, a junction), the flavor's state
+  sidecar (managed, the installed version, the source, pinned, ignored), a TOC hint for an unmanaged addon
+  (Wago, then WoWInterface, then CurseForge, drawn as a guess), the dependency check (`missing`), and on
+  every row of the Forever flavor its Forever status (`build`, `note`, `verified`, `source`, `stale`). The
+  list never goes online: "update available" is the GitHub source's cached release list (the one `add`
+  leaves), read through an `Http` that answers every request with "not modified", whose current release on
+  the entry's channel is not the installed version; without a cached list no update is known.
+- `choose_root`: the folder dialog (`tauri-plugin-dialog`, called from Rust); a game folder, or a flavor
+  folder whose parent is one, is remembered in `config.json` as `mrgl root <folder>` does and answered with
+  its flavors; a cancelled dialog answers nothing.
+- `diagnostics`: the doctor's report (`mrgl_core::doctor`, see [The doctor](#the-doctor)) as the text
+  `mrgl doctor` prints, with the message for a copy that worked and one for a copy the clipboard refused;
+  the view writes it with `navigator.clipboard` (a selection copy as the fallback), so no clipboard plugin
+  joins.
+- `resolve`: a managed addon through its source, for the flavor's build and on its channel: the source's
+  own `Pick`, the handover to the update actions of task 010.
+- `update_all`: answers that the update actions are task 010, in the voice.
 
 The application icon is generated once by `scripts\make-icon.py` (Pillow; run it as
 `uv run --with pillow python -I scripts\make-icon.py`) and committed: `icon.ico` for the

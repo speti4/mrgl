@@ -1,9 +1,15 @@
-// Made-up data in the shape the core will answer with (task 017). The view (`main.js`) reads `window.Data`
-// and never knows whether the rows are made up: task 009 replaces this file with one that invokes the Tauri
-// commands behind the same three calls, and the layout stays as it is.
+// Made-up data in the shape the core answers with (task 017). The view (`main.js`) reads `window.Data`
+// and never knows whether the rows are made up: in the window `data.js` answers through the Tauri commands
+// (task 009); opened in a plain browser, `data.js` loads this module instead, for a look at the layout
+// without the core. The contract, which `data.js` keeps:
 //
-//   Data.version()                  -> Promise<string>            the version for the status bar
-//   Data.flavors()                  -> Promise<{ root, flavors, message }>
+//   Data.version()                   -> Promise<string>            the version for the status bar
+//   Data.flavors()                   -> Promise<{ root, root_origin, flavors, message }>
+//   Data.chooseRoot()                -> Promise<{ flavors, message }>  the folder dialog: the answer of
+//                                       `flavors()` for the chosen root, or a message, or both null
+//   Data.diagnostics()               -> Promise<{ text, copied, failed }>  the doctor's text (task 024) and
+//                                       the message for a copy that worked and for one that did not
+//   Data.resolve(flavorId, folder)   -> Promise<{ pick, message }>  the source's `Pick` (task 010 builds on it)
 //   Data.updateAll(flavorId, report) -> Promise<void>              `report(message)` per step, in order
 //
 // A message is `{ kind, murloc, plain }` as `mrgl_core::voice` says it: the kind picks the murloc line, the
@@ -11,16 +17,25 @@
 // below is a copy of `voice.rs` for the sketch only: the real answers come from Rust, and nothing in the view
 // composes a murloc line.
 //
-// A flavor is `Flavor` of `flavor.rs` plus its friendly name and its scanned addons; an addon is `Addon` of
-// `scan.rs` reduced to what a row shows, plus the facts the sidecar (004), the sources (003), the update
-// check (006), the Forever notes (011) and pin / ignore (021) add:
+// A flavor is `Flavor` of `flavor.rs` plus its friendly name and its scanned addons:
+//
+//   { id, name, folder,                         the `.flavor.info` id, the friendly name, the folder's name
+//     version, interface,                       the installed build and its interface number, or null
+//     version_source, version_file,             019: build-info | client-exe, and the file it was read from
+//     curse_client, warnings, addons }          the CurseForge app's marker; what reading the flavor met
+//
+// An addon is `Addon` of `scan.rs` reduced to what a row shows, plus the facts the sidecar (004), the
+// sources (003), the cached release list, the Forever notes (011), pin / ignore (021) and the dependency
+// check (029) add:
 //
 //   { folder, name, version, linked,            from the scan: the folder, the TOC's plain title and version
 //     source: { kind, id } | null,              github | wago | wowi | curseforge | zip | linked
 //     managed, guessed,                         a sidecar entry; a source known only from a TOC hint
-//     update: { version } | null,               the latest release for the flavor, when newer
+//     update: { version, release, prerelease } | null,  the cached current release, when not the installed one
 //     pinned: string | null, ignored,           021
-//     forever: { build, note } | null }         011: build yes | no | unknown, a curated note or null
+//     forever: { build, note, kind, verified, source, stale } | null,  011, on every row of Forever only:
+//                                               build yes | no | unknown, a curated note or null
+//     missing: [string] }                       029: the required dependencies no folder answers
 //
 // The view derives the row's one state from these flags (`state.js`); the data never names a state.
 (function (root, factory) {
@@ -62,6 +77,7 @@
         pinned: null,
         ignored: false,
         forever: null,
+        missing: [],
       },
       extra
     );
@@ -82,6 +98,8 @@
       name: "retail",
       folder: "_retail_",
       version: "12.1.5.70448",
+      version_source: "build-info",
+      version_file: ".build.info",
       interface: 120105,
       curse_client: true,
       warnings: [],
@@ -101,6 +119,8 @@
       name: "classic",
       folder: "_classic_",
       version: "5.5.4.70531",
+      version_source: "build-info",
+      version_file: ".build.info",
       interface: 50504,
       curse_client: true,
       warnings: [],
@@ -118,14 +138,16 @@
       name: "era",
       folder: "_classic_era_",
       version: "1.15.9.70110",
+      version_source: "client-exe",
+      version_file: "WowClassic.exe",
       interface: 11509,
       curse_client: true,
-      warnings: ["build unknown: no row for wow_classic_era in .build.info"],
+      warnings: ["no row for wow_classic_era in .build.info: the build was read from WowClassic.exe"],
       addons: [
         addon("Questie", "Questie", "11.2.3", { source: github("Questie/Questie"), managed: true }),
         addon("pfQuest", "pfQuest", "6.4.1", { source: github("shagu/pfQuest"), managed: true, update: { version: "6.5.0" } }),
         addon("Bartender4", "Bartender4", "4.15.7", { source: curseforge("4525"), guessed: true }),
-        addon("RaidLogger", "Raid Logger", "0.9", {}),
+        addon("RaidLogger", "Raid Logger", "0.9", { missing: ["LibRaidLog"] }),
       ],
     },
     {
@@ -133,6 +155,8 @@
       name: "forever",
       folder: "_forever_",
       version: "1.60.1.70245",
+      version_source: "build-info",
+      version_file: ".build.info",
       interface: 16001,
       curse_client: false,
       warnings: [],
@@ -146,7 +170,7 @@
         addon("Leatrix_Plus", "Leatrix Plus", "5.5.26", { source: curseforge("289009"), guessed: true, forever: { build: "no", note: null } }),
         addon("TomTom", "TomTom", "v5.5.4-mists", { source: wago("4N2mZ3KL"), managed: true, update: { version: "v5.5.5-forever" }, forever: { build: "yes", note: null } }),
         addon("RaidLogger", "Raid Logger", "0.9", { forever: { build: "unknown", note: null } }),
-        addon("ClassicCastbars", "ClassicCastbars", "v3.1.2", { source: zip("ClassicCastbars-v3.1.2.zip"), managed: true, forever: { build: "no", note: "the castbar needs the combat log it no longer gets" } }),
+        addon("ClassicCastbars", "ClassicCastbars", "v3.1.2", { source: zip("ClassicCastbars-v3.1.2.zip"), managed: true, forever: { build: "no", note: "the castbar needs the combat log it no longer gets", verified: "2026-06-01", stale: true } }),
       ],
     },
   ];
@@ -155,10 +179,44 @@
     return Promise.resolve("0.1.0");
   }
 
+  // The folder dialog needs the window; the browser look answers with what it would do.
+  function chooseRoot() {
+    return Promise.resolve({
+      flavors: null,
+      message: say("warning", "the folder dialog opens in the window: run `cargo run -p mrgl-app`"),
+    });
+  }
+
+  function diagnostics() {
+    const text = [
+      "mrgl: 0.1.0",
+      `root: ${ROOT} (remembered)`,
+      "home: ~\\AppData\\Local\\mrgl",
+      "webview2: unknown",
+      "github rate limit: unknown (made-up data)",
+      "api keys: MRGL_GITHUB_TOKEN not set",
+    ].join("\n");
+    return Promise.resolve({
+      text,
+      copied: say("success", "diagnostics of 4 flavors copied, nothing to look at; paste them into a bug report"),
+      failed: say("error", "the clipboard took no text; run `mrgl doctor` and copy its lines instead"),
+    });
+  }
+
+  function resolve(flavorId, folder) {
+    const flavor = flavors.find((item) => item.id === flavorId);
+    const row = flavor && flavor.addons.find((item) => item.folder === folder);
+    if (!row || !row.managed) return Promise.resolve({ pick: null, message: say("error", `${folder} is not managed by mrgl`) });
+    const version = row.update ? row.update.version : row.version;
+    const pick = { source: `${row.source.kind}:${row.source.id}`, release: version, version, asset: `${folder}-${version}.zip`, guess: false };
+    return Promise.resolve({ pick, message: say("success", `${row.name} ${row.version} → ${version}`) });
+  }
+
   function flavors_() {
     const count = flavors.reduce((sum, flavor) => sum + flavor.addons.length, 0);
     return Promise.resolve({
       root: ROOT,
+      root_origin: "remembered",
       flavors,
       message: say("banner", `${flavors.length} flavors under ${ROOT}, ${addons(count)}`),
     });
@@ -203,5 +261,5 @@
     report(say(held.length ? "warning" : "success", parts.join(", ")));
   }
 
-  return { version, flavors: flavors_, updateAll, settings };
+  return { version, flavors: flavors_, chooseRoot, diagnostics, resolve, updateAll, settings };
 });
