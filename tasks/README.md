@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 28 backlog (2 ready · 0 blocked · 2 waiting · 24 ideas) · 0 in progress · 19 done · 3 dropped · 5 decisions
+**State:** 30 backlog (2 ready · 0 blocked · 2 waiting · 26 ideas) · 0 in progress · 20 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -55,6 +55,7 @@ _none_
 | 040 | [add github:<owner>/<repo> installs the pick through the engine](backlog/040-add-github-installs-the-pick-through-the-engine.md) | S | 2026-10-21 |
 | 041 | [Offline resolve from the cached release list, with a warning](backlog/041-offline-resolve-from-the-cached-release-list.md) | S | 2026-10-21 |
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
+| 061 | [CI compiles the non-Windows paths of the core](backlog/061-ci-compiles-the-non-windows-paths.md) | S | 2026-10-21 |
 
 #### M2 Window MVP
 
@@ -73,12 +74,13 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 005 | [Dev addon linking: junctions for a development folder's addons; CLI link and un…](backlog/005-dev-addon-linking-with-junctions.md) | S | 2026-10-21 |
 | 014 | [Addon sets with enable and disable](backlog/014-addon-sets-with-enable-and-disable.md) | M | 2026-10-21 |
 | 015 | [Addon list export and import, and a TOC-interface versus build warning](backlog/015-list-export-import-and-interface-warning.md) | S | 2026-10-21 |
 | 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](backlog/025-savedvariables-size-and-orphan-cleanup.md) | S | 2026-10-21 |
 | 027 | [Per-character addon sets](backlog/027-per-character-addon-sets.md) | S | 2026-10-21 |
 | 028 | [Lists as discovery: a shareable list format and a Forever starter list in the r…](backlog/028-lists-as-discovery-and-forever-starter-list.md) | S | 2026-10-21 |
+| 060 | [The linked-addon refusal moves into the engine's commit](backlog/060-link-refusal-moves-into-the-engine-commit.md) | S | 2026-10-21 |
+| 062 | [link takes a single addon folder as well as a development folder](backlog/062-link-takes-a-single-addon-folder.md) | S | 2026-10-21 |
 
 #### M4 Sources
 
@@ -126,7 +128,7 @@ _none_
 | 020 | [Game root auto-discovery: the launcher's registry key and the common install fo…](done/020-game-root-auto-discovery.md) | 2026-10-21 |
 | 019 | [Build version fallback from the client exe when .build.info has no row for the …](done/019-build-version-fallback-from-the-client-exe.md) | 2026-10-21 |
 
-_9 more in `done/`._
+_10 more in `done/`._
 
 ### Decisions
 
