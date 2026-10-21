@@ -113,10 +113,7 @@ fn the_characters_are_listed_and_every_addons_txt_round_trips_byte_for_byte() {
     let labels: Vec<String> = characters.iter().map(sets::Character::label).collect();
     assert_eq!(
         labels,
-        [
-            "MRGLSETS/Fixture Realm/Mrgltest",
-            "MRGLSETS/Second Realm/Grrlwave"
-        ],
+        ["Fixture Realm/Mrgltest", "Second Realm/Grrlwave"],
         "the account's SavedVariables is no realm"
     );
     for character in &characters {
@@ -546,7 +543,7 @@ fn an_apply_to_one_character_leaves_the_other_byte_for_byte() {
     assert_eq!(applied.characters.len(), 1);
     assert_eq!(
         applied.characters[0].character.label(),
-        "MRGLSETS/Second Realm/Grrlwave"
+        "Second Realm/Grrlwave"
     );
     let after = snapshot(&wtf_of(&root));
     assert_eq!(

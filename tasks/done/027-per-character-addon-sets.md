@@ -55,12 +55,16 @@ that matches two realms is refused with the realms listed, `--realm` narrows it)
   instead of their count, so a summary can name the one character.
 - 2026-10-22 — `mrgl-cli`: `--character` and `--realm` (which requires `--character`) on `set apply` and
   `set save`; the progress line names the character as given (`applying set raid to the character
-  grrlwave of _forever_`), the summary names the one found (`applied set raid to MRGLSETS/Second
-  Realm/Grrlwave of _forever_: 3 addon lines changed`, `set raid already matches MRGLSETS/Second
+  grrlwave of _forever_`), the summary names the one found (`applied set raid to Second
+  Realm/Grrlwave of _forever_: 3 addon lines changed`, `set raid already matches Second
   Realm/Grrlwave of _forever_, nothing written`); `--json` carries the one character under `characters`.
 - 2026-10-22 — Docs: README (the `--character` usage line and the paragraph on sets), docs/development.md
   (the CLI line in "Layout" and a paragraph on the character rule, `Target` and `find_character`), the
   module docs of `sets.rs` and the CLI.
+- 2026-10-22 — CodeQL flagged the account folder's name in the data lines of `set apply` as cleartext
+  logging of sensitive information (on an older install the folder is the login name): the plain lines and
+  summaries name `<realm>/<character>` only; the account stays in `--json` and in the one error that needs
+  it, one realm and name under two accounts.
 
 ## Deviations from the plan
 
@@ -85,7 +89,7 @@ that matches two realms is refused with the realms listed, `--realm` narrows it)
   two accounts names the accounts; with the stand-in client running an apply to one character is refused
   and `WTF` is byte-equal.
 - 2026-10-22 — end to end through the exe (`crates/mrgl-cli/tests/cli.rs`): `set save raid --character
-  Mrgltest` (`saved set raid of _forever_ from MRGLSETS/Fixture Realm/Mrgltest: 4 addons (3 enabled, 1
+  Mrgltest` (`saved set raid of _forever_ from Fixture Realm/Mrgltest: 4 addons (3 enabled, 1
   disabled)`), `set apply raid --character grrlwave` (the progress, data, warning and summary lines, the
   other character's file byte-equal, Grrlwave's exact bytes), a second apply says nothing was written, the
   ambiguous name exits 1 with the realms listed and writes nothing, `--json … --realm "Second Realm"`

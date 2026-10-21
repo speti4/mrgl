@@ -292,9 +292,10 @@ impl Character {
         self.folder.join(ADDONS_TXT)
     }
 
-    /// `<account>/<realm>/<character>`, for the plain lines.
+    /// `<realm>/<character>`, for the plain lines. The account folder's name is left out: on an older
+    /// install it is the login name, and a pasted output should not carry it (`--json` has it).
     pub fn label(&self) -> String {
-        format!("{}/{}/{}", self.account, self.realm, self.name)
+        format!("{}/{}", self.realm, self.name)
     }
 }
 

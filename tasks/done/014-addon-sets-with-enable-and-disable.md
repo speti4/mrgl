@@ -103,7 +103,7 @@ verbs the CLI's existing commands make natural; the window's click is 010's or a
 ## Verification
 
 - 2026-10-22 — `cargo test --locked`: every test green. `crates/mrgl-core/tests/sets.rs` on a copy of the
-  `addon-sets` tree: both characters are listed (`MRGLSETS/Fixture Realm/Mrgltest`, `MRGLSETS/Second
+  `addon-sets` tree: both characters are listed (`Fixture Realm/Mrgltest`, `Second
   Realm/Grrlwave`, the account's `SavedVariables` not a realm) and both `AddOns.txt` round-trip byte for
   byte; a save keeps `BagSorter` and `RaidFrames` enabled, leaves out `BossTimers` and `QuestArrows`, writes
   `sets.json` under `home\wowf\` and leaves `WTF` byte-equal; a save under the same name in another case

@@ -5672,8 +5672,8 @@ fn set_save_list_show_apply_and_remove_speak_plain_lines() {
         stdout(&output).lines().collect::<Vec<_>>(),
         [
             "applying set raid to every character of _forever_",
-            "MRGLSETS/Fixture Realm/Mrgltest: BagSorter disabled",
-            "MRGLSETS/Second Realm/Grrlwave: BagSorter disabled, BossTimers enabled, RaidFrames enabled",
+            "Fixture Realm/Mrgltest: BagSorter disabled",
+            "Second Realm/Grrlwave: BagSorter disabled, BossTimers enabled, RaidFrames enabled",
             "set raid names addons that are not installed in _forever_, their lines are written all the same: BagSorter, BossTimers, RaidFrames",
             "applied set raid to 2 characters of _forever_: 4 addon lines changed",
         ]
@@ -5814,7 +5814,7 @@ fn set_apply_to_one_character_leaves_the_other_and_refuses_an_ambiguous_name() {
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         stdout_last_line(&output),
-        "saved set raid of _forever_ from MRGLSETS/Fixture Realm/Mrgltest: 4 addons (3 enabled, 1 disabled)"
+        "saved set raid of _forever_ from Fixture Realm/Mrgltest: 4 addons (3 enabled, 1 disabled)"
     );
     let before = snapshot(&wtf);
 
@@ -5835,9 +5835,9 @@ fn set_apply_to_one_character_leaves_the_other_and_refuses_an_ambiguous_name() {
         stdout(&output).lines().collect::<Vec<_>>(),
         [
             "applying set raid to the character grrlwave of _forever_",
-            "MRGLSETS/Second Realm/Grrlwave: BossTimers enabled, QuestArrows disabled, RaidFrames enabled",
+            "Second Realm/Grrlwave: BossTimers enabled, QuestArrows disabled, RaidFrames enabled",
             "set raid names addons that are not installed in _forever_, their lines are written all the same: BagSorter, BossTimers, QuestArrows, RaidFrames",
-            "applied set raid to MRGLSETS/Second Realm/Grrlwave of _forever_: 3 addon lines changed",
+            "applied set raid to Second Realm/Grrlwave of _forever_: 3 addon lines changed",
         ]
     );
     let after = snapshot(&wtf);
@@ -5864,7 +5864,7 @@ fn set_apply_to_one_character_leaves_the_other_and_refuses_an_ambiguous_name() {
     );
     assert_eq!(
         stdout_last_line(&output),
-        "set raid already matches MRGLSETS/Second Realm/Grrlwave of _forever_, nothing written"
+        "set raid already matches Second Realm/Grrlwave of _forever_, nothing written"
     );
 
     // A second Mrgltest on the other realm: the bare name is refused with both realms, `--realm` picks.
