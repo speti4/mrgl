@@ -1,0 +1,24 @@
+[
+  {
+    "tag_name": "Plater-v661",
+    "name": "Plater-v661",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-15T11:38:52Z",
+    "html_url": "https://github.com/Tercioo/Plater-Nameplates/releases/tag/Plater-v661",
+    "assets": [
+      {
+        "name": "Plater-v661.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Tercioo/Plater-Nameplates/releases/download/Plater-v661/Plater-v661.zip"
+      },
+      {
+        "name": "release.json",
+        "content_type": "application/json",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Tercioo/Plater-Nameplates/releases/download/Plater-v661/release.json"
+      }
+    ]
+  }
+]

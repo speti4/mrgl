@@ -21,6 +21,14 @@
 //! A zip in hand is reported as not importable (the zip is on the other machine), a linked folder (`link:`)
 //! is skipped, and an addon the flavor has already (by name, by source, or a folder of the entry that is
 //! there) is reported and left alone at whatever version it is.
+//!
+//! A list is shareable (task 028): it names sources and versions, never a path of one machine. Reading a
+//! list refuses an entry whose source is a zip file, a linked development folder (`link:`) or another local
+//! or absolute path, or whose folder is a path rather than a folder name, and the error names every such
+//! entry ([`ListEntry::not_shareable`]); the export leaves an addon from a zip in hand or a linked folder
+//! out of the list, with a warning that names it. A list written by hand or kept in the repo
+//! (`lists/forever-starter.json`) goes through the same check; the import's outcomes for a zip or a
+//! linked entry stay for a list built in code.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -118,6 +126,21 @@ impl ListFile {
                 list.schema
             )));
         }
+        let refused: Vec<String> = list
+            .addons
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .not_shareable()
+                    .map(|reason| format!("{}: {reason}", entry.name))
+            })
+            .collect();
+        if !refused.is_empty() {
+            return Err(Error::ListNotShareable {
+                path: path.to_path_buf(),
+                entries: refused.join("; "),
+            });
+        }
         Ok(list)
     }
 
@@ -145,6 +168,34 @@ impl ListFile {
             std::fs::create_dir_all(parent).map_err(|source| io(parent, source))?;
         }
         std::fs::write(path, self.to_json()).map_err(|source| io(path, source))
+    }
+}
+
+impl ListEntry {
+    /// Why the entry has no place in a shareable list (task 028), as a clause after its name, or `None`
+    /// when it names a source and plain folder names only: a zip file, a linked development folder and any
+    /// other local or absolute path belong to one machine and mean nothing on another.
+    pub fn not_shareable(&self) -> Option<String> {
+        let source = self.source.trim();
+        match EntrySource::of(source) {
+            EntrySource::Linked => {
+                return Some(format!(
+                    "its source {source} is a linked development folder"
+                ));
+            }
+            EntrySource::Zip if source.to_ascii_lowercase().ends_with(".zip") => {
+                return Some(format!("its source {source} is a zip file"));
+            }
+            EntrySource::Zip => return Some(format!("its source {source} is a local path")),
+            EntrySource::GitHub(_) | EntrySource::Unsupported => {}
+        }
+        self.folders
+            .iter()
+            .find(|folder| {
+                let folder = folder.trim();
+                folder.contains(['/', '\\', ':']) || folder == "." || folder == ".."
+            })
+            .map(|folder| format!("its folder {folder} is a path, not a folder name"))
     }
 }
 
@@ -192,7 +243,8 @@ pub struct Export {
 }
 
 /// The list of a flavor's managed addons: the sidecar against a scan of the AddOns folder, so an addon
-/// deleted by hand is left out (the sidecar itself is not written).
+/// deleted by hand is left out (the sidecar itself is not written). An addon from a zip in hand or a
+/// linked folder is left out too, with a warning, so the list stays shareable (task 028).
 pub fn export(engine: &Engine) -> Result<Export> {
     let loaded = engine.load_state()?;
     let mut state = loaded.state;
@@ -203,10 +255,15 @@ pub fn export(engine: &Engine) -> Result<Export> {
             "{name} was deleted by hand since its install and is left out of the list"
         ));
     }
-    Ok(Export {
-        list: ListFile::from_state(&state, Some(state::now_rfc3339())),
-        warnings,
-    })
+    let mut list = ListFile::from_state(&state, Some(state::now_rfc3339()));
+    list.addons.retain(|entry| match entry.not_shareable() {
+        Some(reason) => {
+            warnings.push(format!("{} is left out of the list: {reason}", entry.name));
+            false
+        }
+        None => true,
+    });
+    Ok(Export { list, warnings })
 }
 
 /// What the import did with one entry.
@@ -815,6 +872,138 @@ mod tests {
         assert_eq!(
             mismatch.line(),
             "RootToc: interface 120105 is not for the build 1.60.1.70245"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // --- task 028: the shareable list ---
+
+    fn list_entry(name: &str, source: &str, folders: &[&str]) -> ListEntry {
+        ListEntry {
+            name: name.to_string(),
+            source: source.to_string(),
+            version: "1.0.0".to_string(),
+            folders: folders.iter().map(|folder| folder.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn an_entry_with_a_path_is_not_shareable() {
+        let shareable =
+            |source: &str, folders: &[&str]| list_entry("Some", source, folders).not_shareable();
+        assert_eq!(shareable("github:Questie/Questie", &["Questie"]), None);
+        assert_eq!(
+            shareable("https://github.com/Questie/Questie", &["Questie"]),
+            None
+        );
+        assert_eq!(shareable("wago:abc123", &["Some"]), None, "not a path");
+        assert_eq!(shareable("github:Example/NoFolders", &[]), None);
+        assert_eq!(
+            shareable("C:\\Downloads\\Some-1.2.3.zip", &["Some"]).as_deref(),
+            Some("its source C:\\Downloads\\Some-1.2.3.zip is a zip file")
+        );
+        assert_eq!(
+            shareable("Some-1.2.3.zip", &["Some"]).as_deref(),
+            Some("its source Some-1.2.3.zip is a zip file")
+        );
+        assert_eq!(
+            shareable("link:D:\\dev\\Some", &["Some"]).as_deref(),
+            Some("its source link:D:\\dev\\Some is a linked development folder")
+        );
+        for path in [
+            "D:\\addons\\Some",
+            "\\\\server\\share\\Some",
+            "/home/someone/Some",
+        ] {
+            assert_eq!(
+                shareable(path, &["Some"]),
+                Some(format!("its source {path} is a local path"))
+            );
+        }
+        for folder in ["..\\Some", "C:\\AddOns\\Some", "Some/Inner", ".."] {
+            assert_eq!(
+                shareable("github:Example/Some", &["Some", folder]),
+                Some(format!("its folder {folder} is a path, not a folder name"))
+            );
+        }
+    }
+
+    #[test]
+    fn reading_a_list_refuses_every_entry_with_a_path_by_name() {
+        let mut list = ListFile {
+            format: FORMAT.to_string(),
+            schema: SCHEMA,
+            flavor: "wowf".to_string(),
+            exported_at: None,
+            addons: vec![
+                list_entry("Questie", "github:Questie/Questie", &["Questie"]),
+                list_entry("Zipped", "C:\\Downloads\\Zipped-1.0.0.zip", &["Zipped"]),
+                list_entry("Dev", "link:D:\\dev\\Dev", &["Dev"]),
+            ],
+        };
+        let path = Path::new("shared.json");
+        let error = ListFile::parse(&list.to_json(), path).expect_err("not shareable");
+        assert!(matches!(error, Error::ListNotShareable { .. }), "{error}");
+        assert_eq!(
+            error.to_string(),
+            "not a shareable addon list: shared.json (Zipped: its source C:\\Downloads\\Zipped-1.0.0.zip is a zip file; Dev: its source link:D:\\dev\\Dev is a linked development folder); a list names sources and versions, never a file or a folder of one machine"
+        );
+
+        list.addons.truncate(1);
+        assert_eq!(
+            ListFile::parse(&list.to_json(), path).expect("shareable"),
+            list
+        );
+    }
+
+    #[test]
+    fn export_leaves_out_a_zip_in_hand_and_a_linked_folder() {
+        let (base, engine) = engine("export-shareable");
+        engine
+            .install(
+                &zips().join("one-folder-1.0.0.zip"),
+                &Metadata {
+                    source: "github:Example/One".to_string(),
+                    version: Some("1.0.0".to_string()),
+                    name: None,
+                    nolib: None,
+                },
+            )
+            .expect("installs");
+        let mut state = engine.load_state().expect("reads").state;
+        for (name, source) in [
+            ("Zipped", "C:\\Downloads\\Zipped-1.0.0.zip"),
+            ("Dev", "link:D:\\dev\\Dev"),
+        ] {
+            let folder = engine.addons_dir().join(name);
+            std::fs::create_dir_all(&folder).expect("the folder");
+            std::fs::write(folder.join(format!("{name}.toc")), "## Interface: 16001\n")
+                .expect("its TOC");
+            state
+                .addons
+                .insert(name.to_string(), entry(source, "1.0.0", &[name]));
+        }
+        engine.home.write_state(&state).expect("writes");
+
+        let export = export(&engine).expect("exports");
+        let names: Vec<&str> = export
+            .list
+            .addons
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(names, ["OneFolder"]);
+        assert_eq!(
+            export.warnings,
+            [
+                "Dev is left out of the list: its source link:D:\\dev\\Dev is a linked development folder",
+                "Zipped is left out of the list: its source C:\\Downloads\\Zipped-1.0.0.zip is a zip file",
+            ]
+        );
+        let path = Path::new("exported.json");
+        assert_eq!(
+            ListFile::parse(&export.list.to_json(), path).expect("what export writes reads back"),
+            export.list
         );
         let _ = std::fs::remove_dir_all(&base);
     }

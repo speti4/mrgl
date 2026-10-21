@@ -3392,10 +3392,24 @@ fn export_then_import_gives_an_empty_flavor_the_same_sidecar_entries() {
         .output()
         .expect("run mrgl");
     assert!(output.status.success(), "{}", stderr_last_line(&output));
+    // The zip in hand and the linked folder are left out of the shareable list (task 028).
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line
+            == "DevAddon is left out of the list: its source link:D:\\dev\\DevAddon is a linked development folder"),
+        "{text}"
+    );
+    assert!(
+        text.lines().any(
+            |line| line.starts_with("OneFolder is left out of the list: its source ")
+                && line.ends_with("one-folder-1.0.0.zip is a zip file")
+        ),
+        "{text}"
+    );
     assert_eq!(
         stdout_last_line(&output),
         format!(
-            "exported 3 managed addons of _forever_ to {}",
+            "exported 1 managed addon of _forever_ to {}",
             list.display()
         )
     );
@@ -3410,9 +3424,9 @@ fn export_then_import_gives_an_empty_flavor_the_same_sidecar_entries() {
         .iter()
         .map(|addon| addon["name"].as_str().expect("a name"))
         .collect();
-    assert_eq!(names, ["DevAddon", "OneFolder", "SeveralFolders"]);
+    assert_eq!(names, ["SeveralFolders"]);
     assert_eq!(
-        written["addons"][2],
+        written["addons"][0],
         serde_json::json!({
             "name": "SeveralFolders",
             "source": "github:Questie/Questie",
@@ -3433,7 +3447,7 @@ fn export_then_import_gives_an_empty_flavor_the_same_sidecar_entries() {
     assert_eq!(printed["addons"], written["addons"]);
     assert_eq!(
         stderr_last_line(&output),
-        "exported 3 managed addons of _forever_"
+        "exported 1 managed addon of _forever_"
     );
 
     let to = Game::new("import");
@@ -3448,23 +3462,13 @@ fn export_then_import_gives_an_empty_flavor_the_same_sidecar_entries() {
         .expect("run mrgl");
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     let text = stdout(&output);
-    let mut lines: Vec<&str> = text.lines().collect();
-    // The zip in hand is named by the absolute path the first install recorded.
-    let zip_line = lines.remove(2);
-    assert!(
-        zip_line.starts_with("OneFolder  not importable (")
-            && zip_line.ends_with(
-                "one-folder-1.0.0.zip): a zip in hand on the machine of the export; add it again with mrgl add <zip>"
-            ),
-        "{zip_line}"
-    );
+    let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines,
         [
-            "dry run: reading 3 addons from forever.json into _forever_",
-            "DevAddon  skipped (link:D:\\dev\\DevAddon): a linked development folder; link it again with mrgl link",
+            "dry run: reading 1 addon from forever.json into _forever_",
             "SeveralFolders  would install 1.2.3 from github:Questie/Questie",
-            "dry run: 3 addons of forever.json for _forever_: 1 to install, 1 not importable, 1 skipped; nothing written",
+            "dry run: 1 addon of forever.json for _forever_: 1 to install; nothing written",
         ],
         "{text}"
     );
@@ -3488,7 +3492,7 @@ fn export_then_import_gives_an_empty_flavor_the_same_sidecar_entries() {
     );
     assert_eq!(
         stdout_last_line(&output),
-        "imported 3 addons of forever.json into _forever_: 1 installed, 1 not importable, 1 skipped"
+        "imported 1 addon of forever.json into _forever_: 1 installed"
     );
     assert!(
         to.addon("SeveralFolders_Options")
@@ -3525,8 +3529,8 @@ fn export_then_import_gives_an_empty_flavor_the_same_sidecar_entries() {
         .iter()
         .map(|addon| addon["outcome"].as_str().expect("an outcome"))
         .collect();
-    assert_eq!(outcomes, ["skipped", "not-importable", "already-installed"]);
-    assert_eq!(value["addons"][2]["version"], "1.2.3");
+    assert_eq!(outcomes, ["already-installed"]);
+    assert_eq!(value["addons"][0]["version"], "1.2.3");
 }
 
 #[test]
@@ -5409,4 +5413,163 @@ fn update_and_import_warn_about_a_pick_from_the_cached_release_list() {
             .any(|line| line == "Fresh  would install 1.2.3 from github:Questie/Questie"),
         "{text}"
     );
+}
+
+// --- task 028: the shareable list's format check and the Forever starter list, against the folder stub ---
+
+/// The Forever starter list in the repo.
+fn starter_list() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lists/forever-starter.json")
+}
+
+/// The stub answers of the starter list's repositories: one release each, in the shape the repository's
+/// latest release had when the list was checked (synthetic sizes, no zips: a dry run downloads none).
+fn starter_stub() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/starter-list")
+}
+
+/// The starter list's entries as JSON.
+fn starter_entries() -> Vec<serde_json::Value> {
+    let text = std::fs::read_to_string(starter_list()).expect("lists/forever-starter.json");
+    let list: serde_json::Value = serde_json::from_str(&text).expect("the list is JSON");
+    list["addons"].as_array().expect("the addons").clone()
+}
+
+#[test]
+fn the_starter_list_and_its_stub_name_the_same_repositories() {
+    let mut listed: Vec<String> = starter_entries()
+        .iter()
+        .map(|entry| {
+            let source = entry["source"].as_str().expect("a source");
+            source
+                .strip_prefix("github:")
+                .unwrap_or_else(|| panic!("a GitHub entry only: {source}"))
+                .to_string()
+        })
+        .collect();
+    listed.sort();
+    let mut stubbed = Vec::new();
+    for owner in std::fs::read_dir(starter_stub().join("api.github.com/repos")).expect("the owners")
+    {
+        let owner = owner.expect("an owner");
+        for repo in std::fs::read_dir(owner.path()).expect("the repositories") {
+            let repo = repo.expect("a repository");
+            stubbed.push(format!(
+                "{}/{}",
+                owner.file_name().to_string_lossy(),
+                repo.file_name().to_string_lossy()
+            ));
+        }
+    }
+    stubbed.sort();
+    assert_eq!(listed, stubbed, "a new entry brings its stub repository");
+}
+
+#[test]
+fn the_forever_starter_list_installs_into_an_empty_flavor_with_dry_run() {
+    let game = Game::new("starter");
+    let entries = starter_entries();
+    let count = entries.len();
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", starter_stub())
+        .args(["--serious", "import"])
+        .arg(starter_list())
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let mut expected = vec![format!(
+        "dry run: reading {count} addons from forever-starter.json into _forever_"
+    )];
+    for entry in &entries {
+        expected.push(format!(
+            "{}  would install {} from {}",
+            entry["name"].as_str().expect("a name"),
+            entry["version"].as_str().expect("a version"),
+            entry["source"].as_str().expect("a source"),
+        ));
+    }
+    expected.push(format!(
+        "dry run: {count} addons of forever-starter.json for _forever_: {count} to install; nothing written"
+    ));
+    assert_eq!(text.lines().collect::<Vec<_>>(), expected, "{text}");
+    assert!(!game.state_path().exists(), "a dry run writes no sidecar");
+    assert!(
+        !game.root.join("_forever_").join("Interface").exists(),
+        "nor an addon"
+    );
+
+    // Every pick is the zip the release's release.json names for Forever.
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", starter_stub())
+        .args(["--json", "import"])
+        .arg(starter_list())
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let addons = value["addons"].as_array().expect("the addons");
+    assert_eq!(addons.len(), count);
+    for addon in addons {
+        assert_eq!(addon["outcome"], "would-install", "{addon}");
+        let detail = addon["detail"].as_str().expect("the pick");
+        assert!(
+            detail.ends_with(
+                ", flavor forever, interface 16001): release.json names forever (interface 16001)"
+            ),
+            "{detail}"
+        );
+    }
+    assert_eq!(value["warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn import_refuses_a_list_with_a_local_path_and_names_the_entry() {
+    let game = Game::new("not-shareable");
+    let base = game.root.parent().expect("the base").to_path_buf();
+    let list = base.join("shared.json");
+    std::fs::write(
+        &list,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [
+                { "name": "Questie", "source": "github:Questie/Questie", "version": "1.2.3", "folders": ["Questie"] },
+                { "name": "Zipped", "source": "C:\\Downloads\\Zipped-1.0.0.zip", "version": "1.0.0", "folders": ["Zipped"] },
+            ],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    let expected = format!(
+        "not a shareable addon list: {} (Zipped: its source C:\\Downloads\\Zipped-1.0.0.zip is a zip file); a list names sources and versions, never a file or a folder of one machine",
+        list.display()
+    );
+    for dry_run in [true, false] {
+        let mut command = game.mrgl();
+        command
+            .arg("import")
+            .arg(&list)
+            .args(["--flavor", "forever"]);
+        if dry_run {
+            command.arg("--dry-run");
+        }
+        let output = command.output().expect("run mrgl");
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(stderr_last_line(&output), expected);
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).lines().count(),
+            2,
+            "a murloc line and the plain line"
+        );
+        assert!(output.stdout.is_empty(), "refused before anything is read");
+        assert!(!game.state_path().exists(), "no sidecar");
+        assert!(!game.addon("Questie").exists(), "no addon");
+    }
 }

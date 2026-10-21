@@ -1,0 +1,24 @@
+[
+  {
+    "tag_name": "r268",
+    "name": "r268",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-19T22:46:43Z",
+    "html_url": "https://github.com/DeadlyBossMods/DBM-Dungeons/releases/tag/r268",
+    "assets": [
+      {
+        "name": "DBM-Dungeons-r268.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/DeadlyBossMods/DBM-Dungeons/releases/download/r268/DBM-Dungeons-r268.zip"
+      },
+      {
+        "name": "release.json",
+        "content_type": "application/json",
+        "size": 2048,
+        "browser_download_url": "https://github.com/DeadlyBossMods/DBM-Dungeons/releases/download/r268/release.json"
+      }
+    ]
+  }
+]

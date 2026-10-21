@@ -42,6 +42,11 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
 - **A toolbox, not only a manager.** WTF backup and restore, addon sets, the SavedVariables sizes with the
   cleanup of files whose addon is gone, a junction link for the addons you develop yourself, and a window on
   top of it all.
+- **Lists instead of a catalog.** An exported list names sources and versions only, so a friend can import
+  it: a zip in hand or a linked folder stays out of it, and a list that names a local path is refused. The
+  repo keeps a Forever starter list, the usual addons whose GitHub releases carry a Forever build, at
+  [`lists/forever-starter.json`](lists/forever-starter.json); one command installs it from a copy of the
+  file: `mrgl import lists/forever-starter.json --flavor forever` (add `--dry-run` to see the picks first).
 - **A murloc voice.** Every message is a murloc line and a plain English line; `--serious` (or
   `MRGL_SERIOUS=1`) keeps only the English, and JSON output is always plain ([docs/nerglish.md](docs/nerglish.md)).
 

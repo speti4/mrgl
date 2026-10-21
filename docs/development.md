@@ -87,6 +87,17 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   capability file and the icon.
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
   [Forever notes](#forever-notes)).
+- `lists/` — shareable addon lists in the format `mrgl export` writes (`list_file`, task 015), read by
+  `mrgl import <file> --flavor <flavor>`: `forever-starter.json`, the Forever starter list (task 028). The
+  format rule: an entry names a source and a version, its folders are plain folder names, and nothing in it
+  is a path of one machine; reading a list refuses an entry whose source is a zip file, a linked folder
+  (`link:`) or another local or absolute path, or whose folder is a path, and names every such entry, and
+  the export leaves an addon from a zip in hand or a linked folder out with a warning. The starter list
+  holds GitHub entries only, each one checked against its repository's latest release (a `release.json`
+  that names `forever` or `camelot` for an asset of the release, or a `-forever` asset); the check, with
+  the release tag and the date, and the candidates without a Forever build yet are in task 028's Log. A
+  change to the list changes its stub under `crates/mrgl-core/tests/fixtures/starter-list/` with it (see
+  [Fixtures](#fixtures)).
 - `scripts/` — helper scripts for the icon, the release zip, the changelog and the commit rules.
 - `docs/` — this page, the git workflow, the maintainer sessions, origin, research and the voice guide.
 - `tasks/` — the backlog, the work in flight, the history and the decisions (the task standard).
@@ -575,6 +586,14 @@ print it as a warning and list it in the JSON `warnings`, and so do `import` (th
 `update` (one line per stale pick of the check), through the one install path of task 055. The asset itself is never cached before an install, so an `add` offline only gets as far as
 finding the release installed already. The folder stub with a folder that does not exist answers every
 request with a network error, which is how the tests go offline.
+
+The Forever starter list (`lists/forever-starter.json`, task 028) has a stub of its own,
+`starter-list/`: one release per entry's repository in the shape that repository's latest release had at
+the check (the tag, the asset names, a `release.json` with the filename and the flavor and interface pairs
+only, every size 2048, no zip), so the end-to-end test imports the list with `--dry-run` into an empty
+`_forever_` and sees a Forever pick for every entry. A test checks that the list and the stub name the same
+repositories and that every line names the list's version, so an entry added or bumped in the list comes
+with its stub repository.
 
 The build version fallback (task 019: the client exe's version resource when `.build.info` has no row for
 the flavor) is tested against a second synthetic game folder, `client-exe/`: a `.build.info` with a row for
