@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 30 backlog (2 ready · 0 blocked · 2 waiting · 26 ideas) · 0 in progress · 20 done · 3 dropped · 5 decisions
+**State:** 29 backlog (2 ready · 0 blocked · 2 waiting · 25 ideas) · 0 in progress · 20 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -79,7 +79,6 @@ _none_
 | 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](backlog/025-savedvariables-size-and-orphan-cleanup.md) | S | 2026-10-21 |
 | 027 | [Per-character addon sets](backlog/027-per-character-addon-sets.md) | S | 2026-10-21 |
 | 028 | [Lists as discovery: a shareable list format and a Forever starter list in the r…](backlog/028-lists-as-discovery-and-forever-starter-list.md) | S | 2026-10-21 |
-| 060 | [The linked-addon refusal moves into the engine's commit](backlog/060-link-refusal-moves-into-the-engine-commit.md) | S | 2026-10-21 |
 | 062 | [link takes a single addon folder as well as a development folder](backlog/062-link-takes-a-single-addon-folder.md) | S | 2026-10-21 |
 
 #### M4 Sources
