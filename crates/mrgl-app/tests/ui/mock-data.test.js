@@ -52,6 +52,13 @@ test("every state and every source badge shows up at least once", async () => {
   assert.ok(forever.addons.some((row) => row.forever.note), "a curated note");
 });
 
+test("only the Forever data carries Forever notes, so only its list shows the column", async () => {
+  const { flavors } = await Data.flavors();
+  for (const flavor of flavors) {
+    assert.equal(State.hasForeverNotes(flavor.addons), flavor.id === "wowf", flavor.id);
+  }
+});
+
 test("update all on Forever reports progress then success and flips the rows", async () => {
   const { flavors } = await Data.flavors();
   const forever = flavors.find((flavor) => flavor.id === "wowf");

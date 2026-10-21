@@ -50,3 +50,47 @@ test("serious drops the murloc line and keeps the kind and the facts", () => {
   assert.deepEqual(Voice.serious(message), { kind: "error", murloc: "", plain: "addon not found: Questie (flavor forever)" });
   assert.deepEqual(Voice.serious(undefined), { kind: undefined, murloc: "", plain: "" });
 });
+
+// The toast cap (task 035): `pushedOut` takes the stack oldest first, the newest last, and names the toasts
+// the cap pushes out.
+const brief = (name) => ({ name, sticky: false });
+const sticky = (name) => ({ name, sticky: true });
+const names = (toasts) => toasts.map((toast) => toast.name);
+
+test("the cap is three visible toasts, a constant", () => {
+  assert.equal(Voice.TOAST_CAP, 3);
+});
+
+test("a stack within the cap loses nothing", () => {
+  assert.deepEqual(Voice.pushedOut([]), []);
+  assert.deepEqual(Voice.pushedOut(undefined), []);
+  assert.deepEqual(Voice.pushedOut([brief("a"), brief("b"), brief("c")]), []);
+  assert.deepEqual(Voice.pushedOut([sticky("a"), sticky("b"), sticky("c")]), []);
+});
+
+test("brief toasts go oldest first, as many as the cap needs", () => {
+  const stack = [brief("a"), brief("b"), brief("c"), brief("d")];
+  assert.deepEqual(names(Voice.pushedOut(stack)), ["a"]);
+  assert.deepEqual(names(Voice.pushedOut([...stack, brief("e")])), ["a", "b"]);
+  assert.deepEqual(names(Voice.pushedOut(stack, 2)), ["a", "b"]);
+});
+
+test("a sticky toast is never pushed out by a brief one", () => {
+  assert.deepEqual(names(Voice.pushedOut([sticky("error"), brief("b"), brief("c"), brief("d")])), ["b"]);
+  assert.deepEqual(names(Voice.pushedOut([brief("a"), sticky("error"), brief("c"), brief("d")])), ["a"]);
+  assert.deepEqual(names(Voice.pushedOut([brief("a"), brief("b"), sticky("error"), brief("d")])), ["a"]);
+});
+
+test("the newest toast always shows, even over a stack of sticky ones", () => {
+  assert.deepEqual(Voice.pushedOut([sticky("a"), sticky("b"), sticky("c"), brief("d")]), []);
+  assert.deepEqual(Voice.pushedOut([sticky("a"), sticky("b"), sticky("c"), sticky("d")]), []);
+});
+
+test("ten quick messages leave three toasts with the sticky error on top", () => {
+  const stack = [sticky("error")];
+  for (let index = 1; index < 10; index += 1) {
+    stack.push(brief(`success ${index}`));
+    for (const old of Voice.pushedOut(stack)) stack.splice(stack.indexOf(old), 1);
+  }
+  assert.deepEqual(names(stack), ["error", "success 8", "success 9"]);
+});

@@ -290,6 +290,15 @@ button:disabled {
   align-items: center;
   column-gap: 0.75rem;
 }
+/* Without a Forever note in the flavor (the view sets the class, task 035), the column is gone, not empty. */
+#flavor.without-forever .list-head,
+#flavor.without-forever .row {
+  grid-template-columns: minmax(10rem, 2fr) minmax(8rem, 1.4fr) 6.5rem 8.5rem 2.2rem;
+}
+#flavor.without-forever .forever-head,
+#flavor.without-forever .forever-cell {
+  display: none;
+}
 .list-head {
   padding: 0.25rem 1.25rem 0.25rem calc(1.25rem + 3px);
   font-size: 0.75rem;

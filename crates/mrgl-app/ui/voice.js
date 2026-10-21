@@ -48,5 +48,28 @@
     return { kind: message && message.kind, murloc: "", plain: message && message.plain ? message.plain : "" };
   }
 
-  return { KINDS, lines, oneLine, placement, kindClass, serious };
+  // How many toasts the stack shows at once (task 035): a burst of updates must not bury the list. A
+  // constant, not a preference.
+  const TOAST_CAP = 3;
+
+  // The toasts the cap pushes out when the stack is over it: `stack` is every toast oldest first, each
+  // `{ sticky }`, the newest last. Brief toasts go oldest first; a sticky one (an error or a fatal) stays
+  // until it is dismissed, so it is never pushed out, and neither is the newest toast, which the reader
+  // has not seen yet. When the stack is sticky toasts alone, it may stay over the cap. The entries come
+  // back as they were given, so the caller can remove what they stand for.
+  function pushedOut(stack, cap) {
+    const limit = typeof cap === "number" ? cap : TOAST_CAP;
+    const toasts = stack || [];
+    const out = [];
+    let shown = toasts.length;
+    for (let index = 0; index < toasts.length - 1 && shown > limit; index += 1) {
+      const toast = toasts[index];
+      if (toast && toast.sticky) continue;
+      out.push(toast);
+      shown -= 1;
+    }
+    return out;
+  }
+
+  return { KINDS, TOAST_CAP, lines, oneLine, placement, kindClass, serious, pushedOut };
 });

@@ -50,5 +50,12 @@
     return (addons || []).filter((addon) => addon.update && !addon.pinned && !addon.ignored).length;
   }
 
-  return { STATES, SOURCES, stateOf, classOf, labelOf, sourceClass, countUpdates };
+  // Whether any row of a flavor carries a Forever note (task 011: the build verdict, with or without the
+  // curated text); the view shows the Forever column only then (task 035). The rows of the other flavors
+  // carry none, so their list has no empty column.
+  function hasForeverNotes(addons) {
+    return (addons || []).some((addon) => Boolean(addon && addon.forever));
+  }
+
+  return { STATES, SOURCES, stateOf, classOf, labelOf, sourceClass, countUpdates, hasForeverNotes };
 });

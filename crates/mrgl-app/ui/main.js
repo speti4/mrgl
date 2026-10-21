@@ -92,7 +92,12 @@
     close.textContent = "×";
     close.addEventListener("click", () => toast.remove());
     toast.append(murloc, plain, close);
-    $("toasts").append(toast);
+    toast.classList.toggle("sticky", Boolean(sticky));
+    const stack = $("toasts");
+    stack.append(toast);
+    // The cap (Voice.TOAST_CAP): the oldest brief toasts make room, a sticky one stays until dismissed.
+    const stacked = Array.from(stack.children, (element) => ({ element, sticky: element.classList.contains("sticky") }));
+    for (const old of Voice.pushedOut(stacked)) old.element.remove();
     if (!sticky) window.setTimeout(() => toast.remove(), shown.kind === "warning" ? 7000 : 4500);
   }
 
@@ -180,6 +185,9 @@
     const button = $("update-all");
     button.textContent = updates > 0 ? `Update all (${updates})` : "Update all";
     button.disabled = busy;
+
+    // The Forever column (header and cells) shows only when a row of this flavor carries a note.
+    $("flavor").classList.toggle("without-forever", !State.hasForeverNotes(flavor.addons));
 
     renderRows(flavor);
     renderLegend();
