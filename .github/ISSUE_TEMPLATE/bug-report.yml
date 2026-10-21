@@ -38,9 +38,9 @@ body:
       label: mrgl doctor
       description: >-
         The output of `mrgl doctor` (add `--flavor <flavor>` for the one the report is about). It names the
-        game folder, each flavor's build, AddOns folder, sidecar and cache, the WebView2 version, the GitHub
-        rate limit and which API keys are set, never their values; paths under your profile folder show as
-        `~`. Read it before you paste it.
+        Windows version, the game folder, each flavor's build, AddOns folder, sidecar and cache, the WebView2
+        version, the GitHub rate limit and which API keys are set, never their values; paths under your
+        profile folder show as `~`. Read it before you paste it.
       render: text
   - type: input
     id: version
@@ -54,7 +54,7 @@ body:
     id: os
     attributes:
       label: Windows version
-      description: "`winver` shows it, for example 24H2, build 26100."
+      description: "The `windows:` line of `mrgl doctor` carries it (`winver` too), for example 24H2, build 26100.1234."
     validations:
       required: true
   - type: dropdown

@@ -78,8 +78,8 @@ pick for forever: github:<owner>/<repo> v2.1.0 (Addon-v2.1.0-forever.zip, flavor
 release notes: Quest arrows point the right way again (https://github.com/<owner>/<repo>/releases/tag/v2.1.0)
 ```
 
-On a standard install no flag is needed: mrgl finds the game folder through the launcher's registry key or
-under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
+On a standard install no flag is needed: mrgl finds the game folder through the registry (the launcher's
+key, or the game's Uninstall entry) or under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
 run would use and where it came from, and `mrgl root <folder>` remembers one (also `--root <folder>` or
 `MRGL_ROOT` for one run).
 

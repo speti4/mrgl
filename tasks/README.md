@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 24 backlog (2 ready · 0 blocked · 2 waiting · 20 ideas) · 0 in progress · 30 done · 3 dropped · 5 decisions
+**State:** 22 backlog (2 ready · 0 blocked · 2 waiting · 18 ideas) · 0 in progress · 32 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -62,8 +62,6 @@ _none_
 | 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
-| 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](backlog/043-second-registry-source-for-the-game-root.md) | S | 2026-10-21 |
-| 051 | [A Windows version line in the doctor report](backlog/051-windows-version-line-in-the-doctor-report.md) | S | 2026-10-21 |
 | 058 | [Forever notes for the addons the community lists as partly restricted](backlog/058-forever-notes-for-the-partly-restricted-addons.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
@@ -113,16 +111,16 @@ _none_
 |---|---|---|
 | 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
 | 061 | [CI compiles the non-Windows paths of the core](done/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 |
+| 051 | [A Windows version line in the doctor report](done/051-windows-version-line-in-the-doctor-report.md) | 2026-10-22 |
+| 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](done/043-second-registry-source-for-the-game-root.md) | 2026-10-22 |
 | 039 | [A bound on the unpacked size of a zip](done/039-bound-on-the-unpacked-size-of-a-zip.md) | 2026-10-22 |
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](done/033-close-the-milestone-of-a-shipped-release.md) | 2026-10-22 |
 | 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](done/025-savedvariables-size-and-orphan-cleanup.md) | 2026-10-22 |
 | 044 | [One zip-entry check for the install engine and the backup restore](done/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | 2026-10-21 |
 | 040 | [add github:<owner>/<repo> installs the pick through the engine](done/040-add-github-installs-the-pick-through-the-engine.md) | 2026-10-21 |
 | 038 | [The install engine warns when the client runs](done/038-install-warns-when-the-client-runs.md) | 2026-10-21 |
-| 037 | [list reads the sidecar: managed (source, version) and unmanaged addons](done/037-list-reads-the-sidecar-managed-and-unmanaged.md) | 2026-10-21 |
-| 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](done/035-window-polish-forever-column-and-toast-cap.md) | 2026-10-21 |
 
-_20 more in `done/`._
+_22 more in `done/`._
 
 ### Decisions
 

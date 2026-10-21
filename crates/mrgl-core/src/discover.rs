@@ -1,12 +1,15 @@
 //! Where the game folder comes from (task 020). A run names it with `--root`, `MRGL_ROOT` or the root
 //! that `mrgl root <folder>` remembered in `config.json` (task 002); when none of those does, the
 //! discovery looks it up in the launcher's registry key (`HKLM\SOFTWARE\WOW6432Node\Blizzard
-//! Entertainment\World of Warcraft`, value `InstallPath`) and then in the usual install folders
-//! (`Program Files (x86)\World of Warcraft`, the same under `Program Files`). A hit counts only when it
-//! is a game root ([`is_game_root`]: a `.build.info` and at least one flavor folder) or when its parent
-//! is one (a launcher value may name a flavor folder). A discovered root is used for the run and reported
-//! with its origin, never written to `config.json`: `mrgl root <folder>` and the window's picker (task
-//! 009) are the places that remember it.
+//! Entertainment\World of Warcraft`, value `InstallPath`), then in the game's Uninstall entry (task 043:
+//! `InstallLocation` under [`UNINSTALL_KEYS`], which an install moved or restored by hand may carry
+//! without the launcher's key), and then in the usual install folders (`Program Files (x86)\World of
+//! Warcraft`, the same under `Program Files`). A registry value of the type `REG_EXPAND_SZ` is expanded
+//! from the environment (`%ProgramFiles(x86)%\World of Warcraft`), a `REG_SZ` value is taken as written
+//! ([`registry_path`]). A hit counts only when it is a game root ([`is_game_root`]: a `.build.info` and
+//! at least one flavor folder) or when its parent is one (a registry value may name a flavor folder). A
+//! discovered root is used for the run and reported with its origin, never written to `config.json`:
+//! `mrgl root <folder>` and the window's picker (task 009) are the places that remember it.
 //!
 //! The lookup sits behind [`RootLookup`]: [`SystemLookup`] reads the registry and the environment,
 //! [`FixedLookup`] is the stub for tests, and `MRGL_DISCOVERY` picks a stub for one run of an exe
@@ -30,10 +33,31 @@ pub const DISCOVERY_ENV: &str = "MRGL_DISCOVERY";
 pub const LAUNCHER_KEY: &str = r"SOFTWARE\WOW6432Node\Blizzard Entertainment\World of Warcraft";
 /// The value under [`LAUNCHER_KEY`] that holds the install folder.
 pub const LAUNCHER_VALUE: &str = "InstallPath";
+/// The game's Uninstall entry, in the order it is read (task 043): the 32-bit view of
+/// `HKEY_LOCAL_MACHINE`, where the installer writes it as it writes the launcher's key, the native view,
+/// then the per-user entry.
+pub const UNINSTALL_KEYS: [(Hive, &str); 3] = [
+    (
+        Hive::LocalMachine,
+        r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\World of Warcraft",
+    ),
+    (
+        Hive::LocalMachine,
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\World of Warcraft",
+    ),
+    (
+        Hive::CurrentUser,
+        r"Software\Microsoft\Windows\CurrentVersion\Uninstall\World of Warcraft",
+    ),
+];
+/// The value under an [`UNINSTALL_KEYS`] key that holds the install folder.
+pub const UNINSTALL_VALUE: &str = "InstallLocation";
 /// The game folder's name under `Program Files (x86)` and `Program Files` on a standard install.
 pub const COMMON_FOLDER: &str = "World of Warcraft";
 /// The `MRGL_DISCOVERY` item that stands in for the WebView2 runtime's registry value (task 024).
 pub const WEBVIEW2_ITEM: &str = "webview2=";
+/// The `MRGL_DISCOVERY` item that stands in for the Windows version's registry values (task 051).
+pub const WINDOWS_ITEM: &str = "windows=";
 
 /// A registry hive [`registry_string`] reads from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,13 +73,66 @@ pub enum Hive {
 /// empty string, and always `None` on a target without a registry. The doctor reads the WebView2
 /// runtime's version through it (task 024).
 pub fn registry_string(hive: Hive, key: &str, value: &str) -> Option<OsString> {
-    system::registry_string(hive, key, value)
+    registry_text(hive, key, value).map(|value| value.text)
+}
+
+/// A string value as the registry holds it: its text as written, and whether it is a `REG_EXPAND_SZ`,
+/// whose `%NAME%` references are meant to be expanded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryText {
+    pub text: OsString,
+    pub expandable: bool,
+}
+
+/// One string value of the registry with its type (task 043): `None` as for [`registry_string`].
+pub fn registry_text(hive: Hive, key: &str, value: &str) -> Option<RegistryText> {
+    system::registry_text(hive, key, value)
+}
+
+/// A text with its `%NAME%` references expanded from this process's environment
+/// (`ExpandEnvironmentStringsW`); a reference to a variable that is not set stays as written. `None` when
+/// the call fails, and always on a target without it.
+pub fn expand_environment(text: &OsStr) -> Option<OsString> {
+    system::expand_environment(text)
+}
+
+/// A registry value as the path the discovery tries (task 043): a `REG_EXPAND_SZ` value expanded through
+/// `expand` ([`expand_environment`], a stub in the tests), a `REG_SZ` value as written; `None` when the
+/// expansion fails or leaves nothing.
+pub fn registry_path(
+    value: RegistryText,
+    expand: impl Fn(&OsStr) -> Option<OsString>,
+) -> Option<PathBuf> {
+    let text = if value.expandable {
+        expand(&value.text)?
+    } else {
+        value.text
+    };
+    (!text.is_empty()).then(|| PathBuf::from(text))
+}
+
+/// A registry value of this machine as a path: read, then expanded when it is a `REG_EXPAND_SZ`.
+fn system_path(hive: Hive, key: &str, value: &str) -> Option<PathBuf> {
+    registry_text(hive, key, value).and_then(|value| registry_path(value, expand_environment))
+}
+
+/// One `REG_DWORD` value of the registry, read the same way: `None` for a missing key or value, another
+/// type, and always on a target without a registry. The doctor reads the Windows update build revision
+/// (`UBR`) through it (task 051).
+pub fn registry_dword(hive: Hive, key: &str, value: &str) -> Option<u32> {
+    system::registry_dword(hive, key, value)
 }
 
 /// The places a game root may be found when nothing names it.
 pub trait RootLookup {
-    /// The launcher's `InstallPath` value as written; `None` when the key or the value is missing.
+    /// The launcher's `InstallPath` value, expanded when it is a `REG_EXPAND_SZ` ([`registry_path`]);
+    /// `None` when the key or the value is missing.
     fn launcher_install_path(&self) -> Option<PathBuf>;
+    /// The game's Uninstall entry's `InstallLocation` values in the order of [`UNINSTALL_KEYS`], each
+    /// expanded the same way (task 043); none unless the lookup reads them.
+    fn uninstall_locations(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
     /// The usual install folders, in the order they are tried.
     fn common_folders(&self) -> Vec<PathBuf>;
 }
@@ -66,7 +143,14 @@ pub struct SystemLookup;
 
 impl RootLookup for SystemLookup {
     fn launcher_install_path(&self) -> Option<PathBuf> {
-        system::launcher_install_path()
+        system_path(Hive::LocalMachine, LAUNCHER_KEY, LAUNCHER_VALUE)
+    }
+
+    fn uninstall_locations(&self) -> Vec<PathBuf> {
+        UNINSTALL_KEYS
+            .iter()
+            .filter_map(|(hive, key)| system_path(*hive, key, UNINSTALL_VALUE))
+            .collect()
     }
 
     fn common_folders(&self) -> Vec<PathBuf> {
@@ -74,11 +158,13 @@ impl RootLookup for SystemLookup {
     }
 }
 
-/// A fixed lookup, the stub for tests: the registry value and the folders it is given.
+/// A fixed lookup, the stub for tests: the registry values and the folders it is given.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FixedLookup {
     pub install_path: Option<PathBuf>,
     pub folders: Vec<PathBuf>,
+    /// The Uninstall entry's values (task 043).
+    pub uninstall_locations: Vec<PathBuf>,
 }
 
 impl FixedLookup {
@@ -91,6 +177,10 @@ impl FixedLookup {
 impl RootLookup for FixedLookup {
     fn launcher_install_path(&self) -> Option<PathBuf> {
         self.install_path.clone()
+    }
+
+    fn uninstall_locations(&self) -> Vec<PathBuf> {
+        self.uninstall_locations.clone()
     }
 
     fn common_folders(&self) -> Vec<PathBuf> {
@@ -109,6 +199,8 @@ pub enum RootOrigin {
     Remembered,
     /// The launcher's registry value.
     Registry,
+    /// The game's Uninstall entry in the registry (task 043).
+    UninstallEntry,
     /// One of the usual install folders.
     CommonFolder,
 }
@@ -122,6 +214,7 @@ impl RootOrigin {
             RootOrigin::Environment => "environment",
             RootOrigin::Remembered => "remembered",
             RootOrigin::Registry => "registry",
+            RootOrigin::UninstallEntry => "uninstall_entry",
             RootOrigin::CommonFolder => "common_folder",
         }
     }
@@ -133,13 +226,17 @@ impl RootOrigin {
             RootOrigin::Environment => "MRGL_ROOT",
             RootOrigin::Remembered => "remembered",
             RootOrigin::Registry => "the launcher's registry key",
+            RootOrigin::UninstallEntry => "the game's Uninstall registry entry",
             RootOrigin::CommonFolder => "a usual install folder",
         }
     }
 
     /// Whether the discovery found the root, rather than the user naming it.
     pub const fn is_discovered(self) -> bool {
-        matches!(self, RootOrigin::Registry | RootOrigin::CommonFolder)
+        matches!(
+            self,
+            RootOrigin::Registry | RootOrigin::UninstallEntry | RootOrigin::CommonFolder
+        )
     }
 }
 
@@ -177,7 +274,7 @@ pub fn is_game_root(path: &Path) -> bool {
 }
 
 /// The game root a candidate names: the candidate when it is a game root, its parent when that is one
-/// (a launcher value may name a flavor folder), `None` otherwise.
+/// (a registry value may name a flavor folder), `None` otherwise.
 fn game_root_at(candidate: &Path) -> Option<PathBuf> {
     let candidate = std::path::absolute(candidate).unwrap_or_else(|_| candidate.to_path_buf());
     if is_game_root(&candidate) {
@@ -189,8 +286,8 @@ fn game_root_at(candidate: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// The first game root the lookup finds: the launcher's registry value, then the usual folders in
-/// order; `None` when none of them is a game root.
+/// The first game root the lookup finds: the launcher's registry value, then the Uninstall entry's
+/// values, then the usual folders in order; `None` when none of them is a game root.
 pub fn discover_root(lookup: &dyn RootLookup) -> Option<GameRoot> {
     if let Some(path) = lookup
         .launcher_install_path()
@@ -200,6 +297,16 @@ pub fn discover_root(lookup: &dyn RootLookup) -> Option<GameRoot> {
         return Some(GameRoot {
             path,
             origin: RootOrigin::Registry,
+        });
+    }
+    if let Some(path) = lookup
+        .uninstall_locations()
+        .iter()
+        .find_map(|location| game_root_at(location))
+    {
+        return Some(GameRoot {
+            path,
+            origin: RootOrigin::UninstallEntry,
         });
     }
     lookup
@@ -243,10 +350,13 @@ pub fn resolve_root(
 }
 
 /// The lookup `MRGL_DISCOVERY` names: unset or empty is the system; `off` is a lookup that finds nothing;
-/// anything else is a stub, `;`-separated, where `registry=<path>` is the launcher's value, a
-/// `webview2=<version>` item is the doctor's (task 024, [`crate::doctor`]) and every other item (with or
-/// without `folder=`) is one of the usual folders, in order. The stub keeps the end-to-end tests off the
-/// real registry and lets a user switch the discovery off.
+/// anything else is a stub, `;`-separated, where `registry=<path>` is the launcher's value,
+/// `uninstall=<path>` one of the Uninstall entry's (task 043), `registry-expand=<text>` and
+/// `uninstall-expand=<text>` the same as a `REG_EXPAND_SZ` value, expanded from the environment as the
+/// system's would be, a `webview2=<version>` or a `windows=<version>` item is the doctor's (tasks 024 and
+/// 051, [`crate::doctor`]) and every other item (with or without `folder=`) is one of the usual folders,
+/// in order. The stub keeps the end-to-end tests off the real registry and lets a user switch the
+/// discovery off.
 pub fn lookup_from_env(value: Option<&OsStr>) -> Box<dyn RootLookup> {
     match parse_lookup(value) {
         Some(fixed) => Box::new(fixed),
@@ -267,10 +377,25 @@ fn parse_lookup(value: Option<&OsStr>) -> Option<FixedLookup> {
         .map(str::trim)
         .filter(|item| !item.is_empty())
     {
+        let expanded = |text: &str| {
+            registry_path(
+                RegistryText {
+                    text: OsString::from(text),
+                    expandable: true,
+                },
+                expand_environment,
+            )
+        };
         if let Some(path) = item.strip_prefix("registry=") {
             lookup.install_path = Some(PathBuf::from(path));
-        } else if item.starts_with(WEBVIEW2_ITEM) {
-            // The doctor's WebView2 stub (task 024), not a folder.
+        } else if let Some(text) = item.strip_prefix("registry-expand=") {
+            lookup.install_path = expanded(text);
+        } else if let Some(path) = item.strip_prefix("uninstall=") {
+            lookup.uninstall_locations.push(PathBuf::from(path));
+        } else if let Some(text) = item.strip_prefix("uninstall-expand=") {
+            lookup.uninstall_locations.extend(expanded(text));
+        } else if item.starts_with(WEBVIEW2_ITEM) || item.starts_with(WINDOWS_ITEM) {
+            // The doctor's WebView2 and Windows stubs (tasks 024, 051), not a folder.
             continue;
         } else {
             let path = item.strip_prefix("folder=").unwrap_or(item);
@@ -319,22 +444,24 @@ pub fn resolve_root_of_process(flag: Option<PathBuf>) -> Result<Resolution> {
 
 #[cfg(windows)]
 mod system {
-    //! One `RegOpenKeyExW` on the launcher's key, one `RegQueryValueExW` for the size and one for the
-    //! value, and the key is closed; a missing key or value, or a value that is not a string, is `None`.
-    //! The usual folders come from `ProgramFiles(x86)` and `ProgramFiles`, with the `C:` defaults when
-    //! the variables are unset.
+    //! One `RegOpenKeyExW` on a key, one `RegQueryValueExW` for the size and one for the value, and the
+    //! key is closed; a missing key or value, or a value of another type, is `None`. An expandable value
+    //! goes through `ExpandEnvironmentStringsW`, once for the size and once for the text. The usual
+    //! folders come from `ProgramFiles(x86)` and `ProgramFiles`, with the `C:` defaults when the
+    //! variables are unset.
 
     use std::ffi::{OsStr, OsString};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::path::PathBuf;
 
     use windows_sys::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Environment::ExpandEnvironmentStringsW;
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_EXPAND_SZ, REG_SZ,
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
         REG_VALUE_TYPE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
     };
 
-    use super::{COMMON_FOLDER, Hive, LAUNCHER_KEY, LAUNCHER_VALUE};
+    use super::{COMMON_FOLDER, Hive, RegistryText};
 
     /// A registry key handle closed on drop.
     struct Key(HKEY);
@@ -350,32 +477,81 @@ mod system {
         OsStr::new(text).encode_wide().chain([0]).collect()
     }
 
-    pub(super) fn launcher_install_path() -> Option<PathBuf> {
-        string_value(HKEY_LOCAL_MACHINE, LAUNCHER_KEY, LAUNCHER_VALUE).map(PathBuf::from)
-    }
-
-    pub(super) fn registry_string(hive: Hive, key: &str, value: &str) -> Option<OsString> {
-        let hive = match hive {
+    fn hkey(hive: Hive) -> HKEY {
+        match hive {
             Hive::LocalMachine => HKEY_LOCAL_MACHINE,
             Hive::CurrentUser => HKEY_CURRENT_USER,
-        };
-        string_value(hive, key, value)
+        }
     }
 
-    /// A `REG_SZ` or `REG_EXPAND_SZ` value as written (an expandable value is not expanded; the launcher
-    /// writes a plain path), without its trailing NULs; `None` for a missing key or value, another type,
-    /// or an empty string.
-    fn string_value(hive: HKEY, key: &str, value: &str) -> Option<OsString> {
-        let key = wide(key);
+    pub(super) fn registry_text(hive: Hive, key: &str, value: &str) -> Option<RegistryText> {
+        string_value(hkey(hive), key, value)
+    }
+
+    pub(super) fn expand_environment(text: &OsStr) -> Option<OsString> {
+        let source: Vec<u16> = text.encode_wide().chain([0]).collect();
+        // The variables may change between the two calls; one more round covers a value that grew.
+        let mut capacity = 0u32;
+        for _ in 0..3 {
+            let mut buffer = vec![0u16; capacity as usize];
+            let destination = if buffer.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                buffer.as_mut_ptr()
+            };
+            // SAFETY: the source is NUL-terminated and the destination holds `capacity` UTF-16 units
+            // (none with a null pointer, which asks for the size only).
+            let needed =
+                unsafe { ExpandEnvironmentStringsW(source.as_ptr(), destination, capacity) };
+            if needed == 0 {
+                return None;
+            }
+            if needed <= capacity {
+                // `needed` counts the terminating NUL.
+                buffer.truncate(needed as usize - 1);
+                return Some(OsString::from_wide(&buffer));
+            }
+            capacity = needed;
+        }
+        None
+    }
+
+    pub(super) fn registry_dword(hive: Hive, key: &str, value: &str) -> Option<u32> {
+        let key = open(hkey(hive), key)?;
         let value = wide(value);
+        let mut kind: REG_VALUE_TYPE = 0;
+        let mut data: u32 = 0;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        // SAFETY: the buffer is the four bytes of `data` and `size` says so; a longer value fails with
+        // ERROR_MORE_DATA and writes nothing.
+        let status = unsafe {
+            RegQueryValueExW(
+                key.0,
+                value.as_ptr(),
+                std::ptr::null(),
+                &mut kind,
+                (&raw mut data).cast::<u8>(),
+                &mut size,
+            )
+        };
+        (status == ERROR_SUCCESS && kind == REG_DWORD && size == 4).then_some(data)
+    }
+
+    /// The key opened for reading, closed when the handle drops; `None` when it is not there.
+    fn open(hive: HKEY, key: &str) -> Option<Key> {
+        let key = wide(key);
         let mut handle: HKEY = std::ptr::null_mut();
         // SAFETY: the key name is NUL-terminated and `handle` receives the opened key; the status says
         // whether it did.
         let opened = unsafe { RegOpenKeyExW(hive, key.as_ptr(), 0, KEY_READ, &mut handle) };
-        if opened != ERROR_SUCCESS {
-            return None;
-        }
-        let key = Key(handle);
+        (opened == ERROR_SUCCESS).then_some(Key(handle))
+    }
+
+    /// A `REG_SZ` or `REG_EXPAND_SZ` value as written, without its trailing NULs, and whether it is the
+    /// expandable type; `None` for a missing key or value, another type, or an empty string.
+    fn string_value(hive: HKEY, key: &str, value: &str) -> Option<RegistryText> {
+        let key = open(hive, key)?;
+        let value = wide(value);
         let mut kind: REG_VALUE_TYPE = 0;
         let mut size: u32 = 0;
         // SAFETY: a null data pointer with a zero size asks for the type and the size in bytes only.
@@ -419,7 +595,10 @@ mod system {
         if buffer.is_empty() {
             return None;
         }
-        Some(OsString::from_wide(&buffer))
+        Some(RegistryText {
+            text: OsString::from_wide(&buffer),
+            expandable: kind == REG_EXPAND_SZ,
+        })
     }
 
     pub(super) fn common_folders() -> Vec<PathBuf> {
@@ -449,16 +628,20 @@ mod system {
     //! The other targets have no launcher key and no usual folder yet; the macOS preview (M6) brings
     //! `/Applications/World of Warcraft/`.
 
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::path::PathBuf;
 
-    use super::Hive;
+    use super::{Hive, RegistryText};
 
-    pub(super) fn launcher_install_path() -> Option<PathBuf> {
+    pub(super) fn registry_text(_hive: Hive, _key: &str, _value: &str) -> Option<RegistryText> {
         None
     }
 
-    pub(super) fn registry_string(_hive: Hive, _key: &str, _value: &str) -> Option<OsString> {
+    pub(super) fn expand_environment(_text: &OsStr) -> Option<OsString> {
+        None
+    }
+
+    pub(super) fn registry_dword(_hive: Hive, _key: &str, _value: &str) -> Option<u32> {
         None
     }
 
@@ -489,6 +672,7 @@ mod tests {
         FixedLookup {
             install_path,
             folders: folders.to_vec(),
+            uninstall_locations: Vec::new(),
         }
     }
 
@@ -622,22 +806,35 @@ mod tests {
             Some(FixedLookup {
                 install_path: Some(PathBuf::from("Q:\\reg")),
                 folders: vec![PathBuf::from("Q:\\one"), PathBuf::from("Q:\\two")],
+                uninstall_locations: Vec::new(),
             })
         );
         assert_eq!(
-            parse_lookup(Some(OsStr::new("webview2=131.0.2903.70;Q:\\only"))),
+            parse_lookup(Some(OsStr::new(
+                "webview2=131.0.2903.70;windows=24H2,26100.1234;Q:\\only"
+            ))),
             Some(FixedLookup {
                 install_path: None,
                 folders: vec![PathBuf::from("Q:\\only")],
+                uninstall_locations: Vec::new(),
             }),
-            "the doctor's item is no folder"
+            "the doctor's items are no folders"
         );
         assert_eq!(
             parse_lookup(Some(OsStr::new("Q:\\only"))),
             Some(FixedLookup {
                 install_path: None,
                 folders: vec![PathBuf::from("Q:\\only")],
+                uninstall_locations: Vec::new(),
             })
+        );
+        assert_eq!(
+            parse_lookup(Some(OsStr::new("uninstall=Q:\\one;uninstall=Q:\\two"))),
+            Some(FixedLookup {
+                uninstall_locations: vec![PathBuf::from("Q:\\one"), PathBuf::from("Q:\\two")],
+                ..FixedLookup::none()
+            }),
+            "the Uninstall entry's values, in order"
         );
     }
 
@@ -648,13 +845,17 @@ mod tests {
             RootOrigin::Environment,
             RootOrigin::Remembered,
             RootOrigin::Registry,
+            RootOrigin::UninstallEntry,
             RootOrigin::CommonFolder,
         ];
         let names: std::collections::HashSet<&str> =
             origins.iter().map(|origin| origin.as_str()).collect();
         assert_eq!(names.len(), origins.len(), "two origins share a JSON name");
         assert!(origins.iter().all(|origin| origin.is_discovered()
-            == matches!(origin, RootOrigin::Registry | RootOrigin::CommonFolder)));
+            == matches!(
+                origin,
+                RootOrigin::Registry | RootOrigin::UninstallEntry | RootOrigin::CommonFolder
+            )));
         let root = GameRoot {
             path: PathBuf::from("Q:\\wow"),
             origin: RootOrigin::Registry,
@@ -666,6 +867,160 @@ mod tests {
         let json = serde_json::to_value(&root).expect("serializes");
         assert_eq!(json["origin"], "registry");
         assert_eq!(json["path"], "Q:\\wow");
+    }
+
+    #[test]
+    fn the_uninstall_entry_follows_the_launchers_value_and_says_so() {
+        let elsewhere = temp_dir("elsewhere-uninstall");
+        let missing = PathBuf::from("Q:\\no\\such\\folder");
+        let with_uninstall = |install_path: Option<PathBuf>, locations: &[PathBuf]| FixedLookup {
+            install_path,
+            folders: vec![elsewhere.clone()],
+            uninstall_locations: locations.to_vec(),
+        };
+
+        // The Uninstall entry alone finds the root, and the origin names it.
+        let found = discover_root(&with_uninstall(None, &[fixtures()])).expect("a hit");
+        assert_eq!(found.origin, RootOrigin::UninstallEntry);
+        assert!(is_game_root(&found.path));
+        assert!(
+            found
+                .found_line()
+                .starts_with("game root found in the game's Uninstall registry entry: "),
+            "{}",
+            found.found_line()
+        );
+        assert_eq!(
+            serde_json::to_value(&found).expect("serializes")["origin"],
+            "uninstall_entry"
+        );
+
+        // A launcher's value that is no game root falls through to it; a later value is tried after a
+        // missing one; a value naming a flavor folder counts for its parent.
+        let found = discover_root(&with_uninstall(
+            Some(missing.clone()),
+            &[missing.clone(), fixtures().join("_forever_")],
+        ))
+        .expect("the parent of the flavor folder");
+        assert_eq!(found.origin, RootOrigin::UninstallEntry);
+        assert_eq!(
+            found.path,
+            std::path::absolute(fixtures()).expect("absolute")
+        );
+
+        // The launcher's value wins when both name a game root.
+        let other = temp_dir("other-root");
+        std::fs::write(other.join(BUILD_INFO), "Product!STRING:0\n").expect("write");
+        std::fs::create_dir_all(other.join("_forever_")).expect("the flavor folder");
+        std::fs::write(
+            other.join("_forever_").join(flavor::FLAVOR_INFO),
+            "Product Flavor!STRING:0\nwowf\n",
+        )
+        .expect("write");
+        assert!(is_game_root(&other));
+        let found = discover_root(&with_uninstall(
+            Some(fixtures()),
+            std::slice::from_ref(&other),
+        ))
+        .expect("a hit");
+        assert_eq!(found.origin, RootOrigin::Registry);
+        assert_eq!(
+            found.path,
+            std::path::absolute(fixtures()).expect("absolute")
+        );
+
+        // The Uninstall entry comes before the usual folders.
+        let found = discover_root(&FixedLookup {
+            install_path: None,
+            folders: vec![fixtures()],
+            uninstall_locations: vec![other.clone()],
+        })
+        .expect("a hit");
+        assert_eq!(found.origin, RootOrigin::UninstallEntry);
+        assert_eq!(found.path, other);
+
+        let _ = std::fs::remove_dir_all(&elsewhere);
+        let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn an_expandable_value_resolves_to_the_root_of_its_literal() {
+        // A stub of the environment call: one variable, `%MRGL_TEST_GAMES%`, names the fixtures' parent.
+        let parent = fixtures()
+            .parent()
+            .expect("the fixtures' parent")
+            .to_path_buf();
+        let environment = |text: &OsStr| {
+            Some(OsString::from(
+                text.to_string_lossy()
+                    .replace("%MRGL_TEST_GAMES%", &parent.to_string_lossy()),
+            ))
+        };
+        let expandable = RegistryText {
+            text: OsString::from("%MRGL_TEST_GAMES%\\flavors"),
+            expandable: true,
+        };
+        let literal = RegistryText {
+            text: fixtures().into_os_string(),
+            expandable: false,
+        };
+        let expanded = registry_path(expandable.clone(), environment).expect("expanded");
+        assert_eq!(expanded, parent.join("flavors"));
+        let as_written = registry_path(literal, environment).expect("as written");
+        for (launcher, uninstall) in [(Some(expanded.clone()), vec![]), (None, vec![expanded])] {
+            let from_expanded = discover_root(&FixedLookup {
+                install_path: launcher,
+                folders: Vec::new(),
+                uninstall_locations: uninstall,
+            })
+            .expect("the expanded value finds the root");
+            let from_literal = discover_root(&lookup(Some(as_written.clone()), &[]))
+                .expect("the literal finds the root");
+            assert_eq!(from_expanded.path, from_literal.path);
+        }
+
+        // A plain string is taken as written, `%` and all; a failed expansion or an empty one is no
+        // value.
+        let plain = RegistryText {
+            expandable: false,
+            ..expandable.clone()
+        };
+        assert_eq!(
+            registry_path(plain, environment),
+            Some(PathBuf::from("%MRGL_TEST_GAMES%\\flavors"))
+        );
+        assert_eq!(registry_path(expandable.clone(), |_| None), None);
+        assert_eq!(registry_path(expandable, |_| Some(OsString::new())), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_environment_call_expands_a_set_variable_and_keeps_an_unset_one() {
+        let system_root = std::env::var_os("SystemRoot").expect("SystemRoot is set on Windows");
+        let mut expected = system_root.clone();
+        expected.push("\\Fonts");
+        assert_eq!(
+            expand_environment(OsStr::new("%SystemRoot%\\Fonts")),
+            Some(expected)
+        );
+        assert_eq!(
+            expand_environment(OsStr::new("%MRGL_NO_SUCH_VARIABLE_043%\\x")),
+            Some(OsString::from("%MRGL_NO_SUCH_VARIABLE_043%\\x"))
+        );
+        assert_eq!(expand_environment(OsStr::new("")), Some(OsString::new()));
+        // The stub item goes through the same call.
+        let mut root = system_root;
+        root.push("\\World of Warcraft");
+        assert_eq!(
+            parse_lookup(Some(OsStr::new(
+                "registry-expand=%SystemRoot%\\World of Warcraft;uninstall-expand=%SystemRoot%\\World of Warcraft"
+            ))),
+            Some(FixedLookup {
+                install_path: Some(PathBuf::from(&root)),
+                folders: Vec::new(),
+                uninstall_locations: vec![PathBuf::from(&root)],
+            })
+        );
     }
 
     #[cfg(windows)]

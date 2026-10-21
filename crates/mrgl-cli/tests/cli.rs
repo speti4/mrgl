@@ -550,7 +550,7 @@ fn no_root_at_all_names_the_three_ways_and_the_discovery() {
     assert_eq!(output.status.code(), Some(1));
     let plain = stderr_last_line(&output);
     assert!(
-        plain.starts_with("no game root for flavor era: none in the launcher's registry key"),
+        plain.starts_with("no game root for flavor era: none in the registry"),
         "{plain}"
     );
     assert!(
@@ -598,7 +598,7 @@ fn root_without_a_folder_prints_nothing_when_none_is_remembered_or_found() {
     assert!(output.status.success());
     assert_eq!(
         stdout_last_line(&output),
-        "no game root: none remembered, none in the launcher's registry key or the usual install folders; run `mrgl root <folder>`"
+        "no game root: none remembered, none in the registry or the usual install folders; run `mrgl root <folder>`"
     );
     let json = mrgl().args(["--json", "root"]).output().expect("run mrgl");
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
@@ -2917,12 +2917,16 @@ fn doctor_prints_every_line_offline_without_a_key_value_or_a_home_path() {
         .to_string_lossy()
         .into_owned();
     assert_eq!(lines[0], format!("mrgl: {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        lines[1], "windows: unknown",
+        "the stub names no Windows version"
+    );
     assert!(
-        lines[1].starts_with("root: ") && lines[1].ends_with(&format!("{root_name} (from --root)")),
+        lines[2].starts_with("root: ") && lines[2].ends_with(&format!("{root_name} (from --root)")),
         "{stdout}"
     );
     assert!(
-        lines[2].starts_with("home: ") && lines[2].ends_with("doctor-lines"),
+        lines[3].starts_with("home: ") && lines[3].ends_with("doctor-lines"),
         "{stdout}"
     );
     let rest = [
@@ -2931,9 +2935,9 @@ fn doctor_prints_every_line_offline_without_a_key_value_or_a_home_path() {
         "api keys: MRGL_GITHUB_TOKEN set",
         "flavor: _forever_ (wowf)",
     ];
-    assert_eq!(lines[3..7], rest, "{stdout}");
+    assert_eq!(lines[4..8], rest, "{stdout}");
     assert!(
-        lines[7].starts_with("  folder: ") && lines[7].ends_with("_forever_"),
+        lines[8].starts_with("  folder: ") && lines[8].ends_with("_forever_"),
         "{stdout}"
     );
     let flavor = [
@@ -2945,7 +2949,7 @@ fn doctor_prints_every_line_offline_without_a_key_value_or_a_home_path() {
         "  client: not running",
         "diagnostics of 1 flavor, nothing to look at; paste the lines above into a bug report",
     ];
-    assert_eq!(lines[8..], flavor, "{stdout}");
+    assert_eq!(lines[9..], flavor, "{stdout}");
     assert!(!stdout.contains(DOCTOR_SECRET), "{stdout}");
     assert_no_home_path(&stdout);
     // The probe left nothing behind, and the home folder got nothing either.
@@ -3009,15 +3013,16 @@ fn doctor_offline_without_a_root_says_unknown_and_succeeds() {
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     let stdout = stdout(&output);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines[1], "root: none found");
-    assert_eq!(lines[3], "webview2: unknown");
-    assert_eq!(lines[4], "github rate limit: unknown (HTTP 404)");
-    assert_eq!(lines[5], "api keys: MRGL_GITHUB_TOKEN not set");
+    assert_eq!(lines[1], "windows: unknown");
+    assert_eq!(lines[2], "root: none found");
+    assert_eq!(lines[4], "webview2: unknown");
+    assert_eq!(lines[5], "github rate limit: unknown (HTTP 404)");
+    assert_eq!(lines[6], "api keys: MRGL_GITHUB_TOKEN not set");
     // The summary speaks through the voice: a murloc line, then the plain one.
-    assert_eq!(lines.len(), 8, "{stdout}");
-    assert!(lines[6].starts_with("Mrgl"), "{stdout}");
+    assert_eq!(lines.len(), 9, "{stdout}");
+    assert!(lines[7].starts_with("Mrgl"), "{stdout}");
     assert_eq!(
-        lines[7],
+        lines[8],
         "diagnostics of no flavor, 1 thing to look at (no game root); paste the lines above into a bug report"
     );
     assert_no_home_path(&stdout);
@@ -4593,4 +4598,157 @@ fn max_unpacked_is_a_usage_error_when_it_is_not_a_size_or_has_nothing_to_bound()
         let output = mrgl().args(&args).output().expect("run mrgl");
         assert_eq!(output.status.code(), Some(2), "{args:?}");
     }
+}
+
+// --- task 051: the Windows version line of the doctor report, from the `windows=` stub item ---
+
+#[test]
+fn doctor_names_the_windows_version_in_the_block_and_the_json() {
+    let output = mrgl()
+        .env(
+            "MRGL_DISCOVERY",
+            "webview2=131.0.2903.70;windows=24H2,26100.1234",
+        )
+        .args(["--serious", "doctor"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines[1], "windows: Windows 11 24H2, build 26100.1234",
+        "{stdout}"
+    );
+
+    let output = mrgl()
+        .env("MRGL_DISCOVERY", "windows=,19045")
+        .args(["--json", "doctor"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(
+        value["windows"],
+        serde_json::json!({
+            "name": "Windows 10",
+            "display_version": null,
+            "build": 19045,
+            "ubr": null,
+            "product_name": null,
+        }),
+        "a part the registry lacks is null"
+    );
+}
+
+// --- task 043: the game's Uninstall entry as a second registry source, and expanded values ---
+
+#[test]
+fn root_finds_the_game_root_in_the_uninstall_entry_alone() {
+    let home = temp_home("uninstall-entry");
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .env(
+            "MRGL_DISCOVERY",
+            format!("uninstall={}", fixtures().display()),
+        )
+        .args(["--serious", "root"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let line = stdout_last_line(&output);
+    assert!(
+        line.starts_with("game root found in the game's Uninstall registry entry: "),
+        "{line}"
+    );
+    assert!(
+        line.ends_with("; run `mrgl root <folder>` to remember it"),
+        "{line}"
+    );
+    assert!(!home.join("config.json").exists(), "nothing saved");
+
+    let json = mrgl()
+        .env(
+            "MRGL_DISCOVERY",
+            format!("uninstall={}", fixtures().display()),
+        )
+        .args(["--json", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(json.status.success(), "{}", stderr_last_line(&json));
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["root_origin"], "uninstall_entry");
+    assert_eq!(value["flavor"]["id"], "wowf");
+}
+
+#[test]
+fn the_launchers_value_wins_over_the_uninstall_entry() {
+    let other = doctor_game_root("uninstall-other");
+    let output = mrgl()
+        .env(
+            "MRGL_DISCOVERY",
+            format!(
+                "registry={};uninstall={}",
+                fixtures().display(),
+                other.display()
+            ),
+        )
+        .args(["--json", "root"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["root_origin"], "registry");
+
+    // A launcher's value that is no game root falls through to the Uninstall entry, which the doctor
+    // names too.
+    let output = mrgl()
+        .env(
+            "MRGL_DISCOVERY",
+            format!("registry=Q:\\nowhere;uninstall={}", other.display()),
+        )
+        .args(["--serious", "doctor"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    assert!(
+        stdout.lines().any(|line| line.starts_with("root: ")
+            && line.ends_with("(found in the game's Uninstall registry entry)")),
+        "{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&other);
+}
+
+#[test]
+fn an_expandable_registry_value_resolves_to_the_root_of_its_literal() {
+    let parent = fixtures()
+        .parent()
+        .expect("the fixtures' parent")
+        .to_path_buf();
+    let root_of = |stub: String| {
+        let output = mrgl()
+            .env("MRGL_TEST_GAMES_043", &parent)
+            .env("MRGL_DISCOVERY", stub)
+            .args(["--json", "root"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("one JSON document");
+        (value["root"].clone(), value["root_origin"].clone())
+    };
+    let (literal, origin) = root_of(format!("registry={}", fixtures().display()));
+    assert_eq!(origin, "registry");
+    assert!(literal.is_string(), "{literal}");
+    // The stub's expandable items go through the same environment call as a `REG_EXPAND_SZ` value.
+    assert_eq!(
+        root_of("registry-expand=%MRGL_TEST_GAMES_043%\\flavors".to_string()),
+        (literal.clone(), "registry".into())
+    );
+    assert_eq!(
+        root_of("uninstall-expand=%MRGL_TEST_GAMES_043%\\flavors".to_string()),
+        (literal, "uninstall_entry".into())
+    );
 }

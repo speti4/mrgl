@@ -38,7 +38,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
   calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
   D-003), the game root resolution (`discover`, task 020: the flag, `MRGL_ROOT`, the remembered root, then
-  the launcher's registry key and the usual install folders, behind a lookup trait with a stub), the
+  the launcher's registry key, the game's Uninstall entry (task 043) and the usual install folders, behind
+  a lookup trait with a stub), the
   dependency check (`dependencies`, task 029: every required name of the TOC the flavor loads, `## Dependencies`,
   `## RequiredDeps` and the other `## Dep…` lines, ASCII case-insensitive, is *met* when an addon folder of
   that name is in the scan, *embedded* when a folder of that name sits inside the addon's own folder, at
@@ -177,10 +178,19 @@ report carries no home folder path and no secret.
 The lines, with the JSON field in brackets:
 
 - `mrgl: <version>` (`mrgl_version`): the version of the exe.
+- `windows: Windows 11 24H2, build 26100.1234` (`windows`: `name`, `display_version`, `build`, `ubr`,
+  `product_name`; task 051): the Windows version from `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`,
+  read like the WebView2 version below: `DisplayVersion`, `CurrentBuildNumber` and the update build revision
+  `UBR` (a `REG_DWORD`) after the dot. The name comes from the build (22000 and later is Windows 11, 10240
+  and later Windows 10), since `ProductName`, kept as written in the JSON, says Windows 10 on Windows 11 too;
+  a product name of another Windows (a server) is shown as written. A value that is not there is left out
+  (`Windows 11, build 26100`) or `build unknown`, `null` in the JSON, and with none of them the line is
+  `windows: unknown`.
 - `root: <folder> (<origin>)` (`root`, `root_origin`): the game root the run resolved, as every command does,
-  and how: `from --root`, `from MRGL_ROOT`, `remembered`, `found in the launcher's registry key`, `found in a
-  usual install folder` (`flag`, `environment`, `remembered`, `registry`, `common_folder`); `none found` when
-  nothing names or finds one.
+  and how: `from --root`, `from MRGL_ROOT`, `remembered`, `found in the launcher's registry key`, `found in
+  the game's Uninstall registry entry`, `found in a usual install folder` (`flag`, `environment`,
+  `remembered`, `registry`, `uninstall_entry`, `common_folder`); `none found` when nothing names or finds
+  one.
 - `home: <folder>` (`home`): the mrgl home folder (`MRGL_HOME`, else `%LOCALAPPDATA%\mrgl`).
 - `webview2: <version> (per-machine)` or `(per-user)` (`webview2`: `version`, `scope`): the WebView2 runtime
   the window runs on, the `pv` value under `Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}`,
@@ -223,10 +233,12 @@ The lines, with the JSON field in brackets:
 The summary names what needs a look: no game root, a missing flavor folder, an AddOns folder that takes no
 write, a sidecar that is rebuilt or unreadable, a process list that cannot be taken, a used-up rate limit and
 the warnings. The tests run the report offline: the core's tests hand it a fixed process list, an in-memory
-HTTP stub and a fixed WebView2 answer; the end-to-end tests stub the WebView2 version with a
-`webview2=<version>` item of `MRGL_DISCOVERY` (any other value of the variable is no runtime, so `off` reads
-no registry), answer the rate limit from `releases/api.github.com/rate_limit.json` and assert that neither a
-key's value nor a `\Users\` path is in the output.
+HTTP stub and a fixed WebView2 and Windows answer; the end-to-end tests stub the WebView2 version with a
+`webview2=<version>` item of `MRGL_DISCOVERY` and the Windows version with a
+`windows=<display version>,<build>.<ubr>` item (`windows=24H2,26100.1234`, a part may be left out; any other
+value of the variable is no runtime and an unknown Windows, so `off` reads no registry), answer the rate
+limit from `releases/api.github.com/rate_limit.json` and assert that neither a key's value nor a `\Users\`
+path is in the output.
 
 ## The UI
 
@@ -506,20 +518,33 @@ run's game folder is resolved in one order by
 every command (`discover::resolve_root_of_process`, task 020): the `--root` flag, then `MRGL_ROOT`, then the
 remembered one, then the discovery: the launcher's registry value (`HKLM\SOFTWARE\WOW6432Node\Blizzard
 Entertainment\World of Warcraft`, `InstallPath`; a value that names a flavor folder counts for its parent),
-then `Program Files (x86)\World of Warcraft` and the same under `Program Files`. A discovered hit counts only
+then the game's Uninstall entry (below), then `Program Files (x86)\World of Warcraft` and the same under
+`Program Files`. A discovered hit counts only
 when it is a game root (a `.build.info` and at least one flavor folder); it is used for the run and reported
 with its origin (a plain line in `list`, the answer of `mrgl root` with no argument, `root_origin` in
 `--json`), and never written to `config.json`: `mrgl root <folder>` is the one place that remembers it.
 `MRGL_DISCOVERY` replaces the lookup for one run: `off` finds nothing, and a `;`-separated list
-(`registry=<path>` for the launcher's value, `webview2=<version>` for the doctor's WebView2 version, every
-other item a usual folder) is the stub the end-to-end tests run on, so no test reads the real registry or
-looks under `Program Files`.
+(`registry=<path>` for the launcher's value, `webview2=<version>` and `windows=<version>` for the doctor's
+WebView2 and Windows version, every other item a usual folder) is the stub the end-to-end tests run on, so
+no test reads the real registry or looks under `Program Files`.
 
 The same `backups\<flavor-id>\` folder takes the zips of `mrgl savedvars --clean` (task 025):
 `SavedVariables-<date>.zip` per cleanup, the orphan SavedVariables files (no addon folder of their name, in
 any case, under `Interface\AddOns`; a disabled addon keeps its folder) and their `.bak` files, each under its
 path relative to `WTF`, so unzipping it into `WTF` by hand puts every file back. `backup --list` shows it
 among the zips; `backup --restore` refuses it, since a restore replaces the whole `WTF` folder.
+
+The game's Uninstall entry (task 043) is the `InstallLocation` value of the `World of Warcraft` key under
+`Microsoft\Windows\CurrentVersion\Uninstall`, read in the 32-bit view of `HKLM` first
+(`HKLM\SOFTWARE\WOW6432Node\…`, where the installer writes it as it writes the launcher's key), then in the
+native `HKLM\SOFTWARE\…`, then in `HKCU\Software\…`: an install moved or restored by hand may carry it
+without the launcher's key. Its origin is `the game's Uninstall registry entry` (`uninstall_entry` in
+`--json`). A value of the type `REG_EXPAND_SZ`, from the launcher's key or the Uninstall entry, is expanded
+from the environment (`ExpandEnvironmentStringsW`; a variable that is not set stays as written) before it is
+tried; a `REG_SZ` value is taken as written, `%` and all (`discover::registry_path`). The stub takes
+`uninstall=<path>` for an Uninstall value, and `registry-expand=<text>` and `uninstall-expand=<text>` for an
+expandable value, which go through the same environment call, so the end-to-end tests cover the expansion
+without a registry.
 
 ## Forever notes
 

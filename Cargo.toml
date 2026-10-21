@@ -52,11 +52,13 @@ tauri-plugin-opener = "2"
 # no registry crate joins for one string value. The time-zone conversion behind the dated backup names and
 # the zip timestamps (task 013) is two more calls from the same bindings, so no date crate either. The dev
 # addon junctions (task 005) are one `DeviceIoControl` with `FSCTL_SET_REPARSE_POINT` (`Win32_System_IO`,
-# `Win32_System_Ioctl`), so no junction crate either.
+# `Win32_System_Ioctl`), so no junction crate either. An expandable registry value of the discovery (task
+# 043) is one `ExpandEnvironmentStringsW` (`Win32_System_Environment`).
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Environment",
     "Win32_System_IO",
     "Win32_System_Ioctl",
     "Win32_System_Registry",
