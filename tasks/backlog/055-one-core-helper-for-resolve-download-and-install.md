@@ -13,8 +13,7 @@ What: the resolve, download and engine-install steps that `add github:` (040, `E
 folder rule and one already-installed rule, that resolves a managed addon on its own channel (021,
 `Target::with_channel`) instead of the stable default; the refusal to install over a linked addon or a
 foreign junction (005, `refuse_links`) moves from `Engine::install` into `Engine::commit`, so every path
-that stages and commits is covered by the one call; and the CLI's install summary line and JSON block
-("installed … into", "updated … from … to …") become one helper every install path calls.
+that stages and commits is covered; and the CLI's install summary line and JSON block become one helper.
 Why: the one path that writes the user's folder was written twice and is about to be written a third time
 (`update --all`, 006); a caller that forgets the link check overwrites a junction into a development folder.
 Done when: one core function with three callers (`add github:`, `import`, `update`), the check once in

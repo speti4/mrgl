@@ -55,7 +55,7 @@ _none_
 | 040 | [add github:<owner>/<repo> installs the pick through the engine](backlog/040-add-github-installs-the-pick-through-the-engine.md) | S | 2026-10-21 |
 | 041 | [Offline resolve from the cached release list, with a warning](backlog/041-offline-resolve-from-the-cached-release-list.md) | S | 2026-10-21 |
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
-| 055 | [One core helper for resolve, download and install](backlog/055-one-core-helper-for-resolve-download-and-install.md) | S | 2026-10-21 |
+| 055 | [One install path: a core helper for resolve, download and install, the link ref…](backlog/055-one-core-helper-for-resolve-download-and-install.md) | M | 2026-10-21 |
 | 061 | [CI compiles the non-Windows paths of the core](backlog/061-ci-compiles-the-non-windows-paths.md) | S | 2026-10-21 |
 
 #### M2 Window MVP
@@ -87,7 +87,7 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 026 | [Adopt: take over an existing AddOns folder from its TOC source headers; CLI ado…](backlog/026-adopt-existing-addons-folder-from-toc-headers.md) | M | 2026-10-21 |
-| 056 | [import installs wago:, wowi: and curse: entries once those sources land](backlog/056-import-wago-wowi-and-curse-entries.md) | S | 2026-10-21 |
+| 056 | [What the Wago, WoWInterface and CurseForge sources owe the existing features](backlog/056-import-wago-wowi-and-curse-entries.md) | S | 2026-10-21 |
 
 #### M5 Trust
 
