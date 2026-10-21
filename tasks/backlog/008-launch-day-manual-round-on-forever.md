@@ -11,11 +11,8 @@ milestone: M1 Core + CLI
 
 What: once Forever is live, install the Forever addon list from GitHub into the real `_forever_` folder with the
 CLI, start the game, confirm every addon loads, run `update --all` once a release lands, and write the result
-as the dated Verification of this task. With the client running: `scan` and `list --json` report it (023); on
-the era folder without a `.build.info` row: `scan` reads the exe's version with no warning (019); both are
-read-only checks no fixture covers. Before the launch, as the first half of this round: `add <zip>`
-and `remove` (004) on the real `_forever_` folder, once with the game on another drive than the mrgl home
-(the copy path of the swap that no fixture covers), and `add github:… --dry-run` (003) against a real
-repository with a Forever release, to confirm the packager's `forever` key as published.
+as the dated Verification of this task. The commands no fixture covers (a zip in hand, backup and restore,
+the running client, the era exe version, a real repository's `forever` key) are the pre-launch round of 045,
+done before this one.
 Why: M1's done-when is this round; the fixtures prove the code, the game proves the flavor pick.
 Done when: the list installs flavor-correctly, loads in-game, and updates; every failure is a task.
