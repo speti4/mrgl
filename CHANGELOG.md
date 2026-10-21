@@ -41,6 +41,10 @@ The repository, the task standard and the empty workspace: no app yet.
 - Addon list export and import, and a TOC-interface versus build warning ([015](https://github.com/speti4/mrgl/blob/main/tasks/done/015-list-export-import-and-interface-warning.md))
 - SavedVariables: size per addon and orphan cleanup into a backup zip; CLI `savedvars` ([025](https://github.com/speti4/mrgl/blob/main/tasks/done/025-savedvariables-size-and-orphan-cleanup.md))
 
+### M5 Trust
+
+- A bound on the unpacked size of a zip ([039](https://github.com/speti4/mrgl/blob/main/tasks/done/039-bound-on-the-unpacked-size-of-a-zip.md))
+
 ### Project housekeeping
 
 - Project scaffolding: repo structure, task standard, decisions, origin and research ([001](https://github.com/speti4/mrgl/blob/main/tasks/done/001-project-scaffolding.md))
