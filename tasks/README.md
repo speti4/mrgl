@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 28 backlog (2 ready · 0 blocked · 2 waiting · 24 ideas) · 0 in progress · 25 done · 3 dropped · 5 decisions
+**State:** 26 backlog (2 ready · 0 blocked · 2 waiting · 22 ideas) · 2 in progress · 25 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -53,7 +53,6 @@ _none_
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
 | 046 | [The asset download's error path: a 404 names the asset, the size is checked](backlog/046-asset-download-404-names-the-missing-asset.md) | S | 2026-10-21 |
 | 055 | [One install path: a core helper for resolve, download and install, the link ref…](backlog/055-one-core-helper-for-resolve-download-and-install.md) | M | 2026-10-21 |
-| 061 | [CI compiles the non-Windows paths of the core](backlog/061-ci-compiles-the-non-windows-paths.md) | S | 2026-10-21 |
 
 #### M2 Window MVP
 
@@ -62,7 +61,6 @@ _none_
 | 009 | [Tauri shell with the flavor list](backlog/009-tauri-shell-with-the-flavor-list.md) | M | 2026-10-21 |
 | 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
-| 033 | [Close the GitHub milestone a release ships: a step in the release checklist](backlog/033-close-the-milestone-of-a-shipped-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
 | 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](backlog/043-second-registry-source-for-the-game-root.md) | S | 2026-10-21 |
 | 051 | [A Windows version line in the doctor report](backlog/051-windows-version-line-in-the-doctor-report.md) | S | 2026-10-21 |
@@ -101,7 +99,17 @@ _none_
 
 ### In progress
 
-_none_
+#### M1 Core + CLI
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 061 | [CI compiles the non-Windows paths of the core](wip/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 | `none` |
+
+#### M2 Window MVP
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 033 | [Close the GitHub milestone a release ships: a step in the release checklist](wip/033-close-the-milestone-of-a-shipped-release.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
