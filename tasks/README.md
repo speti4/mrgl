@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 32 backlog (2 ready · 0 blocked · 2 waiting · 28 ideas) · 0 in progress · 7 done · 0 dropped · 5 decisions
+**State:** 34 backlog (1 ready · 0 blocked · 2 waiting · 31 ideas) · 0 in progress · 8 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -22,7 +22,6 @@ _Generated 2026-10-21 — edit the files, not this section._
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 003 | [GitHub release source: release.json, flavor-correct asset pick, ETag cache; CLI…](backlog/003-github-release-source-with-release-json.md) | M | 2026-10-21 |
 | 006 | [Update check: installed state against the latest release per flavor; update --a…](backlog/006-update-check-and-update-all.md) | S | 2026-10-21 |
 
 ### Needs decision
@@ -56,6 +55,9 @@ _none_
 | 030 | [Release notes before an update: the GitHub release body in one line](backlog/030-release-notes-before-an-update.md) | S | 2026-10-21 |
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](backlog/032-contributing-names-the-mirrored-issues.md) | S | 2026-10-21 |
 | 037 | [list reads the sidecar: managed (source, version) and unmanaged addons](backlog/037-list-reads-the-sidecar-managed-and-unmanaged.md) | S | 2026-10-21 |
+| 040 | [add github:<owner>/<repo> installs the pick through the engine](backlog/040-add-github-installs-the-pick-through-the-engine.md) | S | 2026-10-21 |
+| 041 | [Offline resolve from the cached release list, with a warning](backlog/041-offline-resolve-from-the-cached-release-list.md) | S | 2026-10-21 |
+| 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
 
 #### M2 Window MVP
 
@@ -120,6 +122,7 @@ _none_
 | 017 | [Window design sketch: the list view, the states and the voice's place, before t…](done/017-window-design-sketch-before-the-shell.md) | 2026-10-21 |
 | 016 | [Mirror the task files into GitHub issues and milestones](done/016-task-to-github-issue-mirror.md) | 2026-10-21 |
 | 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](done/004-install-engine-with-state-sidecar.md) | 2026-10-21 |
+| 003 | [GitHub release source: release.json, flavor-correct asset pick, ETag cache; CLI…](done/003-github-release-source-with-release-json.md) | 2026-10-21 |
 | 002 | [Flavor detection and the AddOns scan with TOC parsing; CLI scan, list and root](done/002-flavor-detection-and-addons-scan-with-toc-parsing.md) | 2026-10-21 |
 | 001 | [Project scaffolding: repo structure, task standard, decisions, origin and resea…](done/001-project-scaffolding.md) | 2026-10-21 |
 
