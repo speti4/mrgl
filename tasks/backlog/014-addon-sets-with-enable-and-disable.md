@@ -8,9 +8,10 @@ milestone: M3 Toolbox
 
 # Addon sets with enable and disable
 
-What: named sets of addons per flavor (raid, levelling, minimal), switched with one command or click;
-enable and disable through the flavor's `AddOns.txt` files, never by deleting folders. The file lives per
-character under `WTF`, so a set applies to every character of the flavor or to one chosen character.
+What: named sets of addons per flavor (raid, levelling, minimal), stored under the flavor's sidecar folder
+(`sets.json`), switched with one command or click by rewriting every character's `AddOns.txt` under `WTF` in
+the client's own format, never by deleting folders; refused while the game runs (023). Decided 2026-10-21: a
+set applies to every character of the flavor; one chosen character is task 027.
 Why: switching a dozen addons by hand before a raid is the second most common chore.
-Done when: a set switch changes exactly the listed addons in a fixture flavor and the game's own files are
-left in the format the client wrote.
+Done when: a set switch changes exactly the listed addons in a fixture flavor, the game's own files are left
+in the format the client wrote, and a switch is refused while the client runs.

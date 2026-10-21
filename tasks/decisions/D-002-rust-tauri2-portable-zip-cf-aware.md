@@ -25,11 +25,14 @@ it cannot update most of the retail and classic folders.
   hand. **CurseForge** through its Core API only, with the user's own key sent as `x-api-key`; a project with
   `allowModDistribution=false` gets "open the page / import a zip"; the website is never scraped.
 - **The game stays the user's.** mrgl writes under `Interface\AddOns`, and under `WTF` only for a backup
-  restore or an addon set the user asked for (M3); it never touches the client or its launcher, and lives
-  next to the CurseForge app for the folders that app still manages.
+  restore, an addon set or a SavedVariables cleanup the user asked for (M3), never while the client runs; it
+  never touches the client or its launcher, and lives next to the CurseForge app for the folders that app
+  still manages.
 - The cost is one-way: the stack and the source order shape every crate. Decided 2026-10-21.
 - Amended 2026-10-21: the `WTF` sentence names the two toolbox writes (a backup restore, an addon set), so
   the M3 tasks and this decision agree.
+- Amended 2026-10-21: a third toolbox write, the SavedVariables cleanup of orphan files into a backup zip
+  (task 025), joins the two; every `WTF` write refuses while the client runs (task 023).
 
 ## Not chosen
 

@@ -22,8 +22,11 @@ addon, the source, the version, the file list with hashes and the install time. 
 folder is the truth and the state is a cache: a missing, corrupt or stale state is rebuilt from a scan and
 never an error the user has to fix; an addon the scan finds without a state entry is listed as "unmanaged"
 with its TOC's source hints. Nothing is written into the game folder except the addon folders themselves,
-and the `WTF` files of a backup restore or an addon set the user asked for (M3). Decided 2026-10-21.
+and the `WTF` files of a backup restore, an addon set or a SavedVariables cleanup the user asked for (M3),
+never while the client runs. Decided 2026-10-21.
 Amended 2026-10-21: the last sentence names the two toolbox writes, as D-002 does.
+Amended 2026-10-21: a third toolbox write, the SavedVariables cleanup of orphan files into a backup zip
+(task 025), joins the two; every `WTF` write refuses while the client runs (task 023).
 
 ## Not chosen
 
