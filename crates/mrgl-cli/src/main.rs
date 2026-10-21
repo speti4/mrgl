@@ -2,16 +2,18 @@
 //! plain English line, `--serious` or `MRGL_SERIOUS=1` for the plain line alone, `--json` for machines.
 //! Exit codes: 0 success, 1 an error the plain line explains, 2 a usage error (clap's own).
 //!
-//! `scan`, `list` and `root` are task 002; `add github:<owner>/<repo>` resolves a release (task 003);
-//! `add <file.zip>` and `remove` are task 004 (the install engine);
-//! the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer "not implemented yet" with
-//! their task id until that task lands, so the help text and the voice are testable from the first commit.
+//! `scan`, `list` and `root` are task 002, the game root discovery behind them is task 020;
+//! `add github:<owner>/<repo>` resolves a release (task 003); `add <file.zip>` and `remove` are task 004
+//! (the install engine); the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer "not
+//! implemented yet" with their task id until that task lands, so the help text and the voice are testable
+//! from the first commit.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use mrgl_core::client;
+use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
 use mrgl_core::flavor::{self, FlavorId};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{Engine, Metadata};
@@ -20,9 +22,6 @@ use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Source, SourceSpec, Target};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::{Error, VERSION};
-
-/// The environment variable that names the game folder for one run.
-const ROOT_ENV: &str = "MRGL_ROOT";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -61,14 +60,17 @@ enum Command {
         #[arg(long)]
         flavor: Option<String>,
         /// The World of Warcraft folder (the one with `_retail_`, `_forever_` …) for a flavor named by
-        /// name or id; otherwise `MRGL_ROOT`, then the folder `mrgl root` remembered.
+        /// name or id; otherwise `MRGL_ROOT`, then the folder `mrgl root` remembered, then the
+        /// launcher's registry key and the usual install folders.
         #[arg(long)]
         root: Option<PathBuf>,
     },
-    /// Remember the World of Warcraft folder (the one with `_retail_`, `_forever_` …), or print the
-    /// remembered one.
+    /// Remember the World of Warcraft folder (the one with `_retail_`, `_forever_` …), or print the one a
+    /// run would use and where it comes from.
     Root {
-        /// The game folder to remember; without it, the remembered one is printed.
+        /// The game folder to remember; without it, the one a run would use is printed: `MRGL_ROOT`, the
+        /// remembered one, or the one found in the launcher's registry key or the usual install folders
+        /// (found, not remembered).
         folder: Option<PathBuf>,
     },
     /// Install an addon from a source: the path of a zip in hand (installed), or `github:<owner>/<repo>`
@@ -279,10 +281,13 @@ fn flavor_folder(
         let folder_name = id.folder_name().unwrap_or_default();
         let root = game_root(root_flag, warnings)?.ok_or_else(|| {
             format!(
-                "no game root for flavor {spec}: pass --root <folder>, set {ROOT_ENV} or run `mrgl root <folder>`"
+                "no game root for flavor {spec}: none in the launcher's registry key or the usual install folders; pass --root <folder>, set {ROOT_ENV} or run `mrgl root <folder>`"
             )
         })?;
-        return Ok(root.join(folder_name));
+        if root.origin.is_discovered() {
+            warnings.push(root.found_line());
+        }
+        return Ok(root.path.join(folder_name));
     }
     let path = Path::new(spec);
     if path.is_dir() {
@@ -293,25 +298,18 @@ fn flavor_folder(
     ))
 }
 
-/// The game root: the flag, then `MRGL_ROOT`, then the remembered one; `None` when nothing names it.
+/// The game root every command resolves the same way (task 020, `discover::resolve_root_of_process`):
+/// the flag, then `MRGL_ROOT`, then the remembered one, then the launcher's registry key and the usual
+/// install folders; `None` when nothing names it. A config warning is pushed; a discovered root carries
+/// its origin for the caller to report.
 fn game_root(
     root_flag: Option<PathBuf>,
     warnings: &mut Vec<String>,
-) -> Result<Option<PathBuf>, String> {
-    if let Some(root) = root_flag {
-        return Ok(Some(root));
-    }
-    if let Some(root) = std::env::var_os(ROOT_ENV).filter(|value| !value.is_empty()) {
-        return Ok(Some(PathBuf::from(root)));
-    }
-    match home::read_config() {
-        Ok(loaded) => {
-            warnings.extend(loaded.warning);
-            Ok(loaded.config.root)
-        }
-        Err(Error::NoHome) => Ok(None),
-        Err(other) => Err(other.to_string()),
-    }
+) -> Result<Option<GameRoot>, String> {
+    let resolution =
+        discover::resolve_root_of_process(root_flag).map_err(|error| error.to_string())?;
+    warnings.extend(resolution.warnings);
+    Ok(resolution.root)
 }
 
 /// Prints a scan: the addon lines, the warnings and the summary, or the one JSON document. A client
@@ -422,8 +420,11 @@ fn add_target(spec: Option<&str>, warnings: &mut Vec<String>) -> Result<Target, 
     if let Some(id) = FlavorId::from_spec(spec) {
         let folder_name = id.folder_name().unwrap_or_default();
         if let Some(root) = game_root(None, warnings)?
-            && let Ok(flavor) = flavor::read_flavor(&root.join(folder_name))
+            && let Ok(flavor) = flavor::read_flavor(&root.path.join(folder_name))
         {
+            if root.origin.is_discovered() {
+                warnings.push(root.found_line());
+            }
             warnings.extend(flavor.warnings.iter().cloned());
             return Ok(Target::from_flavor(&flavor));
         }
@@ -499,7 +500,8 @@ fn add_command(
     .to_string())
 }
 
-/// `mrgl root [<folder>]`: remember a game folder, or print the remembered one.
+/// `mrgl root [<folder>]`: remember a game folder, or print the one a run would use with its origin
+/// (`MRGL_ROOT`, the remembered one, or a discovered one, which is reported and never saved).
 fn root_command(reporter: &Reporter, folder: Option<PathBuf>) -> Result<(), String> {
     match folder {
         Some(folder) => {
@@ -518,6 +520,7 @@ fn root_command(reporter: &Reporter, folder: Option<PathBuf>) -> Result<(), Stri
                 reporter.document(serde_json::json!({
                     "kind": "root",
                     "root": folder,
+                    "root_origin": RootOrigin::Remembered,
                     "flavors": ids,
                     "saved": true,
                     "warnings": [],
@@ -534,12 +537,13 @@ fn root_command(reporter: &Reporter, folder: Option<PathBuf>) -> Result<(), Stri
             }
         }
         None => {
-            let loaded = home::read_config().map_err(|error| error.to_string())?;
-            let warnings: Vec<String> = loaded.warning.into_iter().collect();
+            let mut warnings = Vec::new();
+            let root = game_root(None, &mut warnings)?;
             if reporter.json {
                 reporter.document(serde_json::json!({
                     "kind": "root",
-                    "root": loaded.config.root,
+                    "root": root.as_ref().map(|root| &root.path),
+                    "root_origin": root.as_ref().map(|root| root.origin),
                     "flavors": [],
                     "saved": false,
                     "warnings": warnings,
@@ -548,13 +552,21 @@ fn root_command(reporter: &Reporter, folder: Option<PathBuf>) -> Result<(), Stri
                 for warning in &warnings {
                     reporter.say(Kind::Warning, warning);
                 }
-                match loaded.config.root {
-                    Some(root) => {
-                        reporter.say(Kind::Success, format!("game root: {}", root.display()));
+                match root {
+                    Some(root) if root.origin.is_discovered() => {
+                        reporter.say(Kind::Success, root.found_line());
                     }
+                    Some(root) => reporter.say(
+                        Kind::Success,
+                        format!(
+                            "game root: {} ({})",
+                            root.path.display(),
+                            root.origin.description()
+                        ),
+                    ),
                     None => reporter.say(
                         Kind::Nothing,
-                        "no game root remembered: run `mrgl root <folder>`",
+                        "no game root: none remembered, none in the launcher's registry key or the usual install folders; run `mrgl root <folder>`",
                     ),
                 }
             }

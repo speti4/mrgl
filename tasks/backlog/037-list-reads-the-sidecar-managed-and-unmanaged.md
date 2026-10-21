@@ -10,7 +10,8 @@ milestone: M1 Core + CLI
 
 What: `mrgl list --flavor <id>` loads the flavor's sidecar (004) and marks every scanned addon managed
 (with its source and installed version) or unmanaged (with the TOC's source hints, as today), in the
-summary line and in `--json`; a missing or corrupt sidecar is rebuilt silently, as D-003 says.
+summary line and in `--json`; a missing or corrupt sidecar is rebuilt silently, as D-003 says. The `list`
+JSON also carries `root_origin` (020), as the `root` document does.
 Why: 004 writes the sidecar but `list` still shows every addon as the scan sees it; the daily overview
 needs the managed state before `update --all` (006) and the window (009) build on it.
 Done when: a fixture flavor with one installed addon lists it as managed with source and version, the

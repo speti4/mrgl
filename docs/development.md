@@ -13,8 +13,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a staging folder, its addon folders swapped into `Interface\AddOns` one at a time with a revert, the
   previous version's zip kept; task 004), the state sidecar (`state`, D-003), backups and addon sets
   (`backup`), the running-client check (`client`, task 023: a process found by its executable's path under
-  the flavor folder, the guard every `WTF` write calls and the install engine's warning) and the voice table
-  (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
+  the flavor folder, the guard every `WTF` write calls and the install engine's warning), the mrgl home
+  folder with the remembered game root (`home`, D-003), the game root resolution (`discover`, task 020: the
+  flag, `MRGL_ROOT`, the remembered root, then the launcher's registry key and the usual install folders,
+  behind a lookup trait with a stub) and the voice table (`voice`, D-005). Synthetic fixtures are under
+  `tests/fixtures/`.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick; the install from the pick is task
   040), `add <file.zip>` and `remove` (task 004), `update`, `link`, `unlink`, `backup` (stubs that answer
@@ -267,5 +270,14 @@ sidecar `state.json`, the install engine's `staging\` (a zip is unpacked and che
 moves; emptied after every install) and `cache\<addon>\<version>.zip` (the current and the previous
 version's zip for a later rollback; never required, deleting it only disables the rollback). `MRGL_HOME`
 overrides the home folder, and the end-to-end tests set it to a temporary folder so no test reads or writes
-the real one. `MRGL_ROOT` names the game folder for one run, between the `--root` flag and the remembered
-one.
+the real one. A run's game folder is resolved in one order by
+every command (`discover::resolve_root_of_process`, task 020): the `--root` flag, then `MRGL_ROOT`, then the
+remembered one, then the discovery: the launcher's registry value (`HKLM\SOFTWARE\WOW6432Node\Blizzard
+Entertainment\World of Warcraft`, `InstallPath`; a value that names a flavor folder counts for its parent),
+then `Program Files (x86)\World of Warcraft` and the same under `Program Files`. A discovered hit counts only
+when it is a game root (a `.build.info` and at least one flavor folder); it is used for the run and reported
+with its origin (a plain line in `list`, the answer of `mrgl root` with no argument, `root_origin` in
+`--json`), and never written to `config.json`: `mrgl root <folder>` is the one place that remembers it.
+`MRGL_DISCOVERY` replaces the lookup for one run: `off` finds nothing, and a `;`-separated list
+(`registry=<path>` for the launcher's value, every other item a usual folder) is the stub the end-to-end
+tests run on, so no test reads the real registry or looks under `Program Files`.

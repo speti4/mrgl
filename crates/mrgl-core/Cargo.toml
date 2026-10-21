@@ -23,6 +23,7 @@ sha2.workspace = true
 ureq.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-# The process list behind the running-client check (task 023), Windows only; the other targets list nothing
-# until the macOS preview (M6).
+# The process list behind the running-client check (task 023) and the launcher's registry value behind the
+# game root discovery (task 020), Windows only; the other targets list nothing and find nothing until the
+# macOS preview (M6).
 windows-sys.workspace = true
