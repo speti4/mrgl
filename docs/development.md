@@ -177,6 +177,14 @@ report carries no home folder path and no secret.
 The lines, with the JSON field in brackets:
 
 - `mrgl: <version>` (`mrgl_version`): the version of the exe.
+- `windows: Windows 11 24H2, build 26100.1234` (`windows`: `name`, `display_version`, `build`, `ubr`,
+  `product_name`; task 051): the Windows version from `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`,
+  read like the WebView2 version below: `DisplayVersion`, `CurrentBuildNumber` and the update build revision
+  `UBR` (a `REG_DWORD`) after the dot. The name comes from the build (22000 and later is Windows 11, 10240
+  and later Windows 10), since `ProductName`, kept as written in the JSON, says Windows 10 on Windows 11 too;
+  a product name of another Windows (a server) is shown as written. A value that is not there is left out
+  (`Windows 11, build 26100`) or `build unknown`, `null` in the JSON, and with none of them the line is
+  `windows: unknown`.
 - `root: <folder> (<origin>)` (`root`, `root_origin`): the game root the run resolved, as every command does,
   and how: `from --root`, `from MRGL_ROOT`, `remembered`, `found in the launcher's registry key`, `found in a
   usual install folder` (`flag`, `environment`, `remembered`, `registry`, `common_folder`); `none found` when
@@ -223,10 +231,12 @@ The lines, with the JSON field in brackets:
 The summary names what needs a look: no game root, a missing flavor folder, an AddOns folder that takes no
 write, a sidecar that is rebuilt or unreadable, a process list that cannot be taken, a used-up rate limit and
 the warnings. The tests run the report offline: the core's tests hand it a fixed process list, an in-memory
-HTTP stub and a fixed WebView2 answer; the end-to-end tests stub the WebView2 version with a
-`webview2=<version>` item of `MRGL_DISCOVERY` (any other value of the variable is no runtime, so `off` reads
-no registry), answer the rate limit from `releases/api.github.com/rate_limit.json` and assert that neither a
-key's value nor a `\Users\` path is in the output.
+HTTP stub and a fixed WebView2 and Windows answer; the end-to-end tests stub the WebView2 version with a
+`webview2=<version>` item of `MRGL_DISCOVERY` and the Windows version with a
+`windows=<display version>,<build>.<ubr>` item (`windows=24H2,26100.1234`, a part may be left out; any other
+value of the variable is no runtime and an unknown Windows, so `off` reads no registry), answer the rate
+limit from `releases/api.github.com/rate_limit.json` and assert that neither a key's value nor a `\Users\`
+path is in the output.
 
 ## The UI
 
@@ -511,9 +521,9 @@ when it is a game root (a `.build.info` and at least one flavor folder); it is u
 with its origin (a plain line in `list`, the answer of `mrgl root` with no argument, `root_origin` in
 `--json`), and never written to `config.json`: `mrgl root <folder>` is the one place that remembers it.
 `MRGL_DISCOVERY` replaces the lookup for one run: `off` finds nothing, and a `;`-separated list
-(`registry=<path>` for the launcher's value, `webview2=<version>` for the doctor's WebView2 version, every
-other item a usual folder) is the stub the end-to-end tests run on, so no test reads the real registry or
-looks under `Program Files`.
+(`registry=<path>` for the launcher's value, `webview2=<version>` and `windows=<version>` for the doctor's
+WebView2 and Windows version, every other item a usual folder) is the stub the end-to-end tests run on, so
+no test reads the real registry or looks under `Program Files`.
 
 The same `backups\<flavor-id>\` folder takes the zips of `mrgl savedvars --clean` (task 025):
 `SavedVariables-<date>.zip` per cleanup, the orphan SavedVariables files (no addon folder of their name, in

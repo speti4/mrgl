@@ -2917,12 +2917,16 @@ fn doctor_prints_every_line_offline_without_a_key_value_or_a_home_path() {
         .to_string_lossy()
         .into_owned();
     assert_eq!(lines[0], format!("mrgl: {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        lines[1], "windows: unknown",
+        "the stub names no Windows version"
+    );
     assert!(
-        lines[1].starts_with("root: ") && lines[1].ends_with(&format!("{root_name} (from --root)")),
+        lines[2].starts_with("root: ") && lines[2].ends_with(&format!("{root_name} (from --root)")),
         "{stdout}"
     );
     assert!(
-        lines[2].starts_with("home: ") && lines[2].ends_with("doctor-lines"),
+        lines[3].starts_with("home: ") && lines[3].ends_with("doctor-lines"),
         "{stdout}"
     );
     let rest = [
@@ -2931,9 +2935,9 @@ fn doctor_prints_every_line_offline_without_a_key_value_or_a_home_path() {
         "api keys: MRGL_GITHUB_TOKEN set",
         "flavor: _forever_ (wowf)",
     ];
-    assert_eq!(lines[3..7], rest, "{stdout}");
+    assert_eq!(lines[4..8], rest, "{stdout}");
     assert!(
-        lines[7].starts_with("  folder: ") && lines[7].ends_with("_forever_"),
+        lines[8].starts_with("  folder: ") && lines[8].ends_with("_forever_"),
         "{stdout}"
     );
     let flavor = [
@@ -2945,7 +2949,7 @@ fn doctor_prints_every_line_offline_without_a_key_value_or_a_home_path() {
         "  client: not running",
         "diagnostics of 1 flavor, nothing to look at; paste the lines above into a bug report",
     ];
-    assert_eq!(lines[8..], flavor, "{stdout}");
+    assert_eq!(lines[9..], flavor, "{stdout}");
     assert!(!stdout.contains(DOCTOR_SECRET), "{stdout}");
     assert_no_home_path(&stdout);
     // The probe left nothing behind, and the home folder got nothing either.
@@ -3009,15 +3013,16 @@ fn doctor_offline_without_a_root_says_unknown_and_succeeds() {
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     let stdout = stdout(&output);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines[1], "root: none found");
-    assert_eq!(lines[3], "webview2: unknown");
-    assert_eq!(lines[4], "github rate limit: unknown (HTTP 404)");
-    assert_eq!(lines[5], "api keys: MRGL_GITHUB_TOKEN not set");
+    assert_eq!(lines[1], "windows: unknown");
+    assert_eq!(lines[2], "root: none found");
+    assert_eq!(lines[4], "webview2: unknown");
+    assert_eq!(lines[5], "github rate limit: unknown (HTTP 404)");
+    assert_eq!(lines[6], "api keys: MRGL_GITHUB_TOKEN not set");
     // The summary speaks through the voice: a murloc line, then the plain one.
-    assert_eq!(lines.len(), 8, "{stdout}");
-    assert!(lines[6].starts_with("Mrgl"), "{stdout}");
+    assert_eq!(lines.len(), 9, "{stdout}");
+    assert!(lines[7].starts_with("Mrgl"), "{stdout}");
     assert_eq!(
-        lines[7],
+        lines[8],
         "diagnostics of no flavor, 1 thing to look at (no game root); paste the lines above into a bug report"
     );
     assert_no_home_path(&stdout);
@@ -4593,4 +4598,45 @@ fn max_unpacked_is_a_usage_error_when_it_is_not_a_size_or_has_nothing_to_bound()
         let output = mrgl().args(&args).output().expect("run mrgl");
         assert_eq!(output.status.code(), Some(2), "{args:?}");
     }
+}
+
+// --- task 051: the Windows version line of the doctor report, from the `windows=` stub item ---
+
+#[test]
+fn doctor_names_the_windows_version_in_the_block_and_the_json() {
+    let output = mrgl()
+        .env(
+            "MRGL_DISCOVERY",
+            "webview2=131.0.2903.70;windows=24H2,26100.1234",
+        )
+        .args(["--serious", "doctor"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines[1], "windows: Windows 11 24H2, build 26100.1234",
+        "{stdout}"
+    );
+
+    let output = mrgl()
+        .env("MRGL_DISCOVERY", "windows=,19045")
+        .args(["--json", "doctor"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(
+        value["windows"],
+        serde_json::json!({
+            "name": "Windows 10",
+            "display_version": null,
+            "build": 19045,
+            "ubr": null,
+            "product_name": null,
+        }),
+        "a part the registry lacks is null"
+    );
 }

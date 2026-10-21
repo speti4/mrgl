@@ -1,10 +1,10 @@
 //! The diagnostic report (task 024): `mrgl doctor` prints it and the window's "copy diagnostics" action
-//! (task 009) copies the same text. One [`Report`] holds every fact a bug report needs: the game root and
-//! how it was found, each flavor's `.flavor.info` id and build (with the file the build came from, task
-//! 019), whether `Interface\AddOns` is writable, the state sidecar's state, the size of the flavor's zip
-//! cache, the WebView2 runtime's version, the GitHub rate limit left, which API keys are set (by name, never
-//! a value) and whether the client runs from the flavor folder (task 023). [`Report::lines`] is the plain
-//! block a user pastes, the derived `Serialize` is the `--json` document.
+//! (task 009) copies the same text. One [`Report`] holds every fact a bug report needs: the Windows version
+//! (task 051), the game root and how it was found, each flavor's `.flavor.info` id and build (with the file
+//! the build came from, task 019), whether `Interface\AddOns` is writable, the state sidecar's state, the
+//! size of the flavor's zip cache, the WebView2 runtime's version, the GitHub rate limit left, which API keys
+//! are set (by name, never a value) and whether the client runs from the flavor folder (task 023).
+//! [`Report::lines`] is the plain block a user pastes, the derived `Serialize` is the `--json` document.
 //!
 //! The report reads and never repairs: the only write is the AddOns probe, an empty file created and
 //! removed at once, and only in an `Interface\AddOns` folder that exists. A fact that cannot be read is a
@@ -14,10 +14,11 @@
 //!
 //! Behind the report sit the stubs of the modules it reads: the process list of [`crate::client`], the
 //! [`Http`] of [`crate::sources`] (one request, `GET /rate_limit`, which GitHub does not count against the
-//! limit) and a [`RuntimeLookup`] for the WebView2 version, which reads the registry the way the game root
-//! discovery does ([`discover::registry_string`]); `MRGL_DISCOVERY` replaces it for one run as it replaces
-//! the discovery, so no end-to-end test reads the real registry. [`report_of_process`] is the one call of
-//! the command line and the window; [`report`] takes every input explicitly for the tests.
+//! limit) and a [`RuntimeLookup`] for the Windows and the WebView2 version, which reads the registry the way
+//! the game root discovery does ([`discover::registry_string`], [`discover::registry_dword`]);
+//! `MRGL_DISCOVERY` replaces it for one run as it replaces the discovery, so no end-to-end test reads the
+//! real registry. [`report_of_process`] is the one call of the command line and the window; [`report`]
+//! takes every input explicitly for the tests.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -26,7 +27,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 
 use crate::client::{self, ProcessList, SystemProcesses};
-use crate::discover::{self, DISCOVERY_ENV, GameRoot, Hive, RootOrigin, WEBVIEW2_ITEM};
+use crate::discover::{
+    self, DISCOVERY_ENV, GameRoot, Hive, RootOrigin, WEBVIEW2_ITEM, WINDOWS_ITEM,
+};
 use crate::flavor::{self, Flavor, FlavorId};
 use crate::home;
 use crate::scan;
@@ -58,6 +61,13 @@ pub const WEBVIEW2_KEYS: [(Hive, &str, Scope); 3] = [
         Scope::User,
     ),
 ];
+/// The key under `HKEY_LOCAL_MACHINE` that holds the Windows version (task 051).
+pub const WINDOWS_KEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+/// The first build of Windows 11: `ProductName` says Windows 10 on Windows 11 too, so the release's name
+/// comes from the build.
+pub const WINDOWS_11_BUILD: u32 = 22000;
+/// The first build of Windows 10.
+pub const WINDOWS_10_BUILD: u32 = 10240;
 /// The API keys the report names when they are set, by their environment variable; the CurseForge key
 /// joins with its source (M4).
 pub const API_KEYS: [&str; 1] = [TOKEN_ENV];
@@ -91,13 +101,105 @@ pub struct WebView2 {
     pub scope: Scope,
 }
 
-/// Where the WebView2 version comes from.
+/// The Windows version, from the values under [`WINDOWS_KEY`] (task 051): each one `None` when it is not
+/// there, so a partial answer still says what it can.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct WindowsVersion {
+    /// The release: `Windows 11` or `Windows 10` by the build, or the product name as written for another
+    /// Windows (a server).
+    pub name: Option<String>,
+    /// `DisplayVersion`: `24H2`.
+    pub display_version: Option<String>,
+    /// `CurrentBuildNumber`: `26100`.
+    pub build: Option<u32>,
+    /// `UBR`, the update build revision: `1234`.
+    pub ubr: Option<u32>,
+    /// `ProductName` as written (`Windows 10 Pro`, on Windows 11 too).
+    pub product_name: Option<String>,
+}
+
+impl WindowsVersion {
+    /// The version from the registry's values as written: the build is a decimal number, an empty or
+    /// unreadable value is `None`, and the name comes from the build and the product name.
+    pub fn from_values(
+        product_name: Option<&str>,
+        display_version: Option<&str>,
+        build_number: Option<&str>,
+        ubr: Option<u32>,
+    ) -> WindowsVersion {
+        let text = |value: Option<&str>| {
+            value
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        let product_name = text(product_name);
+        let build = build_number.and_then(|build| build.trim().parse::<u32>().ok());
+        WindowsVersion {
+            name: windows_name(product_name.as_deref(), build),
+            display_version: text(display_version),
+            build,
+            ubr,
+            product_name,
+        }
+    }
+
+    /// The report's value: `Windows 11 24H2, build 26100.1234`; a missing part is left out (`Windows 11,
+    /// build 26100`), a missing build is `build unknown`, and no value at all is `unknown`.
+    pub fn text(&self) -> String {
+        if self.name.is_none() && self.display_version.is_none() && self.build.is_none() {
+            return "unknown".to_string();
+        }
+        let mut release = self.name.clone().unwrap_or_else(|| "Windows".to_string());
+        if let Some(display_version) = &self.display_version {
+            release.push(' ');
+            release.push_str(display_version);
+        }
+        let build = match (self.build, self.ubr) {
+            (Some(build), Some(ubr)) => format!("{build}.{ubr}"),
+            (Some(build), None) => build.to_string(),
+            (None, _) => "unknown".to_string(),
+        };
+        format!("{release}, build {build}")
+    }
+}
+
+/// The release's name: a `Windows 10` or `Windows 11` product name is named by the build (Windows 11 keeps
+/// writing `Windows 10` there), any other product name stays as written, and without one the build names
+/// it alone.
+fn windows_name(product_name: Option<&str>, build: Option<u32>) -> Option<String> {
+    let by_build = build.and_then(|build| {
+        if build >= WINDOWS_11_BUILD {
+            Some("Windows 11")
+        } else if build >= WINDOWS_10_BUILD {
+            Some("Windows 10")
+        } else {
+            None
+        }
+    });
+    match product_name {
+        Some(name) => {
+            let client = ["Windows 10", "Windows 11"]
+                .into_iter()
+                .find(|client| name.get(..client.len()) == Some(*client));
+            match client {
+                Some(client) => Some(by_build.unwrap_or(client).to_string()),
+                None => Some(name.to_string()),
+            }
+        }
+        None => by_build.map(str::to_string),
+    }
+}
+
+/// Where the WebView2 and the Windows version come from.
 pub trait RuntimeLookup {
     /// The installed runtime, or `None` when no key names a usable version.
     fn webview2(&self) -> Option<WebView2>;
+    /// The Windows version (task 051); every part `None` when nothing could be read.
+    fn windows(&self) -> WindowsVersion;
 }
 
-/// The machine's registry, through [`discover::registry_string`].
+/// The machine's registry, through [`discover::registry_string`] and [`discover::registry_dword`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemRuntime;
 
@@ -111,15 +213,35 @@ impl RuntimeLookup for SystemRuntime {
             })
         })
     }
+
+    fn windows(&self) -> WindowsVersion {
+        let string = |value: &str| {
+            discover::registry_string(Hive::LocalMachine, WINDOWS_KEY, value)
+                .map(|text| text.to_string_lossy().into_owned())
+        };
+        WindowsVersion::from_values(
+            string("ProductName").as_deref(),
+            string("DisplayVersion").as_deref(),
+            string("CurrentBuildNumber").as_deref(),
+            discover::registry_dword(Hive::LocalMachine, WINDOWS_KEY, "UBR"),
+        )
+    }
 }
 
 /// A fixed answer, the stub for tests and for `MRGL_DISCOVERY`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct FixedRuntime(pub Option<WebView2>);
+pub struct FixedRuntime {
+    pub webview2: Option<WebView2>,
+    pub windows: WindowsVersion,
+}
 
 impl RuntimeLookup for FixedRuntime {
     fn webview2(&self) -> Option<WebView2> {
-        self.0.clone()
+        self.webview2.clone()
+    }
+
+    fn windows(&self) -> WindowsVersion {
+        self.windows.clone()
     }
 }
 
@@ -132,8 +254,9 @@ fn usable_version(value: &str) -> Option<String> {
 }
 
 /// The runtime lookup `MRGL_DISCOVERY` names: unset or empty is the registry; any other value is a stub,
-/// whose `webview2=<version>` item is the per-machine runtime and whose absence (`off`, a list of folders
-/// only) is no runtime.
+/// whose `webview2=<version>` item is the per-machine runtime and whose
+/// `windows=<display version>,<build>.<ubr>` item is the Windows version (`windows=24H2,26100.1234`; a part
+/// may be left out); an item's absence (`off`, a list of folders only) is no runtime, an unknown Windows.
 pub fn runtime_from_env(value: Option<&OsStr>) -> Box<dyn RuntimeLookup> {
     match parse_runtime(value) {
         Some(fixed) => Box::new(fixed),
@@ -145,15 +268,32 @@ pub fn runtime_from_env(value: Option<&OsStr>) -> Box<dyn RuntimeLookup> {
 fn parse_runtime(value: Option<&OsStr>) -> Option<FixedRuntime> {
     let value = value.filter(|value| !value.is_empty())?;
     let text = value.to_string_lossy();
-    let version = text
-        .split(';')
-        .map(str::trim)
-        .find_map(|item| item.strip_prefix(WEBVIEW2_ITEM))
-        .and_then(usable_version);
-    Some(FixedRuntime(version.map(|version| WebView2 {
-        version,
-        scope: Scope::Machine,
-    })))
+    let item = |prefix: &str| {
+        text.split(';')
+            .map(str::trim)
+            .find_map(|item| item.strip_prefix(prefix))
+            .map(str::to_string)
+    };
+    let version = item(WEBVIEW2_ITEM).as_deref().and_then(usable_version);
+    let windows = item(WINDOWS_ITEM)
+        .map(|item| {
+            let (display_version, build) = item.split_once(',').unwrap_or((&item, ""));
+            let (build, ubr) = build.split_once('.').unwrap_or((build, ""));
+            WindowsVersion::from_values(
+                None,
+                Some(display_version),
+                Some(build),
+                ubr.trim().parse().ok(),
+            )
+        })
+        .unwrap_or_default();
+    Some(FixedRuntime {
+        webview2: version.map(|version| WebView2 {
+            version,
+            scope: Scope::Machine,
+        }),
+        windows,
+    })
 }
 
 /// The GitHub rate limit left, or why it is unknown.
@@ -417,6 +557,8 @@ pub struct FlavorReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Report {
     pub mrgl_version: String,
+    /// The Windows version (task 051).
+    pub windows: WindowsVersion,
     /// The game root, the profile folder as `~`; `None` when nothing names or finds one.
     pub root: Option<String>,
     pub root_origin: Option<RootOrigin>,
@@ -520,6 +662,7 @@ pub fn report(inputs: Inputs, probes: &Probes<'_>) -> Report {
     }
     Report {
         mrgl_version: crate::VERSION.to_string(),
+        windows: probes.runtime.windows(),
         root: inputs.root.as_ref().map(|root| redactor.path(&root.path)),
         root_origin: inputs.root.as_ref().map(|root| root.origin),
         home: inputs.home.as_deref().map(|home| redactor.path(home)),
@@ -880,7 +1023,10 @@ impl Report {
     /// The plain block, one fact per line, as a bug report carries it: the general lines, then one block
     /// per flavor, then the warnings. Every line's meaning is in `docs/development.md`, "The doctor".
     pub fn lines(&self) -> Vec<String> {
-        let mut lines = vec![format!("mrgl: {}", self.mrgl_version)];
+        let mut lines = vec![
+            format!("mrgl: {}", self.mrgl_version),
+            format!("windows: {}", self.windows.text()),
+        ];
         lines.push(match (&self.root, self.root_origin) {
             (Some(root), Some(origin)) => {
                 let how = match origin {
@@ -1113,10 +1259,18 @@ mod tests {
         let client_exe = root.join("_forever_").join("WowForever.exe");
         let processes = FixedProcesses::new([(4242, client_exe)]);
         let http = MapHttp::new().answer("https://api.github.com/rate_limit", 200, RATE_LIMIT);
-        let runtime = FixedRuntime(Some(WebView2 {
-            version: "131.0.2903.70".to_string(),
-            scope: Scope::Machine,
-        }));
+        let runtime = FixedRuntime {
+            webview2: Some(WebView2 {
+                version: "131.0.2903.70".to_string(),
+                scope: Scope::Machine,
+            }),
+            windows: WindowsVersion::from_values(
+                Some("Windows 10 Pro"),
+                Some("24H2"),
+                Some("26100"),
+                Some(1234),
+            ),
+        };
         let inputs = Inputs {
             root: Some(GameRoot {
                 path: root.clone(),
@@ -1142,6 +1296,7 @@ mod tests {
 
         let expected = [
             format!("mrgl: {}", crate::VERSION),
+            "windows: Windows 11 24H2, build 26100.1234".to_string(),
             "root: ~\\Games\\World of Warcraft (found in the launcher's registry key)".to_string(),
             "home: ~\\AppData\\Local\\mrgl".to_string(),
             "webview2: 131.0.2903.70 (per-machine)".to_string(),
@@ -1200,6 +1355,16 @@ mod tests {
 
         let value: serde_json::Value = serde_json::from_str(&json).expect("JSON");
         assert_eq!(value["root_origin"], "registry");
+        assert_eq!(
+            value["windows"],
+            serde_json::json!({
+                "name": "Windows 11",
+                "display_version": "24H2",
+                "build": 26100,
+                "ubr": 1234,
+                "product_name": "Windows 10 Pro",
+            })
+        );
         assert_eq!(value["webview2"]["version"], "131.0.2903.70");
         assert_eq!(value["webview2"]["scope"], "machine");
         assert_eq!(value["github_rate_limit"]["remaining"], 4997);
@@ -1235,7 +1400,7 @@ mod tests {
             &Probes {
                 processes: &BrokenProcesses,
                 http: &Offline,
-                runtime: &FixedRuntime(None),
+                runtime: &FixedRuntime::default(),
             },
         );
         let lines = report.lines();
@@ -1243,6 +1408,7 @@ mod tests {
             lines,
             [
                 format!("mrgl: {}", crate::VERSION),
+                "windows: unknown".to_string(),
                 "root: none found".to_string(),
                 "home: none (neither MRGL_HOME nor LOCALAPPDATA is set)".to_string(),
                 "webview2: unknown".to_string(),
@@ -1252,6 +1418,18 @@ mod tests {
             "{lines:#?}"
         );
         assert_eq!(report.flavors, []);
+        let json = serde_json::to_value(&report).expect("serializes");
+        assert_eq!(
+            json["windows"],
+            serde_json::json!({
+                "name": null,
+                "display_version": null,
+                "build": null,
+                "ubr": null,
+                "product_name": null,
+            }),
+            "one object, every part null"
+        );
         let (kind, summary) = report.summary();
         assert_eq!(kind, Kind::Warning);
         assert!(summary.contains("no game root"), "{summary}");
@@ -1276,7 +1454,7 @@ mod tests {
                 &Probes {
                     processes: &BrokenProcesses,
                     http: &MapHttp::new(),
-                    runtime: &FixedRuntime(None),
+                    runtime: &FixedRuntime::default(),
                 },
             )
         };
@@ -1385,23 +1563,94 @@ mod tests {
         assert_eq!(parse_runtime(Some(OsStr::new(""))), None, "the registry");
         assert_eq!(
             parse_runtime(Some(OsStr::new("off"))),
-            Some(FixedRuntime(None))
+            Some(FixedRuntime::default())
         );
         assert_eq!(
             parse_runtime(Some(OsStr::new("registry=Q:\\wow; webview2=131.0.2903.70"))),
-            Some(FixedRuntime(Some(WebView2 {
-                version: "131.0.2903.70".to_string(),
-                scope: Scope::Machine,
-            })))
+            Some(FixedRuntime {
+                webview2: Some(WebView2 {
+                    version: "131.0.2903.70".to_string(),
+                    scope: Scope::Machine,
+                }),
+                windows: WindowsVersion::default(),
+            })
         );
         assert_eq!(
             parse_runtime(Some(OsStr::new("webview2=0.0.0.0"))),
-            Some(FixedRuntime(None)),
+            Some(FixedRuntime::default()),
             "an uninstalled runtime"
         );
+        let windows = |value: &str| {
+            parse_runtime(Some(OsStr::new(value)))
+                .expect("a stub")
+                .windows
+                .text()
+        };
+        assert_eq!(
+            windows("Q:\\wow;windows=24H2,26100.1234"),
+            "Windows 11 24H2, build 26100.1234"
+        );
+        assert_eq!(windows("windows=,19045"), "Windows 10, build 19045");
+        assert_eq!(windows("windows=24H2"), "Windows 24H2, build unknown");
+        assert_eq!(windows("webview2=131.0.2903.70"), "unknown");
         assert_eq!(usable_version(" null "), None);
         assert_eq!(usable_version(""), None);
         assert_eq!(usable_version("120.0.1").as_deref(), Some("120.0.1"));
+    }
+
+    #[test]
+    fn the_windows_line_says_what_the_values_hold_and_unknown_for_the_rest() {
+        // Every value there: Windows 11 still writes `Windows 10` as its product name.
+        let present = WindowsVersion::from_values(
+            Some("Windows 10 Pro"),
+            Some("24H2"),
+            Some("26100"),
+            Some(1234),
+        );
+        assert_eq!(present.name.as_deref(), Some("Windows 11"));
+        assert_eq!(present.text(), "Windows 11 24H2, build 26100.1234");
+        let windows_10 = WindowsVersion::from_values(
+            Some("Windows 10 Home"),
+            Some("22H2"),
+            Some(" 19045 "),
+            Some(5737),
+        );
+        assert_eq!(windows_10.text(), "Windows 10 22H2, build 19045.5737");
+        let server = WindowsVersion::from_values(
+            Some("Windows Server 2022 Datacenter"),
+            Some("21H2"),
+            Some("20348"),
+            Some(2700),
+        );
+        assert_eq!(
+            server.text(),
+            "Windows Server 2022 Datacenter 21H2, build 20348.2700",
+            "another product name stays as written"
+        );
+
+        // Partly there: a missing part is left out, a missing build says so.
+        assert_eq!(
+            WindowsVersion::from_values(None, None, Some("26100"), None).text(),
+            "Windows 11, build 26100"
+        );
+        assert_eq!(
+            WindowsVersion::from_values(Some("Windows 10 Pro"), Some(""), None, Some(1234)).text(),
+            "Windows 10, build unknown",
+            "an empty value is no value, a revision without a build is none"
+        );
+        assert_eq!(
+            WindowsVersion::from_values(None, Some("24H2"), Some("not a number"), None).text(),
+            "Windows 24H2, build unknown"
+        );
+
+        // Nothing there.
+        let absent = WindowsVersion::from_values(None, None, None, None);
+        assert_eq!(absent, WindowsVersion::default());
+        assert_eq!(absent.text(), "unknown");
+        assert_eq!(
+            WindowsVersion::from_values(None, None, None, Some(1234)).text(),
+            "unknown"
+        );
     }
 
     #[test]

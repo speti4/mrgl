@@ -34,6 +34,8 @@ pub const LAUNCHER_VALUE: &str = "InstallPath";
 pub const COMMON_FOLDER: &str = "World of Warcraft";
 /// The `MRGL_DISCOVERY` item that stands in for the WebView2 runtime's registry value (task 024).
 pub const WEBVIEW2_ITEM: &str = "webview2=";
+/// The `MRGL_DISCOVERY` item that stands in for the Windows version's registry values (task 051).
+pub const WINDOWS_ITEM: &str = "windows=";
 
 /// A registry hive [`registry_string`] reads from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +52,13 @@ pub enum Hive {
 /// runtime's version through it (task 024).
 pub fn registry_string(hive: Hive, key: &str, value: &str) -> Option<OsString> {
     system::registry_string(hive, key, value)
+}
+
+/// One `REG_DWORD` value of the registry, read the same way: `None` for a missing key or value, another
+/// type, and always on a target without a registry. The doctor reads the Windows update build revision
+/// (`UBR`) through it (task 051).
+pub fn registry_dword(hive: Hive, key: &str, value: &str) -> Option<u32> {
+    system::registry_dword(hive, key, value)
 }
 
 /// The places a game root may be found when nothing names it.
@@ -244,8 +253,9 @@ pub fn resolve_root(
 
 /// The lookup `MRGL_DISCOVERY` names: unset or empty is the system; `off` is a lookup that finds nothing;
 /// anything else is a stub, `;`-separated, where `registry=<path>` is the launcher's value, a
-/// `webview2=<version>` item is the doctor's (task 024, [`crate::doctor`]) and every other item (with or
-/// without `folder=`) is one of the usual folders, in order. The stub keeps the end-to-end tests off the
+/// `webview2=<version>` or a `windows=<version>` item is the doctor's (tasks 024 and 051,
+/// [`crate::doctor`]) and every other item (with or without `folder=`) is one of the usual folders, in
+/// order. The stub keeps the end-to-end tests off the
 /// real registry and lets a user switch the discovery off.
 pub fn lookup_from_env(value: Option<&OsStr>) -> Box<dyn RootLookup> {
     match parse_lookup(value) {
@@ -269,8 +279,8 @@ fn parse_lookup(value: Option<&OsStr>) -> Option<FixedLookup> {
     {
         if let Some(path) = item.strip_prefix("registry=") {
             lookup.install_path = Some(PathBuf::from(path));
-        } else if item.starts_with(WEBVIEW2_ITEM) {
-            // The doctor's WebView2 stub (task 024), not a folder.
+        } else if item.starts_with(WEBVIEW2_ITEM) || item.starts_with(WINDOWS_ITEM) {
+            // The doctor's WebView2 and Windows stubs (tasks 024, 051), not a folder.
             continue;
         } else {
             let path = item.strip_prefix("folder=").unwrap_or(item);
@@ -330,7 +340,7 @@ mod system {
 
     use windows_sys::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_EXPAND_SZ, REG_SZ,
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
         REG_VALUE_TYPE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
     };
 
@@ -362,20 +372,47 @@ mod system {
         string_value(hive, key, value)
     }
 
-    /// A `REG_SZ` or `REG_EXPAND_SZ` value as written (an expandable value is not expanded; the launcher
-    /// writes a plain path), without its trailing NULs; `None` for a missing key or value, another type,
-    /// or an empty string.
-    fn string_value(hive: HKEY, key: &str, value: &str) -> Option<OsString> {
-        let key = wide(key);
+    pub(super) fn registry_dword(hive: Hive, key: &str, value: &str) -> Option<u32> {
+        let hive = match hive {
+            Hive::LocalMachine => HKEY_LOCAL_MACHINE,
+            Hive::CurrentUser => HKEY_CURRENT_USER,
+        };
+        let key = open(hive, key)?;
         let value = wide(value);
+        let mut kind: REG_VALUE_TYPE = 0;
+        let mut data: u32 = 0;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        // SAFETY: the buffer is the four bytes of `data` and `size` says so; a longer value fails with
+        // ERROR_MORE_DATA and writes nothing.
+        let status = unsafe {
+            RegQueryValueExW(
+                key.0,
+                value.as_ptr(),
+                std::ptr::null(),
+                &mut kind,
+                (&raw mut data).cast::<u8>(),
+                &mut size,
+            )
+        };
+        (status == ERROR_SUCCESS && kind == REG_DWORD && size == 4).then_some(data)
+    }
+
+    /// The key opened for reading, closed when the handle drops; `None` when it is not there.
+    fn open(hive: HKEY, key: &str) -> Option<Key> {
+        let key = wide(key);
         let mut handle: HKEY = std::ptr::null_mut();
         // SAFETY: the key name is NUL-terminated and `handle` receives the opened key; the status says
         // whether it did.
         let opened = unsafe { RegOpenKeyExW(hive, key.as_ptr(), 0, KEY_READ, &mut handle) };
-        if opened != ERROR_SUCCESS {
-            return None;
-        }
-        let key = Key(handle);
+        (opened == ERROR_SUCCESS).then_some(Key(handle))
+    }
+
+    /// A `REG_SZ` or `REG_EXPAND_SZ` value as written (an expandable value is not expanded; the launcher
+    /// writes a plain path), without its trailing NULs; `None` for a missing key or value, another type,
+    /// or an empty string.
+    fn string_value(hive: HKEY, key: &str, value: &str) -> Option<OsString> {
+        let key = open(hive, key)?;
+        let value = wide(value);
         let mut kind: REG_VALUE_TYPE = 0;
         let mut size: u32 = 0;
         // SAFETY: a null data pointer with a zero size asks for the type and the size in bytes only.
@@ -459,6 +496,10 @@ mod system {
     }
 
     pub(super) fn registry_string(_hive: Hive, _key: &str, _value: &str) -> Option<OsString> {
+        None
+    }
+
+    pub(super) fn registry_dword(_hive: Hive, _key: &str, _value: &str) -> Option<u32> {
         None
     }
 
@@ -625,12 +666,14 @@ mod tests {
             })
         );
         assert_eq!(
-            parse_lookup(Some(OsStr::new("webview2=131.0.2903.70;Q:\\only"))),
+            parse_lookup(Some(OsStr::new(
+                "webview2=131.0.2903.70;windows=24H2,26100.1234;Q:\\only"
+            ))),
             Some(FixedLookup {
                 install_path: None,
                 folders: vec![PathBuf::from("Q:\\only")],
             }),
-            "the doctor's item is no folder"
+            "the doctor's items are no folders"
         );
         assert_eq!(
             parse_lookup(Some(OsStr::new("Q:\\only"))),
