@@ -47,3 +47,11 @@ test("update all counts the updates it would touch: not the pinned, not the igno
   assert.equal(State.countUpdates([]), 0);
   assert.equal(State.countUpdates(undefined), 0);
 });
+
+test("a flavor has the Forever column only when a row carries a Forever note", () => {
+  assert.equal(State.hasForeverNotes([row({}), row({ forever: { build: "yes", note: null } })]), true);
+  assert.equal(State.hasForeverNotes([row({ forever: { build: "no", note: "the castbar needs the combat log" } })]), true);
+  assert.equal(State.hasForeverNotes([row({}), row({ managed: true })]), false);
+  assert.equal(State.hasForeverNotes([]), false);
+  assert.equal(State.hasForeverNotes(undefined), false);
+});
