@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "about": "Forever notes (task 011): the crippled cases only, an addon that has a Forever build but half works under Forever's combat restrictions. `kinds` are the restrictions, `addons` the notes, one per addon keyed by its source spec (github:<owner>/<repo>), each naming its kind, a one-line reason, the date it was verified against the source, and the source. A note older than 90 days is shown as stale. How to add one: docs/development.md, Forever notes.",
+  "kinds": {
+    "secret-combat-values": {
+      "reason": "the addon restrictions of Midnight, secret values included, are active in Forever: an addon may show a hidden combat value but not compute with it",
+      "verified": "2026-10-21",
+      "source": "https://warcraft.wiki.gg/wiki/Patch_1.60.1/API_changes"
+    },
+    "combat-log-events": {
+      "reason": "an addon that decides from combat log events or another player's combat state hits the combat restrictions; display-only use works",
+      "verified": "2026-10-21",
+      "source": "https://metammo.com/wow-forever/addons"
+    }
+  },
+  "addons": {}
+}

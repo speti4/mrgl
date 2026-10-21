@@ -7,8 +7,9 @@
 //! (the guard of every `WTF` write), [`home`] is the mrgl home folder with the remembered game root,
 //! [`discover`] resolves a run's game root (the flag, `MRGL_ROOT`, the remembered one, then the launcher's
 //! registry key and the usual install folders), [`dependencies`] checks the required dependencies of the
-//! scanned addons, [`voice`] is the murloc table every message goes through (D-005) and [`zip_entry`] is
-//! the one check every zip entry passes before the install engine or a restore writes it.
+//! scanned addons, [`forever`] holds the Forever notes (the derived build signal and the curated file
+//! compiled in, task 011), [`voice`] is the murloc table every message goes through (D-005) and
+//! [`zip_entry`] is the one check every zip entry passes before the install engine or a restore writes it.
 //! Nothing here prints or reads the network on its own: the callers (the CLI, the window) decide how to
 //! talk and when to go online, which keeps every module testable against the fixtures under
 //! `tests/fixtures/`.
@@ -19,6 +20,7 @@ pub mod dependencies;
 pub mod discover;
 pub mod error;
 pub mod flavor;
+pub mod forever;
 pub mod home;
 pub mod install;
 pub mod pe;

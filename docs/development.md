@@ -30,8 +30,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   that name is in the scan, *embedded* when a folder of that name sits inside the addon's own folder, at
   most three levels down, which a build without `nolib` carries, and *missing* otherwise; an optional
   dependency is never reported; the sidecar entry's `nolib` flag, recorded from the pick at install, turns
-  the embedded lookup off for a `nolib` build, and an entry without it is unknown, embedded possible) and the
-  voice table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
+  the embedded lookup off for a `nolib` build, and an entry without it is unknown, embedded possible), the
+  Forever notes (`forever`, task 011: the build signal `yes`, `no` or `unknown` that
+  `sources::github::forever_build` derives from a release, and the curated `data/forever-notes.json`
+  compiled in with `include_str!`, with the stale rule) and the voice table (`voice`, D-005). Synthetic
+  fixtures are under `tests/fixtures/`.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick, with the release notes' line and
   link under it when the release has notes, task 030; the install from the pick is task 040), `add
@@ -46,6 +49,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `folder`, `required`, `met`, `embedded`, `missing` and `nolib` (`true`, `false` or `null` for unknown).
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
   capability file and the icon.
+- `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
+  [Forever notes](#forever-notes)).
 - `scripts/` — helper scripts for the icon, the release zip, the changelog and the commit rules.
 - `docs/` — this page, the git workflow, the maintainer sessions, origin, research and the voice guide.
 - `tasks/` — the backlog, the work in flight, the history and the decisions (the task standard).
@@ -289,7 +294,10 @@ makes the command line answer every request from that folder instead (the URL's 
 `MRGL_GITHUB_TOKEN` holds a personal access token for the GitHub API (60 requests an hour without one); it is
 sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
-request; the cache can be deleted any time.
+request; the cache can be deleted any time. Next to it, `release-json.json` keeps the current release's
+`release.json` with that release's tag (task 011): this is how `list` reads the Forever build offline. Every
+fixture repository under `releases/` is classified for the Forever build in `tests/github_source.rs`, so a
+new fixture names its expected build there.
 
 The build version fallback (task 019: the client exe's version resource when `.build.info` has no row for
 the flavor) is tested against a second synthetic game folder, `client-exe/`: a `.build.info` with a row for
@@ -321,3 +329,46 @@ with its origin (a plain line in `list`, the answer of `mrgl root` with no argum
 `MRGL_DISCOVERY` replaces the lookup for one run: `off` finds nothing, and a `;`-separated list
 (`registry=<path>` for the launcher's value, every other item a usual folder) is the stub the end-to-end
 tests run on, so no test reads the real registry or looks under `Program Files`.
+
+## Forever notes
+
+Two signals mark an addon on Forever (task 011), derived first and curated second. The derived one is the
+source's: `sources::github::forever_build` reads the current release's `release.json`: `yes` when it names
+`forever` (or `camelot`) for a zip the release has, `no` when it names other flavors only and no asset name
+ends in `-forever` or `-camelot`, `unknown` without a readable `release.json` or when only an asset name
+says forever (a pick by name). The pick carries it (`forever_build`); `add --dry-run --flavor forever` prints
+it on a line after the pick, and `--json` writes `forever: { build, note, kind, verified, source, stale }`
+next to `pick` (the window's `{ build, note }` with the date, the source and the stale flag; `null` for
+another flavor). `list` on Forever marks each managed addon's primary folder (`forever:yes`, with `,note` and
+`,stale`, a warning line per curated note, and the same `forever` object in the JSON, `null` for an
+unmanaged addon) from the cache alone (`GitHub::cached_forever_build`): no request, so `list` stays offline
+and fast, and without a cached release list and the `release.json` of its current release the build is
+`unknown`.
+
+The curated one is `data/forever-notes.json`, compiled into the core with `include_str!`: no file to ship and
+none to read at run time. It holds the crippled cases only: an addon that has a Forever build but half works
+under Forever's combat restrictions. The schema (version 1):
+
+```json
+{
+  "schema": 1,
+  "about": "what the file is",
+  "kinds": {
+    "<kebab-case id>": { "reason": "one line", "verified": "YYYY-MM-DD", "source": "https://…" }
+  },
+  "addons": {
+    "github:<owner>/<repo>": {
+      "kind": "<a kinds id>", "reason": "one line", "verified": "YYYY-MM-DD", "source": "https://…"
+    }
+  }
+}
+```
+
+`kinds` are Forever's restrictions, each described once with its source; `addons` are the notes, keyed by the
+canonical source spec. To add a note, add an entry under `addons` with the restriction it runs into, a
+one-line reason (lower case, no trailing full stop: what does not work), the day it was checked against the
+source and the source's URL, then run `cargo test`. The schema check (`forever::tests`) rejects an unknown
+field or kind, a key that is not a canonical spec, a reason over one line, a date that is no real day or lies
+in the future, and a source that is not an `https://` URL. A note whose `verified` date is more than 90 days
+old (`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
+checks the age in CI.

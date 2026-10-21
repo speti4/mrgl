@@ -1,11 +1,12 @@
 //! The GitHub source over the fixture answers under `tests/fixtures/releases/` (task 003): one folder per
 //! shape of a repository, served by the folder stub, so no test opens a socket. The cache tests use a
-//! temporary folder of their own.
+//! temporary folder of their own. Every fixture repository is classified for the Forever build (task 011).
 
 use std::path::{Path, PathBuf};
 
 use mrgl_core::flavor::{BuildVersion, FlavorId};
-use mrgl_core::sources::github::GitHub;
+use mrgl_core::forever::ForeverBuild;
+use mrgl_core::sources::github::{GitHub, current_release, forever_build};
 use mrgl_core::sources::{FolderHttp, Source, SourceSpec, Target};
 
 fn fixtures() -> PathBuf {
@@ -386,5 +387,114 @@ fn the_cached_release_list_keeps_the_body() {
     let second = github.resolve(&spec, &target).expect("second");
     assert_eq!(second.notes, first.notes);
     assert_eq!(second.page, first.page);
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+// --- task 011: the derived Forever signal over every fixture repository ---
+
+/// The fixture repositories, `<owner>/<repo>`, as the folder stub serves their release lists.
+fn fixture_repositories() -> Vec<String> {
+    let repos = fixtures().join("api.github.com").join("repos");
+    let mut found = Vec::new();
+    for owner in std::fs::read_dir(&repos).expect("the fixture repositories") {
+        let owner = owner.unwrap().path();
+        for repo in std::fs::read_dir(&owner).unwrap() {
+            let repo = repo.unwrap().path();
+            found.push(format!(
+                "{}/{}",
+                owner.file_name().unwrap().to_string_lossy(),
+                repo.file_name().unwrap().to_string_lossy()
+            ));
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn every_fixture_release_is_classified_for_forever() {
+    let expected = [
+        ("Example/BetaOnly", ForeverBuild::Yes),
+        ("Example/Empty", ForeverBuild::Unknown),
+        ("Example/MainlineOnly", ForeverBuild::No),
+        ("Example/NoMetadata", ForeverBuild::No),
+        ("Example/NoNotes", ForeverBuild::Unknown),
+        ("Example/NoReleaseJson", ForeverBuild::Unknown),
+        ("Example/Notes", ForeverBuild::Yes),
+        ("Example/Prerelease", ForeverBuild::Yes),
+        ("Questie/Questie", ForeverBuild::Yes),
+    ];
+    let names: Vec<String> = expected.iter().map(|(name, _)| name.to_string()).collect();
+    assert_eq!(
+        fixture_repositories(),
+        names,
+        "a new fixture repository gets its expected Forever build here"
+    );
+    let github = github();
+    for (name, build) in expected {
+        let spec = spec(&format!("github:{name}"));
+        let SourceSpec::GitHub { owner, repo } = &spec;
+        let releases = github.releases(owner, repo).expect("the release list");
+        let classified = match current_release(&releases) {
+            None => ForeverBuild::Unknown,
+            Some(release) => {
+                let release_json = github
+                    .release_json(&spec, release)
+                    .expect("the release.json download")
+                    .and_then(Result::ok);
+                forever_build(release, release_json.as_ref())
+            }
+        };
+        assert_eq!(classified, build, "{name}");
+        // The pick carries the same signal, whatever flavor it is for.
+        for flavor in [FlavorId::Forever, FlavorId::Retail] {
+            if let Ok(pick) = github.resolve(&spec, &target(flavor.clone(), None)) {
+                assert_eq!(pick.forever_build, build, "{name} for {flavor}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_forever_build_is_read_back_from_the_cache_alone() {
+    let cache = temp_cache("forever");
+    let github = GitHub::new(FolderHttp::new(fixtures()), None, Some(cache.clone()));
+    let questie = spec("github:Questie/Questie");
+    let retail_only = spec("github:Example/MainlineOnly");
+    let by_name = spec("github:Example/NoReleaseJson");
+    // Nothing cached yet: unknown, and no request.
+    assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Unknown);
+    assert!(github.http().requests().is_empty());
+
+    github
+        .resolve(&questie, &target(FlavorId::Forever, None))
+        .expect("questie");
+    github
+        .resolve(&retail_only, &target(FlavorId::Retail, None))
+        .expect("retail");
+    github
+        .resolve(&by_name, &target(FlavorId::Forever, None))
+        .expect("by name");
+    let requests = github.http().requests().len();
+    assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Yes);
+    assert_eq!(github.cached_forever_build(&retail_only), ForeverBuild::No);
+    assert_eq!(github.cached_forever_build(&by_name), ForeverBuild::Unknown);
+    assert_eq!(
+        github.http().requests().len(),
+        requests,
+        "the cache answers without a request"
+    );
+
+    // A cached release.json of another release does not count: the list moved on.
+    let cached = cache
+        .join("questie")
+        .join("questie")
+        .join("release-json.json");
+    let text = std::fs::read_to_string(&cached).expect("the release.json is cached");
+    assert!(text.contains(r#""release":"v1.2.3""#), "{text}");
+    std::fs::write(&cached, text.replace("v1.2.3", "v1.2.2")).unwrap();
+    assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Unknown);
+    std::fs::write(&cached, "{ not json").unwrap();
+    assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Unknown);
     let _ = std::fs::remove_dir_all(&cache);
 }

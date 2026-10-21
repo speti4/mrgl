@@ -1302,6 +1302,7 @@ fn add_dry_run_names_the_forever_asset_against_the_stub() {
         [
             "resolving github:Questie/Questie for forever",
             "pick for forever: github:Questie/Questie v1.2.3 (Questie-v1.2.3-forever.zip, flavor forever, interface 16001): release.json names forever (interface 16001)",
+            "forever build: yes (release.json names forever)",
             "dry run: nothing installed",
         ],
         "{stdout}"
@@ -1324,8 +1325,8 @@ fn add_speaks_murloc_on_every_message() {
     let stdout = stdout(&output);
     assert_eq!(
         stdout.lines().count(),
-        6,
-        "three two-line messages: {stdout}"
+        8,
+        "four two-line messages: {stdout}"
     );
     assert_eq!(stdout_last_line(&output), "dry run: nothing installed");
 }
@@ -2019,11 +2020,12 @@ fn add_dry_run_shows_the_release_notes_line_and_the_page() {
             "resolving github:Example/Notes for forever",
             "pick for forever: github:Example/Notes v2.1.0 (Notes-v2.1.0-forever.zip, flavor forever, interface 16001): release.json names forever (interface 16001)",
             "release notes: Quest arrows point the right way again (https://github.com/Example/Notes/releases/tag/v2.1.0)",
+            "forever build: yes (release.json names forever)",
             "dry run: nothing installed",
         ],
         "{serious}"
     );
-    // The murloc speaks the notes line too: four two-line messages.
+    // The murloc speaks the notes line too: five two-line messages (the Forever line is task 011's).
     let output = mrgl()
         .args([
             "add",
@@ -2034,7 +2036,7 @@ fn add_dry_run_shows_the_release_notes_line_and_the_page() {
         ])
         .output()
         .expect("run mrgl");
-    assert_eq!(stdout(&output).lines().count(), 8, "{}", stdout(&output));
+    assert_eq!(stdout(&output).lines().count(), 10, "{}", stdout(&output));
     let json = mrgl()
         .args([
             "--json",
@@ -2073,13 +2075,15 @@ fn add_dry_run_of_a_release_with_an_empty_body_shows_no_notes() {
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     let stdout = stdout(&output);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.len(), 3, "no notes line and no empty line: {stdout}");
+    assert_eq!(lines.len(), 4, "no notes line and no empty line: {stdout}");
     assert!(
         lines[1].starts_with("pick for forever, a guess: github:Example/NoNotes v1.0.0"),
         "{stdout}"
     );
     assert!(!stdout.contains("release notes"), "{stdout}");
-    assert_eq!(lines[2], "dry run: nothing installed");
+    // The Forever line (task 011) sits where the notes line would be.
+    assert_eq!(lines[2], "forever build: unknown (no release.json says)");
+    assert_eq!(lines[3], "dry run: nothing installed");
     let json = mrgl()
         .args([
             "--json",
@@ -2193,7 +2197,7 @@ fn list_reads_the_nolib_flag_from_the_sidecar() {
     let text = stdout(&output);
     assert!(
         text.lines()
-            .any(|line| line == "NolibBuild  1.0.0  16001  missing: LibEmbedded"),
+            .any(|line| line == "NolibBuild  1.0.0  16001  missing: LibEmbedded  forever:unknown"),
         "{text}"
     );
     assert!(
@@ -2269,4 +2273,150 @@ fn add_warns_after_the_install_when_a_dependency_is_missing() {
         serde_json::Value::Null,
         "a zip in hand does not say"
     );
+}
+
+// --- task 011: the Forever notes on `add --dry-run` and `list` ---
+
+#[test]
+fn add_dry_run_carries_the_forever_signal() {
+    let output = mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Example/NoReleaseJson",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout(&output).contains("\nforever build: unknown (no release.json says)\n"),
+        "{}",
+        stdout(&output)
+    );
+    let json = |source: &str, flavor: &str| {
+        let output = mrgl()
+            .args(["--json", "add", source, "--flavor", flavor, "--dry-run"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("one JSON document")
+    };
+    let questie = json("github:Questie/Questie", "forever");
+    assert_eq!(questie["pick"]["forever_build"], "yes");
+    assert_eq!(questie["forever"]["build"], "yes");
+    assert_eq!(questie["forever"]["note"], serde_json::Value::Null);
+    assert_eq!(questie["forever"]["stale"], false);
+    // Another flavor: the pick still says what the source publishes, the Forever note is not asked for.
+    let retail = json("github:Example/MainlineOnly", "retail");
+    assert_eq!(retail["pick"]["forever_build"], "no");
+    assert_eq!(retail["forever"], serde_json::Value::Null);
+    // A retail dry run prints no Forever line.
+    let output = mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Example/MainlineOnly",
+            "--flavor",
+            "retail",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(
+        !stdout(&output).contains("forever build"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn list_marks_a_managed_forever_addon_from_the_cache_alone() {
+    let game = Game::new("forever-list");
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(zips().join("one-folder-1.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    // The install from a GitHub pick is task 040: the sidecar entry is pointed at the repository by hand.
+    let mut state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(game.state_path()).expect("the sidecar")).unwrap();
+    state["addons"]["OneFolder"]["source"] = "github:Questie/Questie".into();
+    std::fs::write(game.state_path(), state.to_string()).unwrap();
+    let list = |json: bool| {
+        let mut command = game.mrgl();
+        command.arg(if json { "--json" } else { "--serious" });
+        let output = command
+            .args(["list", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        output
+    };
+
+    // Nothing cached yet: unknown.
+    let before = stdout(&list(false));
+    let line = before
+        .lines()
+        .find(|line| line.starts_with("OneFolder  "))
+        .expect("the addon line");
+    assert!(line.ends_with("  forever:unknown"), "{before}");
+
+    // A dry run fetches the release list and its release.json; list reads them back offline.
+    let output = game
+        .mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let after = list(false);
+    let text = stdout(&after);
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("OneFolder  "))
+        .expect("the addon line");
+    assert!(line.ends_with("  forever:yes"), "{text}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&list(true).stdout).expect("one JSON document");
+    let addon = value["addons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|addon| addon["folder"] == "OneFolder")
+        .expect("the addon");
+    assert_eq!(
+        addon["forever"],
+        serde_json::json!({
+            "build": "yes",
+            "note": null,
+            "kind": null,
+            "verified": null,
+            "source": null,
+            "stale": false,
+        })
+    );
+
+    // Another flavor's listing carries no Forever field.
+    let output = mrgl()
+        .args(["--json", "list", "--flavor", "retail", "--root"])
+        .arg(fixtures())
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let addons = value["addons"].as_array().expect("the addons");
+    assert!(!addons.is_empty());
+    assert!(addons.iter().all(|addon| addon.get("forever").is_none()));
 }
