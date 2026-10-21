@@ -70,10 +70,12 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
   task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
   (task 024), `link <folder>` and `unlink <folder>` (task 005), `export --flavor <flavor> [--to <file>]`
-  and `import <file> --flavor <flavor> [--dry-run]` (task 015), `pin <name> [version]`, `unpin`, `ignore`,
+  and `import <file> --flavor <flavor> [--exact] [--dry-run]` (tasks 015 and 057), `pin <name> [version]`,
+  `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
   `rollback <name>` (task 022), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
-  below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
+  below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
+  `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
   addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
@@ -113,6 +115,15 @@ managed or not) is reported and left alone. `--dry-run` resolves every entry and
 `Interface\AddOns` or in the sidecar (the release list cache of the GitHub source is written as on any
 resolve). An entry that fails does not stop the others; the run then ends with exit code 1. The list may
 come from another flavor: the picks are made for the flavor it is imported into, with a warning.
+
+`mrgl import --exact` (task 057) installs the version the list names for each entry instead of the current
+release: the request asks the source for that version (`Wanted::Version`, `Source::resolve_version`), and
+the GitHub source takes the release of the same list whose tag is the version, with or without its leading
+`v`, never a draft, on any channel (`sources::github::release_of_version`), and picks its asset for the
+flavor as for the current one. An entry whose version the source no longer offers is reported (`<name>
+skipped, version <v> not offered: no release <v> in <source>`, outcome `version-not-offered` in the JSON,
+`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup sees the
+releases the release list request returns. The JSON document carries `exact`.
 
 The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:`, `import`
 and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`

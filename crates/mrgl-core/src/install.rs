@@ -173,6 +173,9 @@ pub enum Wanted {
     Current,
     /// A pick made already (by the caller, or by the update check), installed as it is: no second request.
     Pick(Box<Pick>),
+    /// The release that carries this version, on any channel (task 057, `import --exact`):
+    /// [`Source::resolve_version`], [`crate::Error::VersionNotOffered`] when the source has none.
+    Version(String),
 }
 
 /// An install from a source, as the one path takes it (task 055).
@@ -932,7 +935,8 @@ fn managed_entry<'a>(
         .or_else(|| name.and_then(|name| state.entry(name)))
 }
 
-/// The pick a request asks for, on a target: the source's current release, or the pick in hand.
+/// The pick a request asks for, on a target: the source's current release, the pick in hand, or the
+/// release of a version.
 fn resolve_on<S: Source + ?Sized>(
     source: &S,
     request: &SourceRequest,
@@ -941,6 +945,7 @@ fn resolve_on<S: Source + ?Sized>(
     match &request.wanted {
         Wanted::Current => source.resolve(&request.spec, target),
         Wanted::Pick(pick) => Ok((**pick).clone()),
+        Wanted::Version(version) => source.resolve_version(&request.spec, target, version),
     }
 }
 

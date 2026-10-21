@@ -209,13 +209,17 @@ enum Command {
         to: Option<PathBuf>,
     },
     /// Install the addons of a list file `export` wrote: every `github:` entry the flavor does not have
-    /// yet, at its current release.
+    /// yet, at its current release, or with `--exact` at the version the list names.
     Import {
         /// The list file.
         file: PathBuf,
         /// The flavor id or folder to install into.
         #[arg(long)]
         flavor: Option<String>,
+        /// Install the version the list names for each entry (its release), not the current release; an
+        /// entry whose version the source no longer offers is reported and skipped.
+        #[arg(long)]
+        exact: bool,
         /// Resolve every entry and report what would happen, write nothing.
         #[arg(long)]
         dry_run: bool,
@@ -444,8 +448,9 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
         Command::Import {
             file,
             flavor,
+            exact,
             dry_run,
-        } => import_command(reporter, &file, flavor.as_deref(), dry_run)?,
+        } => import_command(reporter, &file, flavor.as_deref(), exact, dry_run)?,
         Command::Pin {
             name,
             version,
@@ -2242,12 +2247,15 @@ fn export_command(
 
 /// `mrgl import <file> --flavor <id> [--dry-run]`: every `github:` entry of a list file that the flavor
 /// does not have is resolved and installed (task 015); a zip in hand is not importable, a linked folder
-/// is skipped, an addon the flavor has is left alone. `--dry-run` resolves and reports, and writes
-/// nothing. An entry that fails does not stop the others; the command then ends with exit code 1.
+/// is skipped, an addon the flavor has is left alone. `--exact` installs the version the list names
+/// (task 057): an entry whose version the source no longer offers is reported, skipped and counted.
+/// `--dry-run` resolves and reports, and writes nothing. An entry that fails does not stop the others;
+/// the command then ends with exit code 1.
 fn import_command(
     reporter: &Reporter,
     file: &Path,
     flavor: Option<&str>,
+    exact: bool,
     dry_run: bool,
 ) -> Result<(), String> {
     let mut warnings = Vec::new();
@@ -2270,14 +2278,19 @@ fn import_command(
         } else {
             "importing"
         };
+        let versions = if exact {
+            " at the versions it names"
+        } else {
+            ""
+        };
         reporter.say(
             Kind::Progress,
-            format!("{verb} {count} from {file_name} into {folder_name}"),
+            format!("{verb} {count} from {file_name} into {folder_name}{versions}"),
         );
     }
     let github = GitHub::from_env(sources::http_from_env());
-    let report =
-        list_file::import(&engine, &github, &list, dry_run).map_err(|error| error.to_string())?;
+    let report = list_file::import(&engine, &github, &list, exact, dry_run)
+        .map_err(|error| error.to_string())?;
     warnings.extend(report.warnings.iter().cloned());
     for item in &report.items {
         warnings.extend(item.warnings.iter().cloned());
@@ -2295,6 +2308,7 @@ fn import_command(
             "flavor": &engine.flavor,
             "file": &path,
             "list_flavor": &list.flavor,
+            "exact": exact,
             "dry_run": dry_run,
             "addons": &report.items,
             "warnings": warnings,
@@ -2323,6 +2337,7 @@ fn import_command(
             (Outcome::NotImportable, "not importable"),
             (Outcome::Skipped, "skipped"),
             (Outcome::Failed, "failed"),
+            (Outcome::VersionNotOffered, "version not offered"),
         ]
         .into_iter()
         .filter_map(|(outcome, label)| match report.count(outcome) {
@@ -2330,7 +2345,7 @@ fn import_command(
             count => Some(format!("{count} {label}")),
         })
         .collect();
-        let kind = if !failed.is_empty() {
+        let kind = if !failed.is_empty() || report.count(Outcome::VersionNotOffered) > 0 {
             Kind::Warning
         } else if report.count(Outcome::Installed) + report.count(Outcome::WouldInstall) > 0 {
             Kind::Success
@@ -2381,6 +2396,10 @@ fn import_line(item: &list_file::Imported) -> String {
         Outcome::NotImportable => format!("not importable ({}): {}", item.source, item.detail),
         Outcome::Skipped => format!("skipped ({}): {}", item.source, item.detail),
         Outcome::Failed => format!("failed: {}", item.detail),
+        Outcome::VersionNotOffered => format!(
+            "skipped, version {} not offered: {}",
+            item.listed_version, item.detail
+        ),
     };
     format!("{}  {what}", item.name)
 }

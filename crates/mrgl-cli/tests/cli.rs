@@ -5187,3 +5187,146 @@ fn update_one_addon_takes_the_same_path_and_names_an_unknown_one() {
         assert_eq!(output.status.code(), Some(2), "{args:?}");
     }
 }
+
+// --- task 057: `import --exact` installs the version the list names ---
+
+/// A copy of the fixture answers with the fixture `Questie` zip behind the Forever asset of the older
+/// `Questie/Questie` release, v1.2.2 (no `release.json`: a pick by its name).
+fn stub_with_older_questie(base: &Path) -> PathBuf {
+    let stub = base.join("stub-older");
+    let _ = std::fs::remove_dir_all(&stub);
+    copy_tree(&releases(), &stub);
+    let older = stub.join("github.com/Questie/Questie/releases/download/v1.2.2");
+    std::fs::create_dir_all(&older).expect("the release folder");
+    std::fs::copy(
+        releases()
+            .join("github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-forever.zip"),
+        older.join("Questie-v1.2.2-forever.zip"),
+    )
+    .expect("the asset");
+    stub
+}
+
+/// A list file of entries `(name, source, version)`, written under the game's base folder.
+fn write_list(game: &Game, file: &str, entries: &[(&str, &str, &str)]) -> PathBuf {
+    let path = game.root.parent().expect("the base").join(file);
+    let addons: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|(name, source, version)| {
+            serde_json::json!({ "name": name, "source": source, "version": version, "folders": [name] })
+        })
+        .collect();
+    std::fs::write(
+        &path,
+        serde_json::json!({ "format": "mrgl-list", "schema": 1, "flavor": "wowf", "addons": addons })
+            .to_string(),
+    )
+    .expect("the list");
+    path
+}
+
+#[test]
+fn import_exact_installs_the_listed_version_and_reports_one_the_source_lacks() {
+    let game = Game::new("import-exact");
+    let stub = stub_with_older_questie(game.root.parent().expect("the base"));
+    let list = write_list(
+        &game,
+        "exact.json",
+        &[
+            ("Questie", "github:Questie/Questie", "1.2.2"),
+            ("Notes", "github:Example/Notes", "0.5.0"),
+        ],
+    );
+    let run = |args: &[&str]| {
+        game.mrgl()
+            .env("MRGL_HTTP_STUB", &stub)
+            .args(["--serious", "import"])
+            .arg(&list)
+            .args(["--flavor", "forever", "--exact"])
+            .args(args)
+            .output()
+            .expect("run mrgl")
+    };
+
+    let output = run(&["--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "dry run: reading 2 addons from exact.json into _forever_ at the versions it names",
+            "Questie  would install 1.2.2 from github:Questie/Questie",
+            "Notes  skipped, version 0.5.0 not offered: no release 0.5.0 in github:Example/Notes",
+            "dry run: 2 addons of exact.json for _forever_: 1 to install, 1 version not offered; nothing written",
+        ]
+    );
+    assert!(!game.state_path().exists(), "a dry run writes nothing");
+
+    let output = run(&[]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line == "Questie  installed 1.2.2 from github:Questie/Questie"),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "imported 2 addons of exact.json into _forever_: 1 installed, 1 version not offered"
+    );
+    let state = sidecar(&game);
+    assert_eq!(state["addons"]["Questie"]["version"], "1.2.2");
+    assert_eq!(
+        state["addons"]["Questie"]["source"],
+        "github:Questie/Questie"
+    );
+    assert!(state["addons"].get("Notes").is_none(), "not installed");
+    assert!(game.addon("Questie").join("Questie.toc").is_file());
+    assert!(!game.addon("Notes").exists());
+
+    // The JSON names the option and the outcome.
+    std::fs::remove_dir_all(&game.home).expect("a fresh home");
+    std::fs::remove_dir_all(game.addon("Questie")).expect("a fresh folder");
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["--json", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever", "--exact"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["exact"], true);
+    assert_eq!(value["addons"][0]["outcome"], "installed");
+    assert_eq!(value["addons"][0]["version"], "1.2.2");
+    assert_eq!(value["addons"][1]["outcome"], "version-not-offered");
+    assert_eq!(value["addons"][1]["listed_version"], "0.5.0");
+}
+
+#[test]
+fn import_without_exact_still_takes_the_current_release() {
+    let game = Game::new("import-current");
+    let stub = stub_with_older_questie(game.root.parent().expect("the base"));
+    let list = write_list(
+        &game,
+        "current.json",
+        &[("Questie", "github:Questie/Questie", "1.2.2")],
+    );
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout(&output).lines().any(|line| line
+            == "Questie  installed 1.2.3 from github:Questie/Questie, the list had 1.2.2"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.2.3");
+}

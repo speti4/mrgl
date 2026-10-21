@@ -225,6 +225,8 @@ pub enum Outcome {
     Skipped,
     /// The resolve, the download or the install failed; the detail says why.
     Failed,
+    /// An exact import (task 057): the source no longer offers the version the list names; skipped.
+    VersionNotOffered,
 }
 
 /// One entry of the list and what the import did with it.
@@ -319,13 +321,16 @@ impl Present<'_> {
 
 /// Imports a list into the engine's flavor: every `github:` entry the flavor does not have is resolved
 /// through the source and installed through the engine's one install path under the list's name for it
-/// ([`Engine::install_from_source`]); `dry_run` resolves and reports ([`Engine::resolve`]), and writes
-/// nothing under `Interface\AddOns` or in the sidecar. An entry that fails is reported as failed and the
+/// ([`Engine::install_from_source`]): its current release, or with `exact` the release of the version the
+/// list names (task 057; an entry whose version the source no longer offers is
+/// [`Outcome::VersionNotOffered`] and skipped); `dry_run` resolves and reports ([`Engine::resolve`]), and
+/// writes nothing under `Interface\AddOns` or in the sidecar. An entry that fails is reported as failed and the
 /// import goes on; only a sidecar or AddOns folder that cannot be read at all is an error.
 pub fn import(
     engine: &Engine,
     source: &dyn Source,
     list: &ListFile,
+    exact: bool,
     dry_run: bool,
 ) -> Result<ImportReport> {
     let loaded = engine.load_state()?;
@@ -391,11 +396,22 @@ pub fn import(
             items.push(item(Outcome::NotImportable, None, detail.to_string()));
             continue;
         };
-        // The one install path of task 055, under the list's name for the addon.
+        // The one install path of task 055, under the list's name for the addon; an exact import asks
+        // for the listed version (task 057).
         let request = SourceRequest {
             spec: spec.clone(),
-            wanted: Wanted::Current,
+            wanted: if exact {
+                Wanted::Version(entry.version.clone())
+            } else {
+                Wanted::Current
+            },
             name: Some(entry.name.clone()),
+        };
+        let failed = |error: Error| match error {
+            Error::VersionNotOffered { .. } => {
+                item(Outcome::VersionNotOffered, None, error.to_string())
+            }
+            error => item(Outcome::Failed, None, error.to_string()),
         };
         if dry_run {
             items.push(match engine.resolve(source, &request) {
@@ -404,7 +420,7 @@ pub fn import(
                     Some(pick.version.clone()),
                     pick.summary(),
                 ),
-                Err(error) => item(Outcome::Failed, None, error.to_string()),
+                Err(error) => failed(error),
             });
             continue;
         }
@@ -439,7 +455,7 @@ pub fn import(
                     current.name, current.entry.version
                 ),
             )),
-            Err(error) => items.push(item(Outcome::Failed, None, error.to_string())),
+            Err(error) => items.push(failed(error)),
         }
     }
 
@@ -708,7 +724,7 @@ mod tests {
             version: "1.2.0",
         };
 
-        let dry = import(&engine, &source, &list, true).expect("a dry run");
+        let dry = import(&engine, &source, &list, false, true).expect("a dry run");
         let outcomes: Vec<Outcome> = dry.items.iter().map(|item| item.outcome).collect();
         assert_eq!(
             outcomes,
@@ -733,7 +749,7 @@ mod tests {
             "a dry run writes nothing"
         );
 
-        let report = import(&engine, &source, &list, false).expect("imports");
+        let report = import(&engine, &source, &list, false, false).expect("imports");
         assert_eq!(report.count(Outcome::Installed), 1);
         assert_eq!(report.count(Outcome::Failed), 1);
         let one = &report.items[0];
@@ -759,7 +775,7 @@ mod tests {
             "the download is gone"
         );
 
-        let again = import(&engine, &source, &list, false).expect("imports again");
+        let again = import(&engine, &source, &list, false, false).expect("imports again");
         assert_eq!(again.items[0].outcome, Outcome::AlreadyInstalled);
         assert_eq!(again.items[0].version.as_deref(), Some("1.2.0"));
         assert_eq!(again.count(Outcome::Installed), 0);
@@ -785,7 +801,7 @@ mod tests {
             zip: zips().join("root-toc-3.0.0.zip"),
             version: "3.0.0",
         };
-        let report = import(&engine, &source, &list, false).expect("imports");
+        let report = import(&engine, &source, &list, false, false).expect("imports");
         let mismatch = report.items[0]
             .interface_mismatch
             .as_ref()

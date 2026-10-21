@@ -36,6 +36,9 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
   guess only (no `release.json` names the flavor, so it is not installed blindly), source gone, pinned,
   ignored, or not checked (a zip in hand, a linked folder); `mrgl update --all` installs the updates after
   one confirmation (`--yes` for scripts), leaves a pinned addon alone and skips an ignored one.
+- **A known-good set on another machine.** `mrgl export` writes the managed addons into a list file and
+  `mrgl import` installs it elsewhere, at the current releases, or with `--exact` at the versions the list
+  names; a version the source no longer offers is reported and skipped.
 - **A toolbox, not only a manager.** WTF backup and restore, addon sets, the SavedVariables sizes with the
   cleanup of files whose addon is gone, a junction link for the addons you develop yourself, and a window on
   top of it all.
@@ -75,6 +78,7 @@ target\release\mrgl.exe savedvars --clean --flavor forever                  # th
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
 target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
 target\release\mrgl.exe import forever-addons.json --flavor forever --dry-run   # what installing that list would do
+target\release\mrgl.exe import forever-addons.json --flavor forever --exact     # the versions the list names, not the current ones
 ```
 
 `add --dry-run` names the asset it picked and why; when the release has notes, the next line is their first

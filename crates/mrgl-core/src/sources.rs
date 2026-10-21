@@ -276,6 +276,22 @@ pub trait Source {
     /// The current release's asset for the target, or why there is none.
     fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick>;
 
+    /// The asset for the target of the release that carries a version (task 057: `import --exact`), on
+    /// any channel, or [`Error::VersionNotOffered`] when the source has no such release. A source that lists
+    /// its releases looks the version up there; this default takes the current release when it carries
+    /// that version, for a source that knows only its current one.
+    fn resolve_version(&self, spec: &SourceSpec, target: &Target, version: &str) -> Result<Pick> {
+        let pick = self.resolve(spec, target)?;
+        if pick.version == version {
+            Ok(pick)
+        } else {
+            Err(Error::VersionNotOffered {
+                spec: spec.to_string(),
+                version: version.to_string(),
+            })
+        }
+    }
+
     /// Downloads the picked asset to a path, creating the parent folders.
     fn fetch(&self, pick: &Pick, to: &Path) -> Result<()>;
 }

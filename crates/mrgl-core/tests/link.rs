@@ -505,7 +505,7 @@ fn import_one(sandbox: &Sandbox, source: &OneZip) -> mrgl_core::list_file::Impor
             folders: Vec::new(),
         }],
     };
-    let report = list_file::import(&sandbox.engine, source, &list, false).expect("imports");
+    let report = list_file::import(&sandbox.engine, source, &list, false, false).expect("imports");
     report.items.into_iter().next().expect("the entry")
 }
 
