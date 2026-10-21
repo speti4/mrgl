@@ -83,8 +83,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
   `folder`, `required`, `met`, `embedded`, `missing` and `nolib` (`true`, `false` or `null` for unknown).
   `savedvars --flavor <flavor> [--clean]` (task 025) prints a data line per SavedVariables entry (size,
-  addon, `account` or `account / realm / character`, `orphan` or `client`) and a summary, `--clean` moves
-  the orphans; `--json` is the `savedvars` or the `savedvars-clean` document.
+  addon, `account-wide` or `realm / character`, never the account folder's name, which `--json` carries,
+  `orphan` or `client`) and a summary, `--clean` moves the orphans; `--json` is the `savedvars` or the
+  `savedvars-clean` document.
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
   capability file and the icon.
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see

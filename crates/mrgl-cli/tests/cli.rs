@@ -4196,21 +4196,21 @@ fn savedvars_lists_the_sizes_and_marks_the_orphans() {
         7 + 1,
         "a line per entry and the summary: {text}"
     );
-    assert_eq!(lines[0], "    500 B  GoneAddon  MRGLFIXTURE  orphan");
+    assert_eq!(lines[0], "    500 B  GoneAddon  account-wide  orphan");
     assert!(
-        lines.contains(&"    120 B  NoTocFolder  MRGLFIXTURE  orphan"),
+        lines.contains(&"    120 B  NoTocFolder  account-wide  orphan"),
         "{text}"
     );
     assert!(
-        lines.contains(&"     90 B  GoneToo  MRGLFIXTURE / Fixture Realm / Mrgltest  orphan"),
+        lines.contains(&"     90 B  GoneToo  Fixture Realm / Mrgltest  orphan"),
         "{text}"
     );
     assert!(
-        lines.contains(&"     60 B  DisabledAddon  MRGLFIXTURE / Fixture Realm / Mrgltest"),
+        lines.contains(&"     60 B  DisabledAddon  Fixture Realm / Mrgltest"),
         "a disabled addon is not an orphan: {text}"
     );
     assert!(
-        lines.contains(&"     40 B  Blizzard_Console  MRGLFIXTURE  client"),
+        lines.contains(&"     40 B  Blizzard_Console  account-wide  client"),
         "{text}"
     );
     assert_eq!(

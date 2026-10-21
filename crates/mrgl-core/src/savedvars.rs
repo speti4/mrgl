@@ -95,13 +95,13 @@ impl SavedVariablesFile {
         self.lua.iter().chain(self.bak.iter())
     }
 
-    /// Where it is, for the plain lines: the account, or `account / realm / character`.
+    /// Where it is, for the plain lines: `account-wide`, or `realm / character`. The account folder's
+    /// name is left out: on an older install it is the login name, and a pasted output should not carry
+    /// it (`--json` has it in `account`).
     pub fn place(&self) -> String {
         match (&self.realm, &self.character) {
-            (Some(realm), Some(character)) => {
-                format!("{} / {realm} / {character}", self.account)
-            }
-            _ => self.account.clone(),
+            (Some(realm), Some(character)) => format!("{realm} / {character}"),
+            _ => "account-wide".to_string(),
         }
     }
 }
@@ -578,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn a_place_reads_as_the_account_or_the_character_path() {
+    fn a_place_reads_as_account_wide_or_the_character_path_without_the_account() {
         let mut file = SavedVariablesFile {
             addon: "Foo".into(),
             account: "ACC".into(),
@@ -591,12 +591,13 @@ mod tests {
             bytes: 0,
             status: Status::Orphan,
         };
-        assert_eq!(file.place(), "ACC");
+        assert_eq!(file.place(), "account-wide");
         file.realm = Some("Some Realm".into());
         file.character = Some("Char".into());
-        assert_eq!(file.place(), "ACC / Some Realm / Char");
+        assert_eq!(file.place(), "Some Realm / Char");
         let json = serde_json::to_value(&file).expect("serializes");
         assert_eq!(json["status"], "orphan");
         assert_eq!(json["realm"], "Some Realm");
+        assert_eq!(json["account"], "ACC", "the account stays in the JSON");
     }
 }

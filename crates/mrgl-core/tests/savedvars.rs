@@ -185,8 +185,8 @@ fn the_listing_has_every_file_with_its_size_and_marks_the_orphans() {
         .iter()
         .map(|file| ((file.place(), file.addon.clone()), file.status))
         .collect();
-    let account = "MRGLFIXTURE".to_string();
-    let character = "MRGLFIXTURE / Fixture Realm / Mrgltest".to_string();
+    let account = "account-wide".to_string();
+    let character = "Fixture Realm / Mrgltest".to_string();
     let expected: BTreeMap<(String, String), Status> = [
         ((account.clone(), "MrglFixture"), Status::Installed),
         ((account.clone(), "GoneAddon"), Status::Orphan),
