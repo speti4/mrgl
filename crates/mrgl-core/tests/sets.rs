@@ -4,6 +4,8 @@
 //! the client's own format and leaves every other byte of `WTF` as it was, a second apply writes nothing,
 //! and an apply with the stand-in client running (the pattern of the 023 and 063 tests: a copy of the
 //! system's `ping.exe` in the flavor folder, never a game file) is refused before anything is written.
+//! A set applied to one chosen character (task 027) leaves the other character's file byte for byte, and
+//! a name on two realms is refused with the realms listed until `realm` narrows it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -11,7 +13,7 @@ use std::process::{Child, Command, Stdio};
 
 use mrgl_core::Error;
 use mrgl_core::flavor::{self, Flavor, FlavorId};
-use mrgl_core::sets::{self, AddonState, AddonsTxt, SETS_FILE};
+use mrgl_core::sets::{self, AddonState, AddonsTxt, SETS_FILE, Target};
 
 fn fixture_wtf() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/addon-sets/WTF")
@@ -142,10 +144,11 @@ fn a_save_keeps_what_every_character_agrees_on_and_replaces_a_set_of_the_same_na
     let path = sets_path_of(&root);
     assert_eq!(path, root.join("home").join("wowf").join(SETS_FILE));
 
-    let saved = sets::save_set(&flavor, &path, " everyday ").expect("saved");
+    let saved =
+        sets::save_set(&flavor, &path, " everyday ", &Target::EveryCharacter).expect("saved");
     assert_eq!(saved.name, "everyday");
     assert!(!saved.replaced);
-    assert_eq!(saved.characters, 2);
+    assert_eq!(saved.characters.len(), 2);
     assert_eq!(
         saved.set.addons,
         BTreeMap::from([
@@ -163,7 +166,8 @@ fn a_save_keeps_what_every_character_agrees_on_and_replaces_a_set_of_the_same_na
     assert_eq!(file["flavor"], "wowf");
     assert_eq!(file["sets"]["everyday"]["addons"]["BagSorter"], "enabled");
 
-    let again = sets::save_set(&flavor, &path, "EVERYDAY").expect("saved again");
+    let again =
+        sets::save_set(&flavor, &path, "EVERYDAY", &Target::EveryCharacter).expect("saved again");
     assert!(again.replaced);
     let file = sets::read_sets_at(&path, &flavor.id).expect("read");
     assert_eq!(
@@ -192,7 +196,13 @@ fn an_apply_changes_exactly_the_listed_addons_in_the_clients_format() {
     );
     let before = snapshot(&wtf_of(&root));
 
-    let applied = sets::apply_set(&flavor, &sets_path_of(&root), "Raid").expect("applied");
+    let applied = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "Raid",
+        &Target::EveryCharacter,
+    )
+    .expect("applied");
     assert_eq!(applied.name, "raid");
     assert_eq!(applied.characters.len(), 2);
     assert_eq!(
@@ -246,7 +256,13 @@ fn an_apply_changes_exactly_the_listed_addons_in_the_clients_format() {
         })
         .collect();
     std::thread::sleep(std::time::Duration::from_millis(20));
-    let again = sets::apply_set(&flavor, &sets_path_of(&root), "raid").expect("applied again");
+    let again = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &Target::EveryCharacter,
+    )
+    .expect("applied again");
     assert_eq!(again.changed(), 0);
     assert_eq!(snapshot(&wtf_of(&root)), after);
     for (file, time) in [FIRST, SECOND].iter().zip(times) {
@@ -265,7 +281,13 @@ fn a_character_without_addons_txt_gets_one() {
     let fresh = wtf_of(&root).join("Account/MRGLSETS/Second Realm/Newbie");
     std::fs::create_dir_all(&fresh).expect("a character folder");
     write_set(&root, "solo", &[("QuestArrows", AddonState::Enabled)]);
-    let applied = sets::apply_set(&flavor, &sets_path_of(&root), "solo").expect("applied");
+    let applied = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "solo",
+        &Target::EveryCharacter,
+    )
+    .expect("applied");
     let newbie = applied
         .characters
         .iter()
@@ -284,7 +306,8 @@ fn unknown_sets_no_characters_and_a_foreign_sets_file_are_errors() {
     let root = temp_game_root("errors");
     let flavor = read(&root);
     let path = sets_path_of(&root);
-    let error = sets::apply_set(&flavor, &path, "raid").expect_err("no set");
+    let error =
+        sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("no set");
     assert_eq!(
         error.to_string(),
         "set not found: raid (flavor forever); no set is saved yet: `mrgl set save <name>` saves one"
@@ -306,7 +329,8 @@ fn unknown_sets_no_characters_and_a_foreign_sets_file_are_errors() {
     );
 
     std::fs::write(&path, "{ not json").expect("a broken file");
-    let error = sets::save_set(&flavor, &path, "raid").expect_err("unreadable");
+    let error =
+        sets::save_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("unreadable");
     assert!(matches!(error, Error::SetsUnreadable { .. }), "{error}");
     assert_eq!(
         std::fs::read_to_string(&path).expect("kept"),
@@ -318,7 +342,7 @@ fn unknown_sets_no_characters_and_a_foreign_sets_file_are_errors() {
         r#"{"format":"mrgl-sets","schema":1,"flavor":"wowf","sets":{"x":{"saved_at":"","addons":{"A\r\nB":"enabled"}}}}"#,
     )
     .expect("a hostile file");
-    let error = sets::apply_set(&flavor, &path, "x").expect_err("refused");
+    let error = sets::apply_set(&flavor, &path, "x", &Target::EveryCharacter).expect_err("refused");
     assert!(
         error.to_string().contains("which is not an addon name"),
         "{error}"
@@ -326,7 +350,8 @@ fn unknown_sets_no_characters_and_a_foreign_sets_file_are_errors() {
 
     std::fs::remove_dir_all(wtf_of(&root)).expect("no WTF");
     std::fs::remove_file(&path).expect("no sets");
-    let error = sets::save_set(&flavor, &path, "raid").expect_err("no characters");
+    let error =
+        sets::save_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("no characters");
     assert!(
         matches!(&error, Error::NoCharacters { path } if path == &wtf_of(&root)),
         "{error}"
@@ -405,7 +430,13 @@ fn an_apply_is_refused_while_the_client_runs_and_a_save_is_not() {
         eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
         return;
     };
-    let error = sets::apply_set(&flavor, &sets_path_of(&root), "raid").expect_err("refused");
+    let error = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &Target::EveryCharacter,
+    )
+    .expect_err("refused");
     assert_eq!(
         error.to_string(),
         format!(
@@ -415,10 +446,22 @@ fn an_apply_is_refused_while_the_client_runs_and_a_save_is_not() {
     );
     assert_eq!(snapshot(&wtf_of(&root)), before, "nothing was touched");
     // A save only reads WTF, so it goes on while the client runs.
-    sets::save_set(&flavor, &sets_path_of(&root), "while-running").expect("saved");
+    sets::save_set(
+        &flavor,
+        &sets_path_of(&root),
+        "while-running",
+        &Target::EveryCharacter,
+    )
+    .expect("saved");
 
     child.stop();
-    let applied = sets::apply_set(&flavor, &sets_path_of(&root), "raid").expect("applied");
+    let applied = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &Target::EveryCharacter,
+    )
+    .expect("applied");
     assert_eq!(applied.changed(), 2);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -437,7 +480,13 @@ fn a_failed_write_puts_the_files_written_before_it_back() {
     permissions.set_readonly(true);
     std::fs::set_permissions(&locked, permissions.clone()).expect("read-only");
 
-    let error = sets::apply_set(&flavor, &sets_path_of(&root), "raid").expect_err("failed");
+    let error = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &Target::EveryCharacter,
+    )
+    .expect_err("failed");
     assert!(
         matches!(&error, Error::SetApplyFailed { set, reverted: true, .. } if set == "raid"),
         "{error}"
@@ -453,5 +502,218 @@ fn a_failed_write_puts_the_files_written_before_it_back() {
     #[allow(clippy::permissions_set_readonly_false)]
     permissions.set_readonly(false);
     std::fs::set_permissions(&locked, permissions).expect("writable again");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Task 027: a set applied to one chosen character; the other character's file stays byte for byte.
+
+fn one(name: &str, realm: Option<&str>) -> Target {
+    Target::Character {
+        name: name.to_string(),
+        realm: realm.map(str::to_string),
+    }
+}
+
+fn modified(path: &Path) -> std::time::SystemTime {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .expect("a time")
+}
+
+#[test]
+fn an_apply_to_one_character_leaves_the_other_byte_for_byte() {
+    let root = temp_game_root("one-character");
+    let flavor = read(&root);
+    write_set(
+        &root,
+        "raid",
+        &[
+            ("BagSorter", AddonState::Disabled),
+            ("BossTimers", AddonState::Enabled),
+        ],
+    );
+    let before = snapshot(&wtf_of(&root));
+    let second_time = modified(&wtf_of(&root).join(SECOND));
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    let applied = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &one("grrlWAVE", None),
+    )
+    .expect("applied");
+    assert_eq!(applied.characters.len(), 1);
+    assert_eq!(
+        applied.characters[0].character.label(),
+        "MRGLSETS/Second Realm/Grrlwave"
+    );
+    let after = snapshot(&wtf_of(&root));
+    assert_eq!(
+        after[FIRST], before[FIRST],
+        "the other character, byte for byte"
+    );
+    assert_eq!(
+        after[SECOND],
+        b"QuestArrows: enabled\n# a line the client never wrote, kept as it is\nBagSorter: disabled\nBossTimers: enabled"
+    );
+    assert_ne!(modified(&wtf_of(&root).join(SECOND)), second_time);
+
+    // The other way round: the first character only, the second keeps what it has now.
+    let first_time = modified(&wtf_of(&root).join(FIRST));
+    let applied = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &one("Mrgltest", Some("fixture realm")),
+    )
+    .expect("applied");
+    assert_eq!(
+        applied.characters[0].changed,
+        [("BagSorter".to_string(), AddonState::Disabled)]
+    );
+    let again = snapshot(&wtf_of(&root));
+    assert_eq!(again[SECOND], after[SECOND]);
+    assert_ne!(again[FIRST], after[FIRST]);
+    assert_ne!(modified(&wtf_of(&root).join(FIRST)), first_time);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_save_from_one_character_takes_that_characters_file() {
+    let root = temp_game_root("save-one");
+    let flavor = read(&root);
+    let saved = sets::save_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &one("Mrgltest", None),
+    )
+    .expect("saved");
+    assert_eq!(saved.characters.len(), 1);
+    assert!(saved.conflicts.is_empty());
+    assert_eq!(
+        saved.set.addons,
+        BTreeMap::from([
+            ("BagSorter".to_string(), AddonState::Enabled),
+            ("BossTimers".to_string(), AddonState::Enabled),
+            ("QuestArrows".to_string(), AddonState::Disabled),
+            ("RaidFrames".to_string(), AddonState::Enabled),
+        ])
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_name_on_two_realms_is_refused_with_the_realms_and_a_realm_narrows_it() {
+    let root = temp_game_root("ambiguous");
+    let flavor = read(&root);
+    let twin = wtf_of(&root).join("Account/MRGLSETS/Second Realm/Mrgltest");
+    std::fs::create_dir_all(&twin).expect("a second Mrgltest");
+    std::fs::write(twin.join("AddOns.txt"), b"BagSorter: enabled\r\n").expect("its file");
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+
+    let error = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &one("mrgltest", None),
+    )
+    .expect_err("ambiguous");
+    assert!(
+        matches!(&error, Error::AmbiguousCharacter { count: 2, .. }),
+        "{error}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "character mrgltest matches 2 characters (flavor forever): Fixture Realm, Second Realm; name one with --realm"
+    );
+    let error = sets::save_set(
+        &flavor,
+        &sets_path_of(&root),
+        "other",
+        &one("Mrgltest", None),
+    )
+    .expect_err("ambiguous for a save too");
+    assert!(
+        matches!(&error, Error::AmbiguousCharacter { .. }),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), before, "nothing was written");
+
+    let error = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &one("Mrgltest", Some("Third Realm")),
+    )
+    .expect_err("no such realm");
+    assert_eq!(
+        error.to_string(),
+        "character not found: Mrgltest on Third Realm (flavor forever); the characters: Mrgltest (Fixture Realm), Grrlwave (Second Realm), Mrgltest (Second Realm)"
+    );
+
+    let applied = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &one("Mrgltest", Some("Second Realm")),
+    )
+    .expect("narrowed");
+    assert_eq!(applied.characters.len(), 1);
+    let after = snapshot(&wtf_of(&root));
+    assert_eq!(after[FIRST], before[FIRST]);
+    assert_eq!(after[SECOND], before[SECOND]);
+    assert_eq!(
+        after["Account/MRGLSETS/Second Realm/Mrgltest/AddOns.txt"],
+        b"BagSorter: disabled\r\n"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn one_realm_under_two_accounts_names_the_accounts() {
+    let character = |account: &str| sets::Character {
+        account: account.to_string(),
+        realm: "Fixture Realm".to_string(),
+        name: "Mrgltest".to_string(),
+        folder: PathBuf::from(account),
+    };
+    let characters = [character("MRGLONE"), character("MRGLTWO")];
+    let error = sets::find_character(
+        &characters,
+        "Mrgltest",
+        Some("Fixture Realm"),
+        &FlavorId::parse("wowf"),
+    )
+    .expect_err("ambiguous");
+    assert_eq!(
+        error.to_string(),
+        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLONE), Fixture Realm (MRGLTWO); the same realm is under more than one account, which --realm cannot tell apart"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn an_apply_to_one_character_is_refused_while_the_client_runs() {
+    let root = temp_game_root("one-client");
+    let flavor = read(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    let Some(mut child) = spawn_stand_in(&flavor.folder) else {
+        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        return;
+    };
+    let error = sets::apply_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &one("Mrgltest", None),
+    )
+    .expect_err("refused");
+    assert!(matches!(&error, Error::ClientRunning { .. }), "{error}");
+    assert_eq!(snapshot(&wtf_of(&root)), before, "nothing was touched");
+    child.stop();
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -83,6 +83,7 @@ target\release\mrgl.exe savedvars --flavor forever                          # th
 target\release\mrgl.exe savedvars --clean --flavor forever                  # the orphans into a backup zip
 target\release\mrgl.exe set save raid --flavor forever                     # the characters' enabled addons as the set "raid"
 target\release\mrgl.exe set apply raid --flavor forever                    # every character's AddOns.txt switched to it
+target\release\mrgl.exe set apply raid --character Mrgl --flavor forever   # one character only (--realm for a name on two realms)
 target\release\mrgl.exe set list --flavor forever                          # the sets so far (show and remove take a name)
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
 target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
@@ -137,6 +138,9 @@ the characters disagree on is left out, with a warning), and `set apply` switche
 flavor to it by rewriting their `AddOns.txt` in the game's own format: exactly the set's addons change,
 every other line stays as the game wrote it, and no addon folder is deleted or moved. Like a restore, an
 apply is refused while the game client runs, since the game writes those files again when you log out.
+`--character <name>` (with `--realm <realm>` when two realms have a character of that name) applies a set
+to that one character and leaves the others as they are, so a raid character and a levelling alt of the
+same flavor can each have their own set; on `set save` it takes the set from that character alone.
 
 `list` and `add` check every addon's required dependencies (the TOC's `## Dependencies` and
 `## RequiredDeps`) and name what the game will not find, as a warning, never a refusal:

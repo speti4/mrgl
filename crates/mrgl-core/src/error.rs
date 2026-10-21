@@ -337,6 +337,25 @@ pub enum Error {
         reason: String,
         reverted: bool,
     },
+
+    /// A character name (and realm) no character folder under `WTF` has (task 027); `known` lists them.
+    #[error("character not found: {name} (flavor {flavor}); the characters: {known}")]
+    CharacterNotFound {
+        name: String,
+        flavor: String,
+        known: String,
+    },
+
+    /// A character name more than one character folder has (task 027): the realms (or realms and
+    /// accounts) are listed, and the hint says how to pick one.
+    #[error("character {name} matches {count} characters (flavor {flavor}): {candidates}; {hint}")]
+    AmbiguousCharacter {
+        name: String,
+        count: usize,
+        flavor: String,
+        candidates: String,
+        hint: &'static str,
+    },
 }
 
 /// The crate's result type.

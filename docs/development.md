@@ -74,8 +74,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   and `import <file> --flavor <flavor> [--exact] [--dry-run]` (tasks 015 and 057), `pin <name> [version]`,
   `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
-  `rollback <name>` (task 022), `set save|apply|list|show|remove` (task 014, below),
-  `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006, below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
+  `rollback <name>` (task 022), `set save|apply|list|show|remove` (task 014; `--character` on `save` and
+  `apply`, task 027; below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
+  below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
   `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
@@ -200,6 +201,16 @@ temporary file renamed over it, and a failure part way puts the files already wr
 deleted or moved; an addon of the set that is not installed is a warning and its line is written all the
 same. `set list`, `set show <name>` and `set remove <name>` read and edit `sets.json` only; every verb takes
 `--flavor` and `--json` (`kind` `set-save`, `set-apply`, `set-list`, `set-show`, `set-remove`).
+
+A set is per flavor, its target may be one character (task 027): `set apply <name> --character <name>
+[--realm <realm>]` writes that character's `AddOns.txt` only and leaves every other character's file byte for
+byte, and `set save <name> --character <name>` takes the set from that one file (so nothing is left out as a
+disagreement). The character is picked from the `WTF` account folders by its folder's name, ignoring case;
+`--realm` narrows a name more than one realm has. A name on two realms without `--realm` is refused with the
+realms listed, and a name no character has with the characters listed; when one realm and name are under
+two accounts the error names the accounts. The guard of task 023 holds as for every character: nothing is
+written while the client runs. In `mrgl_core::sets` the choice is `Target` (`EveryCharacter`, or
+`Character { name, realm }`) and `find_character` is the lookup the window can call.
 
 ## The unpacked-size bound
 

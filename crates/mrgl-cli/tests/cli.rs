@@ -5722,7 +5722,8 @@ fn set_json_is_one_document_per_command() {
     assert_eq!(value["kind"], "set-save");
     assert_eq!(value["name"], "everyday");
     assert_eq!(value["set"]["addons"]["BagSorter"], "enabled");
-    assert_eq!(value["characters"], 2);
+    assert_eq!(value["characters"].as_array().map(Vec::len), Some(2));
+    assert_eq!(value["characters"][1]["realm"], "Second Realm");
     assert_eq!(
         value["conflicts"],
         serde_json::json!(["BossTimers", "QuestArrows"])
@@ -5788,5 +5789,194 @@ fn set_apply_is_refused_while_the_client_runs() {
     let output = set_run(&root, &home, &["--serious", "set", "apply", "everyday"]);
     assert!(output.status.success(), "{output:?}");
     assert_ne!(snapshot(&wtf), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Task 027: `set apply <name> --character <name> [--realm <realm>]` and `set save --character`, over the
+// same `addon-sets` tree.
+
+#[test]
+fn set_apply_to_one_character_leaves_the_other_and_refuses_an_ambiguous_name() {
+    let (root, home) = temp_game_root_with_sets("character");
+    let wtf = root.join("_forever_").join("WTF");
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "save",
+            "raid",
+            "--character",
+            "Mrgltest",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        stdout_last_line(&output),
+        "saved set raid of _forever_ from MRGLSETS/Fixture Realm/Mrgltest: 4 addons (3 enabled, 1 disabled)"
+    );
+    let before = snapshot(&wtf);
+
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "apply",
+            "raid",
+            "--character",
+            "grrlwave",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "applying set raid to the character grrlwave of _forever_",
+            "MRGLSETS/Second Realm/Grrlwave: BossTimers enabled, QuestArrows disabled, RaidFrames enabled",
+            "set raid names addons that are not installed in _forever_, their lines are written all the same: BagSorter, BossTimers, QuestArrows, RaidFrames",
+            "applied set raid to MRGLSETS/Second Realm/Grrlwave of _forever_: 3 addon lines changed",
+        ]
+    );
+    let after = snapshot(&wtf);
+    assert_eq!(
+        after[SETS_FIRST], before[SETS_FIRST],
+        "the other character, byte for byte"
+    );
+    assert_eq!(
+        after[SETS_SECOND],
+        b"QuestArrows: disabled\n# a line the client never wrote, kept as it is\nBagSorter: enabled\nBossTimers: enabled\nRaidFrames: enabled\n"
+    );
+
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "apply",
+            "raid",
+            "--character",
+            "Grrlwave",
+        ],
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "set raid already matches MRGLSETS/Second Realm/Grrlwave of _forever_, nothing written"
+    );
+
+    // A second Mrgltest on the other realm: the bare name is refused with both realms, `--realm` picks.
+    let twin = wtf.join("Account/MRGLSETS/Second Realm/Mrgltest");
+    std::fs::create_dir_all(&twin).expect("a second Mrgltest");
+    std::fs::write(twin.join("AddOns.txt"), b"QuestArrows: enabled\r\n").expect("its file");
+    let before = snapshot(&wtf);
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "apply",
+            "raid",
+            "--character",
+            "Mrgltest",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm, Second Realm; name one with --realm"
+    );
+    assert_eq!(snapshot(&wtf), before, "nothing was written");
+
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--json",
+            "set",
+            "apply",
+            "raid",
+            "--character",
+            "Mrgltest",
+            "--realm",
+            "Second Realm",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["characters"].as_array().map(Vec::len), Some(1));
+    assert_eq!(value["characters"][0]["realm"], "Second Realm");
+    let after = snapshot(&wtf);
+    assert_eq!(after[SETS_FIRST], before[SETS_FIRST]);
+    assert_eq!(after[SETS_SECOND], before[SETS_SECOND]);
+    assert!(
+        after["Account/MRGLSETS/Second Realm/Mrgltest/AddOns.txt"]
+            .starts_with(b"QuestArrows: disabled\r\n")
+    );
+
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "apply",
+            "raid",
+            "--realm",
+            "Second Realm",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "--realm needs --character");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn set_apply_to_one_character_is_refused_while_the_client_runs() {
+    let (root, home) = temp_game_root_with_sets("character-client");
+    let wtf = root.join("_forever_").join("WTF");
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "save",
+            "raid",
+            "--character",
+            "Mrgltest",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let before = snapshot(&wtf);
+    let Some(mut child) = spawn_stand_in(&root.join("_forever_")) else {
+        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        return;
+    };
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "apply",
+            "raid",
+            "--character",
+            "Grrlwave",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "the client is running in _forever_ (client-stand-in.exe, pid {}): close the game first, nothing under WTF is written while it runs",
+            child.id()
+        )
+    );
+    assert_eq!(snapshot(&wtf), before, "nothing was written");
+    child.stop();
     let _ = std::fs::remove_dir_all(&root);
 }

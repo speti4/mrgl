@@ -17,6 +17,10 @@
 //! worked out before the first write, each file is written through a temporary file next to it, and a
 //! failure part way puts the files already written back as they were.
 //!
+//! A save or an apply takes a [`Target`]: every character of the flavor, or one picked by name (and
+//! realm) from the `WTF` account folders (task 027, [`find_character`]); an apply to one character leaves
+//! every other character's file byte for byte.
+//!
 //! `sets.json` is the user's own data, not a cache: a file that cannot be read is an error that names it,
 //! and mrgl never overwrites it.
 
@@ -349,6 +353,96 @@ fn subfolders(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(folders)
 }
 
+/// The characters a save reads or an apply writes (task 027).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Target {
+    /// Every character of the flavor (task 014).
+    #[default]
+    EveryCharacter,
+    /// One character by its folder's name, case-insensitive; `realm` narrows a name that more than one
+    /// realm has.
+    Character { name: String, realm: Option<String> },
+}
+
+/// The characters of a target: every character of the flavor, or the one [`find_character`] picks.
+/// No character at all is [`Error::NoCharacters`].
+pub fn targets(flavor: &Flavor, target: &Target) -> Result<Vec<Character>> {
+    let characters = characters(flavor)?;
+    if characters.is_empty() {
+        return Err(Error::NoCharacters {
+            path: flavor.folder.join(WTF_DIR),
+        });
+    }
+    match target {
+        Target::EveryCharacter => Ok(characters),
+        Target::Character { name, realm } => {
+            find_character(&characters, name, realm.as_deref(), &flavor.id).map(|found| vec![found])
+        }
+    }
+}
+
+/// One character by name (and realm, when given), both compared ignoring case. A name no character has
+/// is [`Error::CharacterNotFound`] with the characters listed; a name more than one character has is
+/// [`Error::AmbiguousCharacter`] with their realms listed (with the account too, when one realm is under
+/// two accounts).
+pub fn find_character(
+    characters: &[Character],
+    name: &str,
+    realm: Option<&str>,
+    flavor: &FlavorId,
+) -> Result<Character> {
+    let same = |a: &str, b: &str| a.trim().to_lowercase() == b.trim().to_lowercase();
+    let matches: Vec<&Character> = characters
+        .iter()
+        .filter(|character| same(&character.name, name))
+        .filter(|character| realm.is_none_or(|realm| same(&character.realm, realm)))
+        .collect();
+    match matches.as_slice() {
+        [found] => Ok((*found).clone()),
+        [] => {
+            let known: Vec<String> = characters
+                .iter()
+                .map(|character| format!("{} ({})", character.name, character.realm))
+                .collect();
+            Err(Error::CharacterNotFound {
+                name: match realm {
+                    Some(realm) => format!("{name} on {realm}"),
+                    None => name.to_string(),
+                },
+                flavor: flavor_label(flavor),
+                known: known.join(", "),
+            })
+        }
+        several => {
+            let mut realms: Vec<&str> = several
+                .iter()
+                .map(|character| character.realm.as_str())
+                .collect();
+            realms.sort_unstable();
+            realms.dedup();
+            let (candidates, hint) = if realms.len() == several.len() {
+                (realms.join(", "), "name one with --realm")
+            } else {
+                let labels: Vec<String> = several
+                    .iter()
+                    .map(|character| format!("{} ({})", character.realm, character.account))
+                    .collect();
+                (
+                    labels.join(", "),
+                    "the same realm is under more than one account, which --realm cannot tell apart",
+                )
+            };
+            Err(Error::AmbiguousCharacter {
+                name: name.to_string(),
+                count: several.len(),
+                flavor: flavor_label(flavor),
+                candidates,
+                hint,
+            })
+        }
+    }
+}
+
 /// One named set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddonSet {
@@ -570,27 +664,23 @@ pub struct Saved {
     pub set: AddonSet,
     /// A set of that name was there before and is replaced.
     pub replaced: bool,
-    /// The characters whose `AddOns.txt` was read.
-    pub characters: usize,
+    /// The characters whose `AddOns.txt` was read (a character without one included).
+    pub characters: Vec<Character>,
     /// Addons left out because the characters disagree on them, by name.
     pub conflicts: Vec<String>,
     /// Plain lines about what was passed over.
     pub warnings: Vec<String>,
 }
 
-/// Saves a set from the flavor's `AddOns.txt` files: every addon a file names, with its state; an addon
+/// Saves a set from the `AddOns.txt` files of the target's characters (every character of the flavor, or
+/// the one [`Target::Character`] names, task 027): every addon a file names, with its state; an addon
 /// the characters disagree on is left out (an apply then leaves it alone) and named in
 /// [`Saved::conflicts`]. A set of the same name is replaced. Reads `WTF` only, so it goes on while the
 /// client runs.
-pub fn save_set(flavor: &Flavor, sets_path: &Path, name: &str) -> Result<Saved> {
+pub fn save_set(flavor: &Flavor, sets_path: &Path, name: &str, target: &Target) -> Result<Saved> {
     let name = checked_set_name(name)?;
     let mut sets = read_sets_at(sets_path, &flavor.id)?;
-    let characters = characters(flavor)?;
-    if characters.is_empty() {
-        return Err(Error::NoCharacters {
-            path: flavor.folder.join(WTF_DIR),
-        });
-    }
+    let characters = targets(flavor, target)?;
     let mut states: BTreeMap<String, (String, Option<AddonState>)> = BTreeMap::new();
     let mut warnings = Vec::new();
     for character in &characters {
@@ -646,7 +736,7 @@ pub fn save_set(flavor: &Flavor, sets_path: &Path, name: &str) -> Result<Saved> 
         name,
         set,
         replaced,
-        characters: characters.len(),
+        characters,
         conflicts,
         warnings,
     })
@@ -684,23 +774,25 @@ impl Applied {
     }
 }
 
-/// Applies a set to every character of the flavor. In this order: the set read (an unknown name is
-/// [`Error::SetNotFound`]), the characters listed (none is [`Error::NoCharacters`]), the guard of task
+/// Applies a set to the target's characters: every character of the flavor, or the one
+/// [`Target::Character`] names (task 027; every other character's file stays byte for byte). In this
+/// order: the set read (an unknown name is [`Error::SetNotFound`]), the characters listed (none is
+/// [`Error::NoCharacters`], a name [`find_character`] cannot pin down its error), the guard of task
 /// 023 (a running client refuses the apply before anything is written), every new `AddOns.txt` worked
 /// out, then only the files that change written, each through a temporary file. A failed write puts the
 /// files already written back and is [`Error::SetApplyFailed`].
-pub fn apply_set(flavor: &Flavor, sets_path: &Path, name: &str) -> Result<Applied> {
+pub fn apply_set(
+    flavor: &Flavor,
+    sets_path: &Path,
+    name: &str,
+    target: &Target,
+) -> Result<Applied> {
     let sets = read_sets_at(sets_path, &flavor.id)?;
     let (name, set) = sets
         .find(name)
         .map(|(key, set)| (key.to_string(), set.clone()))
         .ok_or_else(|| sets.not_found(name, &flavor.id))?;
-    let characters = characters(flavor)?;
-    if characters.is_empty() {
-        return Err(Error::NoCharacters {
-            path: flavor.folder.join(WTF_DIR),
-        });
-    }
+    let characters = targets(flavor, target)?;
     client::ensure_client_not_running(flavor)?;
 
     let mut plans = Vec::new();

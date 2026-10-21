@@ -13,7 +13,8 @@
 //! `channel`, with their marks in `list`, are task 021; `rollback` (the previous version from the kept
 //! zip, then pinned) is task 022; `savedvars` (the SavedVariables sizes and the orphan cleanup) is task
 //! 025; every source-backed install takes the one install path of the engine (task 055); `update` (the
-//! update check and `update --all`) is task 006; `set` (the addon sets) is task 014.
+//! update check and `update --all`) is task 006; `set` (the addon sets) is task 014, its
+//! `--character` and `--realm` task 027.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, IsTerminal};
@@ -2852,15 +2853,27 @@ enum SetAction {
         /// The flavor id or folder.
         #[arg(long)]
         flavor: Option<String>,
+        /// Read one character's AddOns.txt only, by name (the character's folder under WTF).
+        #[arg(long)]
+        character: Option<String>,
+        /// The realm of `--character`, for a name more than one realm has.
+        #[arg(long, requires = "character")]
+        realm: Option<String>,
     },
-    /// Apply a set to every character: exactly the set's addons get its state in AddOns.txt, every other
-    /// line stays as it is. Refused while the client runs.
+    /// Apply a set to every character, or to one with `--character`: exactly the set's addons get its
+    /// state in AddOns.txt, every other line stays as it is. Refused while the client runs.
     Apply {
         /// The set's name.
         name: String,
         /// The flavor id or folder.
         #[arg(long)]
         flavor: Option<String>,
+        /// Apply to one character only, by name; every other character's AddOns.txt stays as it is.
+        #[arg(long)]
+        character: Option<String>,
+        /// The realm of `--character`, for a name more than one realm has.
+        #[arg(long, requires = "character")]
+        realm: Option<String>,
     },
     /// List the flavor's sets.
     List {
@@ -2909,8 +2922,15 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
         }
     };
     match action {
-        SetAction::Save { name, .. } => {
-            let saved = sets::save_set(&flavor, &path, &name).map_err(|error| error.to_string())?;
+        SetAction::Save {
+            name,
+            character,
+            realm,
+            ..
+        } => {
+            let target = set_target(character, realm);
+            let saved = sets::save_set(&flavor, &path, &name, &target)
+                .map_err(|error| error.to_string())?;
             warnings.extend(saved.warnings.iter().cloned());
             if reporter.json {
                 reporter.document(serde_json::json!({
@@ -2920,7 +2940,7 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
                     "name": &saved.name,
                     "set": &saved.set,
                     "replaced": saved.replaced,
-                    "characters": saved.characters,
+                    "characters": &saved.characters,
                     "conflicts": &saved.conflicts,
                     "warnings": warnings,
                 }));
@@ -2937,7 +2957,7 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             let mut summary = format!(
                 "saved set {} of {folder_name} from {}: {}",
                 saved.name,
-                count_characters(saved.characters),
+                characters_text(&target, &saved.characters),
                 count_set(&saved.set)
             );
             if saved.replaced {
@@ -2945,16 +2965,32 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             }
             reporter.say(Kind::Success, summary);
         }
-        SetAction::Apply { name, .. } => {
+        SetAction::Apply {
+            name,
+            character,
+            realm,
+            ..
+        } => {
+            let target = set_target(character, realm);
             if !reporter.json {
+                let whom = match &target {
+                    sets::Target::EveryCharacter => "every character".to_string(),
+                    sets::Target::Character {
+                        name,
+                        realm: Some(realm),
+                    } => format!("the character {name} on {realm}"),
+                    sets::Target::Character { name, realm: None } => {
+                        format!("the character {name}")
+                    }
+                };
                 reporter.say(
                     Kind::Progress,
-                    format!("applying set {name} to every character of {folder_name}"),
+                    format!("applying set {name} to {whom} of {folder_name}"),
                 );
             }
-            let applied =
-                sets::apply_set(&flavor, &path, &name).map_err(|error| error.to_string())?;
-            report_applied(reporter, &flavor, &applied, warnings);
+            let applied = sets::apply_set(&flavor, &path, &name, &target)
+                .map_err(|error| error.to_string())?;
+            report_applied(reporter, &flavor, &target, &applied, warnings);
         }
         SetAction::List { .. } => {
             let file = sets::read_sets_at(&path, &flavor.id).map_err(|error| error.to_string())?;
@@ -3061,6 +3097,7 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
 fn report_applied(
     reporter: &Reporter,
     flavor: &Flavor,
+    target: &sets::Target,
     applied: &sets::Applied,
     mut warnings: Vec<String>,
 ) {
@@ -3124,12 +3161,21 @@ fn report_applied(
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
     }
-    let characters = count_characters(applied.characters.len());
+    let changed: Vec<sets::Character> = applied
+        .characters
+        .iter()
+        .map(|change| change.character.clone())
+        .collect();
+    let characters = characters_text(target, &changed);
+    let matched = match target {
+        sets::Target::EveryCharacter => format!("every character of {folder_name} ({characters})"),
+        sets::Target::Character { .. } => format!("{characters} of {folder_name}"),
+    };
     match applied.changed() {
         0 => reporter.say(
             Kind::Nothing,
             format!(
-                "set {} already matches every character of {folder_name} ({characters}), nothing written",
+                "set {} already matches {matched}, nothing written",
                 applied.name
             ),
         ),
@@ -3147,6 +3193,23 @@ fn report_applied(
                 applied.name
             ),
         ),
+    }
+}
+
+/// The target of `--character` and `--realm` (task 027): one character, or every character without them.
+fn set_target(character: Option<String>, realm: Option<String>) -> sets::Target {
+    match character {
+        Some(name) => sets::Target::Character { name, realm },
+        None => sets::Target::EveryCharacter,
+    }
+}
+
+/// The characters a save read or an apply wrote, for a summary: `2 characters`, or the one character's
+/// `<account>/<realm>/<name>` when the target named it.
+fn characters_text(target: &sets::Target, characters: &[sets::Character]) -> String {
+    match (target, characters) {
+        (sets::Target::Character { .. }, [one]) => one.label(),
+        _ => count_characters(characters.len()),
     }
 }
 
