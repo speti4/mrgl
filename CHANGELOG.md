@@ -32,6 +32,7 @@ The repository, the task standard and the empty workspace: no app yet.
 
 ### M3 Toolbox
 
+- Dev addon linking: junctions for a development folder's addons; CLI `link` and `unlink` ([005](https://github.com/speti4/mrgl/blob/main/tasks/done/005-dev-addon-linking-with-junctions.md))
 - WTF backup and restore ([013](https://github.com/speti4/mrgl/blob/main/tasks/done/013-wtf-backup-and-restore.md))
 
 ### Project housekeeping
