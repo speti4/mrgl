@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 31 backlog (1 ready · 0 blocked · 2 waiting · 28 ideas) · 0 in progress · 12 done · 0 dropped · 5 decisions
+**State:** 32 backlog (2 ready · 0 blocked · 2 waiting · 28 ideas) · 0 in progress · 13 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -23,6 +23,7 @@ _Generated 2026-10-21 — edit the files, not this section._
 | # | Task | Size | Created |
 |---|---|---|---|
 | 006 | [Update check: installed state against the latest release per flavor; update --a…](backlog/006-update-check-and-update-all.md) | S | 2026-10-21 |
+| 045 | [Pre-launch manual round on the real install: the commands no fixture covers](backlog/045-pre-launch-manual-round-on-the-real-install.md) | S | 2026-10-21 |
 
 ### Needs decision
 
@@ -76,12 +77,12 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 005 | [Dev addon linking: junctions for a development folder's addons; CLI link and un…](backlog/005-dev-addon-linking-with-junctions.md) | S | 2026-10-21 |
-| 013 | [WTF backup and restore](backlog/013-wtf-backup-and-restore.md) | M | 2026-10-21 |
 | 014 | [Addon sets with enable and disable](backlog/014-addon-sets-with-enable-and-disable.md) | M | 2026-10-21 |
 | 015 | [Addon list export and import, and a TOC-interface versus build warning](backlog/015-list-export-import-and-interface-warning.md) | S | 2026-10-21 |
 | 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](backlog/025-savedvariables-size-and-orphan-cleanup.md) | S | 2026-10-21 |
 | 027 | [Per-character addon sets](backlog/027-per-character-addon-sets.md) | S | 2026-10-21 |
 | 028 | [Lists as discovery: a shareable list format and a Forever starter list in the r…](backlog/028-lists-as-discovery-and-forever-starter-list.md) | S | 2026-10-21 |
+| 044 | [One zip-entry check for the install engine and the backup restore](backlog/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | S | 2026-10-21 |
 
 #### M4 Sources
 
@@ -100,7 +101,7 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 036 | [macOS process list for the game-running check](backlog/036-macos-process-list-for-the-client-check.md) | S | 2026-10-21 |
+| 036 | [macOS process list for the game-running check, and local time outside Windows](backlog/036-macos-process-list-for-the-client-check.md) | S | 2026-10-21 |
 
 ### In progress
 
@@ -122,10 +123,10 @@ _none_
 | 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
 | 017 | [Window design sketch: the list view, the states and the voice's place, before t…](done/017-window-design-sketch-before-the-shell.md) | 2026-10-21 |
 | 016 | [Mirror the task files into GitHub issues and milestones](done/016-task-to-github-issue-mirror.md) | 2026-10-21 |
+| 013 | [WTF backup and restore](done/013-wtf-backup-and-restore.md) | 2026-10-21 |
 | 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](done/004-install-engine-with-state-sidecar.md) | 2026-10-21 |
-| 003 | [GitHub release source: release.json, flavor-correct asset pick, ETag cache; CLI…](done/003-github-release-source-with-release-json.md) | 2026-10-21 |
 
-_2 more in `done/`._
+_3 more in `done/`._
 
 ### Decisions
 

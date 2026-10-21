@@ -4,14 +4,16 @@
 //!
 //! `scan`, `list` and `root` are task 002, the game root discovery behind them is task 020;
 //! `add github:<owner>/<repo>` resolves a release (task 003); `add <file.zip>` and `remove` are task 004
-//! (the install engine); the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer "not
-//! implemented yet" with their task id until that task lands, so the help text and the voice are testable
-//! from the first commit.
+//! (the install engine); `backup` (the WTF backup, the listing and the restore) is task 013; the other
+//! subcommands follow the M1 plan (`tasks/roadmap.md`) and answer "not implemented yet" with their task id
+//! until that task lands, so the help text and the voice are testable from the first commit.
 
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use mrgl_core::backup;
 use mrgl_core::client;
 use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
 use mrgl_core::flavor::{self, FlavorId, VersionSource};
@@ -129,17 +131,25 @@ enum Command {
         #[arg(long)]
         flavor: Option<String>,
     },
-    /// Back up a flavor's WTF folder, or restore one (the toolbox).
+    /// Back up a flavor's WTF folder into a dated zip, list the backups, or restore one (the toolbox).
     Backup {
         /// The flavor id or folder.
         #[arg(long)]
         flavor: Option<String>,
-        /// Where the backup goes, or comes from with `--restore`.
-        #[arg(long)]
+        /// The backups folder: where a new backup goes, what `--list` lists and where `--restore` looks a
+        /// bare name up; by default `backups\<flavor-id>` under the mrgl home (%LOCALAPPDATA%\mrgl).
+        #[arg(long, value_name = "FOLDER")]
         to: Option<PathBuf>,
-        /// Restore from `--to` instead of backing up.
-        #[arg(long)]
-        restore: bool,
+        /// List the backups instead of making one.
+        #[arg(long, conflicts_with = "restore")]
+        list: bool,
+        /// Restore this backup (a zip path, or a name from `--list`) as the flavor's WTF folder; the
+        /// current WTF is moved aside into the backups folder first. Refused while the client runs.
+        #[arg(long, value_name = "ZIP")]
+        restore: Option<PathBuf>,
+        /// Skip the restore's confirmation (scripts; required with --json).
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -151,11 +161,11 @@ impl Command {
             | Command::List { .. }
             | Command::Root { .. }
             | Command::Add { .. }
-            | Command::Remove { .. } => return None,
+            | Command::Remove { .. }
+            | Command::Backup { .. } => return None,
             Command::Update { all: true, .. } => ("update --all", "006"),
             Command::Update { .. } => ("update", "006"),
             Command::Link { .. } | Command::Unlink { .. } => ("link / unlink", "005"),
-            Command::Backup { .. } => ("backup", "013"),
         };
         Some(Error::NotImplemented { command, task })
     }
@@ -260,6 +270,13 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             dry_run,
         } => add_command(reporter, &source, flavor.as_deref(), dry_run)?,
         Command::Remove { name, flavor } => remove_command(reporter, &name, flavor.as_deref())?,
+        Command::Backup {
+            flavor,
+            to,
+            list,
+            restore,
+            yes,
+        } => backup_command(reporter, flavor.as_deref(), to, list, restore, yes)?,
         _ => unreachable!("every other command answered with its task"),
     }
     Ok(())
@@ -765,4 +782,225 @@ fn count_folders(count: usize) -> String {
     } else {
         format!("{count} folders")
     }
+}
+
+/// `mrgl backup --flavor <id> [--to <folder>]`: the flavor's `WTF` folder into a dated zip under the
+/// backups folder; `--list` lists that folder; `--restore <zip>` puts a backup back after a confirmation
+/// (`--yes` answers it for a script, and is required with `--json`). The restore is refused while the
+/// client runs (task 023), before anything is written.
+fn backup_command(
+    reporter: &Reporter,
+    spec: Option<&str>,
+    to: Option<PathBuf>,
+    list: bool,
+    restore: Option<PathBuf>,
+    yes: bool,
+) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let folder = flavor_folder(spec, None, &mut warnings)?;
+    let flavor = flavor::read_flavor(&folder).map_err(|error| error.to_string())?;
+    warnings.extend(flavor.warnings.iter().cloned());
+    let backups = match to {
+        Some(to) => std::path::absolute(&to)
+            .map_err(|error| format!("resolving {}: {error}", to.display()))?,
+        None => backup::backups_dir(&flavor.id).map_err(|error| error.to_string())?,
+    };
+    let folder_name = flavor.folder_name();
+
+    if list {
+        let listing = backup::list_backups(&backups).map_err(|error| error.to_string())?;
+        warnings.extend(listing.warnings.iter().cloned());
+        if reporter.json {
+            reporter.document(serde_json::json!({
+                "kind": "backup-list",
+                "flavor": &flavor,
+                "folder": &listing.folder,
+                "backups": &listing.backups,
+                "aside": &listing.aside,
+                "warnings": warnings,
+            }));
+            return Ok(());
+        }
+        for entry in &listing.backups {
+            let files = match entry.files {
+                Some(1) => "1 file".to_string(),
+                Some(count) => format!("{count} files"),
+                None => "unreadable".to_string(),
+            };
+            reporter.line(format!(
+                "{}  {files}  {}  {}",
+                entry.name,
+                human_bytes(entry.bytes),
+                entry.modified.as_deref().unwrap_or("-")
+            ));
+        }
+        for aside in &listing.aside {
+            reporter.line(format!(
+                "{}  the WTF folder a restore moved aside",
+                aside
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| aside.display().to_string())
+            ));
+        }
+        for warning in &warnings {
+            reporter.say(Kind::Warning, warning);
+        }
+        let mut summary = match listing.backups.len() {
+            0 => format!(
+                "no backups of {folder_name} in {}",
+                listing.folder.display()
+            ),
+            1 => format!("1 backup of {folder_name} in {}", listing.folder.display()),
+            count => format!(
+                "{count} backups of {folder_name} in {}",
+                listing.folder.display()
+            ),
+        };
+        match listing.aside.len() {
+            0 => {}
+            1 => summary.push_str(", 1 WTF folder moved aside by a restore"),
+            count => summary.push_str(&format!(", {count} WTF folders moved aside by restores")),
+        }
+        let kind = if listing.backups.is_empty() {
+            Kind::Nothing
+        } else {
+            Kind::Success
+        };
+        reporter.say(kind, summary);
+        return Ok(());
+    }
+
+    if let Some(zip) = restore {
+        let zip = resolve_backup(zip, &backups);
+        let zip_name = zip
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| zip.display().to_string());
+        if !yes {
+            if reporter.json {
+                return Err(
+                    "restore needs --yes with --json: nobody is there to answer the confirmation"
+                        .to_string(),
+                );
+            }
+            reporter.say(
+                Kind::Warning,
+                format!(
+                    "restore {zip_name} as the WTF folder of {folder_name}? the current WTF is moved aside into {} first; type y to go on",
+                    backups.display()
+                ),
+            );
+            if !confirmed() {
+                reporter.say(Kind::Nothing, "restore cancelled, nothing changed");
+                return Ok(());
+            }
+        }
+        let restored =
+            backup::restore_wtf(&flavor, &zip, &backups).map_err(|error| error.to_string())?;
+        if reporter.json {
+            reporter.document(serde_json::json!({
+                "kind": "restore",
+                "flavor": &flavor,
+                "zip": &restored.zip,
+                "files": restored.files,
+                "folders": restored.folders,
+                "aside": &restored.aside,
+                "warnings": warnings,
+            }));
+            return Ok(());
+        }
+        for warning in &warnings {
+            reporter.say(Kind::Warning, warning);
+        }
+        let files = match restored.files {
+            1 => "1 file".to_string(),
+            count => format!("{count} files"),
+        };
+        let previous = match &restored.aside {
+            Some(aside) => format!("the previous WTF is at {}", aside.display()),
+            None => "there was no WTF folder before".to_string(),
+        };
+        reporter.say(
+            Kind::Success,
+            format!("restored WTF of {folder_name} from {zip_name}: {files}; {previous}"),
+        );
+        return Ok(());
+    }
+
+    if !reporter.json {
+        reporter.say(
+            Kind::Progress,
+            format!("backing up WTF of {folder_name} into {}", backups.display()),
+        );
+    }
+    let backup = backup::backup_wtf(&flavor, &backups).map_err(|error| error.to_string())?;
+    warnings.extend(backup.warnings.iter().cloned());
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "backup",
+            "flavor": &flavor,
+            "zip": &backup.zip,
+            "files": backup.files,
+            "folders": backup.folders,
+            "bytes": backup.bytes,
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let files = match backup.files {
+        1 => "1 file".to_string(),
+        count => format!("{count} files"),
+    };
+    reporter.say(
+        Kind::Success,
+        format!(
+            "backed up WTF of {folder_name}: {files}, {}, in {}",
+            human_bytes(backup.bytes),
+            backup.zip.display()
+        ),
+    );
+    Ok(())
+}
+
+/// The zip `--restore` names: a path as given, or a bare name (one from `--list`) under the backups
+/// folder when no such path exists where the command runs.
+fn resolve_backup(zip: PathBuf, backups: &Path) -> PathBuf {
+    let bare = zip.components().count() == 1 && !zip.is_absolute();
+    if bare && !zip.exists() {
+        return backups.join(zip);
+    }
+    std::path::absolute(&zip).unwrap_or(zip)
+}
+
+/// Reads one line of the standard input: `y` or `yes`, in any case, is a confirmation; anything else,
+/// an empty line or a closed input is not.
+fn confirmed() -> bool {
+    let mut answer = String::new();
+    if std::io::stdin().lock().read_line(&mut answer).is_err() {
+        return false;
+    }
+    let answer = answer.trim();
+    answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")
+}
+
+/// A byte count for a human: `512 B`, `34.2 KB`, `1.5 MB`, `2.0 GB`.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1024.0;
+    let mut unit = UNITS[0];
+    for next in &UNITS[1..] {
+        if value < 1024.0 {
+            break;
+        }
+        value /= 1024.0;
+        unit = next;
+    }
+    format!("{value:.1} {unit}")
 }

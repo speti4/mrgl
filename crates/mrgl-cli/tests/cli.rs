@@ -4,7 +4,8 @@
 //! points every run at a temporary folder, so no test reads or writes the real config, and
 //! `MRGL_DISCOVERY` is `off` or a stub (task 020), so no test reads the real registry or looks under
 //! `Program Files`. The running-client tests (task 023) copy this test binary into a temporary flavor
-//! folder and start it as a stand-in client, never a game file.
+//! folder and start it as a stand-in client, never a game file. The `backup` tests (task 013) copy the
+//! synthetic fixture `WTF` tree into a temporary flavor folder and never touch a real one.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -138,13 +139,13 @@ fn json_is_plain_json() {
 #[test]
 fn a_planned_command_fails_with_its_task_and_exit_code_one() {
     let output = mrgl()
-        .args(["backup", "--flavor", "forever"])
+        .args(["link", "SomeFolder", "--flavor", "forever"])
         .output()
         .expect("run mrgl");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),
-        "backup is not implemented yet (task 013)"
+        "link / unlink is not implemented yet (task 005)"
     );
 }
 
@@ -1489,4 +1490,419 @@ fn add_caches_the_release_list_under_the_home_folder() {
         "the cached list gives the same pick"
     );
     let _ = std::fs::remove_dir_all(&home);
+}
+
+/// The synthetic `WTF` tree of `mrgl-core`.
+fn fixture_wtf() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/wtf/WTF")
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("the folder");
+    for entry in std::fs::read_dir(from).expect("read") {
+        let entry = entry.expect("entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy");
+        }
+    }
+}
+
+/// A tree as relative paths to the bytes of every file, folders as names with a trailing `/`.
+fn snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(dir: &Path, prefix: &str, into: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).expect("read") {
+            let entry = entry.expect("entry");
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.path().is_dir() {
+                into.insert(format!("{prefix}{name}/"), Vec::new());
+                walk(&entry.path(), &format!("{prefix}{name}/"), into);
+            } else {
+                into.insert(
+                    format!("{prefix}{name}"),
+                    std::fs::read(entry.path()).expect("bytes"),
+                );
+            }
+        }
+    }
+    let mut into = std::collections::BTreeMap::new();
+    walk(dir, "", &mut into);
+    into
+}
+
+/// A synthetic game folder with a `_forever_` flavor and the fixture `WTF` tree copied in.
+fn temp_game_root_with_wtf(name: &str) -> PathBuf {
+    let root = temp_game_root(name);
+    copy_tree(&fixture_wtf(), &root.join("_forever_").join("WTF"));
+    root
+}
+
+#[test]
+fn backup_writes_a_dated_zip_lists_it_and_restores_it() {
+    let root = temp_game_root_with_wtf("backup");
+    let flavor = root.join("_forever_");
+    let wtf = flavor.join("WTF");
+    let backups = root.join("backups");
+    let before = snapshot(&wtf);
+
+    let output = mrgl()
+        .args(["--serious", "backup", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.starts_with("backing up WTF of _forever_ into "),
+        "{text}"
+    );
+    let line = stdout_last_line(&output);
+    assert!(
+        line.starts_with("backed up WTF of _forever_: 8 files, "),
+        "{line}"
+    );
+    let zip = PathBuf::from(line.rsplit(", in ").next().expect("the zip path"));
+    assert!(zip.is_file(), "{}", zip.display());
+    assert_eq!(zip.parent(), Some(backups.as_path()));
+    let name = zip
+        .file_name()
+        .expect("a name")
+        .to_string_lossy()
+        .into_owned();
+    assert!(name.starts_with("WTF-") && name.ends_with(".zip"), "{name}");
+
+    let output = mrgl()
+        .args(["--serious", "backup", "--list", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    assert!(
+        lines[0].starts_with(&name) && lines[0].contains("  8 files  "),
+        "{}",
+        lines[0]
+    );
+    assert_eq!(
+        lines[1],
+        format!("1 backup of _forever_ in {}", backups.display())
+    );
+
+    let json = mrgl()
+        .args(["--json", "backup", "--list", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "backup-list");
+    assert_eq!(value["backups"].as_array().map(Vec::len), Some(1));
+    assert_eq!(value["backups"][0]["name"], name);
+    assert_eq!(value["backups"][0]["files"], 8);
+    assert_eq!(value["aside"], serde_json::json!([]));
+    assert_eq!(value["warnings"], serde_json::json!([]));
+
+    // Changed since the backup; the restore puts the backup back and the change aside.
+    std::fs::write(wtf.join("Config.wtf"), b"SET portal \"changed\"\r\n").expect("changed");
+    let output = mrgl()
+        .args([
+            "--serious",
+            "backup",
+            "--yes",
+            "--restore",
+            &name,
+            "--flavor",
+        ])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let line = stdout_last_line(&output);
+    assert!(
+        line.starts_with(&format!(
+            "restored WTF of _forever_ from {name}: 8 files; the previous WTF is at "
+        )),
+        "{line}"
+    );
+    assert_eq!(snapshot(&wtf), before, "byte for byte");
+    let aside = PathBuf::from(line.rsplit(" is at ").next().expect("the aside path"));
+    assert!(aside.is_dir(), "{}", aside.display());
+    assert_eq!(
+        std::fs::read(aside.join("Config.wtf")).expect("the aside copy"),
+        b"SET portal \"changed\"\r\n"
+    );
+
+    let output = mrgl()
+        .args(["--serious", "backup", "--list", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert_eq!(
+        stdout_last_line(&output),
+        format!(
+            "1 backup of _forever_ in {}, 1 WTF folder moved aside by a restore",
+            backups.display()
+        )
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn backup_json_is_one_document_and_the_default_folder_is_under_the_home() {
+    let root = temp_game_root_with_wtf("backup-json");
+    let home = temp_home("backup-json");
+    let flavor = root.join("_forever_");
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .args(["--json", "backup", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "backup");
+    assert_eq!(value["flavor"]["id"], "wowf");
+    assert_eq!(value["files"], 8);
+    assert_eq!(value["folders"], 6);
+    assert!(value["bytes"].as_u64().is_some_and(|bytes| bytes > 0));
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    let zip = PathBuf::from(value["zip"].as_str().expect("the zip path"));
+    assert!(zip.is_file());
+    assert_eq!(
+        zip.parent(),
+        Some(home.join("backups").join("wowf").as_path())
+    );
+
+    let json = mrgl()
+        .env("MRGL_HOME", &home)
+        .args(["--json", "backup", "--yes", "--restore"])
+        .arg(&zip)
+        .arg("--flavor")
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert!(json.status.success(), "{}", stderr_last_line(&json));
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "restore");
+    assert_eq!(value["files"], 8);
+    assert_eq!(value["folders"], 6);
+    assert!(
+        value["aside"]
+            .as_str()
+            .is_some_and(|aside| aside.contains("WTF-before-restore-")),
+        "{value}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn restore_asks_first_unless_yes_and_json_needs_yes() {
+    let root = temp_game_root_with_wtf("restore-ask");
+    let flavor = root.join("_forever_");
+    let backups = root.join("backups");
+    let output = mrgl()
+        .args(["--json", "backup", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let zip = PathBuf::from(value["zip"].as_str().expect("the zip path"));
+    let before = snapshot(&flavor.join("WTF"));
+
+    let mut child = mrgl()
+        .args(["--serious", "backup", "--restore"])
+        .arg(&zip)
+        .arg("--flavor")
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run mrgl");
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(b"n\n")
+            .expect("the answer");
+    }
+    let output = child.wait_with_output().expect("finished");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    assert!(
+        stdout.starts_with(&format!(
+            "restore {} as the WTF folder of _forever_? ",
+            zip.file_name().expect("a name").to_string_lossy()
+        )),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "restore cancelled, nothing changed"
+    );
+    assert_eq!(snapshot(&flavor.join("WTF")), before);
+
+    let json = mrgl()
+        .args(["--json", "backup", "--restore"])
+        .arg(&zip)
+        .arg("--flavor")
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert_eq!(json.status.code(), Some(1));
+    let value: serde_json::Value = serde_json::from_slice(&json.stderr).expect("a JSON error");
+    assert_eq!(value["kind"], "error");
+    assert!(
+        value["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("restore needs --yes with --json")),
+        "{value}"
+    );
+    assert_eq!(snapshot(&flavor.join("WTF")), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn backup_without_a_wtf_folder_and_a_missing_backup_are_errors() {
+    let root = temp_game_root("no-wtf");
+    let flavor = root.join("_forever_");
+    let output = mrgl()
+        .args(["backup", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(root.join("backups"))
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!("nothing to back up: no WTF folder in {}", flavor.display())
+    );
+    assert!(!root.join("backups").exists());
+
+    let output = mrgl()
+        .args([
+            "backup",
+            "--yes",
+            "--restore",
+            "WTF-2026-01-01-000000.zip",
+            "--flavor",
+        ])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(root.join("backups"))
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "backup not found: {}",
+            root.join("backups")
+                .join("WTF-2026-01-01-000000.zip")
+                .display()
+        )
+    );
+
+    let output = mrgl()
+        .args(["backup", "--list", "--restore", "x.zip"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "--list and --restore conflict"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn restore_is_refused_while_the_client_runs() {
+    let root = temp_game_root_with_wtf("restore-client");
+    let flavor = root.join("_forever_");
+    let backups = root.join("backups");
+    let output = mrgl()
+        .args(["--json", "backup", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let zip = PathBuf::from(value["zip"].as_str().expect("the zip path"));
+    let before = snapshot(&flavor.join("WTF"));
+
+    let mut child = spawn_stand_in(&flavor);
+    let output = mrgl()
+        .args(["backup", "--yes", "--restore"])
+        .arg(&zip)
+        .arg("--flavor")
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "the client is running in _forever_ (client-stand-in.exe, pid {}): close the game first, nothing under WTF is written while it runs",
+            child.id()
+        )
+    );
+    assert_eq!(snapshot(&flavor.join("WTF")), before, "nothing was touched");
+
+    let json = mrgl()
+        .args(["--json", "backup", "--yes", "--restore"])
+        .arg(&zip)
+        .arg("--flavor")
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert_eq!(json.status.code(), Some(1));
+    let value: serde_json::Value = serde_json::from_slice(&json.stderr).expect("a JSON error");
+    assert_eq!(value["kind"], "error");
+
+    child.kill().expect("killed");
+    child.wait().expect("waited");
+    let output = mrgl()
+        .args(["--serious", "backup", "--yes", "--restore"])
+        .arg(&zip)
+        .arg("--flavor")
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(stdout_last_line(&output).starts_with("restored WTF of _forever_ from "));
+    let _ = std::fs::remove_dir_all(&root);
 }

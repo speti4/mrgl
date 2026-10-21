@@ -25,6 +25,10 @@ The repository, the task standard and the empty workspace: no app yet.
 - Game-running detection: no `WTF` write while the client runs ([023](https://github.com/speti4/mrgl/blob/main/tasks/done/023-game-running-detection.md))
 - Window polish: hide the Forever note column without notes, cap the toast stack ([035](https://github.com/speti4/mrgl/blob/main/tasks/done/035-window-polish-forever-column-and-toast-cap.md))
 
+### M3 Toolbox
+
+- WTF backup and restore ([013](https://github.com/speti4/mrgl/blob/main/tasks/done/013-wtf-backup-and-restore.md))
+
 ### Project housekeeping
 
 - Project scaffolding: repo structure, task standard, decisions, origin and research ([001](https://github.com/speti4/mrgl/blob/main/tasks/done/001-project-scaffolding.md))

@@ -11,17 +11,19 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
   home folder, task 003; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
   a staging folder, its addon folders swapped into `Interface\AddOns` one at a time with a revert, the
-  previous version's zip kept; task 004), the state sidecar (`state`, D-003), backups and addon sets
-  (`backup`), the running-client check (`client`, task 023: a process found by its executable's path under
-  the flavor folder, the guard every `WTF` write calls and the install engine's warning), the mrgl home
-  folder with the remembered game root (`home`, D-003), the game root resolution (`discover`, task 020: the
-  flag, `MRGL_ROOT`, the remembered root, then the launcher's registry key and the usual install folders,
-  behind a lookup trait with a stub) and the voice table (`voice`, D-005). Synthetic fixtures are under
-  `tests/fixtures/`.
+  previous version's zip kept; task 004), the state sidecar (`state`, D-003), the toolbox (`backup`: the
+  `WTF` backup into a dated zip, the listing and the restore that checks every entry, moves the current
+  `WTF` aside and reverts on a failure, task 013; later the addon sets), the running-client check (`client`,
+  task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
+  calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
+  D-003), the game root resolution (`discover`, task 020: the flag, `MRGL_ROOT`, the remembered root, then
+  the launcher's registry key and the usual install folders, behind a lookup trait with a stub) and the
+  voice table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick; the install from the pick is task
-  040), `add <file.zip>` and `remove` (task 004), `update`, `link`, `unlink`, `backup` (stubs that answer
-  with the task that builds them until that task lands), with `--json` for machines and `--serious` for the
+  040), `add <file.zip>` and `remove` (task 004), `backup` with `--list`, `--restore` and `--yes` (task 013),
+  `update`, `link`, `unlink` (stubs that answer with the task that builds them until that task lands), with
+  `--json` for machines and `--serious` for the
   murloc-averse; its end-to-end tests under `tests/`.
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
   capability file and the icon.
@@ -248,11 +250,14 @@ shape the BigWigs packager writes, `forever` next to other flavors, one without 
 without `release.json`, one with no release, one with a draft and a prerelease above the stable release),
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
 one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
-folder, a path that tries to escape the staging folder, and a zip with no addon at all). A real addon zip,
-a real AddOns folder or a `WTF` folder never enters the repo; a manual round on a real game folder is a
-task of its own, and its result is a dated line in that task's Verification. The running-client tests copy
-their own test binary into a temporary flavor folder and start it as a stand-in client (it waits for its
-stdin to close), so no game file and no committed executable is involved.
+folder, a path that tries to escape the staging folder, and a zip with no addon at all), and a hand-written
+`WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
+SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made
+up from the first line, task 013). A real addon zip, a real AddOns folder or a `WTF` folder never enters the
+repo; a manual round on a real game folder is a task of its own, and its result is a dated line in that
+task's Verification. The running-client tests copy their own test binary into a temporary flavor folder and
+start it as a stand-in client (it waits for its stdin to close), so no game file and no committed
+executable is involved; the backup tests copy the fixture `WTF` tree into such a folder.
 
 The sources talk to the network through the `Http` trait of `mrgl_core::sources`. `MRGL_HTTP_STUB=<folder>`
 makes the command line answer every request from that folder instead (the URL's host and path under it,
@@ -278,9 +283,12 @@ The command line keeps `config.json` (the remembered game folder) under the mrgl
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
 sidecar `state.json`, the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves; emptied after every install) and `cache\<addon>\<version>.zip` (the current and the previous
-version's zip for a later rollback; never required, deleting it only disables the rollback). `MRGL_HOME`
-overrides the home folder, and the end-to-end tests set it to a temporary folder so no test reads or writes
-the real one. A run's game folder is resolved in one order by
+version's zip for a later rollback; never required, deleting it only disables the rollback), and the `WTF`
+backups under `backups\<flavor-id>\`: `WTF-<date>.zip` per backup (a plain zip, the date local, so the
+names sort by age) and `WTF-before-restore-<date>\` for every `WTF` folder a restore moved aside; nothing
+prunes that folder, deleting a zip or an aside folder by hand is fine. `MRGL_HOME` overrides the home
+folder, and the end-to-end tests set it to a temporary folder so no test reads or writes the real one. A
+run's game folder is resolved in one order by
 every command (`discover::resolve_root_of_process`, task 020): the `--root` flag, then `MRGL_ROOT`, then the
 remembered one, then the discovery: the launcher's registry value (`HKLM\SOFTWARE\WOW6432Node\Blizzard
 Entertainment\World of Warcraft`, `InstallPath`; a value that names a flavor folder counts for its parent),

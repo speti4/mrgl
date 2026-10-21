@@ -1,0 +1,2 @@
+MrglFixture: enabled
+PlainToc: disabled

@@ -49,12 +49,19 @@ target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # re
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # which release asset is the Forever one
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe remove SomeAddon --flavor forever                   # remove an addon mrgl installed
+target\release\mrgl.exe backup --flavor forever                             # the WTF folder into a dated zip
+target\release\mrgl.exe backup --list --flavor forever                      # the backups so far
+target\release\mrgl.exe backup --restore WTF-2026-10-21-193605.zip --flavor forever   # one back, asks first
 ```
 
 On a standard install no flag is needed: mrgl finds the game folder through the launcher's registry key or
 under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
 run would use and where it came from, and `mrgl root <folder>` remembers one (also `--root <folder>` or
 `MRGL_ROOT` for one run).
+
+A backup is a plain zip under `%LOCALAPPDATA%\mrgl\backups\<flavor-id>\` (or the folder `--to` names), and a
+restore moves the current `WTF` folder aside into the same place before it writes, so it can be undone by
+hand; it is refused while the game client runs.
 
 ## Documentation
 
