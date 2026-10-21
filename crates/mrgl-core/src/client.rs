@@ -389,6 +389,7 @@ mod tests {
             id: FlavorId::Forever,
             folder: PathBuf::from(folder),
             version: None,
+            version_source: None,
             curse_client: false,
             warnings: Vec::new(),
         }

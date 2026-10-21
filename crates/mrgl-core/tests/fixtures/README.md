@@ -34,3 +34,12 @@ BOM in a fixture survives every checkout.
   twin (`root-toc-3.0.0`), a wrapper folder around the addon folder (`wrapped-4.0.0`), a TOC without a
   `## Version` (`no-version`), a path that tries to escape the staging folder (`escaping-path`) and a zip
   with no addon at all (`no-addon`). `.gitignore` allows zips here and nowhere else.
+- `client-exe/` — a second made-up game folder for the build version fallback (task 019): its `.build.info`
+  has a row for `wow` only, and the flavor folders hold client exe stubs written by `make-stubs.py` next to
+  them (deterministic; `python -I crates/mrgl-core/tests/fixtures/client-exe/make-stubs.py` rewrites the
+  same bytes). Each stub is a minimal PE file, one `.rsrc` section and no code, never a game executable:
+  `_classic_era_\WowClassic.exe` has a version resource (`1.15.7.70100`, the build number above 65535 so
+  only the `FileVersion` string holds it whole), `_retail_\Wow.exe` has one the `.build.info` row wins
+  over, `_classic_\WowClassic.exe` has a resource section without a version resource, `_forever_` has no
+  exe; `stubs\pe32.exe` (a 32-bit image) and `stubs\fixed-only.exe` (a version resource with the fixed
+  info and no string table) serve the parser's unit tests.

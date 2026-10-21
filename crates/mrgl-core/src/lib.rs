@@ -19,6 +19,7 @@ pub mod error;
 pub mod flavor;
 pub mod home;
 pub mod install;
+pub mod pe;
 pub mod scan;
 pub mod sources;
 pub mod state;
