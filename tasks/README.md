@@ -12,9 +12,9 @@ Every numbered file here is mirrored one way into a GitHub issue by `scripts/syn
 never the issue.
 
 <!-- tasks:index:start -->
-_Generated 2026-10-21 — edit the files, not this section._
+_Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 29 backlog (2 ready · 0 blocked · 2 waiting · 25 ideas) · 0 in progress · 24 done · 3 dropped · 5 decisions
+**State:** 28 backlog (2 ready · 0 blocked · 2 waiting · 24 ideas) · 0 in progress · 25 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -49,7 +49,6 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 022 | [Rollback to the previous version from the kept zip; CLI rollback](backlog/022-rollback-from-the-kept-zip.md) | S | 2026-10-21 |
 | 041 | [Offline resolve from the cached release list, with a warning](backlog/041-offline-resolve-from-the-cached-release-list.md) | S | 2026-10-21 |
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
 | 046 | [The asset download's error path: a 404 names the asset, the size is checked](backlog/046-asset-download-404-names-the-missing-asset.md) | S | 2026-10-21 |
@@ -127,7 +126,7 @@ _none_
 | 024 | [mrgl doctor: a diagnostic report for a bug report](done/024-doctor-diagnostic-report.md) | 2026-10-21 |
 | 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
 
-_14 more in `done/`._
+_15 more in `done/`._
 
 ### Decisions
 
