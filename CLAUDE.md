@@ -45,5 +45,8 @@ Before a commit: the checks in CONTRIBUTING.md, "Checks before a commit" (more o
   `/tasks add` for later), closing files every follow-up with `/tasks add`, `/tasks check` before a task commit;
   a task file reads as public text: it states decisions and results, not conversations; a decision stays
   `proposed` until the maintainer decides it
+- `scripts/sync-issues.py` mirrors every numbered task and decision into a GitHub issue, one way (the
+  `sync-issues` workflow, on every push to `main` that touches `tasks/`): edit the file, never the issue; a
+  task file's H1 and Context are the issue text
 - The repo is public: a task file's `plan:` field is `none` (a plan file lives outside the repo and its name is
   not public text), and no file carries a home folder path (`C:\Users\<name>\…`)

@@ -18,7 +18,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
 - `docs/` — this page, the git workflow, the maintainer sessions, origin, research and the voice guide.
 - `tasks/` — the backlog, the work in flight, the history and the decisions (the task standard).
 - `.github/workflows/` — CI (fmt, clippy, test, the oldest supported Rust, the changelog check, the dependency
-  policy, the workflow lint, the commit rules), the tagged release and the weekly advisory check;
+  policy, the workflow lint, the commit rules), the tagged release, the weekly advisory check and the task-to-issue
+  mirror;
   `.github/actions/install-rust-toolchain/` — the toolchain install step the CI jobs share;
   `.github/dependabot.yml` — the weekly dependency updates.
 - `rust-toolchain.toml` — the pinned Rust version (see [The Rust toolchain](#the-rust-toolchain)).
@@ -64,10 +65,13 @@ acceptance moves with the step and covers nothing else). `.github/workflows/comm
 `commit-rules` (`scripts/check-commit.sh` over every pushed commit and the pull request text, the rules of
 [git-workflow.md](git-workflow.md)) on the same pushes and pull requests. `.github/workflows/advisories.yml`
 runs `cargo deny check advisories` every Monday and by hand (`gh workflow run advisories.yml`), so a RustSec
-advisory for a crate already in `Cargo.lock` shows up between pull requests; it is not a required check. The
-workflows run with a read-only token by default; only the release job may write contents. Cargo runs with
-`--locked` in CI and in the release script, so a `Cargo.lock` out of step with the manifests fails the build
-instead of being rewritten.
+advisory for a crate already in `Cargo.lock` shows up between pull requests; it is not a required check.
+`.github/workflows/sync-issues.yml` runs `scripts/sync-issues.py` on every push to `main` that touches `tasks/`
+or the script (and by hand, `gh workflow run sync-issues.yml`): it mirrors the task files into GitHub, one way
+(see [The issue mirror](#the-issue-mirror)); it is not a required check either. The workflows run with a
+read-only token by default; only the release job may write contents, and only the `sync` job may write issues.
+Cargo runs with `--locked` in CI and in the release script, so a `Cargo.lock` out of step with the manifests
+fails the build instead of being rewritten.
 
 The repo is public from its first commit (D-004), so the Actions minutes of the standard runners are free and
 the Windows jobs run on every change. A macOS job joins with the macOS preview (M6).
@@ -145,8 +149,8 @@ written by hand and kept by every run; the lists are never edited by hand. A tas
 than the app (the repo, CI, the process) carries `changelog: housekeeping` in its frontmatter and is listed last,
 under *Project housekeeping*. The release notes are one section of the changelog without that group (one line
 counts it and links the changelog), with a footer on the checksum, the attestation and the license page. The
-script reads the task files through the parser of `scripts/sync-issues.py`, which is why that script is in the
-repo before its workflow is (the issue mirror is task 016). A release goes like this:
+script reads the task files through the parser of `scripts/sync-issues.py`, the script of the issue mirror.
+A release goes like this:
 
 1. In a pull request: bump the version in `Cargo.toml`, write the summary under *Unreleased* in
    `CHANGELOG.md`, run `python -I scripts/changelog.py` and merge.
@@ -166,6 +170,31 @@ Between releases the committed *Unreleased* list matches `tasks/done/` exactly: 
 on any difference, so the change that closes a task also runs `python -I scripts/changelog.py` and commits the
 regenerated `CHANGELOG.md`. Two task branches that both add a line meet in the changelog; the later one reruns
 the script after its rebase instead of merging the lists by hand.
+
+### The issue mirror
+
+`scripts/sync-issues.py` (from the project-pal task standard, `/tasks mirror`; `--version` prints the
+template version it was copied from, and the copy is never edited per repo) mirrors the task files into GitHub
+issues and milestones, one way. Every numbered file under `tasks/backlog/`, `wip/`, `done/` and `dropped/` and
+every `tasks/decisions/D-NNN-*.md` is one issue: `NNN — <title>` as the title, a line of metadata (stage,
+status, size, milestone, dates, origin; a decision's status, date and cost), then the file's `## Context` (a
+decision's whole body), with a link to the file. The folder sets the state: `done/` closes the issue as
+completed, `dropped/` and a superseded decision as not planned. The labels `mirrored`, `stage:*`, `status:*`,
+`size:*`, `dropped` and `decision` are created by the script; every `## ` heading of `tasks/roadmap.md` is a
+milestone with the heading's paragraph as its description (the script never closes a milestone; a release
+does). An issue is found again by a hidden marker in its body, so a run patches only what differs; an issue
+whose file is gone is reported as an orphan and left alone, and a file without a numbered name is reported and
+not mirrored.
+
+The `sync-issues` workflow runs it on `main` with the job's token (`issues: write`, nothing else), so the first
+run after the workflow landed created every issue and milestone at once, and a run that follows a task commit
+reports `created 0, updated 0` when nothing moved. Nothing flows back: an issue is never edited by hand, a
+comment on it is welcome, and the change goes into the task file. By hand, from a logged-in `gh`:
+
+```powershell
+python -I scripts/sync-issues.py --dry-run     # what a run would change, writes nothing
+python -I scripts/sync-issues.py --check       # exit 1 when the issues drift from the files
+```
 
 ## Fixtures
 

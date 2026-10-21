@@ -1,20 +1,22 @@
-"""Mirrors tasks/ into GitHub issues and milestones, one way.
+"""Mirrors the task files into GitHub issues and milestones, one way (the project-pal task standard).
 
-The task files are the source of truth (tasks/README.md). Every task (backlog/ wip/ done/ dropped/)
-and every decision (decisions/D-NNN-*.md) is one issue: the id in the title, the Context prose in the
-body, the milestone from the frontmatter, labels for stage / status / size, open or closed by the
-folder. Every `## ` heading of tasks/roadmap.md is a milestone (its state is never touched here: the
-maintainer closes a milestone once a release ships it, docs/development.md). Idempotent: an issue
-is found by the marker in its body and only the fields that differ are patched; an id padded to another
-width since its issue was made still finds that issue, which is edited in place, marker included. An
-issue whose file is gone is reported, never closed or deleted.
-The workflow that runs it on every push to main that touches tasks/ is task 016. By hand:
+The task files are the source of truth (`tasks/` or `.claude/tasks/`, its README.md). Every task
+(backlog/ wip/ done/ dropped/) and every decision (decisions/D-NNN-*.md) is one issue: the id in the
+title, the Context prose in the body, the milestone from the frontmatter, labels for stage / status /
+size, open or closed by the folder. Every `## ` heading of roadmap.md is a milestone (its state is
+never touched here: a release closes a milestone). Idempotent: an issue is found by the marker in its
+body and only the fields that differ are patched; an id padded to another width since its issue was
+made (`/tasks renumber`) still finds that issue, which is edited in place, marker included; an issue
+whose file is gone is reported, never closed or deleted; a file without a numbered name (a legacy file the standard tolerates) is reported
+and not mirrored. Run by CI on a push that touches the task files (.github/workflows/sync-issues.yml),
+or by hand after a push:
 
     python -I scripts/sync-issues.py --dry-run     # print what would change
     python -I scripts/sync-issues.py               # apply
     python -I scripts/sync-issues.py --check       # exit 1 when anything would change
 
-Needs `gh` (logged in, or GH_TOKEN in CI); nothing beyond the standard library.
+Needs `gh` (logged in, or GH_TOKEN in CI); nothing beyond the standard library. This file comes from
+the project-pal tasks skill (`/tasks mirror`); TEMPLATE_VERSION tells a later run whether it is older.
 """
 
 from __future__ import annotations
@@ -27,28 +29,46 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+TEMPLATE_VERSION = "2"
+
 ROOT = Path(__file__).resolve().parent.parent
-TASKS = ROOT / "tasks"
+TASK_LOCATIONS = ("tasks", ".claude/tasks")
 STAGES = ("backlog", "wip", "done", "dropped")
 TASK_FILE = re.compile(r"^(?!\d{4}-\d{2}-\d{2}-)(\d{2,4})([a-z]?)-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
 DECISION_FILE = re.compile(r"^D-(\d{2,4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
 MARKER = re.compile(r"<!-- sync-issues: (task|decision) (\S+) -->")
 MIRROR_LABEL = "mirrored"
+SCRIPT = "scripts/sync-issues.py"
 
-LABELS: dict[str, tuple[str, str]] = {
-    MIRROR_LABEL: ("ededed", "Mirrored from tasks/ by scripts/sync-issues.py; edit the file, not the issue"),
-    "stage:backlog": ("c2e0c6", "Open, not started (tasks/backlog/)"),
-    "stage:wip": ("fbca04", "Work in flight (tasks/wip/)"),
-    "status:idea": ("bfd4f2", "Backlog status: idea"),
-    "status:ready": ("bfd4f2", "Backlog status: ready"),
-    "status:blocked": ("bfd4f2", "Backlog status: blocked on a decision"),
-    "status:waiting": ("bfd4f2", "Backlog status: waiting on a date or condition"),
-    "size:S": ("d4c5f9", "Up to half a day"),
-    "size:M": ("d4c5f9", "One or two days"),
-    "size:L": ("d4c5f9", "More than two days"),
-    "dropped": ("cfd3d7", "Closed without work (tasks/dropped/)"),
-    "decision": ("0e8a16", "A decision record (tasks/decisions/)"),
-}
+
+def locate_tasks(root: Path) -> Path:
+    """`tasks/` first, then `.claude/tasks/` — the standard's two locations, in its order."""
+    for location in TASK_LOCATIONS:
+        if (root / location).is_dir():
+            return root / location
+    raise SystemExit(f"{root}: no tasks/ or .claude/tasks/ folder")
+
+
+TASKS = ROOT / "tasks"  # set by main() through locate_tasks(); importers of this module get the default
+TASKS_REL = "tasks"
+
+
+def labels_table() -> dict[str, tuple[str, str]]:
+    t = TASKS_REL
+    return {
+        MIRROR_LABEL: ("ededed", f"Mirrored from {t}/ by {SCRIPT}; edit the file, not the issue"),
+        "stage:backlog": ("c2e0c6", f"Open, not started ({t}/backlog/)"),
+        "stage:wip": ("fbca04", f"Work in flight ({t}/wip/)"),
+        "status:idea": ("bfd4f2", "Backlog status: idea"),
+        "status:ready": ("bfd4f2", "Backlog status: ready"),
+        "status:blocked": ("bfd4f2", "Backlog status: blocked on a decision"),
+        "status:waiting": ("bfd4f2", "Backlog status: waiting on a date or condition"),
+        "size:S": ("d4c5f9", "Up to half a day"),
+        "size:M": ("d4c5f9", "One or two days"),
+        "size:L": ("d4c5f9", "More than two days"),
+        "dropped": ("cfd3d7", f"Closed without work ({t}/dropped/)"),
+        "decision": ("0e8a16", f"A decision record ({t}/decisions/)"),
+    }
 
 
 # --- the flat frontmatter subset of the task standard ---------------------------------------
@@ -226,29 +246,34 @@ def _meta_line(pairs: list[tuple[str, str | None]]) -> str:
     return " · ".join(f"**{name}:** {value}" for name, value in pairs if value)
 
 
-def _body(repo: str, item_kind: str, key: str, rel_path: str, meta: str, prose: str) -> str:
-    url = f"https://github.com/{repo}/blob/main/tasks/{rel_path}"
+def _body(blob: str, item_kind: str, key: str, rel_path: str, meta: str, prose: str) -> str:
+    """`blob` is the file link's base: https://github.com/<repo>/blob/<branch>/<tasks dir>."""
     head = (
         f"<!-- sync-issues: {item_kind} {key} -->\n"
-        f"> Mirrored from [`tasks/{rel_path}`]({url}) by `scripts/sync-issues.py` — edit the file, not this issue; "
+        f"> Mirrored from [`{TASKS_REL}/{rel_path}`]({blob}/{rel_path}) by `{SCRIPT}` — edit the file, not this issue; "
         f"comments are welcome here.\n\n{meta}"
     )
     return f"{head}\n\n{prose}" if prose else head
 
 
-def load_tasks(repo: str) -> list[Item]:
+def _skip(rel: str, what: str) -> None:
+    print(f"skip       {TASKS_REL}/{rel}: not a numbered {what} file name — not mirrored")
+
+
+def load_tasks(blob: str) -> list[Item]:
     items: list[Item] = []
     for stage in STAGES:
         folder = TASKS / stage
         if not folder.is_dir():
             continue
         for path in sorted(folder.iterdir()):
-            match = TASK_FILE.match(path.name)
-            if match is None:
-                if path.suffix == ".md":
-                    raise SystemExit(f"{stage}/{path.name}: not a task file name")
+            if path.suffix != ".md":
                 continue
             rel = f"{stage}/{path.name}"
+            match = TASK_FILE.match(path.name)
+            if match is None:
+                _skip(rel, "task")
+                continue
             data, body = parse_frontmatter(path.read_text(encoding="utf-8"), rel)
             key = match.group(1) + match.group(2)
             size = scalar(data, "size")
@@ -280,7 +305,7 @@ def load_tasks(repo: str) -> list[Item]:
                     sort=(0, key.zfill(6)),
                     rel_path=rel,
                     title=_title(key, _heading(body, rel)),
-                    body=_body(repo, "task", key, rel, _meta_line(pairs), _lead(body)),
+                    body=_body(blob, "task", key, rel, _meta_line(pairs), _lead(body)),
                     state="closed" if closed else "open",
                     state_reason=("not_planned" if stage == "dropped" else "completed") if closed else None,
                     milestone=scalar(data, "milestone"),
@@ -290,18 +315,19 @@ def load_tasks(repo: str) -> list[Item]:
     return items
 
 
-def load_decisions(repo: str) -> list[Item]:
+def load_decisions(blob: str) -> list[Item]:
     items: list[Item] = []
     folder = TASKS / "decisions"
     if not folder.is_dir():
         return items
     for path in sorted(folder.iterdir()):
-        match = DECISION_FILE.match(path.name)
-        if match is None:
-            if path.suffix == ".md":
-                raise SystemExit(f"decisions/{path.name}: not a decision file name")
+        if path.suffix != ".md":
             continue
         rel = f"decisions/{path.name}"
+        match = DECISION_FILE.match(path.name)
+        if match is None:
+            _skip(rel, "decision")
+            continue
         data, body = parse_frontmatter(path.read_text(encoding="utf-8"), rel)
         key = f"D-{match.group(1)}"
         status = scalar(data, "status") or "proposed"
@@ -323,7 +349,7 @@ def load_decisions(repo: str) -> list[Item]:
                 sort=(1, match.group(1).zfill(6)),
                 rel_path=rel,
                 title=_title(key, _heading(body, rel)),
-                body=_body(repo, "decision", key, rel, _meta_line(pairs), _whole(body)),
+                body=_body(blob, "decision", key, rel, _meta_line(pairs), _whole(body)),
                 state="closed" if closed else "open",
                 state_reason=("not_planned" if status == "superseded" else "completed") if closed else None,
                 milestone=None,
@@ -359,7 +385,8 @@ def gh(*args: str, payload: dict | None = None) -> object:
     if payload is not None:
         cmd += ["--input", "-"]
         stdin = json.dumps(payload)
-    result = subprocess.run(cmd, input=stdin, capture_output=True, text=True, encoding="utf-8")
+    # cwd=ROOT: without --repo, gh resolves the remote of the repo being mirrored, not of the caller's cwd.
+    result = subprocess.run(cmd, input=stdin, capture_output=True, text=True, encoding="utf-8", cwd=ROOT)
     if result.returncode != 0:
         raise SystemExit(f"gh {' '.join(args)} failed ({result.returncode}):\n{result.stderr.strip()}\n{result.stdout.strip()}")
     return json.loads(result.stdout) if result.stdout.strip() else None
@@ -378,10 +405,11 @@ def paged(repo: str, path: str, **params: str) -> list[dict]:
         page += 1
 
 
-def default_repo() -> str:
-    name = gh("repo", "view", "--json", "nameWithOwner")
-    assert isinstance(name, dict)
-    return name["nameWithOwner"]
+def repo_view(repo: str | None) -> dict:
+    """`nameWithOwner` and the default branch, of `repo` or of the working copy's remote."""
+    view = gh("repo", "view", *([repo] if repo else []), "--json", "nameWithOwner,defaultBranchRef")
+    assert isinstance(view, dict)
+    return view
 
 
 def _norm(text: str | None) -> str:
@@ -395,7 +423,8 @@ def same_id(key: str) -> str:
 
 def match_issues(items: list[Item], existing_by_key: dict[tuple[str, str], dict]) -> dict[tuple[str, str], tuple[dict, str] | None]:
     """(kind, key) of every item → (its issue, the key in that issue's marker), or None for a new one.
-    The marker's exact key wins; else an issue whose marker holds the same number at another width.
+    The marker's exact key wins; else an issue whose marker holds the same number at another width
+    (a repo that mirrored before `/tasks renumber` padded its ids keeps its issues, edited in place).
     Matched issues are popped from `existing_by_key`, so what stays there is an orphan."""
     out: dict[tuple[str, str], tuple[dict, str] | None] = {}
     for item in items:
@@ -413,15 +442,16 @@ def match_issues(items: list[Item], existing_by_key: dict[tuple[str, str], dict]
 # --- the sync -------------------------------------------------------------------------------
 
 
-def sync(repo: str, apply: bool) -> int:
+def sync(repo: str, branch: str, apply: bool) -> int:
     """Returns the number of changes planned (dry run) or made (apply)."""
-    items = sorted(load_tasks(repo) + load_decisions(repo), key=lambda i: i.sort)
+    blob = f"https://github.com/{repo}/blob/{branch}/{TASKS_REL}"
+    items = sorted(load_tasks(blob) + load_decisions(blob), key=lambda i: i.sort)
     roadmap = load_roadmap()
     changes = 0
     log = print
 
     if apply:
-        for name, (color, description) in LABELS.items():
+        for name, (color, description) in labels_table().items():
             gh("label", "create", name, "--repo", repo, "--color", color, "--description", description, "--force")
 
     milestones: dict[str, dict] = {m["title"]: m for m in paged(repo, "milestones", state="all")}
@@ -444,7 +474,7 @@ def sync(repo: str, apply: bool) -> int:
                 gh("api", "-X", "PATCH", f"repos/{repo}/milestones/{existing['number']}", payload={"description": description})
     for item in items:
         if item.milestone is not None and item.milestone not in milestones:
-            raise SystemExit(f"{item.rel_path}: milestone {item.milestone!r} is not a `## ` heading of tasks/roadmap.md")
+            raise SystemExit(f"{TASKS_REL}/{item.rel_path}: milestone {item.milestone!r} is not a `## ` heading of {TASKS_REL}/roadmap.md")
 
     existing_by_key: dict[tuple[str, str], dict] = {}
     for issue in paged(repo, "issues", state="all", labels=MIRROR_LABEL):
@@ -458,7 +488,7 @@ def sync(repo: str, apply: bool) -> int:
     created = updated = unchanged = 0
     for item in items:
         found = matched[(item.kind, item.key)]
-        issue, marker_key = (None, item.key) if found is None else found
+        issue = None if found is None else found[0]
         milestone_number = milestones[item.milestone]["number"] if item.milestone else None
         if issue is None:
             log(f"issue      create   {item.title}  [{item.state}, {', '.join(item.labels)}]")
@@ -490,14 +520,13 @@ def sync(repo: str, apply: bool) -> int:
         if not patch:
             unchanged += 1
             continue
-        was = f", was {marker_key}" if marker_key != item.key else ""
-        log(f"issue      update   #{issue['number']} {item.title}  ({', '.join(sorted(patch))}{was})")
+        log(f"issue      update   #{issue['number']} {item.title}  ({', '.join(sorted(patch))})")
         updated += 1
         if apply:
             gh("api", "-X", "PATCH", f"repos/{repo}/issues/{issue['number']}", payload=patch)
 
     for (kind, key), issue in sorted(existing_by_key.items()):
-        log(f"orphan     #{issue['number']} {kind} {key}: no file under tasks/ — left as is")
+        log(f"orphan     #{issue['number']} {kind} {key}: no file under {TASKS_REL}/ — left as is")
 
     verb = "" if apply else " (dry run)"
     log(f"{'applied' if apply else 'planned'}{verb}: created {created}, updated {updated}, unchanged {unchanged}; "
@@ -506,15 +535,27 @@ def sync(repo: str, apply: bool) -> int:
 
 
 def main() -> int:
+    global ROOT, TASKS, TASKS_REL
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # titles carry em dashes; Windows consoles may not
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", help="owner/name (default: the repo `gh repo view` resolves from the working copy)")
+    parser.add_argument("--branch", help="the branch the file links point at (default: the repo's default branch)")
+    parser.add_argument("--root", type=Path, help="the repo whose task files are read (default: the one this script sits in)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="print the planned changes, write nothing")
     mode.add_argument("--check", action="store_true", help="like --dry-run, exit 1 when anything would change")
+    mode.add_argument("--version", action="store_true", help="print TEMPLATE_VERSION and exit")
     args = parser.parse_args()
-    repo = args.repo or default_repo()
-    changed = sync(repo, apply=not (args.dry_run or args.check))
+    if args.version:
+        print(TEMPLATE_VERSION)
+        return 0
+    if args.root is not None:
+        ROOT = args.root.resolve()
+    TASKS = locate_tasks(ROOT)
+    TASKS_REL = TASKS.relative_to(ROOT).as_posix()
+    view = repo_view(args.repo)
+    branch = args.branch or (view.get("defaultBranchRef") or {}).get("name") or "main"
+    changed = sync(view["nameWithOwner"], branch, apply=not (args.dry_run or args.check))
     return 1 if args.check and changed else 0
 
 
