@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 31 backlog (2 ready · 0 blocked · 2 waiting · 27 ideas) · 0 in progress · 18 done · 0 dropped · 5 decisions
+**State:** 33 backlog (2 ready · 0 blocked · 2 waiting · 29 ideas) · 0 in progress · 19 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -64,10 +64,11 @@ _none_
 | 009 | [Tauri shell with the flavor list](backlog/009-tauri-shell-with-the-flavor-list.md) | M | 2026-10-21 |
 | 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
-| 024 | [mrgl doctor: a diagnostic report for a bug report](backlog/024-doctor-diagnostic-report.md) | S | 2026-10-21 |
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](backlog/033-close-the-milestone-of-a-shipped-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
 | 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](backlog/043-second-registry-source-for-the-game-root.md) | S | 2026-10-21 |
+| 049 | ["Copy diagnostics" in the window: the doctor report on the clipboard](backlog/049-copy-diagnostics-action-in-the-window.md) | S | 2026-10-21 |
+| 051 | [A Windows version line in the doctor report](backlog/051-windows-version-line-in-the-doctor-report.md) | S | 2026-10-21 |
 | 053 | [Missing dependencies on the addon's row in the window](backlog/053-missing-dependencies-on-the-window-row.md) | S | 2026-10-21 |
 | 058 | [Forever notes for the addons the community lists as partly restricted](backlog/058-forever-notes-for-the-partly-restricted-addons.md) | S | 2026-10-21 |
 
@@ -87,6 +88,7 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 026 | [Adopt: take over an existing AddOns folder from its TOC source headers; CLI ado…](backlog/026-adopt-existing-addons-folder-from-toc-headers.md) | M | 2026-10-21 |
+| 050 | [The doctor names the CurseForge key once that source lands](backlog/050-doctor-names-the-curseforge-key-once-the-source-lands.md) | S | 2026-10-21 |
 | 059 | [The Forever build signal for the Wago, WoWInterface and CurseForge sources](backlog/059-forever-build-signal-for-the-other-sources.md) | S | 2026-10-21 |
 
 #### M5 Trust
@@ -120,12 +122,12 @@ _none_
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
 | 030 | [Release notes before an update: the GitHub release body in one line](done/030-release-notes-before-an-update.md) | 2026-10-21 |
 | 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](done/029-dependency-check-from-toc-and-nolib.md) | 2026-10-21 |
+| 024 | [mrgl doctor: a diagnostic report for a bug report](done/024-doctor-diagnostic-report.md) | 2026-10-21 |
 | 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
 | 020 | [Game root auto-discovery: the launcher's registry key and the common install fo…](done/020-game-root-auto-discovery.md) | 2026-10-21 |
 | 019 | [Build version fallback from the client exe when .build.info has no row for the …](done/019-build-version-fallback-from-the-client-exe.md) | 2026-10-21 |
-| 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
 
-_8 more in `done/`._
+_9 more in `done/`._
 
 ### Decisions
 
