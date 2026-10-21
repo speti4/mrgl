@@ -12,7 +12,7 @@ drop is the only other exit. Closing a task files every follow-up as a `backlog/
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 17 backlog (6 ready · 0 blocked · 2 waiting · 9 ideas) · 0 in progress · 1 done · 0 dropped · 5 decisions
+**State:** 16 backlog (5 ready · 0 blocked · 2 waiting · 9 ideas) · 0 in progress · 2 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -25,7 +25,6 @@ _Generated 2026-10-21 — edit the files, not this section._
 | 004 | [Install engine: zip to staging, addon-folder detection, atomic swap, rollback, …](backlog/004-install-engine-with-state-sidecar.md) | M | 2026-10-21 |
 | 006 | [Update check: installed state against the latest release per flavor; update --a…](backlog/006-update-check-and-update-all.md) | S | 2026-10-21 |
 | 016 | [Mirror the task files into GitHub issues and milestones](backlog/016-task-to-github-issue-mirror.md) | S | 2026-10-21 |
-| 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](backlog/018-github-repository-settings-after-the-first-push.md) | S | 2026-10-21 |
 
 ### Needs decision
 
@@ -78,6 +77,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
 | 001 | [Project scaffolding: repo structure, task standard, decisions, origin and resea…](done/001-project-scaffolding.md) | 2026-10-21 |
 
 ### Decisions
