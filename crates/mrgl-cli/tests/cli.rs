@@ -579,3 +579,327 @@ fn a_folder_without_flavor_info_fails_with_exit_code_one() {
     let value: serde_json::Value = serde_json::from_slice(&json.stderr).expect("a JSON error");
     assert_eq!(value["kind"], "error");
 }
+
+// --- task 004: `add <file.zip>` and `remove` over the fixture zips, in a temporary game folder ---
+
+/// The fixture zips of `mrgl-core`.
+fn zips() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/zips")
+}
+
+/// A temporary game folder with one `_forever_` flavor; `MRGL_ROOT` points the runs at it.
+struct Game {
+    root: PathBuf,
+    home: PathBuf,
+}
+
+impl Game {
+    fn new(name: &str) -> Game {
+        let base =
+            std::env::temp_dir().join(format!("mrgl-cli-install-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("game");
+        std::fs::create_dir_all(root.join("_forever_")).expect("the flavor folder");
+        std::fs::write(
+            root.join(".build.info"),
+            "Version!STRING:0|Product!STRING:0\n1.60.1.70245|wowf\n",
+        )
+        .expect(".build.info");
+        std::fs::write(
+            root.join("_forever_").join(".flavor.info"),
+            "Product Flavor!STRING:0\nwowf\n",
+        )
+        .expect(".flavor.info");
+        Game {
+            root,
+            home: base.join("home"),
+        }
+    }
+
+    fn mrgl(&self) -> Command {
+        let mut command = mrgl();
+        command.env("MRGL_HOME", &self.home);
+        command.env("MRGL_ROOT", &self.root);
+        command
+    }
+
+    fn addon(&self, folder: &str) -> PathBuf {
+        self.root
+            .join("_forever_")
+            .join("Interface")
+            .join("AddOns")
+            .join(folder)
+    }
+
+    fn state_path(&self) -> PathBuf {
+        self.home.join("wowf").join("state.json")
+    }
+}
+
+impl Drop for Game {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(self.root.parent().expect("the base folder"));
+    }
+}
+
+#[test]
+fn add_installs_a_zip_in_hand_updates_it_and_remove_takes_it_out() {
+    let game = Game::new("round");
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(zips().join("one-folder-1.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "installing one-folder-1.0.0.zip into _forever_");
+    assert_eq!(
+        lines.last().copied(),
+        Some("installed OneFolder 1.0.0 (1 folder: OneFolder) into _forever_")
+    );
+    assert!(game.addon("OneFolder").join("OneFolder.toc").is_file());
+    assert!(game.state_path().is_file());
+
+    let output = game
+        .mrgl()
+        .arg("add")
+        .arg(zips().join("one-folder-1.1.0.zip"))
+        .args(["--flavor", "wowf"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "updated OneFolder from 1.0.0 to 1.1.0 (1 folder: OneFolder) in _forever_"
+    );
+    assert!(game.addon("OneFolder").join("new.lua").is_file());
+    assert!(!game.addon("OneFolder").join("old.lua").exists());
+    assert_eq!(
+        stdout(&output).lines().count(),
+        4,
+        "two two-line messages: {}",
+        stdout(&output)
+    );
+
+    let output = game
+        .mrgl()
+        .args(["remove", "onefolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "removed OneFolder 1.1.0 (1 folder: OneFolder) from _forever_"
+    );
+    assert!(!game.addon("OneFolder").exists());
+    let state = std::fs::read_to_string(game.state_path()).expect("the sidecar");
+    assert!(!state.contains("OneFolder"), "{state}");
+}
+
+#[test]
+fn add_and_remove_json_are_one_document_each() {
+    let game = Game::new("json");
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(zips().join("several-folders-2.0.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "add");
+    assert_eq!(value["dry_run"], false);
+    assert_eq!(value["flavor"]["id"], "wowf");
+    assert_eq!(value["addon"]["name"], "SeveralFolders");
+    assert_eq!(value["addon"]["version"], "2.0.0");
+    assert_eq!(value["addon"]["previous_version"], serde_json::Value::Null);
+    assert_eq!(
+        value["addon"]["folders"],
+        serde_json::json!([
+            "SeveralFolders",
+            "SeveralFolders_Data",
+            "SeveralFolders_Options"
+        ])
+    );
+    assert!(
+        value["addon"]["source"]
+            .as_str()
+            .is_some_and(|source| source.ends_with("several-folders-2.0.0.zip"))
+    );
+    assert_eq!(value["warnings"], serde_json::json!([]));
+
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(zips().join("several-folders-2.1.0.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["addon"]["previous_version"], "2.0.0");
+    assert_eq!(
+        value["addon"]["removed_folders"],
+        serde_json::json!(["SeveralFolders_Data"])
+    );
+
+    let output = game
+        .mrgl()
+        .args(["--json", "remove", "SeveralFolders", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "remove");
+    assert_eq!(value["addon"]["name"], "SeveralFolders");
+    assert_eq!(value["addon"]["version"], "2.1.0");
+    assert_eq!(
+        value["addon"]["folders"],
+        serde_json::json!(["SeveralFolders", "SeveralFolders_Options"])
+    );
+}
+
+#[test]
+fn add_dry_run_says_what_it_would_do_and_writes_nothing() {
+    let game = Game::new("dry-run");
+    let output = game
+        .mrgl()
+        .arg("add")
+        .arg(zips().join("several-folders-2.0.0.zip"))
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "dry run: would install SeveralFolders 2.0.0 (3 folders: SeveralFolders, SeveralFolders_Data, SeveralFolders_Options) in _forever_"
+    );
+    assert!(!game.addon("SeveralFolders").exists());
+    assert!(!game.state_path().exists());
+    assert!(
+        std::fs::read_dir(game.home.join("wowf").join("staging"))
+            .map(|entries| entries.count() == 0)
+            .unwrap_or(true),
+        "the staging folder is cleaned"
+    );
+
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(zips().join("several-folders-2.0.0.zip"))
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "add");
+    assert_eq!(value["dry_run"], true);
+    assert_eq!(value["addon"]["name"], "SeveralFolders");
+}
+
+#[test]
+fn add_refuses_an_escaping_zip_with_exit_code_one() {
+    let game = Game::new("escaping");
+    let output = game
+        .mrgl()
+        .arg("add")
+        .arg(zips().join("escaping-path.zip"))
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    let plain = stderr_last_line(&output);
+    assert!(plain.starts_with("refused "), "{plain}");
+    assert!(
+        plain.ends_with(
+            "the entry `Escape/../../Outside.lua` would land outside the staging folder"
+        ),
+        "{plain}"
+    );
+    assert!(!game.addon("Escape").exists());
+}
+
+#[test]
+fn remove_of_an_unknown_or_unmanaged_addon_is_exit_code_one() {
+    let game = Game::new("unknown");
+    let output = game
+        .mrgl()
+        .args(["remove", "Nope", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "addon not found: Nope (flavor forever)"
+    );
+
+    std::fs::create_dir_all(game.addon("ByHand")).expect("a folder by hand");
+    let output = game
+        .mrgl()
+        .args(["remove", "ByHand", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_last_line(&output)
+            .starts_with("addon not managed by mrgl: ByHand (flavor forever); "),
+        "{}",
+        stderr_last_line(&output)
+    );
+    assert!(game.addon("ByHand").is_dir());
+}
+
+#[test]
+fn add_takes_a_flavor_folder_path_and_needs_a_flavor() {
+    let game = Game::new("folder-path");
+    let output = game
+        .mrgl()
+        .arg("add")
+        .arg(zips().join("root-toc-3.0.0.zip"))
+        .arg("--flavor")
+        .arg(game.root.join("_forever_"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "installed RootToc 3.0.0 (1 folder: RootToc) into _forever_"
+    );
+
+    let output = game
+        .mrgl()
+        .arg("add")
+        .arg(zips().join("root-toc-3.0.0.zip"))
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr_last_line(&output).starts_with("no flavor given: "));
+}
+
+#[test]
+fn a_source_spec_and_update_still_name_their_tasks() {
+    let output = mrgl()
+        .args(["add", "wago:something", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "add is not implemented yet (task 003)"
+    );
+    let output = mrgl()
+        .args(["update", "Something", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "update is not implemented yet (task 006)"
+    );
+}

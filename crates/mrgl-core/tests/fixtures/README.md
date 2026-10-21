@@ -19,5 +19,11 @@ BOM in a fixture survives every checkout.
   no `.flavor.info` at all.
 - `release-json/*.json` — `release.json` files in the shape the BigWigs packager writes, with `forever` next
   to other flavors and a release without metadata (task 003).
-- `zips/*.zip` — small archives with one and with several addon folders, and one with a path that tries to
-  escape the staging folder (task 004). `.gitignore` allows zips here and nowhere else.
+- `zips/*.zip` — small archives for the install engine (task 004), written by `zips/make-zips.py` (fixed
+  timestamps and entry order, so a rerun changes no byte; `python -I` it after editing a shape): one addon
+  folder in three versions (`one-folder-1.0.0` with `old.lua`, `1.1.0` with `new.lua` instead, `1.2.0`),
+  several folders in one archive with a root `README.md` and a `Docs/` folder the install ignores
+  (`several-folders-2.0.0`; `2.1.0` drops the `_Data` folder), a TOC at the zip's root with a `_Vanilla`
+  twin (`root-toc-3.0.0`), a wrapper folder around the addon folder (`wrapped-4.0.0`), a TOC without a
+  `## Version` (`no-version`), a path that tries to escape the staging folder (`escaping-path`) and a zip
+  with no addon at all (`no-addon`). `.gitignore` allows zips here and nowhere else.

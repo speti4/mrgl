@@ -2,9 +2,9 @@
 //! plain English line, `--serious` or `MRGL_SERIOUS=1` for the plain line alone, `--json` for machines.
 //! Exit codes: 0 success, 1 an error the plain line explains, 2 a usage error (clap's own).
 //!
-//! `scan`, `list` and `root` are task 002; the other subcommands follow the M1 plan (`tasks/roadmap.md`)
-//! and answer "not implemented yet" with their task id until that task lands, so the help text and the
-//! voice are testable from the first commit.
+//! `scan`, `list` and `root` are task 002; `add <file.zip>` and `remove` are task 004 (the install engine);
+//! the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer "not implemented yet" with
+//! their task id until that task lands, so the help text and the voice are testable from the first commit.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand};
 use mrgl_core::client;
 use mrgl_core::flavor::{self, FlavorId};
 use mrgl_core::home::{self, Config};
+use mrgl_core::install::{Engine, Metadata};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::{Error, VERSION};
@@ -67,9 +68,10 @@ enum Command {
         /// The game folder to remember; without it, the remembered one is printed.
         folder: Option<PathBuf>,
     },
-    /// Install an addon from a source: `github:<owner>/<repo>`, later `wago:`, `wowi:`, `curse:` or a zip path.
+    /// Install an addon from a source: `github:<owner>/<repo>`, later `wago:`, `wowi:`, `curse:`, or the
+    /// path of a zip in hand.
     Add {
-        /// The source spec.
+        /// The source spec, or a zip path (a `.zip` name or an existing file).
         source: String,
         /// The flavor id or folder to install into.
         #[arg(long)]
@@ -138,9 +140,10 @@ impl Command {
     fn not_yet(&self) -> Option<Error> {
         let (command, task) = match self {
             Command::Scan { .. } | Command::List { .. } | Command::Root { .. } => return None,
-            Command::Add { .. } => ("add", "003"),
+            Command::Add { source, .. } if !is_zip_in_hand(source) => ("add", "003"),
+            Command::Add { .. } | Command::Remove { .. } => return None,
             Command::Update { all: true, .. } => ("update --all", "006"),
-            Command::Update { .. } | Command::Remove { .. } => ("update / remove", "004"),
+            Command::Update { .. } => ("update", "006"),
             Command::Link { .. } | Command::Unlink { .. } => ("link / unlink", "005"),
             Command::Backup { .. } => ("backup", "013"),
         };
@@ -236,6 +239,12 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             report_scan(reporter, "list", &scan, warnings);
         }
         Command::Root { folder } => root_command(reporter, folder)?,
+        Command::Add {
+            source,
+            flavor,
+            dry_run,
+        } => add_zip(reporter, &source, flavor.as_deref(), dry_run)?,
+        Command::Remove { name, flavor } => remove_command(reporter, &name, flavor.as_deref())?,
         _ => unreachable!("every other command answered with its task"),
     }
     Ok(())
@@ -449,4 +458,191 @@ fn root_command(reporter: &Reporter, folder: Option<PathBuf>) -> Result<(), Stri
         }
     }
     Ok(())
+}
+
+/// Whether an `add` target is a zip in hand rather than a source spec: a `.zip` name or an existing file.
+fn is_zip_in_hand(source: &str) -> bool {
+    source.to_ascii_lowercase().ends_with(".zip") || Path::new(source).is_file()
+}
+
+/// The install engine of the flavor a `--flavor` spec names.
+fn engine_for(spec: Option<&str>, warnings: &mut Vec<String>) -> Result<Engine, String> {
+    let folder = flavor_folder(spec, None, warnings)?;
+    let flavor = flavor::read_flavor(&folder).map_err(|error| error.to_string())?;
+    warnings.extend(flavor.warnings.iter().cloned());
+    Engine::new(flavor).map_err(|error| error.to_string())
+}
+
+/// `mrgl add <file.zip> --flavor <id>`: the fourth source of D-002, a zip in hand, through the install
+/// engine; `--dry-run` stages the zip, says what it would install and writes nothing.
+fn add_zip(
+    reporter: &Reporter,
+    source: &str,
+    flavor: Option<&str>,
+    dry_run: bool,
+) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let zip =
+        std::path::absolute(source).map_err(|error| format!("resolving {source}: {error}"))?;
+    let zip_name = zip
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| zip.display().to_string());
+    let metadata = Metadata {
+        source: zip.display().to_string(),
+        version: None,
+        name: None,
+    };
+    let folder_name = engine.flavor.folder_name();
+    if !reporter.json {
+        reporter.say(
+            Kind::Progress,
+            format!("installing {zip_name} into {folder_name}"),
+        );
+    }
+
+    if dry_run {
+        let loaded = engine.load_state().map_err(|error| error.to_string())?;
+        warnings.extend(loaded.warning);
+        let staged = engine
+            .stage(&zip, &metadata)
+            .map_err(|error| error.to_string())?;
+        let previous = loaded
+            .state
+            .entry(&staged.name)
+            .map(|(_, entry)| entry.version.clone());
+        let folders = staged.folders();
+        if reporter.json {
+            reporter.document(serde_json::json!({
+                "kind": "add",
+                "flavor": &engine.flavor,
+                "dry_run": true,
+                "addon": {
+                    "name": staged.name,
+                    "version": staged.version,
+                    "previous_version": previous,
+                    "source": staged.source,
+                    "folders": folders,
+                    "removed_folders": [],
+                },
+                "warnings": warnings,
+            }));
+        } else {
+            for warning in &warnings {
+                reporter.say(Kind::Warning, warning);
+            }
+            let what = match &previous {
+                Some(previous) => format!(
+                    "update {} from {previous} to {}",
+                    staged.name, staged.version
+                ),
+                None => format!("install {} {}", staged.name, staged.version),
+            };
+            reporter.say(
+                Kind::Success,
+                format!(
+                    "dry run: would {what} ({}: {}) in {folder_name}",
+                    count_folders(folders.len()),
+                    folders.join(", ")
+                ),
+            );
+        }
+        staged.discard();
+        return Ok(());
+    }
+
+    let installed = engine
+        .install(&zip, &metadata)
+        .map_err(|error| error.to_string())?;
+    warnings.extend(installed.warnings.iter().cloned());
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "add",
+            "flavor": &engine.flavor,
+            "dry_run": false,
+            "addon": {
+                "name": installed.name,
+                "version": installed.version,
+                "previous_version": installed.previous_version,
+                "source": metadata.source,
+                "folders": installed.folders,
+                "removed_folders": installed.removed_folders,
+            },
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let mut summary = match &installed.previous_version {
+        Some(previous) => format!(
+            "updated {} from {previous} to {} ({}: {}) in {folder_name}",
+            installed.name,
+            installed.version,
+            count_folders(installed.folders.len()),
+            installed.folders.join(", ")
+        ),
+        None => format!(
+            "installed {} {} ({}: {}) into {folder_name}",
+            installed.name,
+            installed.version,
+            count_folders(installed.folders.len()),
+            installed.folders.join(", ")
+        ),
+    };
+    if !installed.removed_folders.is_empty() {
+        summary.push_str(&format!(
+            ", {} of the previous version removed ({})",
+            count_folders(installed.removed_folders.len()),
+            installed.removed_folders.join(", ")
+        ));
+    }
+    reporter.say(Kind::Success, summary);
+    Ok(())
+}
+
+/// `mrgl remove <name> --flavor <id>`: a managed addon's folders, its entry and its cache go.
+fn remove_command(reporter: &Reporter, name: &str, flavor: Option<&str>) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let removed = engine.remove(name).map_err(|error| error.to_string())?;
+    warnings.extend(removed.warnings.iter().cloned());
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "remove",
+            "flavor": &engine.flavor,
+            "addon": {
+                "name": removed.name,
+                "version": removed.version,
+                "folders": removed.folders,
+            },
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    reporter.say(
+        Kind::Success,
+        format!(
+            "removed {} {} ({}: {}) from {}",
+            removed.name,
+            removed.version,
+            count_folders(removed.folders.len()),
+            removed.folders.join(", "),
+            engine.flavor.folder_name()
+        ),
+    );
+    Ok(())
+}
+
+fn count_folders(count: usize) -> String {
+    if count == 1 {
+        "1 folder".to_string()
+    } else {
+        format!("{count} folders")
+    }
 }

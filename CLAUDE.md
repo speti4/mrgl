@@ -28,9 +28,10 @@ Before a commit: the checks in CONTRIBUTING.md, "Checks before a commit" (more o
 ## Data outside the repo (never commit)
 - The game folders, the `WTF` folder, a real addon zip or a downloaded release never enter the repo; test
   fixtures are small synthetic addons, TOCs, `release.json` files and zips only (`crates/mrgl-core/tests/fixtures/`)
-- The state sidecar and the CLI's `config.json` (the remembered game folder) live under `%LOCALAPPDATA%\mrgl\`
-  (D-003; `MRGL_HOME` overrides it, tests point it at a temp folder); the WoW install path of the maintainer's
-  machine stays in the gitignored `CLAUDE.local.md`
+- The state sidecar, the install engine's staging folder and its zip cache (`<flavor-id>\state.json`,
+  `staging\`, `cache\<addon>\<version>.zip`) and the CLI's `config.json` (the remembered game folder) live
+  under `%LOCALAPPDATA%\mrgl\` (D-003; `MRGL_HOME` overrides it, tests point it at a temp folder); the WoW
+  install path of the maintainer's machine stays in the gitignored `CLAUDE.local.md`
 - Blizzard audio and artwork never enter the repo: the murloc voice is text only (D-005)
 
 ## Conventions
