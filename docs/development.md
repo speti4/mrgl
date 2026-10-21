@@ -39,14 +39,17 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   Forever notes (`forever`, task 011: the build signal `yes`, `no` or `unknown` that
   `sources::github::forever_build` derives from a release, and the curated `data/forever-notes.json`
   compiled in with `include_str!`, with the stale rule), the diagnostic report (`doctor`, task 024: the
-  facts a bug report needs, with the profile folder as `~`, see [The doctor](#the-doctor)) and the voice
-  table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
+  facts a bug report needs, with the profile folder as `~`, see [The doctor](#the-doctor)), the addon
+  list (`list_file`, task 015: the export from the sidecar and the import through the source and the engine,
+  below), the interface check (`interface`, task 015, below) and the voice table (`voice`, D-005). Synthetic
+  fixtures are under `tests/fixtures/`.
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick, with the release notes' line and
   link under it when the release has notes, task 030; the install from the pick is task 040), `add
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
   task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
-  (task 024), `link <folder>` and `unlink <folder>` (task 005), `update` (a stub that answers with the task
+  (task 024), `link <folder>` and `unlink <folder>` (task 005), `export --flavor <flavor> [--to <file>]`
+  and `import <file> --flavor <flavor> [--dry-run]` (task 015), `update` (a stub that answers with the task
   that builds it until that task lands), with `--json` for machines and `--serious` for the
   murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
@@ -72,6 +75,27 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `about.toml` — the same licenses for the third-party license page of the release zip.
 - `CHANGELOG.md` — every release and the tasks it closed, generated from `tasks/done/` (see
   [The changelog](#the-changelog)).
+
+The addon list (task 015) is a JSON file, `format` `mrgl-list`, `schema` 1: the flavor id it was exported
+from (`flavor`), when (`exported_at`, RFC 3339 in UTC) and one entry per managed addon under `addons`, with
+the sidecar's `name`, `source` and `version` and the addon's `folders`. `mrgl export` writes the sidecar's
+entries whose folders are still there (the list itself on the standard output without `--to`); a file of
+another format or schema is refused on import. `mrgl import` resolves every `github:` entry for the target
+flavor's build and installs the current release through the engine under the entry's name, so the version
+in the list is a record, not a pin; a zip in hand is reported as not importable, a `link:` entry is skipped,
+and an addon the flavor already has (the same name, the same source, or a folder of the entry that is there,
+managed or not) is reported and left alone. `--dry-run` resolves every entry and writes nothing under
+`Interface\AddOns` or in the sidecar (the release list cache of the GitHub source is written as on any
+resolve). An entry that fails does not stop the others; the run then ends with exit code 1. The list may
+come from another flavor: the picks are made for the flavor it is imported into, with a warning.
+
+The interface check (task 015) compares the `## Interface` numbers of the TOC the flavor loads with the
+installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,
+`16001` is 1), and the addon passes when one number of the list has the build's major. A mismatch is a
+warning, never a refusal: `scan` and `list` mark the addon's line `interface mismatch` and add one warning
+line, their JSON carries `interface_mismatches`, and `add <file.zip>` and `import` add a warning after the
+install (`interface_mismatch` in their JSON). An unknown build, a TOC without an `## Interface` line and a
+folder the flavor loads no TOC from give no warning.
 
 ## The voice
 
@@ -347,8 +371,8 @@ shape the BigWigs packager writes, `forever` next to other flavors, one without 
 without `release.json`, one with no release, one with a draft and a prerelease above the stable release),
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
 one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
-folder, a path that tries to escape the staging folder, an addon with an embedded and a missing required
-dependency, and a zip with no addon at all), a hand-written
+folder, a TOC with an interface for another build, a path that tries to escape the staging folder, an addon
+with an embedded and a missing required dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
 SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made
 up from the first line, task 013), a third game folder for the dependency check (`dependencies/`, task

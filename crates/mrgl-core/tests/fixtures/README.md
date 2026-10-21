@@ -26,17 +26,20 @@ BOM in a fixture survives every checkout.
   shape without flavor metadata; `Example/NoReleaseJson` has zips only (`-forever`, `-cata` and the unsuffixed
   retail one); `Example/Empty` has no release; `Example/Prerelease` has a draft, a prerelease and a stable
   release; `Example/BetaOnly` has a prerelease alone; `Example/MainlineOnly` names retail only. The asset
-  names are made up and no zip sits behind them: a download test serves a text file from a temporary folder.
+  names are made up and no zip sits behind them: a download test serves a text file from a temporary folder,
+  and the import test of task 015 copies this tree into a temporary folder with a fixture zip of `zips/`
+  behind the Forever asset of `Questie/Questie`.
 - `zips/*.zip` — small archives for the install engine (task 004), written by `zips/make-zips.py` (fixed
   timestamps and entry order, so a rerun changes no byte; `python -I` it after editing a shape): one addon
   folder in three versions (`one-folder-1.0.0` with `old.lua`, `1.1.0` with `new.lua` instead, `1.2.0`),
   several folders in one archive with a root `README.md` and a `Docs/` folder the install ignores
   (`several-folders-2.0.0`; `2.1.0` drops the `_Data` folder), a TOC at the zip's root with a `_Vanilla`
   twin (`root-toc-3.0.0`), a wrapper folder around the addon folder (`wrapped-4.0.0`), a TOC without a
-  `## Version` (`no-version`), a path that tries to escape the staging folder (`escaping-path`), an addon
-  that requires `LibEmbedded`, carried under its `Libs/`, and `LibMissing`, carried nowhere
-  (`needs-library-1.0.0`, task 029), and a zip with no addon at all (`no-addon`). `.gitignore` allows zips
-  here and nowhere else.
+  `## Version` (`no-version`), a TOC whose `## Interface` (110207) has another major version than every
+  fixture build, for the interface warning of task 015 (`stale-interface-1.0.0`), a path that tries to
+  escape the staging folder (`escaping-path`), an addon that requires `LibEmbedded`, carried under its
+  `Libs/`, and `LibMissing`, carried nowhere (`needs-library-1.0.0`, task 029), and a zip with no addon at
+  all (`no-addon`). `.gitignore` allows zips here and nowhere else.
 - `dependencies/` — a third made-up game folder for the dependency check (task 029): a `.build.info` row
   and a `_forever_` flavor whose `Needy` requires `LibMet` (an addon folder of its own: met), `LibEmbedded`
   (a folder under `Needy/Libs/`: embedded) and `LibMissing` (nowhere: missing), with `libmet` repeated in
