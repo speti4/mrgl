@@ -15,7 +15,8 @@
 //!
 //! One entry per managed addon of the state sidecar (the entries whose folders were deleted by hand are
 //! left out, D-003), with the sidecar's name, source and version and the addon's folders. The import
-//! resolves every `github:` entry through the source and installs the current release through the engine;
+//! resolves every `github:` entry through the source and installs the current release through the one
+//! install path of the engine ([`Engine::install_from_source`], task 055);
 //! the version in the file is what was installed at the export, reported next to what the import brings.
 //! A zip in hand is reported as not importable (the zip is on the other machine), a linked folder (`link:`)
 //! is skipped, and an addon the flavor has already (by name, by source, or a folder of the entry that is
@@ -27,10 +28,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::install::{Engine, Metadata};
+use crate::install::{Engine, PickInstalled, SourceInstalled, SourceRequest, Wanted};
 use crate::interface::{self, InterfaceMismatch};
 use crate::scan;
-use crate::sources::{Source, SourceSpec, Target};
+use crate::sources::{Source, SourceSpec};
 use crate::state::{self, State};
 
 /// The `format` of a list file.
@@ -317,7 +318,8 @@ impl Present<'_> {
 }
 
 /// Imports a list into the engine's flavor: every `github:` entry the flavor does not have is resolved
-/// through the source and installed through the engine; `dry_run` resolves and reports, and writes
+/// through the source and installed through the engine's one install path under the list's name for it
+/// ([`Engine::install_from_source`]); `dry_run` resolves and reports ([`Engine::resolve`]), and writes
 /// nothing under `Interface\AddOns` or in the sidecar. An entry that fails is reported as failed and the
 /// import goes on; only a sidecar or AddOns folder that cannot be read at all is an error.
 pub fn import(
@@ -350,8 +352,6 @@ pub fn import(
         added_names: HashSet::new(),
         added_sources: HashSet::new(),
     };
-    let target = Target::from_flavor(&engine.flavor);
-    let downloads = engine.home.staging_dir().join("downloads");
     let mut items = Vec::new();
     for entry in &list.addons {
         let kind = EntrySource::of(&entry.source);
@@ -391,36 +391,28 @@ pub fn import(
             items.push(item(Outcome::NotImportable, None, detail.to_string()));
             continue;
         };
-        let pick = match source.resolve(spec, &target) {
-            Ok(pick) => pick,
-            Err(error) => {
-                items.push(item(Outcome::Failed, None, error.to_string()));
-                continue;
-            }
+        // The one install path of task 055, under the list's name for the addon.
+        let request = SourceRequest {
+            spec: spec.clone(),
+            wanted: Wanted::Current,
+            name: Some(entry.name.clone()),
         };
         if dry_run {
-            items.push(item(
-                Outcome::WouldInstall,
-                Some(pick.version.clone()),
-                pick.summary(),
-            ));
+            items.push(match engine.resolve(source, &request) {
+                Ok(pick) => item(
+                    Outcome::WouldInstall,
+                    Some(pick.version.clone()),
+                    pick.summary(),
+                ),
+                Err(error) => item(Outcome::Failed, None, error.to_string()),
+            });
             continue;
         }
-        let zip = downloads.join(state::file_safe(&pick.asset));
-        let installed = source.fetch(&pick, &zip).and_then(|()| {
-            engine.install(
-                &zip,
-                &Metadata {
-                    source: pick.source.clone(),
-                    version: Some(pick.version.clone()),
-                    name: Some(entry.name.clone()),
-                    nolib: Some(pick.nolib),
-                },
-            )
-        });
-        let _ = std::fs::remove_file(&zip);
-        match installed {
-            Ok(installed) => {
+        match engine.install_from_source(source, &request, &mut |_| {}) {
+            Ok(SourceInstalled {
+                pick,
+                outcome: PickInstalled::Installed(installed),
+            }) => {
                 present
                     .added_names
                     .insert(installed.name.to_ascii_lowercase());
@@ -436,10 +428,20 @@ pub fn import(
                 done.warnings = installed.warnings;
                 items.push(done);
             }
+            Ok(SourceInstalled {
+                outcome: PickInstalled::AlreadyInstalled(current),
+                ..
+            }) => items.push(item(
+                Outcome::AlreadyInstalled,
+                Some(current.entry.version.clone()),
+                format!(
+                    "{} {} is managed already",
+                    current.name, current.entry.version
+                ),
+            )),
             Err(error) => items.push(item(Outcome::Failed, None, error.to_string())),
         }
     }
-    let _ = std::fs::remove_dir(&downloads);
 
     if items.iter().any(|item| item.outcome == Outcome::Installed) {
         let after = scan::scan_flavor(&engine.flavor)?;
@@ -463,7 +465,8 @@ pub fn import(
 mod tests {
     use super::*;
     use crate::flavor::{BuildVersion, Flavor, FlavorId};
-    use crate::sources::Pick;
+    use crate::install::Metadata;
+    use crate::sources::{Pick, Target};
     use crate::state::Entry;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -748,8 +751,11 @@ mod tests {
         assert_eq!(installed.source, "github:Example/One");
         assert_eq!(installed.version, "1.2.0");
         assert!(state.entry("ByHand").is_none(), "left alone");
-        assert!(
-            !engine.home.staging_dir().join("downloads").exists(),
+        assert_eq!(
+            std::fs::read_dir(engine.home.staging_dir())
+                .map(|entries| entries.count())
+                .unwrap_or_default(),
+            0,
             "the download is gone"
         );
 

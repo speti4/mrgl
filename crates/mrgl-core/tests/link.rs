@@ -447,3 +447,144 @@ fn a_link_replaced_by_a_real_folder_is_forgotten_on_the_next_link() {
     assert!(state.entry("DevAddon").is_none());
     assert!(state.entry("OneFolder").is_some());
 }
+
+// --- task 055: the link guard sits in the commit, so every path that stages and commits refuses ---
+
+/// A source without the network: every spec resolves to one pick, served from one fixture zip.
+struct OneZip {
+    zip: PathBuf,
+    version: &'static str,
+}
+
+impl mrgl_core::sources::Source for OneZip {
+    fn resolve(
+        &self,
+        spec: &mrgl_core::sources::SourceSpec,
+        _target: &mrgl_core::sources::Target,
+    ) -> mrgl_core::error::Result<mrgl_core::sources::Pick> {
+        Ok(mrgl_core::sources::Pick {
+            source: spec.to_string(),
+            release: format!("v{}", self.version),
+            version: self.version.to_string(),
+            published: None,
+            prerelease: false,
+            asset: "One-forever.zip".to_string(),
+            url: "https://github.test/One-forever.zip".to_string(),
+            size: None,
+            flavor: "forever".to_string(),
+            interface: Some(16001),
+            guess: false,
+            reason: "release.json names forever (interface 16001)".to_string(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: mrgl_core::forever::ForeverBuild::Unknown,
+            stale: None,
+        })
+    }
+
+    fn fetch(&self, _pick: &mrgl_core::sources::Pick, to: &Path) -> mrgl_core::error::Result<()> {
+        std::fs::copy(&self.zip, to).expect("the download");
+        Ok(())
+    }
+}
+
+/// An import of one `github:` entry the flavor does not have, so it reaches the install path.
+#[cfg(windows)]
+fn import_one(sandbox: &Sandbox, source: &OneZip) -> mrgl_core::list_file::Imported {
+    use mrgl_core::list_file::{self, FORMAT, ListEntry, ListFile, SCHEMA};
+    let list = ListFile {
+        format: FORMAT.to_string(),
+        schema: SCHEMA,
+        flavor: "wowf".to_string(),
+        exported_at: None,
+        addons: vec![ListEntry {
+            name: "Fresh".to_string(),
+            source: "github:Example/Fresh".to_string(),
+            version: source.version.to_string(),
+            folders: Vec::new(),
+        }],
+    };
+    let report = list_file::import(&sandbox.engine, source, &list, false).expect("imports");
+    report.items.into_iter().next().expect("the entry")
+}
+
+#[cfg(windows)]
+#[test]
+fn every_install_path_refuses_a_linked_addon_and_a_foreign_junction() {
+    use mrgl_core::list_file::Outcome;
+    let sandbox = Sandbox::new("every-path");
+    let before = snapshot(&sandbox.dev);
+    let source = OneZip {
+        zip: zip("one-folder-1.2.0.zip"),
+        version: "1.2.0",
+    };
+    let spec = mrgl_core::sources::SourceSpec::parse("github:Example/One").expect("a spec");
+    let from_source = |sandbox: &Sandbox| {
+        sandbox.engine.install_from_source(
+            &source,
+            &mrgl_core::install::SourceRequest::current(spec.clone()),
+            &mut |_| {},
+        )
+    };
+
+    // A linked addon: the source path and the import refuse it like the zip path does.
+    link::link(&sandbox.engine, &sandbox.dev).expect("links");
+    let error = from_source(&sandbox).expect_err("refused");
+    assert!(
+        matches!(&error, Error::LinkedAddon { action: "install over", name, .. } if name == "OneFolder"),
+        "{error}"
+    );
+    let imported = import_one(&sandbox, &source);
+    assert_eq!(imported.outcome, Outcome::Failed);
+    assert!(
+        imported
+            .detail
+            .starts_with("refused to install over OneFolder (flavor forever): it is linked from "),
+        "{}",
+        imported.detail
+    );
+    assert!(link::is_link(&sandbox.addon("OneFolder")));
+    link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
+
+    // A junction mrgl did not make over a managed addon with a previous version: the zip, the source,
+    // the import and the rollback all refuse it, and nothing moves.
+    for name in ["one-folder-1.0.0.zip", "one-folder-1.1.0.zip"] {
+        sandbox
+            .engine
+            .install(&zip(name), &metadata_for(&zip(name)))
+            .expect("installs");
+    }
+    std::fs::remove_dir_all(sandbox.addon("OneFolder")).expect("the folder goes");
+    let dev = link::dev_folder(&sandbox.dev).expect("the folder");
+    link::create_junction(&sandbox.addon("OneFolder"), &dev.join("OneFolder"))
+        .expect("a junction by hand");
+    let foreign = |error: &Error| matches!(error, Error::ForeignJunction { folder, .. } if folder == "OneFolder");
+    let zip_path = zip("one-folder-1.2.0.zip");
+    let error = sandbox
+        .engine
+        .install(&zip_path, &metadata_for(&zip_path))
+        .expect_err("refused");
+    assert!(foreign(&error), "{error}");
+    let error = from_source(&sandbox).expect_err("refused");
+    assert!(foreign(&error), "{error}");
+    let imported = import_one(&sandbox, &source);
+    assert_eq!(imported.outcome, Outcome::Failed);
+    assert!(
+        imported
+            .detail
+            .starts_with("refused to install over OneFolder (flavor forever): it is a junction"),
+        "{}",
+        imported.detail
+    );
+    let error = sandbox.engine.rollback("OneFolder").expect_err("refused");
+    assert!(foreign(&error), "{error}");
+
+    assert!(link::is_link(&sandbox.addon("OneFolder")));
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    let (_, entry) = state.entry("OneFolder").expect("still managed");
+    assert_eq!(entry.version, "1.1.0", "the rollback changed nothing");
+    assert!(entry.pinned.is_none());
+    assert!(state.entry("Fresh").is_none());
+    assert_eq!(snapshot(&sandbox.dev), before, "the development folder");
+}

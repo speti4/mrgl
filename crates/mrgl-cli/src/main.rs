@@ -29,14 +29,17 @@ use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
 use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
-use mrgl_core::install::{Engine, Marked, Metadata, PickInstalled, PickStep};
+use mrgl_core::install::{
+    AlreadyInstalled, Engine, Installed, Marked, Metadata, PickInstalled, PickStep,
+    SourceInstalled, SourceRequest,
+};
 use mrgl_core::interface::{self, InterfaceMismatch};
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
-use mrgl_core::sources::{self, Channel, Pick, Source, SourceSpec, Target};
+use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::zip_entry;
@@ -1138,9 +1141,9 @@ fn add_target(spec: Option<&str>, warnings: &mut Vec<String>) -> Result<Target, 
 }
 
 /// `mrgl add <source> --flavor <flavor> [--dry-run]`: resolve the release for the flavor and report the
-/// pick; without `--dry-run` the pick is downloaded and installed through the engine (task 040,
-/// [`install_from_source`]), and an addon the sidecar has from that source at that version already is
-/// reported as such, with nothing downloaded.
+/// pick; without `--dry-run` the pick is downloaded and installed through the engine's one install path
+/// (tasks 040 and 055, [`Engine::install_from_source`]), and an addon the sidecar has from that source at
+/// that version already is reported as such, with nothing downloaded.
 fn add_command(
     reporter: &Reporter,
     source: &str,
@@ -1153,37 +1156,32 @@ fn add_command(
     if !dry_run {
         let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
         let folder_name = engine.flavor.folder_name();
-        let (pick, outcome) = install_from_source(reporter, &engine, &spec, &mut warnings)?;
-        // The same companions as `add <file.zip>`: the running-client warning (task 038), the
-        // dependency check (task 029) and the interface check (task 015) of the installed folders.
-        let (installed, addon, client_warning, mismatch) = match &outcome {
-            PickInstalled::Installed(installed) => {
-                warnings.extend(installed.warnings.iter().cloned());
-                let dependencies =
-                    installed_dependencies(&engine, &installed.folders, &mut warnings);
-                let mismatch = installed_mismatch(&engine, installed.folders.first());
-                let addon = serde_json::json!({
-                    "name": installed.name,
-                    "version": installed.version,
-                    "previous_version": installed.previous_version,
-                    "source": pick.source,
-                    "folders": installed.folders,
-                    "removed_folders": installed.removed_folders,
-                    "dependencies": dependencies,
-                });
-                (true, addon, installed.client_warning.clone(), mismatch)
-            }
+        let github = GitHub::from_env(sources::http_from_env());
+        let SourceInstalled { pick, outcome } = engine
+            .install_from_source(
+                &github,
+                &SourceRequest::current(spec.clone()),
+                &mut install_progress(reporter, &engine, &mut warnings),
+            )
+            .map_err(|error| error.to_string())?;
+        // The same companions as `add <file.zip>`, from the one summary helper of task 055: the
+        // running-client warning (task 038), the dependency check (task 029) and the interface check
+        // (task 015) of the installed folders.
+        let (installed, summary, client_warning, kind) = match &outcome {
+            PickInstalled::Installed(installed) => (
+                true,
+                install_summary(&engine, installed, &pick.source, &mut warnings),
+                installed.client_warning.clone(),
+                Kind::Success,
+            ),
             PickInstalled::AlreadyInstalled(current) => {
                 warnings.extend(current.warnings.iter().cloned());
-                let addon = serde_json::json!({
-                    "name": current.name,
-                    "version": current.entry.version,
-                    "previous_version": current.entry.previous_version,
-                    "source": current.entry.source,
-                    "folders": current.entry.folders,
-                    "removed_folders": [],
-                });
-                (false, addon, None, None)
+                (
+                    false,
+                    already_installed_summary(current, &folder_name),
+                    None,
+                    Kind::Nothing,
+                )
             }
         };
         // The Forever signal and note of task 011, on the install as on the dry run.
@@ -1200,9 +1198,9 @@ fn add_command(
                 "forever": forever,
                 "installed": installed,
                 "already_installed": !installed,
-                "addon": addon,
+                "addon": summary.addon,
                 "client_warning": client_warning,
-                "interface_mismatch": mismatch,
+                "interface_mismatch": summary.mismatch,
                 "warnings": warnings,
             }));
             return Ok(());
@@ -1210,7 +1208,7 @@ fn add_command(
         for warning in client_warning.iter().chain(&warnings) {
             reporter.say(Kind::Warning, warning);
         }
-        if let Some(mismatch) = &mismatch {
+        if let Some(mismatch) = &summary.mismatch {
             reporter.say(
                 Kind::Warning,
                 interface_after_install(mismatch, &folder_name),
@@ -1220,40 +1218,7 @@ fn add_command(
             let (kind, text) = forever_message(status);
             reporter.say(kind, text);
         }
-        match outcome {
-            PickInstalled::Installed(installed) => {
-                let folders = format!(
-                    "{}: {}",
-                    count_folders(installed.folders.len()),
-                    installed.folders.join(", ")
-                );
-                let mut summary = match &installed.previous_version {
-                    Some(previous) => format!(
-                        "updated {} from {previous} to {} ({folders}) in {folder_name}",
-                        installed.name, installed.version
-                    ),
-                    None => format!(
-                        "installed {} {} ({folders}) into {folder_name}",
-                        installed.name, installed.version
-                    ),
-                };
-                if !installed.removed_folders.is_empty() {
-                    summary.push_str(&format!(
-                        ", {} of the previous version removed ({})",
-                        count_folders(installed.removed_folders.len()),
-                        installed.removed_folders.join(", ")
-                    ));
-                }
-                reporter.say(Kind::Success, summary);
-            }
-            PickInstalled::AlreadyInstalled(current) => reporter.say(
-                Kind::Nothing,
-                format!(
-                    "{} {} is installed already in {folder_name} from {}, nothing to do",
-                    current.name, current.entry.version, current.entry.source
-                ),
-            ),
-        }
+        reporter.say(kind, summary.line);
         return Ok(());
     }
     let target = add_target(flavor, &mut warnings)?;
@@ -1306,55 +1271,137 @@ fn add_command(
     Ok(())
 }
 
-/// The install path of a source spec (task 040): resolves the release for the engine's flavor and hands
-/// the pick to the engine ([`Engine::install_pick`]), which downloads it into the staging folder and
-/// installs it, or finds it installed already. In human mode it says what runs (resolving, the pick,
-/// downloading, installing); with `--json` it prints nothing. The caller reports the outcome and the
-/// warnings, which this pushes to.
-fn install_from_source(
-    reporter: &Reporter,
+/// The progress of the one install path (task 055, [`Engine::install_from_source`]), the same lines for
+/// every caller: resolving, the pick, downloading, installing. A pick that is a guess is pushed to the
+/// warnings instead, so it is in the JSON document too and on the screen with the other warnings; in
+/// `--json` mode nothing else is said.
+fn install_progress<'a>(
+    reporter: &'a Reporter,
     engine: &Engine,
-    spec: &SourceSpec,
-    warnings: &mut Vec<String>,
-) -> Result<(Pick, PickInstalled), String> {
-    let target = Target::from_flavor(&engine.flavor);
-    let name = target.flavor_name().to_string();
+    warnings: &'a mut Vec<String>,
+) -> impl FnMut(PickStep<'_>) + 'a {
+    let name = Target::from_flavor(&engine.flavor)
+        .flavor_name()
+        .to_string();
     let folder_name = engine.flavor.folder_name();
-    if !reporter.json {
-        reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
+    move |step| {
+        // Task 041: a pick from the cached release list, offline, is a warning on the screen and in the JSON.
+        if let PickStep::Picked { pick } = step {
+            warnings.extend(pick.stale_warning());
+        }
+        install_step(reporter, &name, &folder_name, warnings, step);
     }
-    let github = GitHub::from_env(sources::http_from_env());
-    let pick = github
-        .resolve(spec, &target)
-        .map_err(|error| error.to_string())?;
-    // Task 041: a pick from the cached release list, offline, is a warning on the screen and in the JSON.
-    warnings.extend(pick.stale_warning());
-    if pick.guess {
-        // A guess is worth a warning in the JSON document too, not only on the screen.
-        warnings.push(format!("pick for {name}, a guess: {}", pick.summary()));
-    } else if !reporter.json {
-        reporter.say(
+}
+
+/// One progress step of [`install_progress`].
+fn install_step(
+    reporter: &Reporter,
+    name: &str,
+    folder_name: &str,
+    warnings: &mut Vec<String>,
+    step: PickStep<'_>,
+) {
+    match step {
+        PickStep::Picked { pick } if pick.guess => {
+            warnings.push(format!("pick for {name}, a guess: {}", pick.summary()));
+        }
+        _ if reporter.json => {}
+        PickStep::Resolving { spec, .. } => {
+            reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
+        }
+        PickStep::Picked { pick } => reporter.say(
             Kind::Progress,
             format!("pick for {name}: {}", pick.summary()),
-        );
+        ),
+        PickStep::Downloading { pick, .. } => {
+            reporter.say(Kind::Progress, format!("downloading {}", pick.asset));
+        }
+        PickStep::Installing { pick, .. } => reporter.say(
+            Kind::Progress,
+            format!("installing {} into {folder_name}", pick.asset),
+        ),
     }
-    let outcome = engine
-        .install_pick(&github, &pick, &mut |step| {
-            if reporter.json {
-                return;
-            }
-            match step {
-                PickStep::Downloading { pick, .. } => {
-                    reporter.say(Kind::Progress, format!("downloading {}", pick.asset));
-                }
-                PickStep::Installing { pick, .. } => reporter.say(
-                    Kind::Progress,
-                    format!("installing {} into {folder_name}", pick.asset),
-                ),
-            }
-        })
-        .map_err(|error| error.to_string())?;
-    Ok((pick, outcome))
+}
+
+/// What every install path reports about an addon it installed (task 055): the `addon` block of the
+/// JSON document, the interface check of the primary folder (task 015) and the plain summary line.
+struct InstallSummary {
+    addon: serde_json::Value,
+    mismatch: Option<InterfaceMismatch>,
+    line: String,
+}
+
+/// The one summary of an install, for `add <file.zip>`, `add github:` and `update` (task 055): the
+/// engine's warnings and those of the dependency check of the installed folders (task 029) go to
+/// `warnings`; the `addon` block names the addon as the sidecar records it now; the line is `installed
+/// <name> <version> (<folders>) into <flavor folder>`, or `updated <name> from <previous> to <version>
+/// (<folders>) in <flavor folder>`, with the folders of the previous version that went.
+fn install_summary(
+    engine: &Engine,
+    installed: &Installed,
+    source: &str,
+    warnings: &mut Vec<String>,
+) -> InstallSummary {
+    warnings.extend(installed.warnings.iter().cloned());
+    let dependencies = installed_dependencies(engine, &installed.folders, warnings);
+    let mismatch = installed_mismatch(engine, installed.folders.first());
+    let addon = serde_json::json!({
+        "name": installed.name,
+        "version": installed.version,
+        "previous_version": installed.previous_version,
+        "source": source,
+        "folders": installed.folders,
+        "removed_folders": installed.removed_folders,
+        "dependencies": dependencies,
+    });
+    let folder_name = engine.flavor.folder_name();
+    let folders = format!(
+        "{}: {}",
+        count_folders(installed.folders.len()),
+        installed.folders.join(", ")
+    );
+    let mut line = match &installed.previous_version {
+        Some(previous) => format!(
+            "updated {} from {previous} to {} ({folders}) in {folder_name}",
+            installed.name, installed.version
+        ),
+        None => format!(
+            "installed {} {} ({folders}) into {folder_name}",
+            installed.name, installed.version
+        ),
+    };
+    if !installed.removed_folders.is_empty() {
+        line.push_str(&format!(
+            ", {} of the previous version removed ({})",
+            count_folders(installed.removed_folders.len()),
+            installed.removed_folders.join(", ")
+        ));
+    }
+    InstallSummary {
+        addon,
+        mismatch,
+        line,
+    }
+}
+
+/// The summary of an addon the one install path found installed already at the pick's version: the
+/// sidecar's entry as the `addon` block, nothing removed, and the nothing-to-do line.
+fn already_installed_summary(current: &AlreadyInstalled, folder_name: &str) -> InstallSummary {
+    InstallSummary {
+        addon: serde_json::json!({
+            "name": current.name,
+            "version": current.entry.version,
+            "previous_version": current.entry.previous_version,
+            "source": current.entry.source,
+            "folders": current.entry.folders,
+            "removed_folders": [],
+        }),
+        mismatch: None,
+        line: format!(
+            "{} {} is installed already in {folder_name} from {}, nothing to do",
+            current.name, current.entry.version, current.entry.source
+        ),
+    }
 }
 
 /// The release notes under the pick (task 030): the notes line, then the release page, as one message of the
@@ -1553,25 +1600,15 @@ fn add_zip(
     let installed = engine
         .install(&zip, &metadata)
         .map_err(|error| error.to_string())?;
-    warnings.extend(installed.warnings.iter().cloned());
-    let dependencies = installed_dependencies(&engine, &installed.folders, &mut warnings);
-    let mismatch = installed_mismatch(&engine, installed.folders.first());
+    let summary = install_summary(&engine, &installed, &metadata.source, &mut warnings);
     if reporter.json {
         reporter.document(serde_json::json!({
             "kind": "add",
             "flavor": &engine.flavor,
             "dry_run": false,
-            "addon": {
-                "name": installed.name,
-                "version": installed.version,
-                "previous_version": installed.previous_version,
-                "source": metadata.source,
-                "folders": installed.folders,
-                "removed_folders": installed.removed_folders,
-                "dependencies": dependencies,
-            },
+            "addon": summary.addon,
             "client_warning": installed.client_warning,
-            "interface_mismatch": mismatch,
+            "interface_mismatch": summary.mismatch,
             "warnings": warnings,
         }));
         return Ok(());
@@ -1579,31 +1616,8 @@ fn add_zip(
     for warning in installed.client_warning.iter().chain(&warnings) {
         reporter.say(Kind::Warning, warning);
     }
-    let mut summary = match &installed.previous_version {
-        Some(previous) => format!(
-            "updated {} from {previous} to {} ({}: {}) in {folder_name}",
-            installed.name,
-            installed.version,
-            count_folders(installed.folders.len()),
-            installed.folders.join(", ")
-        ),
-        None => format!(
-            "installed {} {} ({}: {}) into {folder_name}",
-            installed.name,
-            installed.version,
-            count_folders(installed.folders.len()),
-            installed.folders.join(", ")
-        ),
-    };
-    if !installed.removed_folders.is_empty() {
-        summary.push_str(&format!(
-            ", {} of the previous version removed ({})",
-            count_folders(installed.removed_folders.len()),
-            installed.removed_folders.join(", ")
-        ));
-    }
-    reporter.say(Kind::Success, summary);
-    if let Some(mismatch) = &mismatch {
+    reporter.say(Kind::Success, summary.line);
+    if let Some(mismatch) = &summary.mismatch {
         reporter.say(
             Kind::Warning,
             interface_after_install(mismatch, &folder_name),

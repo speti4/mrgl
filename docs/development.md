@@ -17,11 +17,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
-  result, never a refusal, task 038; it refuses to install over a linked addon or a junction it did not
-  make; `Engine::install_pick` takes a source's pick to it, task 040: the sidecar is checked for the addon
-  from that source at that version, else the asset is downloaded through the source's `Http` into the
-  staging folder and goes through the same install call with the pick's source and version, and the
-  download is removed once the call returns; the rollback, `Engine::rollback`, sends the entry's previous
+  result, never a refusal, task 038; its commit, `Engine::commit`, refuses to install over a linked addon
+  or a junction it did not make before the first folder moves, so every path that stages and commits does,
+  task 055; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
+  below; the rollback, `Engine::rollback`, sends the entry's previous
   version and its zip from the cache through the same stage and swap with the entry's source, pins the
   addon there and leaves both zips in the cache, so a second rollback goes forward again, task 022), the
   dev addon links (`link`, task 005: a directory junction under `Interface\AddOns` for every
@@ -115,6 +114,21 @@ managed or not) is reported and left alone. `--dry-run` resolves every entry and
 `Interface\AddOns` or in the sidecar (the release list cache of the GitHub source is written as on any
 resolve). An entry that fails does not stop the others; the run then ends with exit code 1. The list may
 come from another flavor: the picks are made for the flavor it is imported into, with a warning.
+
+The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:` and `import`
+call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
+or a pick made already, and the name the list file gives the addon) and resolves it for the flavor's build
+on the addon's own channel, the channel of its sidecar entry from that source (else of the entry of that
+name, else `stable`, `Engine::target_for`, task 021). An addon the sidecar has from that source at the
+pick's version, its folders there, is installed already: nothing is downloaded and nothing moves. Otherwise
+the asset is downloaded into a fresh folder under `staging\`, staged and committed with the pick's source
+and version under the name the sidecar knows the source by (else the request's name, else the folders'),
+and the download is removed whatever the install returned. `Engine::resolve` is the same resolve alone, for
+a dry run, and `Engine::install_pick` the same path for a pick in hand. The link refusal of task 005 sits in
+`Engine::commit`, so a zip in hand, a source, an import and a rollback all refuse to install over
+a linked addon or a junction mrgl did not make. The command line reports every install with one summary
+(the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
+interface checks).
 
 The interface check (task 015) compares the `## Interface` numbers of the TOC the flavor loads with the
 installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,

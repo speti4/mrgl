@@ -981,6 +981,9 @@ fn a_pick_installs_through_the_source_and_then_is_installed_already() {
             assert!(zip.is_file(), "downloaded: {}", zip.display());
             steps.push(format!("installing {}", pick.version));
         }
+        PickStep::Resolving { .. } | PickStep::Picked { .. } => {
+            panic!("a pick in hand is not resolved again: {step:?}")
+        }
     };
     let outcome = sandbox
         .engine
@@ -1476,4 +1479,93 @@ fn a_rollback_past_the_bound_is_refused_and_changes_nothing() {
     );
     assert_eq!(tree_hashes(&sandbox.addon("OneFolder")), addon_before);
     assert!(sandbox.staging_entries().is_empty());
+}
+
+// --- task 055: the one install path resolves on the addon's own channel ---
+
+#[test]
+fn the_one_path_resolves_a_managed_addon_on_its_channel_and_finds_it_installed() {
+    let sandbox = Sandbox::new("one-path");
+    let releases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/releases");
+    let github = GitHub::new(FolderHttp::new(releases), None, None);
+    let request = |spec: &str| {
+        mrgl_core::install::SourceRequest::current(SourceSpec::parse(spec).expect("a spec"))
+    };
+
+    // An addon the sidecar does not have is picked on the stable channel.
+    let pick = sandbox
+        .engine
+        .resolve(&github, &request("github:Example/Prerelease"))
+        .expect("a pick");
+    assert_eq!(pick.version, "1.0.0");
+
+    // A managed addon on the prerelease channel is picked on its own channel, by the source of its entry
+    // (another case than the request's spelling) or, for an entry of another source, by the request's name.
+    sandbox.install("one-folder-1.0.0.zip");
+    let mut state = sandbox.state();
+    let entry = state.addons.get_mut("OneFolder").expect("installed");
+    entry.source = "github:example/prerelease".to_string();
+    entry.set_channel(Channel::Prerelease);
+    sandbox.engine.home.write_state(&state).expect("writes");
+    let pick = sandbox
+        .engine
+        .resolve(&github, &request("github:Example/Prerelease"))
+        .expect("a pick");
+    assert_eq!(pick.version, "1.1.0-beta");
+    assert!(pick.prerelease);
+    let mut by_name = request("github:Example/BetaOnly");
+    by_name.name = Some("onefolder".to_string());
+    let state = sandbox.state();
+    assert_eq!(
+        sandbox
+            .engine
+            .target_for(&state, "github:Example/BetaOnly", by_name.name.as_deref())
+            .channel,
+        Channel::Prerelease
+    );
+    assert_eq!(
+        sandbox
+            .engine
+            .target_for(&state, "github:Example/BetaOnly", None)
+            .channel,
+        Channel::Stable
+    );
+
+    // The full path with the progress steps in order: resolved, picked, then the installed check stops it
+    // when the sidecar has that version (no download).
+    let mut state = sandbox.state();
+    state
+        .addons
+        .get_mut("OneFolder")
+        .expect("installed")
+        .version = "1.1.0-beta".to_string();
+    sandbox.engine.home.write_state(&state).expect("writes");
+    let mut steps = Vec::new();
+    let installed = sandbox
+        .engine
+        .install_from_source(
+            &github,
+            &request("github:Example/Prerelease"),
+            &mut |step| match step {
+                PickStep::Resolving { spec, target } => {
+                    steps.push(format!("resolving {spec} on {}", target.channel))
+                }
+                PickStep::Picked { pick } => steps.push(format!("picked {}", pick.version)),
+                other => panic!("no download: {other:?}"),
+            },
+        )
+        .expect("checks");
+    assert_eq!(
+        steps,
+        [
+            "resolving github:Example/Prerelease on prerelease",
+            "picked 1.1.0-beta"
+        ]
+    );
+    let PickInstalled::AlreadyInstalled(current) = installed.outcome else {
+        panic!("installed already, not {:?}", installed.outcome);
+    };
+    assert_eq!(current.name, "OneFolder");
+    assert_eq!(installed.pick.version, "1.1.0-beta");
+    assert_eq!(sandbox.staging_entries(), Vec::<String>::new());
 }
