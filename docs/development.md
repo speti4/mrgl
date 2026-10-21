@@ -18,7 +18,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
   result, never a refusal, task 038; it refuses to install over a linked addon or a junction it did not
-  make), the dev addon links (`link`, task 005: a directory junction under `Interface\AddOns` for every
+  make; `Engine::install_pick` takes a source's pick to it, task 040: the sidecar is checked for the addon
+  from that source at that version, else the asset is downloaded through the source's `Http` into the
+  staging folder and goes through the same install call with the pick's source and version, and the
+  download is removed once the call returns), the dev addon links (`link`, task 005: a directory junction under `Interface\AddOns` for every
   addon of a development folder, a mount-point reparse point made through the Windows API, recorded in the
   sidecar with the source `link:<development folder>`, the TOC's version and no file list; `unlink` removes
   exactly those junctions, never a real folder or a junction mrgl did not make; Windows-only), the state
@@ -50,7 +53,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   sidecar through the install engine and marks every addon managed or unmanaged with `state::classify`,
   task 037, while `scan` stays the raw folder view), `add github:<owner>/<repo>
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick, with the release notes' line and
-  link under it when the release has notes, task 030; the install from the pick is task 040), `add
+  link under it when the release has notes, task 030; task 040 installs it through the engine or reports
+  it installed already), `add
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
   task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
   (task 024), `link <folder>` and `unlink <folder>` (task 005), `export --flavor <flavor> [--to <file>]`

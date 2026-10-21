@@ -15,6 +15,10 @@
 //! [`Removed::client_warning`]. The client reads the addon folders again at `/reload` or the next login, so
 //! the write goes on; only a `WTF` write is refused while it runs. The engine asks the system's process list
 //! unless [`Engine::with_processes`] hands it another (the tests' stand-in client).
+//!
+//! [`Engine::install_pick`] is that hand-over for a source's [`Pick`] (task 040): the asset is downloaded
+//! through the source into the staging folder and goes through the same call, unless the sidecar has the
+//! addon from that source at that version already.
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
@@ -27,7 +31,7 @@ use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
 use crate::scan;
-use crate::sources::Channel;
+use crate::sources::{Channel, Pick, Source};
 use crate::state::{self, Entry, FlavorHome, LoadedState, State};
 use crate::toc::{self, TocName};
 use crate::zip_entry::{self, ZipRole};
@@ -135,6 +139,36 @@ pub struct Marked {
     pub channel: Channel,
     /// Whether the entry changed; `false` means it was so already and nothing was written.
     pub changed: bool,
+    pub warnings: Vec<String>,
+}
+
+/// A step of [`Engine::install_pick`], for the caller's progress line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickStep<'a> {
+    /// The asset is about to be downloaded into this file under the staging folder.
+    Downloading { pick: &'a Pick, to: &'a Path },
+    /// The asset is downloaded; the engine's install call starts.
+    Installing { pick: &'a Pick, zip: &'a Path },
+}
+
+/// What an install from a source's pick did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickInstalled {
+    /// The addon was installed, or updated from the version the sidecar had (the engine's normal path).
+    Installed(Installed),
+    /// The sidecar has the addon from this source at the pick's version and its folders are there: nothing
+    /// was downloaded and nothing moved.
+    AlreadyInstalled(AlreadyInstalled),
+}
+
+/// A managed addon the sidecar has from a source, at the version a pick names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlreadyInstalled {
+    /// The sidecar's key.
+    pub name: String,
+    /// The sidecar's entry as it stands.
+    pub entry: Entry,
+    /// Plain lines about the sidecar (a corrupt one read as fresh).
     pub warnings: Vec<String>,
 }
 
@@ -385,6 +419,57 @@ impl Engine {
         warnings.append(&mut installed.warnings);
         installed.warnings = warnings;
         Ok(installed)
+    }
+
+    /// Installs a source's pick (task 040). When the sidecar has an addon from the pick's source (ASCII
+    /// case-insensitive, as GitHub's names are) at the pick's version and its folders are there, nothing is
+    /// downloaded and nothing moves. Otherwise the asset is downloaded through the source into a fresh
+    /// folder under `staging\` and handed to [`Engine::install`] with the pick's source and version as the
+    /// metadata (the TOC's `## Version` stays the fallback), under the name the sidecar already knows the
+    /// addon by when it came from this source; an addon at another version is updated by that same call.
+    /// The download is removed once the call returns, whatever it returned; the engine keeps its own copy
+    /// in the cache.
+    pub fn install_pick<S: Source + ?Sized>(
+        &self,
+        source: &S,
+        pick: &Pick,
+        progress: &mut dyn FnMut(PickStep<'_>),
+    ) -> Result<PickInstalled> {
+        let loaded = self.load_state()?;
+        let mut state = loaded.state;
+        let scan = scan::scan_flavor(&self.flavor)?;
+        // In memory only: an entry whose folders were deleted by hand does not count as installed, and the
+        // install call below reconciles again and writes the sidecar.
+        state.reconcile(&scan);
+        let managed = state
+            .addons
+            .into_iter()
+            .find(|(_, entry)| entry.source.eq_ignore_ascii_case(&pick.source));
+        if let Some((name, entry)) = &managed
+            && entry.version == pick.version
+        {
+            return Ok(PickInstalled::AlreadyInstalled(AlreadyInstalled {
+                name: name.clone(),
+                entry: entry.clone(),
+                warnings: loaded.warning.into_iter().collect(),
+            }));
+        }
+        let dir = fresh_staging_dir(
+            &self.home.staging_dir(),
+            &format!("download-{}", pick.asset),
+        )?;
+        let _download = RemoveOnDrop(dir.clone());
+        let zip = dir.join(state::file_safe(&pick.asset));
+        progress(PickStep::Downloading { pick, to: &zip });
+        source.fetch(pick, &zip)?;
+        progress(PickStep::Installing { pick, zip: &zip });
+        let metadata = Metadata {
+            source: pick.source.clone(),
+            version: Some(pick.version.clone()),
+            name: managed.map(|(name, _)| name),
+            nolib: Some(pick.nolib),
+        };
+        self.install(&zip, &metadata).map(PickInstalled::Installed)
     }
 
     /// Removes a managed addon: its folders under `Interface\AddOns`, its entry and its cache. A name the
@@ -665,6 +750,15 @@ fn plural(count: usize, noun: &str) -> String {
 /// The flavor as a message names it: the friendly name, else the id.
 fn flavor_label(id: &FlavorId) -> String {
     id.friendly_name().unwrap_or(id.as_str()).to_string()
+}
+
+/// A folder removed when the guard goes, on every path out of a function (a download in the staging folder).
+struct RemoveOnDrop(PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// A fresh folder under `staging\`, named after the zip and the clock, never one that exists.

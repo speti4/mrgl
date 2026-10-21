@@ -26,9 +26,11 @@ BOM in a fixture survives every checkout.
   shape without flavor metadata; `Example/NoReleaseJson` has zips only (`-forever`, `-cata` and the unsuffixed
   retail one); `Example/Empty` has no release; `Example/Prerelease` has a draft, a prerelease and a stable
   release; `Example/BetaOnly` has a prerelease alone; `Example/MainlineOnly` names retail only. The asset
-  names are made up and no zip sits behind them: a download test serves a text file from a temporary folder,
-  and the import test of task 015 copies this tree into a temporary folder with a fixture zip of `zips/`
-  behind the Forever asset of `Questie/Questie`.
+  names are made up; one zip sits behind them, `Questie-v1.2.3-forever.zip` under
+  `github.com/Questie/Questie/releases/download/v1.2.3/` (task 040: one `Questie` folder whose TOC says
+  `v1.2.3` while the pick says `1.2.3`), written by `zips/make-zips.py`; every other asset is a 404, the
+  fetch test serves a text file from a temporary folder, and the import test of task 015 copies this tree
+  into a temporary folder with a fixture zip of `zips/` behind the Forever asset of `Questie/Questie`.
 - `zips/*.zip` — small archives for the install engine (task 004), written by `zips/make-zips.py` (fixed
   timestamps and entry order, so a rerun changes no byte; `python -I` it after editing a shape): one addon
   folder in three versions (`one-folder-1.0.0` with `old.lua`, `1.1.0` with `new.lua` instead, `1.2.0`),

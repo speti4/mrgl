@@ -1,11 +1,13 @@
-"""Writes the synthetic fixture zips of task 004 next to this script, deterministically (fixed timestamps,
-fixed entry order, deflate), so a rerun changes no byte. Run it as `python -I <this file>` after editing a
-shape below; the zips are committed. Nothing here comes from a real addon."""
+"""Writes the synthetic fixture zips of task 004 next to this script, and the release asset the GitHub
+source's folder stub serves (task 040) under `../releases/`, deterministically (fixed timestamps, fixed entry
+order, deflate), so a rerun changes no byte. Run it as `python -I <this file>` after editing a shape below;
+the zips are committed. Nothing here comes from a real addon."""
 
 from pathlib import Path
 import zipfile
 
 HERE = Path(__file__).resolve().parent
+RELEASES = HERE.parent / "releases"
 EPOCH = (1980, 1, 1, 0, 0, 0)
 
 
@@ -18,6 +20,7 @@ def toc(name, version, interface="16001", extra=""):
 
 def write(file_name, entries):
     path = HERE / file_name
+    path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
         for name, content in entries:
             info = zipfile.ZipInfo(name, date_time=EPOCH)
@@ -105,4 +108,12 @@ write("needs-library-1.0.0.zip", [
 write("no-addon.zip", [
     ("readme.txt", "no addon folder anywhere\n"),
     ("Docs/notes.txt", "still no TOC\n"),
+])
+
+# The forever asset of `github:Questie/Questie` v1.2.3, at the URL path the folder stub maps its download to.
+# The TOC keeps the tag's `v`, so a test sees the sidecar record the pick's version (`1.2.3`) instead.
+write(RELEASES / "github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-forever.zip", [
+    ("Questie/", ""),
+    ("Questie/Questie.toc", toc("Questie", "v1.2.3", extra="## Notes: a made-up stand-in, no real addon\r\n")),
+    ("Questie/core.lua", "-- Questie fixture 1.2.3\n"),
 ])

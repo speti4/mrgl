@@ -3,7 +3,8 @@
 //! Exit codes: 0 success, 1 an error the plain line explains, 2 a usage error (clap's own).
 //!
 //! `scan`, `list` and `root` are task 002, the game root discovery behind them is task 020;
-//! `add github:<owner>/<repo>` resolves a release (task 003); `add <file.zip>` and `remove` are task 004
+//! `add github:<owner>/<repo>` resolves a release (task 003) and installs it (task 040); `add <file.zip>` and
+//! `remove` are task 004
 //! (the install engine); `list` reads the state sidecar for the managed and the unmanaged addons (task 037);
 //! `backup` (the WTF backup, the listing and the restore) is task 013; the Forever
 //! notes on `add` and on `list` (the derived build signal and the curated note) are task 011; `link` and
@@ -26,13 +27,13 @@ use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
 use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
-use mrgl_core::install::{Engine, Marked, Metadata};
+use mrgl_core::install::{Engine, Marked, Metadata, PickInstalled, PickStep};
 use mrgl_core::interface::{self, InterfaceMismatch};
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
-use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
+use mrgl_core::sources::{self, Channel, Pick, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::{Error, VERSION};
@@ -88,9 +89,9 @@ enum Command {
         /// (found, not remembered).
         folder: Option<PathBuf>,
     },
-    /// Install an addon from a source: the path of a zip in hand (installed), or `github:<owner>/<repo>`
-    /// (task 003 resolves the release; the install from the pick is task 040), later `wago:`, `wowi:`,
-    /// `curse:`.
+    /// Install an addon from a source: the path of a zip in hand, or `github:<owner>/<repo>` (the current
+    /// release's asset for the flavor; an addon installed already at that version is left as it is), later
+    /// `wago:`, `wowi:`, `curse:`.
     Add {
         /// The source spec (`github:<owner>/<repo>`), or a zip path (a `.zip` name or an existing file).
         source: String,
@@ -1063,7 +1064,9 @@ fn add_target(spec: Option<&str>, warnings: &mut Vec<String>) -> Result<Target, 
 }
 
 /// `mrgl add <source> --flavor <flavor> [--dry-run]`: resolve the release for the flavor and report the
-/// pick; the install from the pick is task 040, so without `--dry-run` the command says so and fails.
+/// pick; without `--dry-run` the pick is downloaded and installed through the engine (task 040,
+/// [`install_from_source`]), and an addon the sidecar has from that source at that version already is
+/// reported as such, with nothing downloaded.
 fn add_command(
     reporter: &Reporter,
     source: &str,
@@ -1072,6 +1075,112 @@ fn add_command(
 ) -> Result<(), String> {
     let spec = SourceSpec::parse(source).map_err(|error| error.to_string())?;
     let mut warnings = Vec::new();
+    if !dry_run {
+        let engine = engine_for(flavor, &mut warnings)?;
+        let folder_name = engine.flavor.folder_name();
+        let (pick, outcome) = install_from_source(reporter, &engine, &spec, &mut warnings)?;
+        // The same companions as `add <file.zip>`: the running-client warning (task 038), the
+        // dependency check (task 029) and the interface check (task 015) of the installed folders.
+        let (installed, addon, client_warning, mismatch) = match &outcome {
+            PickInstalled::Installed(installed) => {
+                warnings.extend(installed.warnings.iter().cloned());
+                let dependencies =
+                    installed_dependencies(&engine, &installed.folders, &mut warnings);
+                let mismatch = installed_mismatch(&engine, installed.folders.first());
+                let addon = serde_json::json!({
+                    "name": installed.name,
+                    "version": installed.version,
+                    "previous_version": installed.previous_version,
+                    "source": pick.source,
+                    "folders": installed.folders,
+                    "removed_folders": installed.removed_folders,
+                    "dependencies": dependencies,
+                });
+                (true, addon, installed.client_warning.clone(), mismatch)
+            }
+            PickInstalled::AlreadyInstalled(current) => {
+                warnings.extend(current.warnings.iter().cloned());
+                let addon = serde_json::json!({
+                    "name": current.name,
+                    "version": current.entry.version,
+                    "previous_version": current.entry.previous_version,
+                    "source": current.entry.source,
+                    "folders": current.entry.folders,
+                    "removed_folders": [],
+                });
+                (false, addon, None, None)
+            }
+        };
+        // The Forever signal and note of task 011, on the install as on the dry run.
+        let forever = (engine.flavor.id == FlavorId::Forever)
+            .then(|| ForeverStatus::for_source(&pick.source, pick.forever_build));
+        if reporter.json {
+            reporter.document(serde_json::json!({
+                "kind": "add",
+                "source": &spec,
+                "flavor": &engine.flavor.id,
+                "build": engine.flavor.version.map(|version| version.to_string()),
+                "dry_run": false,
+                "pick": &pick,
+                "forever": forever,
+                "installed": installed,
+                "already_installed": !installed,
+                "addon": addon,
+                "client_warning": client_warning,
+                "interface_mismatch": mismatch,
+                "warnings": warnings,
+            }));
+            return Ok(());
+        }
+        for warning in client_warning.iter().chain(&warnings) {
+            reporter.say(Kind::Warning, warning);
+        }
+        if let Some(mismatch) = &mismatch {
+            reporter.say(
+                Kind::Warning,
+                interface_after_install(mismatch, &folder_name),
+            );
+        }
+        if let Some(status) = forever.as_ref() {
+            let (kind, text) = forever_message(status);
+            reporter.say(kind, text);
+        }
+        match outcome {
+            PickInstalled::Installed(installed) => {
+                let folders = format!(
+                    "{}: {}",
+                    count_folders(installed.folders.len()),
+                    installed.folders.join(", ")
+                );
+                let mut summary = match &installed.previous_version {
+                    Some(previous) => format!(
+                        "updated {} from {previous} to {} ({folders}) in {folder_name}",
+                        installed.name, installed.version
+                    ),
+                    None => format!(
+                        "installed {} {} ({folders}) into {folder_name}",
+                        installed.name, installed.version
+                    ),
+                };
+                if !installed.removed_folders.is_empty() {
+                    summary.push_str(&format!(
+                        ", {} of the previous version removed ({})",
+                        count_folders(installed.removed_folders.len()),
+                        installed.removed_folders.join(", ")
+                    ));
+                }
+                reporter.say(Kind::Success, summary);
+            }
+            PickInstalled::AlreadyInstalled(current) => reporter.say(
+                Kind::Nothing,
+                format!(
+                    "{} {} is installed already in {folder_name} from {}, nothing to do",
+                    current.name, current.entry.version, current.entry.source
+                ),
+            ),
+        }
+        return Ok(());
+    }
     let target = add_target(flavor, &mut warnings)?;
     let name = target.flavor_name().to_string();
     if !reporter.json {
@@ -1089,7 +1198,7 @@ fn add_command(
             "source": &spec,
             "flavor": &target.flavor,
             "build": target.version.map(|version| version.to_string()),
-            "dry_run": dry_run,
+            "dry_run": true,
             "pick": &pick,
             "forever": forever,
             "installed": false,
@@ -1111,22 +1220,62 @@ fn add_command(
             );
         }
         say_release_notes(reporter, &pick);
-        if let Some(status) = forever.as_ref().filter(|_| dry_run) {
+        if let Some(status) = forever.as_ref() {
             let (kind, text) = forever_message(status);
             reporter.say(kind, text);
         }
-        if dry_run {
-            reporter.say(Kind::Nothing, "dry run: nothing installed");
-        }
+        reporter.say(Kind::Nothing, "dry run: nothing installed");
     }
-    if dry_run {
-        return Ok(());
+    Ok(())
+}
+
+/// The install path of a source spec (task 040): resolves the release for the engine's flavor and hands
+/// the pick to the engine ([`Engine::install_pick`]), which downloads it into the staging folder and
+/// installs it, or finds it installed already. In human mode it says what runs (resolving, the pick,
+/// downloading, installing); with `--json` it prints nothing. The caller reports the outcome and the
+/// warnings, which this pushes to.
+fn install_from_source(
+    reporter: &Reporter,
+    engine: &Engine,
+    spec: &SourceSpec,
+    warnings: &mut Vec<String>,
+) -> Result<(Pick, PickInstalled), String> {
+    let target = Target::from_flavor(&engine.flavor);
+    let name = target.flavor_name().to_string();
+    let folder_name = engine.flavor.folder_name();
+    if !reporter.json {
+        reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
     }
-    Err(Error::NotImplemented {
-        command: "add (the install)",
-        task: "040",
+    let github = GitHub::from_env(sources::http_from_env());
+    let pick = github
+        .resolve(spec, &target)
+        .map_err(|error| error.to_string())?;
+    if pick.guess {
+        // A guess is worth a warning in the JSON document too, not only on the screen.
+        warnings.push(format!("pick for {name}, a guess: {}", pick.summary()));
+    } else if !reporter.json {
+        reporter.say(
+            Kind::Progress,
+            format!("pick for {name}: {}", pick.summary()),
+        );
     }
-    .to_string())
+    let outcome = engine
+        .install_pick(&github, &pick, &mut |step| {
+            if reporter.json {
+                return;
+            }
+            match step {
+                PickStep::Downloading { pick, .. } => {
+                    reporter.say(Kind::Progress, format!("downloading {}", pick.asset));
+                }
+                PickStep::Installing { pick, .. } => reporter.say(
+                    Kind::Progress,
+                    format!("installing {} into {folder_name}", pick.asset),
+                ),
+            }
+        })
+        .map_err(|error| error.to_string())?;
+    Ok((pick, outcome))
 }
 
 /// The release notes under the pick (task 030): the notes line, then the release page, as one message of the
