@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use mrgl_core::client;
 use mrgl_core::flavor::{self, FlavorId};
 use mrgl_core::home::{self, Config};
 use mrgl_core::scan::{self, Addon, Scan};
@@ -291,16 +292,25 @@ fn game_root(
     }
 }
 
-/// Prints a scan: the addon lines, the warnings and the summary, or the one JSON document.
+/// Prints a scan: the addon lines, the warnings and the summary, or the one JSON document. A client
+/// running from the flavor folder (task 023) is named in the summary and is `client_running` in the JSON.
 fn report_scan(reporter: &Reporter, kind: &str, scan: &Scan, mut warnings: Vec<String>) {
     warnings.extend(scan.flavor.warnings.iter().cloned());
     warnings.extend(scan.warnings.iter().cloned());
+    let client = match client::client_running(&scan.flavor) {
+        Ok(client) => client,
+        Err(error) => {
+            warnings.push(error.to_string());
+            None
+        }
+    };
     if reporter.json {
         reporter.document(serde_json::json!({
             "kind": kind,
             "flavor": &scan.flavor,
             "addons": &scan.addons,
             "skipped": &scan.skipped,
+            "client_running": client,
             "warnings": warnings,
         }));
         return;
@@ -317,6 +327,9 @@ fn report_scan(reporter: &Reporter, kind: &str, scan: &Scan, mut warnings: Vec<S
     };
     if scan.flavor.curse_client {
         build.push_str(", managed by the CurseForge app");
+    }
+    if client.is_some() {
+        build.push_str(", client running");
     }
     let mut summary = match scan.addons.len() {
         0 => format!("no addons in {} ({build})", scan.flavor.folder_name()),

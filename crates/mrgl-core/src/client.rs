@@ -1,0 +1,444 @@
+//! The running game client (task 023): a process whose executable lives under a flavor folder, found by
+//! path and never by name, since the Forever executable's name is unknown before launch. The client
+//! rewrites `AddOns.txt` on logout and holds `WTF` files open, so every `WTF` write (a backup restore, an
+//! addon set, a SavedVariables cleanup; D-002, D-003) calls [`ensure_client_not_running`] first and refuses
+//! with the documented line while the client runs. A write under `Interface\AddOns` is safe, the client
+//! reads the folders again at `/reload` or the next login, so the install engine turns
+//! [`warn_if_client_running`] into a warning instead. `scan` and `list` report [`client_running`] in their
+//! summary and in `--json`.
+//!
+//! Behind the three calls, [`ProcessList`] lists the running processes with their executable paths:
+//! [`SystemProcesses`] asks the operating system (on Windows one Toolhelp snapshot and one handle per
+//! process, no file I/O, so the check costs nothing noticeable when no client runs) and [`FixedProcesses`]
+//! is the stub for tests. Paths are compared component by component, case-insensitively on Windows, after
+//! the flavor folder is canonicalized once (a junction into the game folder resolves to the path the
+//! kernel reports for the process).
+
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf, Prefix};
+
+use serde::Serialize;
+
+use crate::error::{Error, Result};
+use crate::flavor::Flavor;
+
+/// A running process: its id and the full path of its executable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningProcess {
+    pub pid: u32,
+    pub exe: PathBuf,
+}
+
+/// The running processes of this machine, as far as this user may see them.
+pub trait ProcessList {
+    /// Every visible process with its executable's path. A process whose path cannot be read (the system
+    /// processes, another user's) is left out, never an error; the error is a process list that cannot
+    /// be taken at all.
+    fn executables(&self) -> std::io::Result<Vec<RunningProcess>>;
+}
+
+/// The operating system's process list.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemProcesses;
+
+impl ProcessList for SystemProcesses {
+    fn executables(&self) -> std::io::Result<Vec<RunningProcess>> {
+        system::executables()
+    }
+}
+
+/// A fixed process list, the stub for tests: the processes it is given, in that order.
+#[derive(Debug, Clone, Default)]
+pub struct FixedProcesses(pub Vec<RunningProcess>);
+
+impl FixedProcesses {
+    /// A stub from `(pid, exe)` pairs.
+    pub fn new<P: Into<PathBuf>>(processes: impl IntoIterator<Item = (u32, P)>) -> Self {
+        Self(
+            processes
+                .into_iter()
+                .map(|(pid, exe)| RunningProcess {
+                    pid,
+                    exe: exe.into(),
+                })
+                .collect(),
+        )
+    }
+}
+
+impl ProcessList for FixedProcesses {
+    fn executables(&self) -> std::io::Result<Vec<RunningProcess>> {
+        Ok(self.0.clone())
+    }
+}
+
+/// The game client found running from a flavor folder; `--json` carries it as `{pid, exe}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RunningClient {
+    pub pid: u32,
+    /// The executable's full path, under the flavor folder.
+    pub exe: PathBuf,
+}
+
+impl RunningClient {
+    /// The executable's file name, for the plain lines.
+    pub fn exe_name(&self) -> String {
+        self.exe
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.exe.display().to_string())
+    }
+
+    /// The refusal of a `WTF` write while this client runs, as the error whose `Display` is the plain line.
+    pub fn refusal(&self, flavor: &Flavor) -> Error {
+        Error::ClientRunning {
+            flavor: flavor.folder_name(),
+            client: self.clone(),
+        }
+    }
+
+    /// The plain warning line of a write under `Interface\AddOns` while this client runs.
+    pub fn install_warning(&self, flavor: &Flavor) -> String {
+        format!(
+            "the client is running in {} ({}, pid {}): the installed addons load at /reload or the next login",
+            flavor.folder_name(),
+            self.exe_name(),
+            self.pid
+        )
+    }
+}
+
+/// The first process of a list whose executable lives under a folder. The folder is canonicalized once
+/// (a missing folder is taken as given, absolute); the process paths are compared as they are, since the
+/// kernel reports the resolved path of an image and a file lookup per process would cost what the check
+/// must not.
+pub fn client_running_among(
+    processes: &dyn ProcessList,
+    folder: &Path,
+) -> Result<Option<RunningClient>> {
+    let folder = resolved(folder);
+    let found = processes
+        .executables()
+        .map_err(|source| Error::ProcessList { source })?
+        .into_iter()
+        .find(|process| is_under(&process.exe, &folder))
+        .map(|process| RunningClient {
+            pid: process.pid,
+            exe: process.exe,
+        });
+    Ok(found)
+}
+
+/// The client running from a flavor's folder, through the system's process list; `None` when none runs.
+/// The error is a process list that cannot be taken, not a running client.
+pub fn client_running(flavor: &Flavor) -> Result<Option<RunningClient>> {
+    client_running_among(&SystemProcesses, &flavor.folder)
+}
+
+/// The guard every `WTF` write calls first: `Ok(())` when no client runs from the flavor folder,
+/// [`Error::ClientRunning`] with the refusal line when one does, and the process-list error when it
+/// cannot tell (a write is refused rather than risked).
+pub fn ensure_client_not_running(flavor: &Flavor) -> Result<()> {
+    match client_running(flavor)? {
+        Some(client) => Err(client.refusal(flavor)),
+        None => Ok(()),
+    }
+}
+
+/// The check the install engine turns into a warning before a write under `Interface\AddOns`: the plain
+/// line when a client runs from the flavor folder, or when the process list cannot be taken (the install
+/// goes on either way); `None` when no client runs.
+pub fn warn_if_client_running(flavor: &Flavor) -> Option<String> {
+    match client_running(flavor) {
+        Ok(Some(client)) => Some(client.install_warning(flavor)),
+        Ok(None) => None,
+        Err(error) => Some(error.to_string()),
+    }
+}
+
+/// The folder as the kernel would report it: canonical when it exists, absolute otherwise, without the
+/// `\\?\` prefix either way.
+fn resolved(folder: &Path) -> PathBuf {
+    let path = std::fs::canonicalize(folder)
+        .or_else(|_| std::path::absolute(folder))
+        .unwrap_or_else(|_| folder.to_path_buf());
+    strip_verbatim(&path)
+}
+
+/// `\\?\C:\x` as `C:\x` and `\\?\UNC\server\share` as `\\server\share`, so a canonical path and a
+/// process's Win32 path compare component by component.
+fn strip_verbatim(path: &Path) -> PathBuf {
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path.to_path_buf();
+    };
+    let root = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => format!("{}:\\", char::from(letter)),
+        Prefix::VerbatimUNC(server, share) => format!(
+            "\\\\{}\\{}\\",
+            server.to_string_lossy(),
+            share.to_string_lossy()
+        ),
+        _ => return path.to_path_buf(),
+    };
+    let mut result = PathBuf::from(root);
+    for component in components {
+        if let Component::Normal(part) = component {
+            result.push(part);
+        }
+    }
+    result
+}
+
+/// Whether `exe` lies strictly under `folder`, component by component; the folder itself does not count.
+fn is_under(exe: &Path, folder: &Path) -> bool {
+    let mut found = exe.components();
+    for wanted in folder.components() {
+        match found.next() {
+            Some(component) if same_component(component.as_os_str(), wanted.as_os_str()) => {}
+            _ => return false,
+        }
+    }
+    found.next().is_some()
+}
+
+/// Two path components, case-insensitively on Windows (the file systems there are), exactly elsewhere.
+fn same_component(found: &OsStr, wanted: &OsStr) -> bool {
+    if cfg!(windows) {
+        found.to_string_lossy().to_lowercase() == wanted.to_string_lossy().to_lowercase()
+    } else {
+        found == wanted
+    }
+}
+
+#[cfg(windows)]
+mod system {
+    //! One `CreateToolhelp32Snapshot` over the processes, then per process an `OpenProcess` with the
+    //! limited query right and `QueryFullProcessImageNameW` for the Win32 path of its image: no file is
+    //! opened and nothing is read from disk. A process that cannot be opened (a system process, another
+    //! user's with no right to query it) is left out.
+
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
+    };
+
+    use super::RunningProcess;
+
+    /// A kernel handle closed on drop.
+    struct Handle(HANDLE);
+
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            // SAFETY: the handle came from a successful CreateToolhelp32Snapshot or OpenProcess and is
+            // closed exactly once, here.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    pub(super) fn executables() -> std::io::Result<Vec<RunningProcess>> {
+        // SAFETY: a plain call with constant flags; the process id argument is unused for a process snapshot.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error());
+        }
+        let snapshot = Handle(snapshot);
+        // SAFETY: PROCESSENTRY32W is a plain C struct; all-zero is a valid value, and dwSize is set
+        // before the first call as the API requires.
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        // SAFETY: the snapshot handle is valid and `entry` is a correctly sized, writable struct.
+        if unsafe { Process32FirstW(snapshot.0, &mut entry) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut processes = Vec::new();
+        loop {
+            let pid = entry.th32ProcessID;
+            if let Some(exe) = image_path(pid) {
+                processes.push(RunningProcess { pid, exe });
+            }
+            // SAFETY: as for Process32FirstW; a zero return is the end of the snapshot.
+            if unsafe { Process32NextW(snapshot.0, &mut entry) } == 0 {
+                break;
+            }
+        }
+        Ok(processes)
+    }
+
+    /// The Win32 path of a process's image, or `None` when the process cannot be opened or queried.
+    fn image_path(pid: u32) -> Option<PathBuf> {
+        if pid == 0 {
+            return None;
+        }
+        // SAFETY: a plain call; a null handle is the failure case and is checked.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return None;
+        }
+        let handle = Handle(handle);
+        // Most paths fit MAX_PATH; a longer one gets one retry with the largest path Windows allows.
+        for capacity in [1024usize, 32_768] {
+            let mut buffer = vec![0u16; capacity];
+            let mut length = capacity as u32;
+            // SAFETY: the handle is open with the query right, the buffer is `length` UTF-16 units long
+            // and `length` is updated to the characters written.
+            let ok = unsafe {
+                QueryFullProcessImageNameW(
+                    handle.0,
+                    PROCESS_NAME_WIN32,
+                    buffer.as_mut_ptr(),
+                    &mut length,
+                )
+            };
+            if ok != 0 {
+                buffer.truncate(length as usize);
+                return Some(PathBuf::from(OsString::from_wide(&buffer)));
+            }
+        }
+        None
+    }
+}
+
+#[cfg(not(windows))]
+mod system {
+    //! The other targets list nothing yet: the check reports no client and the guard lets a write
+    //! through. The macOS preview (M6) brings the macOS process list.
+
+    use super::RunningProcess;
+
+    pub(super) fn executables() -> std::io::Result<Vec<RunningProcess>> {
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flavor::FlavorId;
+
+    fn flavor(folder: &str) -> Flavor {
+        Flavor {
+            id: FlavorId::Forever,
+            folder: PathBuf::from(folder),
+            version: None,
+            curse_client: false,
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_process_under_the_folder_is_the_client() {
+        let processes = FixedProcesses::new([
+            (4, "C:\\Windows\\System32\\svchost.exe"),
+            (120, "C:\\games\\World of Warcraft\\_retail_\\Wow.exe"),
+            (
+                121,
+                "C:\\games\\World of Warcraft\\_forever_\\Launcher\\Helper.exe",
+            ),
+            (
+                122,
+                "C:\\games\\World of Warcraft\\_forever_\\WowForever.exe",
+            ),
+        ]);
+        let folder = Path::new("C:\\games\\World of Warcraft\\_forever_");
+        let client = client_running_among(&processes, folder)
+            .expect("a list")
+            .expect("the client");
+        assert_eq!(
+            client.pid, 121,
+            "the first process under the folder, any depth"
+        );
+        assert_eq!(client.exe_name(), "Helper.exe");
+        assert_eq!(
+            client_running_among(
+                &processes,
+                Path::new("C:\\games\\World of Warcraft\\_classic_")
+            )
+            .expect("a list"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_sibling_folder_with_the_same_prefix_is_not_the_client() {
+        let processes =
+            FixedProcesses::new([(7, "C:\\games\\World of Warcraft\\_forever_2\\Wow.exe")]);
+        let folder = Path::new("C:\\games\\World of Warcraft\\_forever_");
+        assert_eq!(
+            client_running_among(&processes, folder).expect("a list"),
+            None
+        );
+        assert!(!is_under(
+            Path::new("C:\\games\\_forever_"),
+            Path::new("C:\\games\\_forever_")
+        ));
+        assert!(!is_under(
+            Path::new("C:\\games"),
+            Path::new("C:\\games\\_forever_")
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_compare_case_insensitively_and_without_the_verbatim_prefix() {
+        assert!(is_under(
+            Path::new("c:\\GAMES\\world of warcraft\\_FOREVER_\\wow.exe"),
+            Path::new("C:\\games\\World of Warcraft\\_forever_")
+        ));
+        assert_eq!(
+            strip_verbatim(Path::new("\\\\?\\C:\\games\\_forever_")),
+            PathBuf::from("C:\\games\\_forever_")
+        );
+        assert_eq!(
+            strip_verbatim(Path::new("\\\\?\\UNC\\server\\share\\_forever_")),
+            PathBuf::from("\\\\server\\share\\_forever_")
+        );
+        assert_eq!(
+            strip_verbatim(Path::new("C:\\games\\_forever_")),
+            PathBuf::from("C:\\games\\_forever_")
+        );
+    }
+
+    #[test]
+    fn the_refusal_and_the_warning_are_the_documented_lines() {
+        let client = RunningClient {
+            pid: 4242,
+            exe: PathBuf::from("C:\\games\\World of Warcraft\\_forever_\\WowForever.exe"),
+        };
+        let flavor = flavor("C:\\games\\World of Warcraft\\_forever_");
+        assert_eq!(
+            client.refusal(&flavor).to_string(),
+            "the client is running in _forever_ (WowForever.exe, pid 4242): close the game first, nothing under WTF is written while it runs"
+        );
+        assert_eq!(
+            client.install_warning(&flavor),
+            "the client is running in _forever_ (WowForever.exe, pid 4242): the installed addons load at /reload or the next login"
+        );
+        let json = serde_json::to_value(&client).expect("serializes");
+        assert_eq!(json["pid"], 4242);
+        assert!(
+            json["exe"]
+                .as_str()
+                .is_some_and(|exe| exe.ends_with("WowForever.exe"))
+        );
+    }
+
+    #[test]
+    fn a_missing_folder_is_taken_as_given() {
+        let folder = std::env::temp_dir().join("mrgl-client-test-no-such-folder");
+        let processes = FixedProcesses::new([(9, folder.join("Wow.exe"))]);
+        let client = client_running_among(&processes, &folder)
+            .expect("a list")
+            .expect("the client");
+        assert_eq!(client.pid, 9);
+    }
+}
