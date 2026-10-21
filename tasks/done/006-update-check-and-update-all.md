@@ -71,6 +71,8 @@ as `--all` over one entry, and the stub of `update` that named this task goes.
 - 2026-10-22 — tests: `tests/cli.rs` gains five end-to-end tests over a fixture sidecar of ten entries, one per
   state, against the folder stub; `tests/link.rs` `an_update_over_a_foreign_junction_is_refused`;
   `update::tests` for the data lines and the request.
+- 2026-10-22 — on top of task 041: `update` prints `Pick::stale_warning()` for every pick of the check that
+  came from the cached release list offline, and the progress of the one install path pushes it for `add`.
 
 ## Deviations from the plan
 

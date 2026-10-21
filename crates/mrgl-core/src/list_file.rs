@@ -415,11 +415,16 @@ pub fn import(
         };
         if dry_run {
             items.push(match engine.resolve(source, &request) {
-                Ok(pick) => item(
-                    Outcome::WouldInstall,
-                    Some(pick.version.clone()),
-                    pick.summary(),
-                ),
+                Ok(pick) => {
+                    let mut would = item(
+                        Outcome::WouldInstall,
+                        Some(pick.version.clone()),
+                        pick.summary(),
+                    );
+                    // Task 041: a pick from the cached release list, offline, says so.
+                    would.warnings.extend(pick.stale_warning());
+                    would
+                }
                 Err(error) => failed(error),
             });
             continue;
@@ -441,7 +446,8 @@ pub fn import(
                     pick.summary(),
                 );
                 done.folders = installed.folders;
-                done.warnings = installed.warnings;
+                done.warnings = pick.stale_warning().into_iter().collect();
+                done.warnings.extend(installed.warnings);
                 items.push(done);
             }
             Ok(SourceInstalled {

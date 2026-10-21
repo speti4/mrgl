@@ -5204,6 +5204,23 @@ fn stub_with_older_questie(base: &Path) -> PathBuf {
         older.join("Questie-v1.2.2-forever.zip"),
     )
     .expect("the asset");
+    // The release list names the asset's size, which the download is checked against (task 046): the
+    // copy names the size of the zip now behind it.
+    let list_path = stub.join("api.github.com/repos/Questie/Questie/releases.json");
+    let mut list: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&list_path).expect("the release list"))
+            .expect("JSON");
+    let size = std::fs::metadata(older.join("Questie-v1.2.2-forever.zip"))
+        .expect("the asset")
+        .len();
+    for release in list.as_array_mut().expect("the releases") {
+        for asset in release["assets"].as_array_mut().expect("the assets") {
+            if asset["name"] == "Questie-v1.2.2-forever.zip" {
+                asset["size"] = size.into();
+            }
+        }
+    }
+    std::fs::write(&list_path, list.to_string()).expect("the release list");
     stub
 }
 
@@ -5329,4 +5346,67 @@ fn import_without_exact_still_takes_the_current_release() {
         stdout(&output)
     );
     assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.2.3");
+}
+
+// --- tasks 006 and 057 over task 041: a pick from the cached release list is a warning on update and import ---
+
+#[test]
+fn update_and_import_warn_about_a_pick_from_the_cached_release_list() {
+    let game = update_game("update-stale");
+    let offline = game.root.parent().expect("the base").join("no-such-stub");
+    let stale = |text: &str| {
+        text.lines().any(|line| {
+            line.starts_with(
+                "offline: github:Questie/Questie v1.2.3 is from the release list cached ",
+            )
+        })
+    };
+    // Online first, so the release lists are cached; then every request is a network error.
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(!stale(&stdout(&output)), "{}", stdout(&output));
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &offline)
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    let text = stdout(&output);
+    assert!(stale(&text), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line == "Questie  1.2.2 -> 1.2.3  update available"),
+        "{text}"
+    );
+
+    let list = write_list(
+        &game,
+        "stale.json",
+        &[("Fresh", "github:Questie/Questie", "1.2.3")],
+    );
+    // Another flavor folder and home with the same warm release-list cache.
+    let other = Game::new("import-stale");
+    copy_tree(&game.home.join("cache"), &other.home.join("cache"));
+    let output = other
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &offline)
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    let text = stdout(&output);
+    assert!(stale(&text), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line == "Fresh  would install 1.2.3 from github:Questie/Questie"),
+        "{text}"
+    );
 }

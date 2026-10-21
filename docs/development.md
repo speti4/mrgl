@@ -123,7 +123,9 @@ the GitHub source takes the release of the same list whose tag is the version, w
 flavor as for the current one. An entry whose version the source no longer offers is reported (`<name>
 skipped, version <v> not offered: no release <v> in <source>`, outcome `version-not-offered` in the JSON,
 `version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup sees the
-releases the release list request returns. The JSON document carries `exact`.
+releases the release list holds: the first page, and the pages after it only while none holds a stable
+release (task 042), so a version older than the first page reads as not offered. The JSON document carries
+`exact`.
 
 The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:`, `import`
 and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
@@ -569,8 +571,8 @@ keeps `checked_at`, when the API last confirmed the list (RFC 3339 in UTC, refre
 and the pick carries `stale: { checked_at, reason }` (`null` for a fresh pick). `Pick::stale_warning` is the
 warning line, `offline: <source> <tag> is from the release list cached <local time>, the pick may be stale
 (<the network error>)` (`cached at an unknown time` for a cache without the date): `add --dry-run` and `add`
-print it as a warning and list it in the JSON `warnings`; the update check of task 006 reads the same flag
-from its picks. The asset itself is never cached before an install, so an `add` offline only gets as far as
+print it as a warning and list it in the JSON `warnings`, and so do `import` (the entry's `warnings`) and
+`update` (one line per stale pick of the check), through the one install path of task 055. The asset itself is never cached before an install, so an `add` offline only gets as far as
 finding the release installed already. The folder stub with a folder that does not exist answers every
 request with a network error, which is how the tests go offline.
 

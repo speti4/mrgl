@@ -63,14 +63,17 @@ helper of 055 with a resolve of a named version instead of the latest pick.
   and `import_without_exact_still_takes_the_current_release` over a copy of the fixture answers with the
   fixture `Questie` zip behind the v1.2.2 Forever asset; `github::tests` for the lookup and the resolve of
   a version.
+- 2026-10-22 — on top of tasks 042, 046 and 041: `GitHub::resolve_version` reads the same paged and
+  cached list as `resolve` (`release_list`), so an exact pick offline comes from the cache with its stale
+  flag, and the import lists `Pick::stale_warning()` among the entry's warnings, the dry run's too.
 
 ## Deviations from the plan
 
 - The option is `--exact`, the name the task proposed; it combines with `--dry-run`.
 - A version the source no longer offers is its own outcome (`version-not-offered`), a warning that does not
   fail the run, rather than a failure: the list is still a known-good set for the other entries.
-- The lookup sees the releases the release list request returns (the first page of 30 today); an older
-  version beyond it reads as not offered until the release list is read further.
+- The lookup sees the releases the release list holds: the first page of 30, and the pages after it only
+  while none holds a stable release (task 042); an older version beyond them reads as not offered.
 
 ## Verification
 

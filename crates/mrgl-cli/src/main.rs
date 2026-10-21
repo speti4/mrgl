@@ -2437,6 +2437,13 @@ fn update_command(
     let github = GitHub::from_env(sources::http_from_env());
     let check = update::check(&engine, &github, name).map_err(|error| error.to_string())?;
     warnings.extend(check.warnings.iter().cloned());
+    // Task 041: a pick from the cached release list, offline, is a warning here as on `add`.
+    warnings.extend(
+        check
+            .addons
+            .iter()
+            .filter_map(|addon| addon.pick.as_ref()?.stale_warning()),
+    );
     let updates: Vec<&update::AddonUpdate> = check.updates().collect();
     if !reporter.json {
         for addon in &check.addons {
