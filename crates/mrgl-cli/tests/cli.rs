@@ -1664,9 +1664,30 @@ fn add_json_is_one_document_with_the_pick() {
     assert_eq!(value["warnings"], serde_json::json!([]));
 }
 
+// --- task 040: `add github:` installs the pick through the engine, against the folder stub ---
+
+/// The sidecar of a game as JSON.
+fn sidecar(game: &Game) -> serde_json::Value {
+    let text = std::fs::read_to_string(game.state_path()).expect("the sidecar");
+    serde_json::from_str(&text).expect("the sidecar is JSON")
+}
+
+/// The names under the flavor's staging folder (none once every install call has returned).
+fn staging_entries(game: &Game) -> Vec<String> {
+    match std::fs::read_dir(game.home.join("wowf").join("staging")) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 #[test]
-fn add_without_dry_run_reports_the_pick_then_names_task_040() {
-    let output = mrgl()
+fn add_github_installs_the_pick_and_a_second_run_finds_it_installed() {
+    let game = Game::new("github");
+    let output = game
+        .mrgl()
         .args([
             "--serious",
             "add",
@@ -1676,16 +1697,176 @@ fn add_without_dry_run_reports_the_pick_then_names_task_040() {
         ])
         .output()
         .expect("run mrgl");
-    assert_eq!(output.status.code(), Some(1));
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "resolving github:Questie/Questie for forever",
+            "pick for forever: github:Questie/Questie v1.2.3 (Questie-v1.2.3-forever.zip, flavor forever, interface 16001): release.json names forever (interface 16001)",
+            "downloading Questie-v1.2.3-forever.zip",
+            "installing Questie-v1.2.3-forever.zip into _forever_",
+            // The Forever signal of task 011 comes with the install too.
+            "forever build: yes (release.json names forever)",
+            "installed Questie 1.2.3 (1 folder: Questie) into _forever_",
+        ],
+        "{text}"
+    );
+    assert!(game.addon("Questie").join("Questie.toc").is_file());
+    // The sidecar records the pick's source and version; the TOC says `v1.2.3`, the fallback only.
+    let state = sidecar(&game);
+    assert_eq!(
+        state["addons"]["Questie"]["source"],
+        "github:Questie/Questie"
+    );
+    assert_eq!(state["addons"]["Questie"]["version"], "1.2.3");
     assert!(
-        stdout_last_line(&output).starts_with("pick for forever: github:Questie/Questie v1.2.3"),
-        "{}",
-        stdout(&output)
+        std::fs::read_to_string(game.addon("Questie").join("Questie.toc"))
+            .unwrap()
+            .contains("## Version: v1.2.3")
     );
     assert_eq!(
-        stderr_last_line(&output),
-        "add (the install) is not implemented yet (task 040)"
+        staging_entries(&game),
+        Vec::<String>::new(),
+        "the download is gone"
     );
+    assert!(
+        game.home
+            .join("wowf")
+            .join("cache")
+            .join("Questie")
+            .join("1.2.3.zip")
+            .is_file(),
+        "the engine keeps the zip for a rollback"
+    );
+
+    // The second run finds it in the sidecar: no download, no swap, and every message has its murloc line.
+    let before = std::fs::read(game.state_path()).unwrap();
+    let output = game
+        .mrgl()
+        .args(["add", "github:Questie/Questie", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    // Four two-line messages: the resolve, the pick, the Forever line of task 011, the outcome.
+    assert_eq!(text.lines().count(), 8, "four two-line messages: {text}");
+    assert!(!text.contains("downloading"), "{text}");
+    assert_eq!(
+        stdout_last_line(&output),
+        "Questie 1.2.3 is installed already in _forever_ from github:Questie/Questie, nothing to do"
+    );
+    assert_eq!(
+        std::fs::read(game.state_path()).unwrap(),
+        before,
+        "the sidecar is untouched"
+    );
+}
+
+#[test]
+fn add_github_updates_another_version_and_json_is_one_document() {
+    let game = Game::new("github-json");
+    let run = |args: &[&str]| {
+        game.mrgl()
+            .args(args)
+            .args(["add", "github:Questie/Questie", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl")
+    };
+    let output = run(&["--json"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "add");
+    assert_eq!(value["source"], "github:Questie/Questie");
+    assert_eq!(value["flavor"], "wowf");
+    assert_eq!(value["build"], "1.60.1.70245");
+    assert_eq!(value["dry_run"], false);
+    assert_eq!(value["installed"], true);
+    assert_eq!(value["already_installed"], false);
+    assert_eq!(value["pick"]["version"], "1.2.3");
+    assert_eq!(value["pick"]["asset"], "Questie-v1.2.3-forever.zip");
+    assert_eq!(
+        value["addon"],
+        serde_json::json!({
+            "name": "Questie",
+            "version": "1.2.3",
+            "previous_version": null,
+            "source": "github:Questie/Questie",
+            "folders": ["Questie"],
+            "removed_folders": [],
+            // The dependency check of task 029 runs on the installed folders.
+            "dependencies": [{
+                "folder": "Questie", "required": [], "met": [], "embedded": [], "missing": [], "nolib": false
+            }],
+        })
+    );
+    assert_eq!(value["warnings"], serde_json::json!([]));
+
+    // Another version in the sidecar: the same call updates it.
+    let mut state = sidecar(&game);
+    state["addons"]["Questie"]["version"] = "1.2.2".into();
+    std::fs::write(game.state_path(), state.to_string()).unwrap();
+    let output = run(&["--serious"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(stdout(&output).contains("downloading Questie-v1.2.3-forever.zip"));
+    assert_eq!(
+        stdout_last_line(&output),
+        "updated Questie from 1.2.2 to 1.2.3 (1 folder: Questie) in _forever_"
+    );
+
+    let output = run(&["--json"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["installed"], false);
+    assert_eq!(value["already_installed"], true);
+    assert_eq!(value["addon"]["version"], "1.2.3");
+    assert_eq!(value["addon"]["previous_version"], "1.2.2");
+    assert_eq!(value["addon"]["source"], "github:Questie/Questie");
+}
+
+#[test]
+fn add_github_without_dry_run_needs_the_game_folder_and_the_asset() {
+    // No game folder: the dry run works on the flavor id alone, the install needs the AddOns folder.
+    let output = mrgl()
+        .args(["add", "github:Questie/Questie", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_last_line(&output).starts_with("no game root for flavor forever: "),
+        "{}",
+        stderr_last_line(&output)
+    );
+
+    // An asset the stub does not serve: the download fails, nothing is installed, nothing stays behind.
+    let game = Game::new("github-missing");
+    let output = game
+        .mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Example/NoReleaseJson",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "GitHub answered 404 for https://github.com/Example/NoReleaseJson/releases/download/3.0.0/Thing-3.0.0-forever.zip: no such repository, or it is private"
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("downloading Thing-3.0.0-forever.zip"),
+        "{text}"
+    );
+    assert!(!text.contains("installing"), "{text}");
+    assert_eq!(staging_entries(&game), Vec::<String>::new());
+    assert!(!game.state_path().exists());
 }
 
 #[test]

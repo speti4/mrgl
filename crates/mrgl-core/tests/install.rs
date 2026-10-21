@@ -1,8 +1,9 @@
 //! The install engine over the fixture zips under `tests/fixtures/zips/`, in a temporary game folder with
 //! a temporary mrgl home: install, update (a second version over the first), the folders a version drops,
-//! the escaping path, the failed swap that leaves the folder as it was, remove, the sidecar round trip, and
-//! the running client as a warning (task 038, through a stub process list). No real game folder and no
-//! network anywhere.
+//! the escaping path, the failed swap that leaves the folder as it was, remove, the sidecar round trip, the
+//! running client as a warning (task 038, through a stub process list) and the install of a GitHub pick
+//! (task 040) through the folder stub over `tests/fixtures/releases/`. No real game folder and no network
+//! anywhere.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,8 +11,10 @@ use std::path::{Path, PathBuf};
 use mrgl_core::Error;
 use mrgl_core::client::{FixedProcesses, ProcessList, RunningProcess};
 use mrgl_core::flavor::{self, FlavorId};
-use mrgl_core::install::{Engine, Metadata};
+use mrgl_core::install::{Engine, Metadata, PickInstalled, PickStep};
 use mrgl_core::sources::Channel;
+use mrgl_core::sources::github::GitHub;
+use mrgl_core::sources::{FolderHttp, Source, SourceSpec, Target};
 use mrgl_core::state::{self, STATE_FILE, State};
 
 fn zips() -> PathBuf {
@@ -955,6 +958,128 @@ fn a_mark_on_an_unknown_or_unmanaged_addon_is_an_error_and_writes_nothing() {
         "addon not managed by mrgl: ByHand (flavor forever); it was installed by hand or by another manager, and only an addon mrgl installed can be ignored"
     );
     assert!(!sandbox.engine.home.state_path().exists());
+}
+
+#[test]
+fn a_pick_installs_through_the_source_and_then_is_installed_already() {
+    let sandbox = Sandbox::new("pick");
+    let releases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/releases");
+    let github = GitHub::new(FolderHttp::new(releases), None, None);
+    let spec = SourceSpec::parse("github:Questie/Questie").expect("a spec");
+    let pick = github
+        .resolve(&spec, &Target::from_flavor(&sandbox.engine.flavor))
+        .expect("a pick");
+    let staging = sandbox.engine.home.staging_dir();
+    let mut steps = Vec::new();
+    let mut record = |step: PickStep<'_>| match step {
+        PickStep::Downloading { pick, to } => {
+            assert!(to.starts_with(&staging), "{}", to.display());
+            assert!(!to.exists());
+            steps.push(format!("downloading {}", pick.asset));
+        }
+        PickStep::Installing { pick, zip } => {
+            assert!(zip.is_file(), "downloaded: {}", zip.display());
+            steps.push(format!("installing {}", pick.version));
+        }
+    };
+    let outcome = sandbox
+        .engine
+        .install_pick(&github, &pick, &mut record)
+        .expect("installs");
+    assert_eq!(
+        steps,
+        ["downloading Questie-v1.2.3-forever.zip", "installing 1.2.3"]
+    );
+    let PickInstalled::Installed(installed) = outcome else {
+        panic!("installed, not {outcome:?}");
+    };
+    assert_eq!(installed.name, "Questie");
+    assert_eq!(
+        installed.version, "1.2.3",
+        "the pick's, not the TOC's v1.2.3"
+    );
+    assert_eq!(installed.folders, ["Questie"]);
+    let state = sandbox.state();
+    let (_, entry) = state.entry("Questie").expect("in the sidecar");
+    assert_eq!(entry.source, "github:Questie/Questie");
+    assert_eq!(entry.version, "1.2.3");
+    assert_eq!(sandbox.staging_entries(), Vec::<String>::new());
+    assert_eq!(sandbox.cache_entries("Questie"), ["1.2.3.zip"]);
+
+    // The same pick again, and the source spelled in another case: installed already, nothing fetched.
+    let downloads = |github: &GitHub<FolderHttp>| {
+        github
+            .http()
+            .requests()
+            .iter()
+            .filter(|request| request.url == pick.url)
+            .count()
+    };
+    let mut lower = pick.clone();
+    lower.source = "github:questie/questie".to_string();
+    for again in [&pick, &lower] {
+        let outcome = sandbox
+            .engine
+            .install_pick(&github, again, &mut |step| panic!("no step: {step:?}"))
+            .expect("checks");
+        let PickInstalled::AlreadyInstalled(current) = outcome else {
+            panic!("installed already, not {outcome:?}");
+        };
+        assert_eq!(current.name, "Questie");
+        assert_eq!(current.entry.version, "1.2.3");
+        assert!(current.warnings.is_empty());
+    }
+    assert_eq!(downloads(&github), 1);
+
+    // Its folder deleted by hand: not installed any more, so the pick is downloaded and installed again.
+    std::fs::remove_dir_all(sandbox.addon("Questie")).expect("deleted by hand");
+    let outcome = sandbox
+        .engine
+        .install_pick(&github, &pick, &mut |_| {})
+        .expect("installs again");
+    let PickInstalled::Installed(installed) = outcome else {
+        panic!("installed, not {outcome:?}");
+    };
+    assert_eq!(
+        installed.warnings,
+        ["Questie was deleted by hand since its install and is no longer managed"]
+    );
+    assert!(sandbox.addon("Questie").join("Questie.toc").is_file());
+    assert_eq!(downloads(&github), 2);
+}
+
+#[test]
+fn another_version_from_the_same_source_is_updated_under_its_name() {
+    let sandbox = Sandbox::new("pick-update");
+    // The addon installed from a zip in hand under another name, then recorded as from the source.
+    sandbox.install("one-folder-1.0.0.zip");
+    let mut state = sandbox.state();
+    let entry = state.addons.get_mut("OneFolder").expect("installed");
+    entry.source = "github:Questie/Questie".to_string();
+    sandbox.engine.home.write_state(&state).expect("writes");
+    let releases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/releases");
+    let github = GitHub::new(FolderHttp::new(releases), None, None);
+    let spec = SourceSpec::parse("github:Questie/Questie").expect("a spec");
+    let pick = github
+        .resolve(&spec, &Target::from_flavor(&sandbox.engine.flavor))
+        .expect("a pick");
+    let outcome = sandbox
+        .engine
+        .install_pick(&github, &pick, &mut |_| {})
+        .expect("updates");
+    let PickInstalled::Installed(installed) = outcome else {
+        panic!("installed, not {outcome:?}");
+    };
+    // The sidecar's name for the source stays the key, and the folders the new zip lacks go.
+    assert_eq!(installed.name, "OneFolder");
+    assert_eq!(installed.previous_version.as_deref(), Some("1.0.0"));
+    assert_eq!(installed.version, "1.2.3");
+    assert_eq!(installed.removed_folders, ["OneFolder"]);
+    assert!(!sandbox.addon("OneFolder").exists());
+    assert!(sandbox.addon("Questie").is_dir());
+    let state = sandbox.state();
+    assert_eq!(state.addons.len(), 1);
+    assert_eq!(state.addons["OneFolder"].folders, ["Questie"]);
 }
 
 /// A zip written by the test itself, stored entries only.

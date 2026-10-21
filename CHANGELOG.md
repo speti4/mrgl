@@ -21,6 +21,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - Dependency check from the TOC `## Dependencies` and `## RequiredDeps` and the `release.json` `nolib` flag ([029](https://github.com/speti4/mrgl/blob/main/tasks/done/029-dependency-check-from-toc-and-nolib.md))
 - Release notes before an update: the GitHub release body in one line ([030](https://github.com/speti4/mrgl/blob/main/tasks/done/030-release-notes-before-an-update.md))
 - `list` reads the sidecar: managed (source, version) and unmanaged addons ([037](https://github.com/speti4/mrgl/blob/main/tasks/done/037-list-reads-the-sidecar-managed-and-unmanaged.md))
+- `add github:<owner>/<repo>` installs the pick through the engine ([040](https://github.com/speti4/mrgl/blob/main/tasks/done/040-add-github-installs-the-pick-through-the-engine.md))
 
 ### M2 Window MVP
 
