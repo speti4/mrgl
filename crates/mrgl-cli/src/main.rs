@@ -156,6 +156,18 @@ enum Command {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// Print a diagnostic report for a bug report: the game root, each flavor's build, AddOns folder,
+    /// sidecar, cache and client, the WebView2 version, the GitHub rate limit and which API keys are set
+    /// (never their values); paths under your profile folder show as `~`.
+    Doctor {
+        /// Report one flavor only: `forever`, `retail`, `classic`, `era` or a `.flavor.info` id.
+        #[arg(long)]
+        flavor: Option<String>,
+        /// The World of Warcraft folder; otherwise the one every command resolves (`MRGL_ROOT`, the
+        /// remembered one, the launcher's registry key, the usual install folders).
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
 }
 
 impl Command {
@@ -168,6 +180,7 @@ impl Command {
             | Command::Add { .. }
             | Command::Remove { .. }
             | Command::Backup { .. } => return None,
+            Command::Doctor { .. } => return None,
             Command::Update { all: true, .. } => ("update --all", "006"),
             Command::Update { .. } => ("update", "006"),
             Command::Link { .. } | Command::Unlink { .. } => ("link / unlink", "005"),
@@ -291,6 +304,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             restore,
             yes,
         } => backup_command(reporter, flavor.as_deref(), to, list, restore, yes)?,
+        Command::Doctor { flavor, root } => doctor_command(reporter, flavor.as_deref(), root)?,
         _ => unreachable!("every other command answered with its task"),
     }
     Ok(())
@@ -1243,6 +1257,36 @@ fn human_bytes(bytes: u64) -> String {
         unit = next;
     }
     format!("{value:.1} {unit}")
+}
+
+/// `mrgl doctor [--flavor <flavor>] [--root <folder>]`: the diagnostic report (task 024). The plain output
+/// is a block the user pastes into a bug report, one fact per line like the data lines of a listing, and
+/// the voice's two-line summary after it; `--json` is the one document. The report never fails: what it
+/// cannot read is `unknown` in it, so only an unknown `--flavor` is an error.
+fn doctor_command(
+    reporter: &Reporter,
+    flavor: Option<&str>,
+    root: Option<PathBuf>,
+) -> Result<(), String> {
+    let only = match flavor {
+        Some(spec) => Some(FlavorId::from_spec(spec).ok_or_else(|| {
+            format!("unknown flavor: {spec} (forever, retail, classic, era or a .flavor.info id)")
+        })?),
+        None => None,
+    };
+    let report = mrgl_core::doctor::report_of_process(root, only);
+    if reporter.json {
+        let mut value = serde_json::to_value(&report).map_err(|error| error.to_string())?;
+        value["kind"] = "doctor".into();
+        reporter.document(value);
+        return Ok(());
+    }
+    for line in report.lines() {
+        reporter.line(line);
+    }
+    let (kind, summary) = report.summary();
+    reporter.say(kind, summary);
+    Ok(())
 }
 
 #[cfg(test)]

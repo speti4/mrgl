@@ -13,7 +13,7 @@
 //! ([`lookup_from_env`]), so an end-to-end test never reads the real registry. [`resolve_root_of_process`]
 //! is the one call every command of the command line and the window's picker start from.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -32,6 +32,25 @@ pub const LAUNCHER_KEY: &str = r"SOFTWARE\WOW6432Node\Blizzard Entertainment\Wor
 pub const LAUNCHER_VALUE: &str = "InstallPath";
 /// The game folder's name under `Program Files (x86)` and `Program Files` on a standard install.
 pub const COMMON_FOLDER: &str = "World of Warcraft";
+/// The `MRGL_DISCOVERY` item that stands in for the WebView2 runtime's registry value (task 024).
+pub const WEBVIEW2_ITEM: &str = "webview2=";
+
+/// A registry hive [`registry_string`] reads from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hive {
+    /// `HKEY_LOCAL_MACHINE`: what is installed for every user.
+    LocalMachine,
+    /// `HKEY_CURRENT_USER`: what is installed for this user.
+    CurrentUser,
+}
+
+/// One string value of the registry, read the way the launcher's `InstallPath` is (open, query, close):
+/// a `REG_SZ` or `REG_EXPAND_SZ` value as written, `None` for a missing key or value, another type or an
+/// empty string, and always `None` on a target without a registry. The doctor reads the WebView2
+/// runtime's version through it (task 024).
+pub fn registry_string(hive: Hive, key: &str, value: &str) -> Option<OsString> {
+    system::registry_string(hive, key, value)
+}
 
 /// The places a game root may be found when nothing names it.
 pub trait RootLookup {
@@ -224,9 +243,10 @@ pub fn resolve_root(
 }
 
 /// The lookup `MRGL_DISCOVERY` names: unset or empty is the system; `off` is a lookup that finds nothing;
-/// anything else is a stub, `;`-separated, where `registry=<path>` is the launcher's value and every
-/// other item (with or without `folder=`) is one of the usual folders, in order. The stub keeps the
-/// end-to-end tests off the real registry and lets a user switch the discovery off.
+/// anything else is a stub, `;`-separated, where `registry=<path>` is the launcher's value, a
+/// `webview2=<version>` item is the doctor's (task 024, [`crate::doctor`]) and every other item (with or
+/// without `folder=`) is one of the usual folders, in order. The stub keeps the end-to-end tests off the
+/// real registry and lets a user switch the discovery off.
 pub fn lookup_from_env(value: Option<&OsStr>) -> Box<dyn RootLookup> {
     match parse_lookup(value) {
         Some(fixed) => Box::new(fixed),
@@ -249,6 +269,9 @@ fn parse_lookup(value: Option<&OsStr>) -> Option<FixedLookup> {
     {
         if let Some(path) = item.strip_prefix("registry=") {
             lookup.install_path = Some(PathBuf::from(path));
+        } else if item.starts_with(WEBVIEW2_ITEM) {
+            // The doctor's WebView2 stub (task 024), not a folder.
+            continue;
         } else {
             let path = item.strip_prefix("folder=").unwrap_or(item);
             lookup.folders.push(PathBuf::from(path));
@@ -307,11 +330,11 @@ mod system {
 
     use windows_sys::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_LOCAL_MACHINE, KEY_READ, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE, RegCloseKey,
-        RegOpenKeyExW, RegQueryValueExW,
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_EXPAND_SZ, REG_SZ,
+        REG_VALUE_TYPE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
     };
 
-    use super::{COMMON_FOLDER, LAUNCHER_KEY, LAUNCHER_VALUE};
+    use super::{COMMON_FOLDER, Hive, LAUNCHER_KEY, LAUNCHER_VALUE};
 
     /// A registry key handle closed on drop.
     struct Key(HKEY);
@@ -329,6 +352,14 @@ mod system {
 
     pub(super) fn launcher_install_path() -> Option<PathBuf> {
         string_value(HKEY_LOCAL_MACHINE, LAUNCHER_KEY, LAUNCHER_VALUE).map(PathBuf::from)
+    }
+
+    pub(super) fn registry_string(hive: Hive, key: &str, value: &str) -> Option<OsString> {
+        let hive = match hive {
+            Hive::LocalMachine => HKEY_LOCAL_MACHINE,
+            Hive::CurrentUser => HKEY_CURRENT_USER,
+        };
+        string_value(hive, key, value)
     }
 
     /// A `REG_SZ` or `REG_EXPAND_SZ` value as written (an expandable value is not expanded; the launcher
@@ -418,9 +449,16 @@ mod system {
     //! The other targets have no launcher key and no usual folder yet; the macOS preview (M6) brings
     //! `/Applications/World of Warcraft/`.
 
+    use std::ffi::OsString;
     use std::path::PathBuf;
 
+    use super::Hive;
+
     pub(super) fn launcher_install_path() -> Option<PathBuf> {
+        None
+    }
+
+    pub(super) fn registry_string(_hive: Hive, _key: &str, _value: &str) -> Option<OsString> {
         None
     }
 
@@ -585,6 +623,14 @@ mod tests {
                 install_path: Some(PathBuf::from("Q:\\reg")),
                 folders: vec![PathBuf::from("Q:\\one"), PathBuf::from("Q:\\two")],
             })
+        );
+        assert_eq!(
+            parse_lookup(Some(OsStr::new("webview2=131.0.2903.70;Q:\\only"))),
+            Some(FixedLookup {
+                install_path: None,
+                folders: vec![PathBuf::from("Q:\\only")],
+            }),
+            "the doctor's item is no folder"
         );
         assert_eq!(
             parse_lookup(Some(OsStr::new("Q:\\only"))),

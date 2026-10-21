@@ -26,6 +26,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - Window design sketch: the list view, the states and the voice's place, before the shell is built ([017](https://github.com/speti4/mrgl/blob/main/tasks/done/017-window-design-sketch-before-the-shell.md))
 - Game root auto-discovery: the launcher's registry key and the common install folders ([020](https://github.com/speti4/mrgl/blob/main/tasks/done/020-game-root-auto-discovery.md))
 - Game-running detection: no `WTF` write while the client runs ([023](https://github.com/speti4/mrgl/blob/main/tasks/done/023-game-running-detection.md))
+- `mrgl doctor`: a diagnostic report for a bug report ([024](https://github.com/speti4/mrgl/blob/main/tasks/done/024-doctor-diagnostic-report.md))
 - Window polish: hide the Forever note column without notes, cap the toast stack ([035](https://github.com/speti4/mrgl/blob/main/tasks/done/035-window-polish-forever-column-and-toast-cap.md))
 - The install engine warns when the client runs ([038](https://github.com/speti4/mrgl/blob/main/tasks/done/038-install-warns-when-the-client-runs.md))
 

@@ -20,8 +20,9 @@ BOM in a fixture survives every checkout.
 - `releases/` — the answers of the GitHub source (task 003), laid out as the folder stub reads them: the
   URL's host and path under this folder (`api.github.com/repos/<owner>/<repo>/releases.json` is the release
   list, `github.com/<owner>/<repo>/releases/download/<tag>/release.json` the packager's metadata of one
-  release). `Questie/Questie` carries a draft above a stable release whose `release.json` names `mainline`,
-  `classic`, `mists` and `forever`, with `nolib` twins; `Example/NoMetadata` has a `release.json` in the old
+  release, `api.github.com/rate_limit.json` the rate limit `mrgl doctor` reports). `Questie/Questie`
+  carries a draft above a stable release whose `release.json` names `mainline`, `classic`, `mists` and
+  `forever`, with `nolib` twins; `Example/NoMetadata` has a `release.json` in the old
   shape without flavor metadata; `Example/NoReleaseJson` has zips only (`-forever`, `-cata` and the unsuffixed
   retail one); `Example/Empty` has no release; `Example/Prerelease` has a draft, a prerelease and a stable
   release; `Example/BetaOnly` has a prerelease alone; `Example/MainlineOnly` names retail only. The asset

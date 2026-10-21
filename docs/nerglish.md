@@ -29,8 +29,8 @@ who skips the murloc line loses nothing.
 - `--json` output, on every command: machines read it, so it is plain JSON with no murloc anywhere.
 - `--help` and the usage errors: `clap` writes them, and a reader looking up a flag is not in the mood.
 - Log lines and anything written to a file.
-- The data lines of a listing (`scan`, `list`: one addon per line). The summary after them is the message
-  and carries the two lines.
+- The data lines of a listing (`scan`, `list`: one addon per line; `doctor`: one fact per line, a block to
+  paste into a bug report). The summary after them is the message and carries the two lines.
 - `--serious` on any command, or the environment variable `MRGL_SERIOUS=1`: the murloc line is dropped and only
   the plain line prints. The flag wins over the variable when both are set.
 - Exit codes: `0` success, `1` an error the plain line explains, `2` a usage error (`clap`). Never a murloc
