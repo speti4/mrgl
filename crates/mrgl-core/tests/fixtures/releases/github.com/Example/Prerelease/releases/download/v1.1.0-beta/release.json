@@ -1,0 +1,14 @@
+{
+  "releases": [
+    {
+      "filename": "Pre-v1.1.0-beta-forever.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "forever",
+          "interface": 16001
+        }
+      ]
+    }
+  ]
+}

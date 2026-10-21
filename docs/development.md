@@ -6,16 +6,20 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
 ## Layout
 
 - `crates/mrgl-core` — the library: flavor detection (`flavor`), the AddOns scan and TOC parsing (`scan`,
-  `toc`), the sources (`sources`: GitHub `release.json` first, later Wago, WoWInterface and CurseForge), the
-  install engine (`install`: a zip into a staging folder, its addon folders swapped into `Interface\AddOns`
-  one at a time with a revert, the previous version's zip kept; task 004), the state sidecar (`state`,
-  D-003), backups and addon sets (`backup`), the running-client check (`client`, task 023: a process found
-  by its executable's path under the flavor folder, the guard every `WTF` write calls and the install
-  engine's warning) and the voice table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
-- `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add <file.zip>` and
-  `remove` (task 004), `add <source>`, `update`, `link`, `unlink`, `backup` (stubs that answer with the task
-  that builds them until that task lands), with `--json` for machines and `--serious` for the murloc-averse;
-  its end-to-end tests under `tests/`.
+  `toc`), the sources (`sources`: the `Source` trait, the `Pick` it hands to the install engine, the `Http`
+  trait with the real `ureq` client and the folder-backed stub; `sources::github` reads the releases API,
+  the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
+  home folder, task 003; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
+  a staging folder, its addon folders swapped into `Interface\AddOns` one at a time with a revert, the
+  previous version's zip kept; task 004), the state sidecar (`state`, D-003), backups and addon sets
+  (`backup`), the running-client check (`client`, task 023: a process found by its executable's path under
+  the flavor folder, the guard every `WTF` write calls and the install engine's warning) and the voice table
+  (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
+- `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add github:<owner>/<repo>
+  --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick; the install from the pick is task
+  040), `add <file.zip>` and `remove` (task 004), `update`, `link`, `unlink`, `backup` (stubs that answer
+  with the task that builds them until that task lands), with `--json` for machines and `--serious` for the
+  murloc-averse; its end-to-end tests under `tests/`.
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
   capability file and the icon.
 - `scripts/` — helper scripts for the icon, the release zip, the changelog and the commit rules.
@@ -235,15 +239,27 @@ python -I scripts/sync-issues.py --check       # exit 1 when the issues drift fr
 Every test runs offline and against synthetic data under `crates/mrgl-core/tests/fixtures/`: a hand-written
 game folder (`flavors/`: a `.build.info` with a row per product and a flavor folder per id, whose made-up
 addons cover the multi-TOC suffixes, the `## Interface` lists, the `X-Curse-Project-ID` / `X-Wago-ID` /
-`X-WoWI-ID` headers and the other shapes its README lists), `release.json` files in the shape the BigWigs
-packager writes (`forever` next to other flavors), and small zips for the install engine (`zips/`, written
-by the deterministic `make-zips.py` next to them: one addon folder in three versions, several folders in
-one archive, a TOC at the zip's root, a wrapper folder, a path that tries to escape the staging folder, and
-a zip with no addon at all). A real addon zip, a real AddOns folder or a `WTF` folder never enters the repo;
-a manual round on a real game folder is a task of its own, and its result is a dated line in that task's
-Verification. The running-client tests copy their own test binary into a temporary flavor folder and start
-it as a stand-in client (it waits for its stdin to close), so no game file and no committed executable is
-involved.
+`X-WoWI-ID` headers and the other shapes its README lists), the answers of the GitHub source (`releases/`:
+a folder per URL the source asks, the release lists as the API writes them and `release.json` files in the
+shape the BigWigs packager writes, `forever` next to other flavors, one without metadata, one repository
+without `release.json`, one with no release, one with a draft and a prerelease above the stable release),
+and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
+one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
+folder, a path that tries to escape the staging folder, and a zip with no addon at all). A real addon zip,
+a real AddOns folder or a `WTF` folder never enters the repo; a manual round on a real game folder is a
+task of its own, and its result is a dated line in that task's Verification. The running-client tests copy
+their own test binary into a temporary flavor folder and start it as a stand-in client (it waits for its
+stdin to close), so no game file and no committed executable is involved.
+
+The sources talk to the network through the `Http` trait of `mrgl_core::sources`. `MRGL_HTTP_STUB=<folder>`
+makes the command line answer every request from that folder instead (the URL's host and path under it,
+`.json` appended when the bare path is no file, a 404 for a missing file, an `ETag` from the content and a
+304 for a matching `If-None-Match`), which is how the end-to-end tests run `add` offline against
+`tests/fixtures/releases/`; a unit test builds a `FolderHttp` or an in-memory stub directly.
+`MRGL_GITHUB_TOKEN` holds a personal access token for the GitHub API (60 requests an hour without one); it is
+sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
+its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
+request; the cache can be deleted any time.
 
 The command line keeps `config.json` (the remembered game folder) under the mrgl home folder,
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state

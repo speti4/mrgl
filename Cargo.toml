@@ -30,6 +30,10 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 # SHA-256 of every installed file for the state sidecar's file list (D-003, task 004): a stable hash the
 # repair and rollback of later tasks can compare against; std has no hash function meant for files.
 sha2 = "0.10"
+# The HTTP client of the sources (task 003): the GitHub releases API and the asset downloads, blocking, with
+# rustls compiled in (no OpenSSL, nothing to install, D-002); std has no HTTP and Tauri's own client belongs to
+# the window. Its `ring` provider compiles C and assembly through the MSVC tools the build already needs.
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 # The window, IPC, async runtime and asset embedding of the D-002 shell, on the system web view (WebView2 on
 # Windows 11): one portable zip with two exes, nothing to install (task 001).
 tauri = "2"

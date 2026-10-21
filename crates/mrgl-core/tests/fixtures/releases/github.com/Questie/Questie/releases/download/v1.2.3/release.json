@@ -1,0 +1,64 @@
+{
+  "releases": [
+    {
+      "filename": "Questie-v1.2.3.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "mainline",
+          "interface": 120105
+        }
+      ]
+    },
+    {
+      "filename": "Questie-v1.2.3-nolib.zip",
+      "nolib": true,
+      "metadata": [
+        {
+          "flavor": "mainline",
+          "interface": 120105
+        }
+      ]
+    },
+    {
+      "filename": "Questie-v1.2.3-classic.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "classic",
+          "interface": 11509
+        }
+      ]
+    },
+    {
+      "filename": "Questie-v1.2.3-mists.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "mists",
+          "interface": 50504
+        }
+      ]
+    },
+    {
+      "filename": "Questie-v1.2.3-forever.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "forever",
+          "interface": 16001
+        }
+      ]
+    },
+    {
+      "filename": "Questie-v1.2.3-forever-nolib.zip",
+      "nolib": true,
+      "metadata": [
+        {
+          "flavor": "forever",
+          "interface": 16001
+        }
+      ]
+    }
+  ]
+}

@@ -25,8 +25,16 @@ fn mrgl() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mrgl"));
     command.env_remove("MRGL_SERIOUS");
     command.env_remove("MRGL_ROOT");
+    command.env_remove("MRGL_GITHUB_TOKEN");
     command.env("MRGL_HOME", temp_home("nohome"));
+    // Every source answers from the fixture folder, never from the network.
+    command.env("MRGL_HTTP_STUB", releases());
     command
+}
+
+/// The fixture answers of the GitHub source, served by the folder stub.
+fn releases() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/releases")
 }
 
 fn stdout(output: &Output) -> String {
@@ -113,13 +121,13 @@ fn json_is_plain_json() {
 #[test]
 fn a_planned_command_fails_with_its_task_and_exit_code_one() {
     let output = mrgl()
-        .args(["add", "github:someone/something"])
+        .args(["backup", "--flavor", "forever"])
         .output()
         .expect("run mrgl");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),
-        "add is not implemented yet (task 003)"
+        "backup is not implemented yet (task 013)"
     );
 }
 
@@ -883,7 +891,7 @@ fn add_takes_a_flavor_folder_path_and_needs_a_flavor() {
 }
 
 #[test]
-fn a_source_spec_and_update_still_name_their_tasks() {
+fn an_unknown_source_spec_and_update_are_plain_errors() {
     let output = mrgl()
         .args(["add", "wago:something", "--flavor", "forever"])
         .output()
@@ -891,7 +899,7 @@ fn a_source_spec_and_update_still_name_their_tasks() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),
-        "add is not implemented yet (task 003)"
+        "unknown source: wago:something (expected github:<owner>/<repo>)"
     );
     let output = mrgl()
         .args(["update", "Something", "--flavor", "forever"])
@@ -902,4 +910,305 @@ fn a_source_spec_and_update_still_name_their_tasks() {
         stderr_last_line(&output),
         "update is not implemented yet (task 006)"
     );
+}
+
+#[test]
+fn add_dry_run_names_the_forever_asset_against_the_stub() {
+    let output = mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "resolving github:Questie/Questie for forever",
+            "pick for forever: github:Questie/Questie v1.2.3 (Questie-v1.2.3-forever.zip, flavor forever, interface 16001): release.json names forever (interface 16001)",
+            "dry run: nothing installed",
+        ],
+        "{stdout}"
+    );
+}
+
+#[test]
+fn add_speaks_murloc_on_every_message() {
+    let output = mrgl()
+        .args([
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    assert_eq!(
+        stdout.lines().count(),
+        6,
+        "three two-line messages: {stdout}"
+    );
+    assert_eq!(stdout_last_line(&output), "dry run: nothing installed");
+}
+
+#[test]
+fn add_reads_the_installed_build_from_the_game_folder() {
+    // Without a game folder the progressing classic has no game type: the pick is a guess.
+    let output = mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "classic",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let guessed = stdout(&output);
+    assert!(
+        guessed.contains("pick for classic, a guess: github:Questie/Questie v1.2.3 (Questie-v1.2.3-mists.zip, flavor mists, interface 50504): release.json names mists (interface 50504); the installed build is unknown, so the game type is a guess"),
+        "{guessed}"
+    );
+    // With the game folder (here through MRGL_ROOT) the build 5.5.4 names Mists: no guess.
+    let output = mrgl()
+        .env("MRGL_ROOT", fixtures())
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "classic",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let known = stdout(&output);
+    assert!(
+        known.contains("pick for classic: github:Questie/Questie v1.2.3 (Questie-v1.2.3-mists.zip, flavor mists, interface 50504): release.json names mists (interface 50504)"),
+        "{known}"
+    );
+    // A flavor folder path works the same way.
+    let output = mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--dry-run",
+            "--flavor",
+        ])
+        .arg(fixtures().join("_classic_era_"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout(&output).contains("(Questie-v1.2.3-classic.zip, flavor classic, interface 11509)"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn add_json_is_one_document_with_the_pick() {
+    let output = mrgl()
+        .env("MRGL_ROOT", fixtures())
+        .args([
+            "--json",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "add");
+    assert_eq!(value["source"], "github:Questie/Questie");
+    assert_eq!(value["flavor"], "wowf");
+    assert_eq!(value["build"], "1.60.1.70245");
+    assert_eq!(value["dry_run"], true);
+    assert_eq!(value["installed"], false);
+    assert_eq!(value["pick"]["release"], "v1.2.3");
+    assert_eq!(value["pick"]["version"], "1.2.3");
+    assert_eq!(value["pick"]["asset"], "Questie-v1.2.3-forever.zip");
+    assert_eq!(value["pick"]["flavor"], "forever");
+    assert_eq!(value["pick"]["interface"], 16001);
+    assert_eq!(value["pick"]["guess"], false);
+    assert_eq!(value["pick"]["prerelease"], false);
+    assert!(
+        value["pick"]["url"]
+            .as_str()
+            .unwrap()
+            .ends_with("/Questie-v1.2.3-forever.zip")
+    );
+    assert_eq!(value["warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn add_without_dry_run_reports_the_pick_then_names_task_040() {
+    let output = mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stdout_last_line(&output).starts_with("pick for forever: github:Questie/Questie v1.2.3"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(
+        stderr_last_line(&output),
+        "add (the install) is not implemented yet (task 040)"
+    );
+}
+
+#[test]
+fn add_a_pick_by_name_is_a_warning() {
+    let output = mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Example/NoReleaseJson",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    assert!(
+        stdout.contains("pick for forever, a guess: github:Example/NoReleaseJson 3.0.0 (Thing-3.0.0-forever.zip, flavor forever): no release.json names forever; the asset name ends in -forever, a guess"),
+        "{stdout}"
+    );
+    let json = mrgl()
+        .args([
+            "--json",
+            "add",
+            "github:Example/NoReleaseJson",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["pick"]["guess"], true);
+    assert_eq!(value["pick"]["interface"], serde_json::Value::Null);
+}
+
+#[test]
+fn add_failures_are_plain_lines_with_exit_code_one() {
+    let cases = [
+        (
+            vec!["add", "wago:abc", "--flavor", "forever", "--dry-run"],
+            "unknown source: wago:abc (expected github:<owner>/<repo>)",
+        ),
+        (
+            vec!["add", "github:Questie/Questie", "--dry-run"],
+            "no flavor given: --flavor forever, retail, classic, era, a .flavor.info id or a flavor folder",
+        ),
+        (
+            vec![
+                "add",
+                "github:Questie/Questie",
+                "--flavor",
+                "plunderstorm",
+                "--dry-run",
+            ],
+            "unknown flavor: plunderstorm (forever, retail, classic, era, a .flavor.info id or a flavor folder)",
+        ),
+        (
+            vec![
+                "add",
+                "github:Example/Empty",
+                "--flavor",
+                "forever",
+                "--dry-run",
+            ],
+            "no release in github:Example/Empty",
+        ),
+        (
+            vec![
+                "add",
+                "github:Example/Missing",
+                "--flavor",
+                "forever",
+                "--dry-run",
+            ],
+            "GitHub answered 404 for https://api.github.com/repos/Example/Missing/releases?per_page=30: no such repository, or it is private",
+        ),
+        (
+            vec![
+                "add",
+                "github:Example/MainlineOnly",
+                "--flavor",
+                "forever",
+                "--dry-run",
+            ],
+            "no asset for flavor forever in github:Example/MainlineOnly v4.0.0 (release.json names mainline, standard; assets: Only-v4.0.0.zip, release.json)",
+        ),
+    ];
+    for (args, plain) in cases {
+        let output = mrgl().args(&args).output().expect("run mrgl");
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert_eq!(stderr_last_line(&output), plain, "{args:?}");
+    }
+}
+
+#[test]
+fn add_caches_the_release_list_under_the_home_folder() {
+    let home = temp_home("release-cache");
+    let run = || {
+        mrgl()
+            .env("MRGL_HOME", &home)
+            .args([
+                "--serious",
+                "add",
+                "github:Questie/Questie",
+                "--flavor",
+                "forever",
+                "--dry-run",
+            ])
+            .output()
+            .expect("run mrgl")
+    };
+    let first = run();
+    assert!(first.status.success(), "{}", stderr_last_line(&first));
+    let cache = home
+        .join("cache")
+        .join("github")
+        .join("questie")
+        .join("questie");
+    let text =
+        std::fs::read_to_string(cache.join("releases.json")).expect("the release list is cached");
+    assert!(text.contains(r#""etag""#), "with its tag: {text}");
+    let second = run();
+    assert_eq!(
+        stdout(&first),
+        stdout(&second),
+        "the cached list gives the same pick"
+    );
+    let _ = std::fs::remove_dir_all(&home);
 }

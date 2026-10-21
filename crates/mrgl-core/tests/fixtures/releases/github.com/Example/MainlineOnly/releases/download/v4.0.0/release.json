@@ -1,0 +1,18 @@
+{
+  "releases": [
+    {
+      "filename": "Only-v4.0.0.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "mainline",
+          "interface": 120105
+        },
+        {
+          "flavor": "standard",
+          "interface": 120105
+        }
+      ]
+    }
+  ]
+}
