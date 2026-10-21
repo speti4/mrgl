@@ -229,12 +229,13 @@ artwork.
 
 ## CI and releases
 
-`.github/workflows/ci.yml` runs five jobs on every push to `main` and every pull request: `test`
+`.github/workflows/ci.yml` runs six jobs on every push to `main` and every pull request: `test`
 (windows-latest: `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`), `lint` (ubuntu:
 `cargo fmt --check` and `scripts/changelog.py --check`, the latter skipped on a tag, see
 [The changelog](#the-changelog)), `msrv` (windows-latest: `cargo check` with the toolchain that `rust-version`
 in `Cargo.toml` names, so nothing newer than the declared minimum slips in; it runs on Windows because the
-Windows target needs tauri-build's resource compiler, which a Linux runner lacks), `deny` (`cargo deny check`
+Windows target needs tauri-build's resource compiler, which a Linux runner lacks), `non-windows` (ubuntu:
+`cargo check --all-targets --locked` over the workspace, below), `deny` (`cargo deny check`
 against `deny.toml` for the Windows target: licenses from the allowlist, no RustSec advisory or yanked crate,
 crates.io as the only source; and `about.toml` accepts the same licenses) and `workflow-lint` (zizmor over the
 workflows, the local action and `dependabot.yml`; a finding accepted on purpose carries
@@ -254,9 +255,17 @@ fails the build instead of being rewritten.
 The repo is public from its first commit (D-004), so the Actions minutes of the standard runners are free and
 the Windows jobs run on every change. A macOS job joins with the macOS preview (M6).
 
+The `non-windows` job (task 061) compiles the `cfg(not(windows))` branches (the junctions of `link`, the process
+list of `client`, the launcher lookup of `discover`, the time zone of `backup`, and the tests that only build off
+Windows), so a broken non-Windows path fails the pull request that breaks it instead of turning up at the macOS
+preview; a Windows machine never compiles them. It checks and does not test: the fixtures are shaped for Windows
+paths. The window's crate is in the check too: the job installs the WebKitGTK and D-Bus headers its Linux graph
+builds against (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`), which took 35 seconds of a run of about two minutes
+when the job landed; if that install ever outgrows a minute, the check narrows to `-p mrgl-core -p mrgl-cli`.
+
 Some of the setup lives in the repository settings, not in a file: CodeQL runs as GitHub's default setup; a
 ruleset protects `main` (changes arrive through a pull request with squash merge only, the checks `test`,
-`lint`, `msrv`, `deny`, `workflow-lint` and `commit-rules` must pass, the history stays linear, and force
+`lint`, `msrv`, `non-windows`, `deny`, `workflow-lint` and `commit-rules` must pass, the history stays linear, and force
 pushes and deletion are blocked); another ruleset keeps `v*` tags from being moved or deleted; squash merge
 is the only merge method, with the pull request title and description as the default commit message; private
 vulnerability reporting is on (the link in SECURITY.md and the code of conduct depends on it); Dependabot
@@ -310,7 +319,7 @@ cargo install cargo-about --version (Get-Content scripts\cargo-about-version.txt
 scripts\release.ps1                     # dist\: the zip, SHA256SUMS.txt, release-notes-<version>.md
 ```
 
-Pushing a tag `v<version>` runs the five jobs; when they pass, the `release` job checks that the tag is on
+Pushing a tag `v<version>` runs the six jobs; when they pass, the `release` job checks that the tag is on
 `main`, installs the pinned cargo-about, runs `release.ps1`, attests the build provenance of the zip and
 publishes it with the checksum file as a GitHub release titled `mrgl <version>`, with the notes file as its
 text, through the runner's `gh` CLI. The release job builds without the Rust cache, so nothing a pull request
