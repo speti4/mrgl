@@ -44,6 +44,7 @@ The repository, the task standard and the empty workspace: no app yet.
 
 - Dev addon linking: junctions for a development folder's addons; CLI `link` and `unlink` ([005](https://github.com/speti4/mrgl/blob/main/tasks/done/005-dev-addon-linking-with-junctions.md))
 - WTF backup and restore ([013](https://github.com/speti4/mrgl/blob/main/tasks/done/013-wtf-backup-and-restore.md))
+- Addon sets with enable and disable ([014](https://github.com/speti4/mrgl/blob/main/tasks/done/014-addon-sets-with-enable-and-disable.md))
 - Addon list export and import, and a TOC-interface versus build warning ([015](https://github.com/speti4/mrgl/blob/main/tasks/done/015-list-export-import-and-interface-warning.md))
 - SavedVariables: size per addon and orphan cleanup into a backup zip; CLI `savedvars` ([025](https://github.com/speti4/mrgl/blob/main/tasks/done/025-savedvariables-size-and-orphan-cleanup.md))
 - Lists as discovery: a shareable list format and a Forever starter list in the repo ([028](https://github.com/speti4/mrgl/blob/main/tasks/done/028-lists-as-discovery-and-forever-starter-list.md))
