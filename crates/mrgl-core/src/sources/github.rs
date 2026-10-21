@@ -13,11 +13,19 @@
 //! A release without `release.json`, or one whose metadata names other flavors only, falls back to the
 //! asset names (`-forever`, `-classic`, `-mists`, …, the retail zip being the one with no suffix) and the
 //! pick says it is a guess. The release list is cached with its `ETag` under the mrgl home folder
-//! (`cache/github/<owner>/<repo>/`), so a second run costs one conditional request and no rate limit.
+//! (`cache/github/<owner>/<repo>/`), so a second run costs one conditional request and no rate limit. A
+//! first page of 30 releases without a stable one (a repository that publishes nightly prereleases) is
+//! followed by the next pages the `Link` header names, up to [`MAX_PAGES`] (task 042).
 //!
 //! The same release says whether the addon publishes a Forever build at all ([`forever_build`], task 011):
-//! the pick carries it, and the current release's `release.json` is cached next to the list, so `list` can
-//! answer from the cache alone ([`GitHub::cached_forever_build`]), offline.
+//! the pick carries it, and every release's `release.json` is cached per tag next to the list (task 042), so
+//! a repeated resolve of the same release downloads it once and `list` can answer from the cache alone
+//! ([`GitHub::cached_forever_build`]), offline.
+//!
+//! When the API cannot be reached (no network, a timeout) and the release list is cached, the resolve
+//! answers from the cache, the cached `release.json` of the release included, and the pick carries
+//! [`Stale`] with the cache's date, so the caller warns that it may be stale (task 041); with nothing
+//! cached the network error stands.
 
 use std::path::{Path, PathBuf};
 
@@ -26,10 +34,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::flavor::FlavorId;
 use crate::forever::ForeverBuild;
-use crate::home;
 use crate::sources::{
-    Channel, Http, Pick, Request, Response, Source, SourceSpec, Target, notes_line,
+    self, Channel, Http, Pick, Request, Response, Source, SourceSpec, Stale, Target, notes_line,
 };
+use crate::{home, state};
 
 /// The environment variable with a personal access token; without one the API allows 60 requests an hour.
 pub const TOKEN_ENV: &str = "MRGL_GITHUB_TOKEN";
@@ -41,10 +49,15 @@ pub const RELEASE_JSON: &str = "release.json";
 pub const CACHE_SUBDIR: &str = "cache/github";
 /// The cached release list of one repository, under `<cache>/<owner>/<repo>/`.
 pub const CACHE_FILE: &str = "releases.json";
-/// The cached `release.json` of a repository's current release, next to [`CACHE_FILE`] (task 011).
-pub const RELEASE_JSON_CACHE_FILE: &str = "release-json.json";
+/// The folder of the cached `release.json` files of a repository, one `tag-<tag>.json` per release, next to
+/// [`CACHE_FILE`] (tasks 011, 042).
+pub const RELEASE_JSON_CACHE_DIR: &str = "release-json";
 /// How many releases one page lists; the current one is near the top.
 const PER_PAGE: u32 = 30;
+/// How many pages of the release list a resolve reads at most while none of them holds a stable release
+/// (task 042): 150 releases, a nightly prerelease a day for five months. Past it the newest prerelease is
+/// the current release, as for a repository without a stable one.
+pub const MAX_PAGES: usize = 5;
 
 /// The source over any [`Http`]: the real client in the exes, a stub in the tests.
 pub struct GitHub<H: Http> {
@@ -384,18 +397,39 @@ impl<H: Http> GitHub<H> {
         )
     }
 
+    /// The cached `release.json` of one release: `<cache>/<owner>/<repo>/release-json/tag-<tag>.json`, the
+    /// tag made file-safe (the file names the tag again, so two tags that read the same here never mix).
+    fn release_json_cache_path(&self, owner: &str, repo: &str, tag: &str) -> Option<PathBuf> {
+        self.cache_path(owner, repo, RELEASE_JSON_CACHE_DIR)
+            .map(|dir| dir.join(format!("tag-{}.json", state::file_safe(tag))))
+    }
+
+    /// The cached `release.json` of a release, when the cache holds the one of this tag and this asset.
+    fn cached_release_json(
+        &self,
+        owner: &str,
+        repo: &str,
+        release: &Release,
+        asset: &Asset,
+    ) -> Option<serde_json::Value> {
+        let path = self.release_json_cache_path(owner, repo, &release.tag_name)?;
+        let cached: CachedReleaseJson = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        (cached.release == release.tag_name
+            && cached.url.as_deref() == Some(asset.browser_download_url.as_str())
+            && cached.size == asset.size)
+            .then_some(cached.release_json)
+    }
+
     /// Whether the repository publishes a `forever` build, from the cache alone (task 011): the cached
-    /// release list's current release and the `release.json` cached for it, never a request, so `list`
-    /// stays offline and fast. `Unknown` when nothing is cached, the cache is unreadable, the current
-    /// release has no `release.json`, or the cached one belongs to another release (the list moved on and
-    /// no `add` has fetched the new one yet).
+    /// release list's current release and the `release.json` cached for its tag, never a request, so
+    /// `list` stays offline and fast. `Unknown` when nothing is cached, the cache is unreadable, the
+    /// current release has no `release.json`, or none is cached for its tag (the list moved on and no `add`
+    /// has fetched the new one yet).
     pub fn cached_forever_build(&self, spec: &SourceSpec) -> ForeverBuild {
         let SourceSpec::GitHub { owner, repo } = spec;
-        let read = |file: &str| {
-            self.cache_path(owner, repo, file)
-                .and_then(|path| std::fs::read(path).ok())
-        };
-        let Some(cached) = read(CACHE_FILE)
+        let Some(cached) = self
+            .cache_file(owner, repo)
+            .and_then(|path| std::fs::read(path).ok())
             .and_then(|bytes| serde_json::from_slice::<CachedReleases<Vec<Release>>>(&bytes).ok())
         else {
             return ForeverBuild::Unknown;
@@ -403,15 +437,13 @@ impl<H: Http> GitHub<H> {
         let Some(release) = current_release(&cached.releases) else {
             return ForeverBuild::Unknown;
         };
-        let release_json = read(RELEASE_JSON_CACHE_FILE)
-            .and_then(|bytes| serde_json::from_slice::<CachedReleaseJson>(&bytes).ok())
-            .filter(|cached| cached.release == release.tag_name)
-            .and_then(|cached| serde_json::from_value::<ReleaseJson>(cached.release_json).ok());
+        let release_json = release
+            .release_json_asset()
+            .and_then(|asset| self.cached_release_json(owner, repo, release, asset))
+            .and_then(|raw| serde_json::from_value::<ReleaseJson>(raw).ok());
         match release_json {
-            Some(release_json) if release.release_json_asset().is_some() => {
-                forever_build(release, Some(&release_json))
-            }
-            _ => ForeverBuild::Unknown,
+            Some(release_json) => forever_build(release, Some(&release_json)),
+            None => ForeverBuild::Unknown,
         }
     }
 
@@ -426,8 +458,18 @@ impl<H: Http> GitHub<H> {
     }
 
     /// The releases of a repository, newest first, from the API or, when the API says nothing changed,
-    /// from the cache.
+    /// from the cache. A first page without a stable release is followed by the next ones (task 042):
+    /// the pages the `Link` header names as `next`, on the API host only, until one holds a stable
+    /// release or [`MAX_PAGES`] are read; the cache keeps every page read with the first page's tag.
     pub fn releases(&self, owner: &str, repo: &str) -> Result<Vec<Release>> {
+        self.release_list(owner, repo).map(|(releases, _)| releases)
+    }
+
+    /// The release list as [`GitHub::releases`] reads it, and whether it is the cached one read offline
+    /// (task 041): a network error on the first page with a cached list answers from the cache with its
+    /// date and the error; without a cached list the error stands. Every answer of the source refreshes the
+    /// cache's date, a 304 included.
+    fn release_list(&self, owner: &str, repo: &str) -> Result<(Vec<Release>, Option<Stale>)> {
         let url = format!("{API_URL}/repos/{owner}/{repo}/releases?per_page={PER_PAGE}");
         let cache_file = self.cache_file(owner, repo);
         let cached: Option<CachedReleases<serde_json::Value>> = cache_file
@@ -438,19 +480,58 @@ impl<H: Http> GitHub<H> {
         if let Some(etag) = cached.as_ref().and_then(|cached| cached.etag.as_ref()) {
             request = request.header("If-None-Match", etag.clone());
         }
-        let response = self.http.get(&request)?;
+        let response = match self.http.get(&request) {
+            Ok(response) => response,
+            Err(error @ Error::Network { .. }) => {
+                let Some(cached) = cached else {
+                    return Err(error);
+                };
+                let stale = Stale {
+                    checked_at: cached.checked_at,
+                    reason: error.to_string(),
+                };
+                let releases = serde_json::from_value(cached.releases).map_err(|reason| {
+                    Error::SourceDocument {
+                        what: "release list",
+                        spec: format!("github:{owner}/{repo}"),
+                        reason: reason.to_string(),
+                    }
+                })?;
+                return Ok((releases, Some(stale)));
+            }
+            Err(error) => return Err(error),
+        };
         let unreadable = |reason: String| Error::SourceDocument {
             what: "release list",
             spec: format!("github:{owner}/{repo}"),
             reason,
         };
+        let page = |response: &Response| {
+            serde_json::from_slice::<Vec<serde_json::Value>>(&response.body)
+                .map_err(|reason| unreadable(reason.to_string()))
+        };
         let releases: serde_json::Value = match response.status {
             200 => {
-                let releases = serde_json::from_slice(&response.body)
-                    .map_err(|reason| unreadable(reason.to_string()))?;
+                let mut releases = page(&response)?;
+                let mut next = next_page(&response);
+                let mut pages = 1;
+                while pages < MAX_PAGES
+                    && !has_stable_release(&releases)
+                    && let Some(url) = next.take()
+                {
+                    let response = self.http.get(&self.api_request(url.clone()))?;
+                    if response.status != 200 {
+                        return Err(status_error(response.status, &url, &response));
+                    }
+                    releases.extend(page(&response)?);
+                    next = next_page(&response);
+                    pages += 1;
+                }
+                let releases = serde_json::Value::Array(releases);
                 if let Some(path) = &cache_file {
                     let cached = CachedReleases {
                         etag: response.header("etag").map(str::to_string),
+                        checked_at: Some(state::now_rfc3339()),
                         releases: &releases,
                     };
                     // The cache is a convenience: a folder that cannot be written costs a request per
@@ -460,12 +541,21 @@ impl<H: Http> GitHub<H> {
                 releases
             }
             304 => match cached {
-                Some(cached) => cached.releases,
+                Some(mut cached) => {
+                    // Confirmed: the offline resolve dates the cache from here (task 041).
+                    if let Some(path) = &cache_file {
+                        cached.checked_at = Some(state::now_rfc3339());
+                        let _ = write_cache(path, &cached);
+                    }
+                    cached.releases
+                }
                 None => return Err(status_error(304, &url, &response)),
             },
             status => return Err(status_error(status, &url, &response)),
         };
-        serde_json::from_value(releases).map_err(|reason| unreadable(reason.to_string()))
+        let releases =
+            serde_json::from_value(releases).map_err(|reason| unreadable(reason.to_string()))?;
+        Ok((releases, None))
     }
 
     /// A release's `release.json`, when it has one: `Ok(None)` without the asset, `Ok(Some(Err(reason)))`
@@ -478,20 +568,35 @@ impl<H: Http> GitHub<H> {
         let Some(asset) = release.release_json_asset() else {
             return Ok(None);
         };
-        let response = self.download(&asset.browser_download_url)?;
+        let SourceSpec::GitHub { owner, repo } = spec;
+        // A release's `release.json` does not change once uploaded: the cached one of this tag and this
+        // asset answers without a request (task 042).
+        if let Some(raw) = self.cached_release_json(owner, repo, release, asset)
+            && let Ok(release_json) = ReleaseJson::deserialize(&raw)
+        {
+            return Ok(Some(Ok(release_json)));
+        }
+        let response = self.download_asset(
+            &spec.to_string(),
+            &release.tag_name,
+            &asset.name,
+            &asset.browser_download_url,
+        )?;
         let parsed = serde_json::from_slice::<serde_json::Value>(&response.body).and_then(|raw| {
             let release_json = ReleaseJson::deserialize(&raw)?;
             Ok((raw, release_json))
         });
         match parsed {
             Ok((raw, release_json)) => {
-                let SourceSpec::GitHub { owner, repo } = spec;
-                if let Some(path) = self.cache_path(owner, repo, RELEASE_JSON_CACHE_FILE) {
+                if let Some(path) = self.release_json_cache_path(owner, repo, &release.tag_name) {
                     let cached = CachedReleaseJson {
                         release: release.tag_name.clone(),
+                        url: Some(asset.browser_download_url.clone()),
+                        size: asset.size,
                         release_json: raw,
                     };
-                    // A convenience like the release list: without it, `list` says unknown.
+                    // A convenience like the release list: without it, the next resolve downloads it
+                    // again and `list` says unknown.
                     let _ = write_cache(&path, &cached);
                 }
                 Ok(Some(Ok(release_json)))
@@ -504,28 +609,77 @@ impl<H: Http> GitHub<H> {
     }
 
     /// A release asset's bytes: no token (the download hops to the object store, and the asset is public).
-    fn download(&self, url: &str) -> Result<Response> {
+    /// A 404 names the asset and the release (task 046): the list named it, so the repository is there and
+    /// the release changed after it was listed; any other status is the status error.
+    fn download_asset(
+        &self,
+        spec: &str,
+        release: &str,
+        asset: &str,
+        url: &str,
+    ) -> Result<Response> {
         let response = self.http.get(&Request::get(url))?;
-        if response.status != 200 {
-            return Err(status_error(response.status, url, &response));
+        match response.status {
+            200 => Ok(response),
+            404 => Err(Error::AssetMissing {
+                host: "GitHub",
+                spec: spec.to_string(),
+                release: release.to_string(),
+                asset: asset.to_string(),
+                url: url.to_string(),
+            }),
+            status => Err(status_error(status, url, &response)),
         }
-        Ok(response)
     }
 }
 
-/// The cache file's shape: the release list as the API sent it, with the tag to ask again with.
+/// The cache file's shape: the release list as the API sent it, with the tag to ask again with and when
+/// the API last confirmed it (RFC 3339 in UTC, task 041).
 #[derive(Debug, Serialize, Deserialize)]
 struct CachedReleases<T> {
     #[serde(default)]
     etag: Option<String>,
+    #[serde(default)]
+    checked_at: Option<String>,
     releases: T,
 }
 
-/// The cached `release.json` of the current release, with the tag of the release it belongs to.
+/// The cached `release.json` of one release, with the tag of the release and the asset it came from (a
+/// re-uploaded asset has another size or URL, and is downloaded again).
 #[derive(Debug, Serialize, Deserialize)]
 struct CachedReleaseJson {
     release: String,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    size: Option<u64>,
     release_json: serde_json::Value,
+}
+
+/// Whether a page of the release list holds a stable release: neither a draft nor a prerelease.
+fn has_stable_release(releases: &[serde_json::Value]) -> bool {
+    let flag = |release: &serde_json::Value, name: &str| {
+        release.get(name).and_then(serde_json::Value::as_bool) == Some(true)
+    };
+    releases
+        .iter()
+        .any(|release| !flag(release, "draft") && !flag(release, "prerelease"))
+}
+
+/// The next page of a paged answer: the `Link` header's `rel="next"` URL, when it is on the API host (the
+/// token goes with it, so a link anywhere else is not followed).
+fn next_page(response: &Response) -> Option<String> {
+    response.header("link")?.split(',').find_map(|link| {
+        let (url, params) = link.trim().split_once(';')?;
+        let url = url.trim().strip_prefix('<')?.strip_suffix('>')?;
+        let next = params.split(';').any(|param| {
+            param
+                .trim()
+                .strip_prefix("rel=")
+                .is_some_and(|rel| rel.trim_matches('"').split(' ').any(|rel| rel == "next"))
+        });
+        (next && url.starts_with(&format!("{API_URL}/"))).then(|| url.to_string())
+    })
 }
 
 /// Writes a cache file through a temporary file and a rename, so a reader (another run at the same time)
@@ -546,17 +700,26 @@ fn write_cache<T: Serialize>(path: &Path, cached: &T) -> std::io::Result<()> {
     })
 }
 
-/// A status the source cannot work with, with the hint the user can act on.
+/// A status the source cannot work with, with the hint the user can act on. A 429, or a 403 with no request
+/// left, is the rate limit: the hint names when it resets, in local time, from `x-ratelimit-reset` (else
+/// from `retry-after`), and the token variable (task 042).
 fn status_error(status: u16, url: &str, response: &Response) -> Error {
-    let rate_limited = response
-        .header("x-ratelimit-remaining")
-        .is_some_and(|remaining| remaining.trim() == "0");
+    let rate_limited = status == 429
+        || response
+            .header("x-ratelimit-remaining")
+            .is_some_and(|remaining| remaining.trim() == "0");
     let hint = match status {
         304 => "nothing changed, but there is no cached copy to read".to_string(),
         401 => format!("the token in {TOKEN_ENV} is not accepted"),
-        403 | 429 if rate_limited => {
-            format!("the rate limit is used up; set {TOKEN_ENV} to a token of your own")
-        }
+        403 | 429 if rate_limited => match rate_limit_reset(response) {
+            Some(reset) => format!(
+                "the rate limit is used up until {} (local time); set {TOKEN_ENV} to a token of your own for 5000 requests an hour",
+                sources::local_time_text(reset)
+            ),
+            None => format!(
+                "the rate limit is used up; set {TOKEN_ENV} to a token of your own for 5000 requests an hour"
+            ),
+        },
         403 => "access denied".to_string(),
         404 => "no such repository, or it is private".to_string(),
         500..=599 => "the server has a problem; try again later".to_string(),
@@ -570,10 +733,27 @@ fn status_error(status: u16, url: &str, response: &Response) -> Error {
     }
 }
 
+/// When the rate limit resets, in Unix seconds: `x-ratelimit-reset`, else now plus `retry-after` (the
+/// secondary limit's header).
+fn rate_limit_reset(response: &Response) -> Option<i64> {
+    let number = |name: &str| {
+        response
+            .header(name)
+            .and_then(|value| value.trim().parse::<i64>().ok())
+    };
+    number("x-ratelimit-reset").or_else(|| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs();
+        Some(i64::try_from(now).ok()? + number("retry-after")?)
+    })
+}
+
 impl<H: Http> Source for GitHub<H> {
     fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
         let SourceSpec::GitHub { owner, repo } = spec;
-        let releases = self.releases(owner, repo)?;
+        let (releases, stale) = self.release_list(owner, repo)?;
         let release =
             current_release_on(&releases, target.channel).ok_or_else(|| Error::NoRelease {
                 spec: spec.to_string(),
@@ -639,11 +819,26 @@ impl<H: Http> Source for GitHub<H> {
             page: release.html_url.clone().filter(|page| !page.is_empty()),
             nolib: chosen.nolib,
             forever_build,
+            stale,
         })
     }
 
+    /// Downloads the picked asset; a byte count other than the size the release list names is refused
+    /// before the file is written (task 046), a pick without a size is written as it came.
     fn fetch(&self, pick: &Pick, to: &Path) -> Result<()> {
-        let response = self.download(&pick.url)?;
+        let response = self.download_asset(&pick.source, &pick.release, &pick.asset, &pick.url)?;
+        let got = response.body.len() as u64;
+        if let Some(expected) = pick.size
+            && got != expected
+        {
+            return Err(Error::AssetSizeMismatch {
+                spec: pick.source.clone(),
+                release: pick.release.clone(),
+                asset: pick.asset.clone(),
+                expected,
+                got,
+            });
+        }
         if let Some(parent) = to.parent() {
             std::fs::create_dir_all(parent).map_err(|source| Error::Io {
                 context: "creating the download folder",
@@ -1081,14 +1276,26 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_release_json_download_is_a_status_error() {
+    fn a_missing_release_json_download_names_the_asset() {
         let http = MapHttp::new().answer(RELEASES_URL, 200, &releases_body(&["release.json"]));
         let error = GitHub::new(http, None, None)
             .resolve(&spec(), &Target::new(FlavorId::Forever))
             .unwrap_err()
             .to_string();
+        assert_eq!(
+            error,
+            "the asset release.json of github:o/r v1.0.0 is missing: GitHub answered 404 for https://dl.test/release.json (removed or renamed after the release was listed)"
+        );
+        // Another status of a download stays the status error with its hint.
+        let http = MapHttp::new()
+            .answer(RELEASES_URL, 200, &releases_body(&["release.json"]))
+            .answer("https://dl.test/release.json", 503, "");
+        let error = GitHub::new(http, None, None)
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .unwrap_err()
+            .to_string();
         assert!(
-            error.starts_with("GitHub answered 404 for https://dl.test/release.json"),
+            error.starts_with("GitHub answered 503 for https://dl.test/release.json: "),
             "{error}"
         );
     }
@@ -1116,6 +1323,7 @@ mod tests {
             page: None,
             nolib: false,
             forever_build: ForeverBuild::Unknown,
+            stale: None,
         };
         let to = dir.join("nested").join("A.zip");
         github.fetch(&pick, &to).expect("fetched");

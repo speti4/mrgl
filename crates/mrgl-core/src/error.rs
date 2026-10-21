@@ -256,6 +256,32 @@ pub enum Error {
         path: PathBuf,
         excess: crate::zip_entry::Excess,
     },
+
+    /// A release asset the release list names answers 404 on download: removed or renamed after the list
+    /// was read (task 046). The release list's own 404 stays a [`Error::SourceStatus`] with its hint.
+    #[error(
+        "the asset {asset} of {spec} {release} is missing: {host} answered 404 for {url} (removed or renamed after the release was listed)"
+    )]
+    AssetMissing {
+        host: &'static str,
+        spec: String,
+        release: String,
+        asset: String,
+        url: String,
+    },
+
+    /// A downloaded asset whose byte count is not the size the release list names: cut short or replaced
+    /// (task 046). It is refused before anything opens it, so nothing is installed.
+    #[error(
+        "refused {asset} of {spec} {release}: {got} bytes downloaded, the release list names {expected}; the download was cut short or the asset changed, try again"
+    )]
+    AssetSizeMismatch {
+        spec: String,
+        release: String,
+        asset: String,
+        expected: u64,
+        got: u64,
+    },
 }
 
 /// The crate's result type.

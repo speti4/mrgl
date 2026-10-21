@@ -490,10 +490,46 @@ makes the command line answer every request from that folder instead (the URL's 
 `MRGL_GITHUB_TOKEN` holds a personal access token for the GitHub API (60 requests an hour without one); it is
 sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
-request; the cache can be deleted any time. Next to it, `release-json.json` keeps the current release's
-`release.json` with that release's tag (task 011): this is how `list` reads the Forever build offline. Every
+request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
+`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline. Every
 fixture repository under `releases/` is classified for the Forever build in `tests/github_source.rs`, so a
 new fixture names its expected build there.
+
+The release list walks its pages (task 042): when the first page of 30 holds no stable release (a repository
+that publishes a nightly prerelease every day), the source follows the `Link` header's `rel="next"` page,
+on `api.github.com` only, with the token, until a page holds a stable release or five pages are read
+(`sources::github::MAX_PAGES`); past the bound the newest prerelease is current, as for a repository without
+a stable release. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
+conditional request. A release's `release.json` is read from `release-json/tag-<tag>.json` when the file
+names the same tag and the same asset URL and size, so a repeated resolve of an unchanged release costs that
+one request and no download. A 429, or a 403 with `x-ratelimit-remaining: 0`, is the rate limit: its line
+names the local time it resets (`x-ratelimit-reset`, else `retry-after`) and `MRGL_GITHUB_TOKEN`. The folder
+stub serves a `page` above 1 from `<answer>.page-<n>.json`, and a `<answer>.headers` file next to an answer
+adds its `Name: value` lines to the headers, a `Status: <code>` line setting the status, which is how the
+paged fixture `Example/Nightly` (30 nightly prereleases, the stable release on page two) and the rate-limit
+tests are served.
+
+An asset download has its own errors (task 046). A 404 on an asset the release list names (a zip or
+`release.json`) is `the asset <name> of <source> <tag> is missing: GitHub answered 404 for <url> (removed or
+renamed after the release was listed)`; the release list's own 404 keeps `no such repository, or it is
+private`. The downloaded byte count is compared with the asset's `size` in the release list before the file
+is written, so the engine never opens a cut download: a mismatch is `refused <asset> of <source> <tag>: <n>
+bytes downloaded, the release list names <size>; the download was cut short or the asset changed, try
+again`, and an asset the list gives no size installs as before (the Forever zip of the `Questie/Questie`
+fixture lists none, so a test can put any fixture zip behind it).
+
+The offline rule (task 041): when the release list's request fails on the network (no connection, a
+timeout: `Error::Network`) and the list is cached, the resolve answers from the cache, the release's cached
+`release-json/tag-<tag>.json` included, so a stale pick needs no network at all; with nothing cached the
+network error stands, and a status answer (a 404, the rate limit) is never read as offline. The cache file
+keeps `checked_at`, when the API last confirmed the list (RFC 3339 in UTC, refreshed by a 200 and by a 304),
+and the pick carries `stale: { checked_at, reason }` (`null` for a fresh pick). `Pick::stale_warning` is the
+warning line, `offline: <source> <tag> is from the release list cached <local time>, the pick may be stale
+(<the network error>)` (`cached at an unknown time` for a cache without the date): `add --dry-run` and `add`
+print it as a warning and list it in the JSON `warnings`; the update check of task 006 reads the same flag
+from its picks. The asset itself is never cached before an install, so an `add` offline only gets as far as
+finding the release installed already. The folder stub with a folder that does not exist answers every
+request with a network error, which is how the tests go offline.
 
 The build version fallback (task 019: the client exe's version resource when `.build.info` has no row for
 the flavor) is tested against a second synthetic game folder, `client-exe/`: a `.build.info` with a row for

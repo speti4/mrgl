@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 22 backlog (2 ready · 0 blocked · 2 waiting · 18 ideas) · 0 in progress · 32 done · 3 dropped · 5 decisions
+**State:** 19 backlog (2 ready · 0 blocked · 2 waiting · 15 ideas) · 0 in progress · 35 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -49,9 +49,6 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 041 | [Offline resolve from the cached release list, with a warning](backlog/041-offline-resolve-from-the-cached-release-list.md) | S | 2026-10-21 |
-| 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
-| 046 | [The asset download's error path: a 404 names the asset, the size is checked](backlog/046-asset-download-404-names-the-missing-asset.md) | S | 2026-10-21 |
 | 055 | [One install path: a core helper for resolve, download and install, the link ref…](backlog/055-one-core-helper-for-resolve-download-and-install.md) | M | 2026-10-21 |
 
 #### M2 Window MVP
@@ -112,15 +109,15 @@ _none_
 | 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
 | 061 | [CI compiles the non-Windows paths of the core](done/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 |
 | 051 | [A Windows version line in the doctor report](done/051-windows-version-line-in-the-doctor-report.md) | 2026-10-22 |
+| 046 | [The asset download's error path: a 404 names the asset, the size is checked](done/046-asset-download-404-names-the-missing-asset.md) | 2026-10-22 |
 | 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](done/043-second-registry-source-for-the-game-root.md) | 2026-10-22 |
+| 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](done/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | 2026-10-22 |
+| 041 | [Offline resolve from the cached release list, with a warning](done/041-offline-resolve-from-the-cached-release-list.md) | 2026-10-22 |
 | 039 | [A bound on the unpacked size of a zip](done/039-bound-on-the-unpacked-size-of-a-zip.md) | 2026-10-22 |
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](done/033-close-the-milestone-of-a-shipped-release.md) | 2026-10-22 |
 | 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](done/025-savedvariables-size-and-orphan-cleanup.md) | 2026-10-22 |
-| 044 | [One zip-entry check for the install engine and the backup restore](done/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | 2026-10-21 |
-| 040 | [add github:<owner>/<repo> installs the pick through the engine](done/040-add-github-installs-the-pick-through-the-engine.md) | 2026-10-21 |
-| 038 | [The install engine warns when the client runs](done/038-install-warns-when-the-client-runs.md) | 2026-10-21 |
 
-_22 more in `done/`._
+_25 more in `done/`._
 
 ### Decisions
 

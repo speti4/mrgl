@@ -1889,7 +1889,8 @@ fn add_github_without_dry_run_needs_the_game_folder_and_the_asset() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),
-        "GitHub answered 404 for https://github.com/Example/NoReleaseJson/releases/download/3.0.0/Thing-3.0.0-forever.zip: no such repository, or it is private"
+        // The asset's 404 names the asset and the release (task 046), not the release list's hint.
+        "the asset Thing-3.0.0-forever.zip of github:Example/NoReleaseJson 3.0.0 is missing: GitHub answered 404 for https://github.com/Example/NoReleaseJson/releases/download/3.0.0/Thing-3.0.0-forever.zip (removed or renamed after the release was listed)"
     );
     let text = stdout(&output);
     assert!(
@@ -4750,5 +4751,197 @@ fn an_expandable_registry_value_resolves_to_the_root_of_its_literal() {
     assert_eq!(
         root_of("uninstall-expand=%MRGL_TEST_GAMES_043%\\flavors".to_string()),
         (literal, "uninstall_entry".into())
+    );
+}
+
+// --- task 046: the asset download's 404 names the asset, a short download is refused ---
+
+#[test]
+fn add_refuses_an_asset_shorter_than_its_listed_size() {
+    let game = Game::new("short-asset");
+    let stub = game.root.parent().expect("the base folder").join("stub");
+    let list = stub.join("api.github.com/repos/Example/Short/releases.json");
+    std::fs::create_dir_all(list.parent().unwrap()).unwrap();
+    std::fs::write(
+        &list,
+        r#"[{"tag_name":"v1.0.0","assets":[{"name":"Short-v1.0.0-forever.zip","size":2048,"browser_download_url":"https://github.com/Example/Short/releases/download/v1.0.0/Short-v1.0.0-forever.zip"}]}]"#,
+    )
+    .unwrap();
+    let asset =
+        stub.join("github.com/Example/Short/releases/download/v1.0.0/Short-v1.0.0-forever.zip");
+    std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+    std::fs::write(&asset, b"PK cut short").unwrap();
+    let run = |json: bool| {
+        let mut command = game.mrgl();
+        command.env("MRGL_HTTP_STUB", &stub);
+        if json {
+            command.arg("--json");
+        } else {
+            command.arg("--serious");
+        }
+        command
+            .args(["add", "github:Example/Short", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl")
+    };
+    let plain = "refused Short-v1.0.0-forever.zip of github:Example/Short v1.0.0: 12 bytes downloaded, the release list names 2048; the download was cut short or the asset changed, try again";
+    let output = run(false);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stderr_last_line(&output), plain);
+    let text = stdout(&output);
+    assert!(
+        text.contains("downloading Short-v1.0.0-forever.zip"),
+        "{text}"
+    );
+    assert!(!text.contains("installing"), "{text}");
+    assert_eq!(staging_entries(&game), Vec::<String>::new());
+    assert!(!game.state_path().exists(), "nothing installed");
+    assert!(!game.addon("Short").exists());
+
+    let output = run(true);
+    assert_eq!(output.status.code(), Some(1));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("one JSON error document");
+    assert_eq!(value["kind"], "error");
+    assert_eq!(value["message"], plain);
+}
+
+// --- task 041: the offline resolve from the cached release list, with a warning ---
+
+/// The plain line of a network error on the Questie release list, the stub folder missing.
+const QUESTIE_OFFLINE: &str = "cannot reach https://api.github.com/repos/Questie/Questie/releases?per_page=30: offline, the stub folder is missing";
+
+/// Whether a line is the stale warning of the Questie pick.
+fn is_stale_warning(line: &str) -> bool {
+    line.starts_with("offline: github:Questie/Questie v1.2.3 is from the release list cached ")
+        && line.ends_with(&format!(", the pick may be stale ({QUESTIE_OFFLINE})"))
+}
+
+#[test]
+fn add_dry_run_offline_answers_from_a_warm_cache_with_a_warning() {
+    let home = temp_home("offline-dry-run");
+    let gone = home.join("no-such-stub");
+    let run = |stub: &Path, mode: &str| {
+        mrgl()
+            .env("MRGL_HOME", &home)
+            .env("MRGL_HTTP_STUB", stub)
+            .args([
+                mode,
+                "add",
+                "github:Questie/Questie",
+                "--flavor",
+                "forever",
+                "--dry-run",
+            ])
+            .output()
+            .expect("run mrgl")
+    };
+    // A cold cache: the network error stands.
+    let cold = run(&gone, "--serious");
+    assert_eq!(cold.status.code(), Some(1));
+    assert_eq!(stderr_last_line(&cold), QUESTIE_OFFLINE);
+
+    // A working network warms the cache and warns about nothing.
+    let online = run(&releases(), "--serious");
+    assert!(online.status.success(), "{}", stderr_last_line(&online));
+    assert!(!stdout(&online).contains("offline"), "{}", stdout(&online));
+
+    let offline = run(&gone, "--serious");
+    assert!(offline.status.success(), "{}", stderr_last_line(&offline));
+    let text = stdout(&offline);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "resolving github:Questie/Questie for forever");
+    assert!(is_stale_warning(lines[1]), "{text}");
+    assert_eq!(
+        lines[2],
+        "pick for forever: github:Questie/Questie v1.2.3 (Questie-v1.2.3-forever.zip, flavor forever, interface 16001): release.json names forever (interface 16001)"
+    );
+    assert_eq!(lines.last(), Some(&"dry run: nothing installed"));
+
+    let json = run(&gone, "--json");
+    assert!(json.status.success(), "{}", stderr_last_line(&json));
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["pick"]["release"], "v1.2.3");
+    assert_eq!(value["pick"]["stale"]["reason"], QUESTIE_OFFLINE);
+    assert!(value["pick"]["stale"]["checked_at"].is_string(), "{value}");
+    let warnings = value["warnings"].as_array().expect("the warnings");
+    assert_eq!(warnings.len(), 1, "{value}");
+    assert!(
+        is_stale_warning(warnings[0].as_str().unwrap_or_default()),
+        "{value}"
+    );
+
+    let fresh = run(&releases(), "--json");
+    let value: serde_json::Value =
+        serde_json::from_slice(&fresh.stdout).expect("one JSON document");
+    assert_eq!(value["pick"]["stale"], serde_json::Value::Null);
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn add_offline_finds_the_installed_release_from_the_cache_with_a_warning() {
+    let game = Game::new("offline-add");
+    let gone = game
+        .root
+        .parent()
+        .expect("the base folder")
+        .join("no-such-stub");
+    let online = game
+        .mrgl()
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(online.status.success(), "{}", stderr_last_line(&online));
+
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &gone)
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(text.lines().any(is_stale_warning), "{text}");
+    assert_eq!(
+        stdout_last_line(&output),
+        "Questie 1.2.3 is installed already in _forever_ from github:Questie/Questie, nothing to do"
+    );
+
+    let json = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &gone)
+        .args([
+            "--json",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(json.status.success(), "{}", stderr_last_line(&json));
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["already_installed"], true);
+    assert_eq!(value["pick"]["stale"]["reason"], QUESTIE_OFFLINE);
+    assert!(
+        value["warnings"]
+            .as_array()
+            .expect("the warnings")
+            .iter()
+            .any(|warning| is_stale_warning(warning.as_str().unwrap_or_default())),
+        "{value}"
     );
 }
