@@ -44,12 +44,17 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 ```powershell
 cargo build --release
 target\release\mrgl.exe --version
-target\release\mrgl.exe root "C:\Program Files (x86)\World of Warcraft"   # remember the game folder once
 target\release\mrgl.exe list --flavor forever                               # what is installed, flavor-correctly
+target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # remember a game folder installed elsewhere
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # which release asset is the Forever one
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe remove SomeAddon --flavor forever                   # remove an addon mrgl installed
 ```
+
+On a standard install no flag is needed: mrgl finds the game folder through the launcher's registry key or
+under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
+run would use and where it came from, and `mrgl root <folder>` remembers one (also `--root <folder>` or
+`MRGL_ROOT` for one run).
 
 ## Documentation
 

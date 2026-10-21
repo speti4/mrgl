@@ -1,9 +1,10 @@
 //! End-to-end tests of the `mrgl` exe: the voice's two-line rule, `--serious`, `MRGL_SERIOUS`, `--json`, the
 //! exit codes, and `scan`, `list` and `root` over the synthetic flavors tree of `mrgl-core`. The tests assert
 //! the plain line (docs/nerglish.md, rule 3); the murloc line is checked only for being there. `MRGL_HOME`
-//! points every run at a temporary folder, so no test reads or writes the real config. The running-client
-//! tests (task 023) copy this test binary into a temporary flavor folder and start it as a stand-in
-//! client, never a game file.
+//! points every run at a temporary folder, so no test reads or writes the real config, and
+//! `MRGL_DISCOVERY` is `off` or a stub (task 020), so no test reads the real registry or looks under
+//! `Program Files`. The running-client tests (task 023) copy this test binary into a temporary flavor
+//! folder and start it as a stand-in client, never a game file.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -12,6 +13,20 @@ use std::process::{Child, Command, Output, Stdio};
 /// The synthetic game folder of `mrgl-core`.
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/flavors")
+}
+
+/// A `MRGL_DISCOVERY` stub: the launcher's value and the usual folders, `;`-separated.
+fn discovery(registry: Option<&Path>, folders: &[&Path]) -> String {
+    let mut items: Vec<String> = registry
+        .map(|path| format!("registry={}", path.display()))
+        .into_iter()
+        .collect();
+    items.extend(
+        folders
+            .iter()
+            .map(|path| format!("folder={}", path.display())),
+    );
+    items.join(";")
 }
 
 /// A fresh, nonexistent home folder for one test.
@@ -29,6 +44,8 @@ fn mrgl() -> Command {
     command.env("MRGL_HOME", temp_home("nohome"));
     // Every source answers from the fixture folder, never from the network.
     command.env("MRGL_HTTP_STUB", releases());
+    // No test reads the real registry or looks under Program Files.
+    command.env("MRGL_DISCOVERY", "off");
     command
 }
 
@@ -303,7 +320,7 @@ fn the_environment_beats_the_config() {
 }
 
 #[test]
-fn the_remembered_root_is_the_last_resort() {
+fn the_remembered_root_beats_the_discovery() {
     let home = temp_home("remembered");
     let saved = mrgl()
         .env("MRGL_HOME", &home)
@@ -321,35 +338,209 @@ fn the_remembered_root_is_the_last_resort() {
     let config = std::fs::read_to_string(home.join("config.json")).expect("config.json written");
     assert!(config.contains("\"root\""), "{config}");
 
+    // The discovery would find a game root with `_forever_` only; the remembered one has `era`.
+    let other = temp_game_root("remembered-beats");
+    let stub = discovery(Some(&other), &[]);
     let output = mrgl()
         .env("MRGL_HOME", &home)
-        .args(["list", "--flavor", "era"])
+        .env("MRGL_DISCOVERY", &stub)
+        .args(["--serious", "list", "--flavor", "era"])
         .output()
         .expect("run mrgl");
     assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
     assert!(stdout_last_line(&output).starts_with("1 addon in _classic_era_"));
+    assert!(!stdout.contains("game root found"), "{stdout}");
 
     let shown = mrgl()
         .env("MRGL_HOME", &home)
+        .env("MRGL_DISCOVERY", &stub)
         .arg("root")
         .output()
         .expect("run mrgl");
-    assert!(stdout_last_line(&shown).starts_with("game root: "));
+    let line = stdout_last_line(&shown);
+    assert!(line.starts_with("game root: "), "{line}");
+    assert!(line.ends_with(" (remembered)"), "{line}");
 
     let json = mrgl()
         .env("MRGL_HOME", &home)
+        .env("MRGL_DISCOVERY", &stub)
         .args(["--json", "root"])
         .output()
         .expect("run mrgl");
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
     assert_eq!(value["kind"], "root");
     assert_eq!(value["saved"], false);
+    assert_eq!(value["root_origin"], "remembered");
     assert!(value["root"].is_string());
     let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&other);
 }
 
 #[test]
-fn no_root_at_all_names_the_three_ways() {
+fn list_finds_the_root_in_the_launchers_registry_key() {
+    let output = mrgl()
+        .env("MRGL_DISCOVERY", discovery(Some(&fixtures()), &[]))
+        .args(["--serious", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "the found line and the summary: {stdout}");
+    assert!(
+        lines[0].starts_with("game root found in the launcher's registry key: "),
+        "{stdout}"
+    );
+    assert!(
+        lines[0].ends_with("; run `mrgl root <folder>` to remember it"),
+        "{stdout}"
+    );
+    assert_eq!(lines[1], "no addons in _forever_ (wowf 1.60.1.70245)");
+
+    let json = mrgl()
+        .env("MRGL_DISCOVERY", discovery(Some(&fixtures()), &[]))
+        .args(["--json", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "list");
+    assert_eq!(value["flavor"]["id"], "wowf");
+    let warnings = value["warnings"].as_array().expect("warnings");
+    assert_eq!(warnings.len(), 1, "{value}");
+    assert!(
+        warnings[0].as_str().is_some_and(
+            |line| line.starts_with("game root found in the launcher's registry key: ")
+        ),
+        "{value}"
+    );
+}
+
+#[test]
+fn a_registry_value_that_names_a_flavor_folder_gives_its_parent() {
+    let output = mrgl()
+        .env(
+            "MRGL_DISCOVERY",
+            discovery(Some(&fixtures().join("_retail_")), &[]),
+        )
+        .args(["--serious", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    assert!(
+        stdout.contains("game root found in the launcher's registry key: "),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("flavors; run `mrgl root <folder>` to remember it"),
+        "the parent of _retail_: {stdout}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "no addons in _forever_ (wowf 1.60.1.70245)"
+    );
+}
+
+#[test]
+fn the_usual_folders_are_tried_in_order_after_the_registry() {
+    let nowhere = Path::new("Q:\\nowhere\\registry");
+    let elsewhere = Path::new("Q:\\nowhere\\folder");
+    let output = mrgl()
+        .env(
+            "MRGL_DISCOVERY",
+            discovery(Some(nowhere), &[elsewhere, &fixtures()]),
+        )
+        .args(["--serious", "list", "--flavor", "classic"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    assert!(
+        stdout.contains("game root found in a usual install folder: "),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "1 addon in _classic_ (wow_classic 5.5.4.70531)"
+    );
+}
+
+#[test]
+fn a_hit_that_is_not_a_game_root_is_skipped() {
+    // Neither the folder nor its parent is a game root: no .build.info next to a flavor folder.
+    let inside = fixtures().join("_retail_").join("Interface");
+    let output = mrgl()
+        .env("MRGL_DISCOVERY", discovery(Some(&inside), &[&inside]))
+        .args(["list", "--flavor", "era"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_last_line(&output).starts_with("no game root for flavor era: "),
+        "{}",
+        stderr_last_line(&output)
+    );
+}
+
+#[test]
+fn root_reports_a_discovered_root_and_never_saves_it() {
+    let home = temp_home("discovered");
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .env("MRGL_DISCOVERY", discovery(Some(&fixtures()), &[]))
+        .arg("root")
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let line = stdout_last_line(&output);
+    assert!(
+        line.starts_with("game root found in the launcher's registry key: "),
+        "{line}"
+    );
+    assert!(
+        line.ends_with("; run `mrgl root <folder>` to remember it"),
+        "{line}"
+    );
+    assert!(!home.join("config.json").exists(), "nothing saved");
+
+    let json = mrgl()
+        .env("MRGL_HOME", &home)
+        .env("MRGL_DISCOVERY", discovery(None, &[&fixtures()]))
+        .args(["--json", "root"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "root");
+    assert_eq!(value["saved"], false);
+    assert_eq!(value["root_origin"], "common_folder");
+    assert!(value["root"].is_string(), "{value}");
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    assert!(!home.join("config.json").exists(), "nothing saved");
+}
+
+#[test]
+fn root_names_the_environment_as_the_origin() {
+    let output = mrgl()
+        .env("MRGL_ROOT", fixtures())
+        .args(["--serious", "root"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let line = stdout_last_line(&output);
+    assert!(line.starts_with("game root: "), "{line}");
+    assert!(line.ends_with(" (MRGL_ROOT)"), "{line}");
+    let json = mrgl()
+        .env("MRGL_ROOT", fixtures())
+        .args(["--json", "root"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["root_origin"], "environment");
+}
+
+#[test]
+fn no_root_at_all_names_the_three_ways_and_the_discovery() {
     let output = mrgl()
         .args(["list", "--flavor", "era"])
         .output()
@@ -357,7 +548,7 @@ fn no_root_at_all_names_the_three_ways() {
     assert_eq!(output.status.code(), Some(1));
     let plain = stderr_last_line(&output);
     assert!(
-        plain.starts_with("no game root for flavor era: "),
+        plain.starts_with("no game root for flavor era: none in the launcher's registry key"),
         "{plain}"
     );
     assert!(
@@ -400,13 +591,17 @@ fn root_rejects_a_folder_without_flavors() {
 }
 
 #[test]
-fn root_without_a_folder_prints_nothing_when_none_is_remembered() {
+fn root_without_a_folder_prints_nothing_when_none_is_remembered_or_found() {
     let output = mrgl().arg("root").output().expect("run mrgl");
     assert!(output.status.success());
     assert_eq!(
         stdout_last_line(&output),
-        "no game root remembered: run `mrgl root <folder>`"
+        "no game root: none remembered, none in the launcher's registry key or the usual install folders; run `mrgl root <folder>`"
     );
+    let json = mrgl().args(["--json", "root"]).output().expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert!(value["root"].is_null(), "{value}");
+    assert!(value["root_origin"].is_null(), "{value}");
 }
 
 #[test]
@@ -423,7 +618,7 @@ fn a_corrupt_config_is_a_warning() {
     let stdout = stdout(&output);
     assert!(stdout.contains("unreadable config: "), "{stdout}");
     assert!(
-        stdout.ends_with("no game root remembered: run `mrgl root <folder>`\n"),
+        stdout.ends_with("the usual install folders; run `mrgl root <folder>`\n"),
         "{stdout}"
     );
     let _ = std::fs::remove_dir_all(&home);
