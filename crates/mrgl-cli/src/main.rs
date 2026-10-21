@@ -15,6 +15,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use mrgl_core::backup;
 use mrgl_core::client;
+use mrgl_core::dependencies::{self, AddonDependencies};
 use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
 use mrgl_core::flavor::{self, FlavorId, VersionSource};
 use mrgl_core::home::{self, Config};
@@ -22,6 +23,7 @@ use mrgl_core::install::{Engine, Metadata};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Source, SourceSpec, Target};
+use mrgl_core::state::FlavorHome;
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::{Error, VERSION};
 
@@ -250,13 +252,14 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
     match command {
         Command::Scan { folder } => {
             let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
-            report_scan(reporter, "scan", &scan, Vec::new());
+            report_scan(reporter, "scan", &scan, Vec::new(), &[]);
         }
         Command::List { flavor, root } => {
             let mut warnings = Vec::new();
             let folder = flavor_folder(flavor.as_deref(), root, &mut warnings)?;
             let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
-            report_scan(reporter, "list", &scan, warnings);
+            let dependencies = check_dependencies(&scan, &mut warnings);
+            report_scan(reporter, "list", &scan, warnings, &dependencies);
         }
         Command::Root { folder } => root_command(reporter, folder)?,
         Command::Add {
@@ -331,7 +334,15 @@ fn game_root(
 
 /// Prints a scan: the addon lines, the warnings and the summary, or the one JSON document. A client
 /// running from the flavor folder (task 023) is named in the summary and is `client_running` in the JSON.
-fn report_scan(reporter: &Reporter, kind: &str, scan: &Scan, mut warnings: Vec<String>) {
+/// `dependencies` is the dependency check of the scan (task 029; empty for `scan`, which reads the folder
+/// only).
+fn report_scan(
+    reporter: &Reporter,
+    kind: &str,
+    scan: &Scan,
+    mut warnings: Vec<String>,
+    dependencies: &[AddonDependencies],
+) {
     warnings.extend(scan.flavor.warnings.iter().cloned());
     warnings.extend(scan.warnings.iter().cloned());
     let client = match client::client_running(&scan.flavor) {
@@ -341,19 +352,28 @@ fn report_scan(reporter: &Reporter, kind: &str, scan: &Scan, mut warnings: Vec<S
             None
         }
     };
+    let mut lines = Vec::new();
+    let mut objects = Vec::new();
+    for addon in &scan.addons {
+        let mut line = addon_line(addon);
+        let mut object = serde_json::to_value(addon).unwrap_or_default();
+        mark_dependencies(dependencies, &addon.folder, &mut line, &mut object);
+        lines.push(line);
+        objects.push(object);
+    }
     if reporter.json {
         reporter.document(serde_json::json!({
             "kind": kind,
             "flavor": &scan.flavor,
-            "addons": &scan.addons,
+            "addons": objects,
             "skipped": &scan.skipped,
             "client_running": client,
             "warnings": warnings,
         }));
         return;
     }
-    for addon in &scan.addons {
-        reporter.line(addon_line(addon));
+    for line in lines {
+        reporter.line(line);
     }
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
@@ -427,6 +447,73 @@ fn addon_line(addon: &Addon) -> String {
         parts.push("no toc for this flavor".to_string());
     }
     parts.join("  ")
+}
+
+/// Task 029's mark on one addon of a listing: a `missing: …` suffix on its line and the `dependencies`
+/// field of its JSON object, from the check's result for the folder (nothing when the scan was not
+/// checked).
+fn mark_dependencies(
+    checks: &[AddonDependencies],
+    folder: &str,
+    line: &mut String,
+    object: &mut serde_json::Value,
+) {
+    let Some(check) = checks.iter().find(|check| check.folder == folder) else {
+        return;
+    };
+    if check.has_missing() {
+        line.push_str(&format!("  missing: {}", check.missing.join(", ")));
+    }
+    if let Some(object) = object.as_object_mut() {
+        object.insert("dependencies".to_string(), serde_json::json!(check));
+    }
+}
+
+/// The dependency check of a scan (task 029), with the `nolib` flags of the flavor's sidecar: a sidecar
+/// that cannot be read is a warning and leaves every flag unknown. Every addon with a missing required
+/// dependency adds its warning line.
+fn check_dependencies(scan: &Scan, warnings: &mut Vec<String>) -> Vec<AddonDependencies> {
+    let id = &scan.flavor.id;
+    let state = match FlavorHome::new(id).and_then(|home| home.read_state(id)) {
+        Ok(loaded) => {
+            warnings.extend(loaded.warning);
+            Some(loaded.state)
+        }
+        Err(error) => {
+            warnings.push(error.to_string());
+            None
+        }
+    };
+    let checks = dependencies::check(scan, state.as_ref());
+    warnings.extend(checks.iter().filter_map(AddonDependencies::warning));
+    checks
+}
+
+/// The dependency check after an install (task 029): the flavor's folder as it is now, the results of the
+/// folders just installed, and a warning line for each with a missing required dependency.
+fn installed_dependencies(
+    engine: &Engine,
+    folders: &[String],
+    warnings: &mut Vec<String>,
+) -> Vec<AddonDependencies> {
+    let scan = match scan::scan_flavor(&engine.flavor) {
+        Ok(scan) => scan,
+        Err(error) => {
+            warnings.push(error.to_string());
+            return Vec::new();
+        }
+    };
+    let state = engine.load_state().ok().map(|loaded| loaded.state);
+    let checks: Vec<AddonDependencies> = dependencies::check(&scan, state.as_ref())
+        .into_iter()
+        .filter(|check| {
+            folders
+                .iter()
+                .any(|folder| folder.eq_ignore_ascii_case(&check.folder))
+        })
+        .collect();
+    warnings.extend(checks.iter().filter_map(AddonDependencies::warning));
+    checks
 }
 
 /// The target of an `add`: the flavor the spec names and, when a game folder is known and holds that
@@ -644,6 +731,7 @@ fn add_zip(
         source: zip.display().to_string(),
         version: None,
         name: None,
+        nolib: None,
     };
     let folder_name = engine.flavor.folder_name();
     if !reporter.json {
@@ -707,6 +795,7 @@ fn add_zip(
         .install(&zip, &metadata)
         .map_err(|error| error.to_string())?;
     warnings.extend(installed.warnings.iter().cloned());
+    let dependencies = installed_dependencies(&engine, &installed.folders, &mut warnings);
     if reporter.json {
         reporter.document(serde_json::json!({
             "kind": "add",
@@ -719,6 +808,7 @@ fn add_zip(
                 "source": metadata.source,
                 "folders": installed.folders,
                 "removed_folders": installed.removed_folders,
+                "dependencies": dependencies,
             },
             "client_warning": installed.client_warning,
             "warnings": warnings,

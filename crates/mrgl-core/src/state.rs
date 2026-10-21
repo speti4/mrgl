@@ -121,6 +121,11 @@ pub struct Entry {
     pub files: BTreeMap<String, String>,
     /// When the install finished, RFC 3339 in UTC (`2026-10-21T14:03:05Z`).
     pub installed_at: String,
+    /// The installed asset is a `nolib` build (task 029): `Some(true)` carries no embedded library,
+    /// `Some(false)` carries its libraries, `None` (absent in the JSON) is unknown, a zip in hand or an
+    /// entry written before the flag existed. The dependency check reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nolib: Option<bool>,
 }
 
 /// The sidecar of one flavor.
@@ -358,6 +363,7 @@ mod tests {
                 "ab".repeat(32),
             )]),
             installed_at: "2026-10-21T14:03:05Z".to_string(),
+            nolib: None,
         }
     }
 
@@ -428,6 +434,26 @@ mod tests {
         assert_eq!(loaded.state, state);
         assert_eq!(loaded.warning, None);
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_nolib_flag_is_written_when_known_and_absent_reads_unknown() {
+        let mut known = entry(&["Foo"]);
+        known.nolib = Some(true);
+        let text = serde_json::to_string(&known).expect("serializes");
+        assert!(text.contains("\"nolib\":true"), "{text}");
+        assert_eq!(
+            serde_json::from_str::<Entry>(&text).expect("reads").nolib,
+            Some(true)
+        );
+        let unknown = serde_json::to_string(&entry(&["Foo"])).expect("serializes");
+        assert!(!unknown.contains("nolib"), "{unknown}");
+        assert_eq!(
+            serde_json::from_str::<Entry>(&unknown)
+                .expect("reads")
+                .nolib,
+            None
+        );
     }
 
     #[test]

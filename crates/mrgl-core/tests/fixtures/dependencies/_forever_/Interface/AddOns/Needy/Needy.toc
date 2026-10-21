@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: Needy
+## Version: 1.0.0
+## Dependencies: LibMet, LibEmbedded, LibMissing
+## RequiredDeps: libmet
+## OptionalDeps: LibOptional
+
+Libs/LibEmbedded/LibEmbedded.lua
+core.lua

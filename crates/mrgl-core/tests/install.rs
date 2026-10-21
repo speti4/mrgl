@@ -117,6 +117,7 @@ fn metadata(zip_name: &str) -> Metadata {
         source: zip(zip_name).display().to_string(),
         version: None,
         name: None,
+        nolib: None,
     }
 }
 
@@ -350,6 +351,7 @@ fn the_metadata_names_the_source_the_version_and_the_name() {
         source: "github:someone/one-folder".to_string(),
         version: Some("v1.0.0-release".to_string()),
         name: Some("One".to_string()),
+        nolib: Some(false),
     };
     let installed = sandbox
         .engine
@@ -361,10 +363,14 @@ fn the_metadata_names_the_source_the_version_and_the_name() {
     let state = sandbox.state();
     let (_, entry) = state.entry("One").expect("the entry");
     assert_eq!(entry.source, "github:someone/one-folder");
+    assert_eq!(entry.nolib, Some(false), "the pick's nolib flag (task 029)");
     assert_eq!(sandbox.cache_entries("One"), ["v1.0.0-release.zip"]);
 
     let no_version = sandbox.install("no-version.zip");
     assert_eq!(no_version.version, "unknown");
+    let state = sandbox.state();
+    let (_, entry) = state.entry("NoVersion").expect("the entry");
+    assert_eq!(entry.nolib, None, "a zip in hand does not say");
     assert_eq!(sandbox.cache_entries("NoVersion"), ["unknown.zip"]);
 }
 
@@ -668,6 +674,7 @@ fn a_folder_taken_over_from_another_managed_addon_is_a_warning() {
         source: "zip in hand".to_string(),
         version: Some("9".to_string()),
         name: Some("Options".to_string()),
+        nolib: None,
     };
     // A zip that ships only the Options folder under another name takes that folder over.
     let only_options = sandbox.root.join("only-options.zip");

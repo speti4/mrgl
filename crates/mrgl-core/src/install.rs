@@ -42,6 +42,9 @@ pub struct Metadata {
     /// The addon's name, the sidecar's key; `None` derives it from the folders (the one whose name the
     /// others extend, `BigWigs` for `BigWigs_Core` and `BigWigs_Options`, else the first by name).
     pub name: Option<String>,
+    /// The pick's `nolib` flag ([`crate::sources::Pick::nolib`]), recorded on the sidecar entry for the
+    /// dependency check (task 029); `None` when the source does not say (a zip in hand).
+    pub nolib: Option<bool>,
 }
 
 /// One addon folder found in a staged zip.
@@ -73,6 +76,8 @@ pub struct Staged {
     pub version: String,
     /// The source to record.
     pub source: String,
+    /// The `nolib` flag to record ([`Metadata::nolib`]).
+    pub nolib: Option<bool>,
     keep: bool,
 }
 
@@ -216,6 +221,7 @@ impl Engine {
             name: String::new(),
             version: String::new(),
             source: metadata.source.clone(),
+            nolib: metadata.nolib,
             keep: false,
         };
         let unpacked = staged.dir.join("unpacked");
@@ -315,6 +321,7 @@ impl Engine {
             folders: new_folders.clone(),
             files,
             installed_at: state::now_rfc3339(),
+            nolib: staged.nolib,
         };
         if let Some((old_name, _)) = &previous {
             state.addons.remove(old_name);

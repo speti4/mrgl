@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-21 — edit the files, not this section._
 
-**State:** 29 backlog (2 ready · 0 blocked · 2 waiting · 25 ideas) · 0 in progress · 16 done · 0 dropped · 5 decisions
+**State:** 30 backlog (2 ready · 0 blocked · 2 waiting · 26 ideas) · 0 in progress · 17 done · 0 dropped · 5 decisions
 
 ### Ready
 
@@ -51,11 +51,11 @@ _none_
 |---|---|---|---|
 | 021 | [Pin, ignore and the pre-release channel per addon; CLI pin, unpin, ignore and u…](backlog/021-pin-ignore-and-prerelease-channel.md) | S | 2026-10-21 |
 | 022 | [Rollback to the previous version from the kept zip; CLI rollback](backlog/022-rollback-from-the-kept-zip.md) | S | 2026-10-21 |
-| 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](backlog/029-dependency-check-from-toc-and-nolib.md) | S | 2026-10-21 |
 | 037 | [list reads the sidecar: managed (source, version) and unmanaged addons](backlog/037-list-reads-the-sidecar-managed-and-unmanaged.md) | S | 2026-10-21 |
 | 040 | [add github:<owner>/<repo> installs the pick through the engine](backlog/040-add-github-installs-the-pick-through-the-engine.md) | S | 2026-10-21 |
 | 041 | [Offline resolve from the cached release list, with a warning](backlog/041-offline-resolve-from-the-cached-release-list.md) | S | 2026-10-21 |
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
+| 052 | [Does an embedded library satisfy a required dependency in the client?](backlog/052-embedded-library-versus-a-required-dependency-in-the-client.md) | S | 2026-10-21 |
 
 #### M2 Window MVP
 
@@ -69,6 +69,7 @@ _none_
 | 033 | [Close the GitHub milestone a release ships: a step in the release checklist](backlog/033-close-the-milestone-of-a-shipped-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
 | 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](backlog/043-second-registry-source-for-the-game-root.md) | S | 2026-10-21 |
+| 053 | [Missing dependencies on the addon's row in the window](backlog/053-missing-dependencies-on-the-window-row.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
 
@@ -117,13 +118,13 @@ _none_
 | 035 | [Window polish: hide the Forever note column without notes, cap the toast stack](done/035-window-polish-forever-column-and-toast-cap.md) | 2026-10-21 |
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
 | 030 | [Release notes before an update: the GitHub release body in one line](done/030-release-notes-before-an-update.md) | 2026-10-21 |
+| 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](done/029-dependency-check-from-toc-and-nolib.md) | 2026-10-21 |
 | 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
 | 020 | [Game root auto-discovery: the launcher's registry key and the common install fo…](done/020-game-root-auto-discovery.md) | 2026-10-21 |
 | 019 | [Build version fallback from the client exe when .build.info has no row for the …](done/019-build-version-fallback-from-the-client-exe.md) | 2026-10-21 |
 | 018 | [GitHub repository settings after the first push: rulesets, CodeQL, private repo…](done/018-github-repository-settings-after-the-first-push.md) | 2026-10-21 |
-| 017 | [Window design sketch: the list view, the states and the voice's place, before t…](done/017-window-design-sketch-before-the-shell.md) | 2026-10-21 |
 
-_6 more in `done/`._
+_7 more in `done/`._
 
 ### Decisions
 

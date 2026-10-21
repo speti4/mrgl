@@ -165,6 +165,8 @@ pub struct Chosen<'a> {
     pub interface: Option<u32>,
     pub guess: bool,
     pub reason: String,
+    /// The asset is a `nolib` build: its libraries are separate addons, none is embedded (task 029).
+    pub nolib: bool,
 }
 
 /// The asset a `release.json` names for the target: the first key with an entry, a library-included zip
@@ -199,7 +201,7 @@ pub fn pick_by_metadata<'a>(
         }
         // Library-included first (stable, so the file order breaks the tie), then the build's major.
         candidates.sort_by_key(|(_, _, nolib)| *nolib);
-        let (asset, interface, _) = candidates
+        let (asset, interface, nolib) = candidates
             .iter()
             .find(|(_, interface, _)| major.is_some_and(|major| interface / 10000 == major))
             .or_else(|| candidates.first())
@@ -218,6 +220,7 @@ pub fn pick_by_metadata<'a>(
             interface: Some(interface),
             guess,
             reason,
+            nolib,
         });
     }
     None
@@ -240,12 +243,13 @@ pub fn pick_by_name<'a>(release: &'a Release, target: &Target) -> Option<Chosen<
             Some((asset, stem.to_string(), nolib))
         })
         .collect();
-    let pick = |asset: &'a Asset, flavor: &str, reason: String| Chosen {
+    let pick = |asset: &'a Asset, flavor: &str, nolib: bool, reason: String| Chosen {
         asset,
         flavor: flavor.to_string(),
         interface: None,
         guess: true,
         reason,
+        nolib,
     };
     for key in flavor_keys(target) {
         let suffix = format!("-{key}");
@@ -254,10 +258,11 @@ pub fn pick_by_name<'a>(release: &'a Release, target: &Target) -> Option<Chosen<
             .filter(|(_, stem, _)| stem.ends_with(&suffix))
             .collect();
         hits.sort_by_key(|(_, _, nolib)| *nolib);
-        if let Some((asset, _, _)) = hits.first() {
+        if let Some((asset, _, nolib)) = hits.first() {
             return Some(pick(
                 asset,
                 key,
+                *nolib,
                 format!(
                     "no release.json names {}; the asset name ends in {suffix}, a guess",
                     target.flavor_name()
@@ -275,10 +280,11 @@ pub fn pick_by_name<'a>(release: &'a Release, target: &Target) -> Option<Chosen<
             })
             .collect();
         hits.sort_by_key(|(_, _, nolib)| *nolib);
-        if let Some((asset, _, _)) = hits.first() {
+        if let Some((asset, _, nolib)) = hits.first() {
             return Some(pick(
                 asset,
                 "mainline",
+                *nolib,
                 "no release.json names retail; the asset name has no flavor suffix, which the packager gives the retail zip, a guess".to_string(),
             ));
         }
@@ -515,6 +521,7 @@ impl<H: Http> Source for GitHub<H> {
             reason,
             notes: release.body.as_deref().and_then(notes_line),
             page: release.html_url.clone().filter(|page| !page.is_empty()),
+            nolib: chosen.nolib,
         })
     }
 
@@ -653,10 +660,29 @@ mod tests {
             chosen.reason,
             "release.json names forever (interface 16001)"
         );
+        assert!(!chosen.nolib, "the library zip");
         let retail = pick_by_metadata(&release, &release_json, &Target::new(FlavorId::Retail))
             .expect("a pick");
         assert_eq!(retail.asset.name, "A-v1.zip");
         assert!(pick_by_metadata(&release, &release_json, &classic(5)).is_none());
+    }
+
+    #[test]
+    fn the_chosen_asset_carries_its_nolib_flag() {
+        let release = release("v1", &["A-v1-forever-nolib.zip", "B-v1-nolib.zip"]);
+        let release_json = ReleaseJson {
+            releases: vec![entry("A-v1-forever-nolib.zip", true, &[("forever", 16001)])],
+        };
+        let by_metadata =
+            pick_by_metadata(&release, &release_json, &Target::new(FlavorId::Forever))
+                .expect("the nolib zip, the only one");
+        assert!(by_metadata.nolib);
+        let by_name = pick_by_name(&release, &Target::new(FlavorId::Forever)).expect("by name");
+        assert_eq!(by_name.asset.name, "A-v1-forever-nolib.zip");
+        assert!(by_name.nolib);
+        let retail = pick_by_name(&release, &Target::new(FlavorId::Retail)).expect("retail");
+        assert_eq!(retail.asset.name, "B-v1-nolib.zip");
+        assert!(retail.nolib);
     }
 
     #[test]
@@ -909,6 +935,7 @@ mod tests {
             reason: String::new(),
             notes: None,
             page: None,
+            nolib: false,
         };
         let to = dir.join("nested").join("A.zip");
         github.fetch(&pick, &to).expect("fetched");
