@@ -1,8 +1,8 @@
-# Tests on Windows, the format check and the changelog check on Linux, the oldest supported Rust on Windows, the
-# dependency policy and the workflow lint on every push to main and every pull request; the ruleset on `main`
-# requires them, so no path filter skips them (the commit rules have their own workflow, commit-rules.yml). The
-# repo is public from its first commit (D-004), so the Windows runners cost nothing and run on every change; a
-# macOS job joins with the macOS preview (M6). A tag also packs and publishes the portable Windows zip, its
+# Tests on Windows, the format check and the changelog check on Linux, the oldest supported Rust on Windows, a
+# check of the non-Windows code on Linux, the dependency policy and the workflow lint on every push to main and
+# every pull request; the ruleset on `main` requires them, so no path filter skips them (the commit rules have
+# their own workflow, commit-rules.yml). The repo is public from its first commit (D-004), so the Windows
+# runners cost nothing and run on every change; a macOS job joins with the macOS preview (M6). A tag also packs and publishes the portable Windows zip, its
 # checksum, its build provenance attestation and the notes from the changelog, with the license page inside the
 # zip. The toolchain is the stable version `rust-toolchain.toml` pins, installed by the runner's own rustup
 # through the local action .github/actions/install-rust-toolchain, not by a third-party action; every cargo
@@ -95,6 +95,27 @@ jobs:
         shell: bash
         run: cargo "+$MSRV" check --all-targets --locked
 
+  # The `cfg(not(windows))` branches compile: `cargo check` over every target of the workspace, the tests
+  # included, on Linux, so the macOS preview (M6) starts from a core that builds off Windows and a broken
+  # non-Windows path shows up in the pull request that breaks it. A check only: the tests stay on Windows, whose
+  # paths the fixtures are shaped for. The window's crate is checked too, with the GTK and WebKitGTK headers its
+  # Linux dependencies build against. No Rust cache, as in the msrv job.
+  non-windows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/install-rust-toolchain
+      # The system libraries the Linux graph of tauri, tao and wry finds through pkg-config (webkit2gtk-4.1
+      # brings GTK 3, libsoup 3 and JavaScriptCore along; tao's dbus wants libdbus-1).
+      - name: Install the Linux libraries of the window
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends pkg-config libwebkit2gtk-4.1-dev libdbus-1-dev
+      - run: cargo check --all-targets --locked
+
   # Advisories, licenses, bans and sources of the shipped graph (deny.toml).
   deny:
     runs-on: ubuntu-latest
@@ -132,7 +153,7 @@ jobs:
           advanced-security: false
 
   release:
-    needs: [test, lint, msrv, deny, workflow-lint]
+    needs: [test, lint, msrv, non-windows, deny, workflow-lint]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     timeout-minutes: 45
