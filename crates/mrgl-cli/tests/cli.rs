@@ -3974,8 +3974,12 @@ fn rollback_puts_the_previous_version_back_pins_it_and_goes_forward_again() {
     assert!(game.addon("OneFolder").join("old.lua").is_file());
     assert!(!game.addon("OneFolder").join("new.lua").exists());
     let output = run_in(&game, &["list"]);
+    // The managed part (task 037) sits before the pin, the Forever mark (task 011) after it.
     assert!(
-        stdout(&output).contains("OneFolder  1.0.0  16001  pinned at 1.0.0\n"),
+        stdout(&output).lines().any(
+            |line| line.starts_with("OneFolder  1.0.0  16001  managed  ")
+                && line.ends_with("  pinned at 1.0.0  forever:unknown")
+        ),
         "{}",
         stdout(&output)
     );
