@@ -18,6 +18,7 @@ The repository, the task standard and the empty workspace: no app yet.
 ### M2 Window MVP
 
 - Window design sketch: the list view, the states and the voice's place, before the shell is built ([017](https://github.com/speti4/mrgl/blob/main/tasks/done/017-window-design-sketch-before-the-shell.md))
+- Game-running detection: no `WTF` write while the client runs ([023](https://github.com/speti4/mrgl/blob/main/tasks/done/023-game-running-detection.md))
 
 ### Project housekeeping
 
