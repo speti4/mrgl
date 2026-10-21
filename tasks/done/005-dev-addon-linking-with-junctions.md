@@ -84,6 +84,11 @@ are Windows-only and the tests that need one are Windows-only.
   name as the `one-folder` zips; `DevAddon` without one; `Media` without a TOC), the core tests in
   `tests/link.rs`, the end-to-end tests in the CLI's `tests/cli.rs`; README, `docs/development.md` and the
   fixtures README describe them.
+- 2026-10-21 — the first CI run failed one test on the Windows runner: with the development folder deleted,
+  `unlink` spelled it from the temp path as given (`C:\Users\RUNNER~1\…`, an 8.3 short name), which did
+  not match the canonical spelling the link recorded. `dev_folder_lenient` now canonicalizes the nearest
+  folder that still exists and appends the missing names; reproduced locally with `TMP` set to an 8.3
+  path (the test failed before the change and passes after it), and the test asserts the spelling.
 
 ## Deviations from the plan
 
@@ -130,7 +135,8 @@ are Windows-only and the tests that need one are Windows-only.
   development folder still holds its five files.
 - 2026-10-21 — `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo +1.90 check
   --all-targets --locked`, `python -I scripts/changelog.py --check` and `cargo deny check` (the manifests
-  changed): all green. The non-Windows paths (`ensure_supported`, the `cfg(not(windows))` tests) are not
+  changed): all green; `cargo test --locked` green again with `TMP` and `TEMP` set to an 8.3 short path,
+  as on the CI runner. The non-Windows paths (`ensure_supported`, the `cfg(not(windows))` tests) are not
   compiled locally: a check for another target stops at `ring`'s C build without a cross compiler.
 
 ## Closing checklist

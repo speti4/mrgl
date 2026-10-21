@@ -381,8 +381,16 @@ fn unlink_leaves_a_real_folder_and_takes_a_dangling_junction_of_its_own() {
     std::fs::remove_dir(sandbox.addon("DevAddon")).expect("the junction goes");
     std::fs::create_dir(sandbox.addon("DevAddon")).expect("a real folder");
     std::fs::write(sandbox.addon("DevAddon").join("copy.lua"), "-- a copy\n").expect("a file");
-    // The development folder is gone: OneFolder's junction dangles, and is still ours to remove.
+    // The development folder is gone: OneFolder's junction dangles, and is still ours to remove. Its
+    // name is still spelled as the link recorded it (canonical parents, even when the temp folder's
+    // path carries an 8.3 short name).
+    let recorded = link::dev_folder(&sandbox.dev).expect("the folder");
     std::fs::remove_dir_all(&sandbox.dev).expect("the development folder goes");
+    assert_eq!(link::dev_folder_lenient(&sandbox.dev), recorded);
+    assert_eq!(
+        link::dev_folder_lenient(&sandbox.dev.join("deeper")),
+        recorded.join("deeper")
+    );
 
     let unlinked = link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
     assert_eq!(unlinked.unlinked, ["OneFolder"]);

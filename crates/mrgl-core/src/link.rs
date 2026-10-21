@@ -130,14 +130,27 @@ pub fn dev_folder(folder: &Path) -> Result<PathBuf> {
     Ok(strip_verbatim(&canonical))
 }
 
-/// The development folder as [`dev_folder`] spells it, or, when it is gone (deleted after the link),
-/// absolute as given.
+/// The development folder as [`dev_folder`] spells it, also when it is gone (deleted after the link): the
+/// nearest folder above it that still exists is canonicalized and the missing names are appended, so an
+/// 8.3 short name or another spelling of a parent (`C:\Users\RUNNER~1\…`) still matches the recorded
+/// source.
 pub fn dev_folder_lenient(folder: &Path) -> PathBuf {
-    match std::fs::canonicalize(folder) {
-        Ok(canonical) => strip_verbatim(&canonical),
-        Err(_) => std::path::absolute(folder)
-            .map(|absolute| strip_verbatim(&absolute))
-            .unwrap_or_else(|_| folder.to_path_buf()),
+    let absolute = std::path::absolute(folder).unwrap_or_else(|_| folder.to_path_buf());
+    let mut missing = Vec::new();
+    let mut current = absolute.as_path();
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(current) {
+            let mut path = strip_verbatim(&canonical);
+            path.extend(missing.iter().rev());
+            return path;
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return strip_verbatim(&absolute),
+        }
     }
 }
 
