@@ -3,7 +3,8 @@
 //! BigWigs packager writes them, or one addon whose TOC sits at the zip's root), and they are swapped into
 //! `Interface\AddOns` one folder at a time with a revert when a swap fails, so the folder is either the old
 //! version or the new one. The state sidecar ([`crate::state`]) records what was installed from where, and
-//! the cache keeps the zip of the current and the previous version for a later rollback. Only
+//! the cache keeps the zip of the current and the previous version for the rollback ([`Engine::rollback`],
+//! task 022: the previous version's cached zip through the same install call, then pinned). Only
 //! `Interface\AddOns` is written in the game folder.
 //!
 //! The entry takes a zip path and the install metadata (source, version): a source such as GitHub hands
@@ -169,6 +170,27 @@ pub struct AlreadyInstalled {
     /// The sidecar's entry as it stands.
     pub entry: Entry,
     /// Plain lines about the sidecar (a corrupt one read as fresh).
+    pub warnings: Vec<String>,
+}
+
+/// What a rollback did (task 022): the version installed now is the previous one, pinned, and the version
+/// rolled back from is the previous one in its turn, so a second rollback goes forward again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RolledBack {
+    /// The addon's name as the sidecar spells it.
+    pub name: String,
+    /// The version installed now, the one rolled back to.
+    pub version: String,
+    /// The version rolled back from, now the entry's previous version.
+    pub previous_version: String,
+    /// The pin the rollback set: the version rolled back to.
+    pub pinned: String,
+    /// The entry's source, unchanged by the rollback.
+    pub source: String,
+    /// The folders written, the primary one first.
+    pub folders: Vec<String>,
+    /// The folders of the version rolled back from that the version rolled back to does not ship, removed.
+    pub removed_folders: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -552,6 +574,85 @@ impl Engine {
     /// Puts a managed addon on a release channel.
     pub fn set_channel(&self, name: &str, channel: Channel) -> Result<Marked> {
         self.mark(name, "put on a channel", |entry| entry.set_channel(channel))
+    }
+
+    /// Rolls a managed addon back to its previous version (task 022): the entry's `previous_version` and
+    /// its zip in the cache go through the same stage and swap as an install, with the entry's source
+    /// unchanged, and the addon is pinned at that version so an update does not bring the version rolled
+    /// back from in again (`unpin` is the step back). The cache keeps both zips, the one rolled back to (now
+    /// current) and the one rolled back from (now previous), so a second rollback goes forward again.
+    /// A name the sidecar does not know, an entry with no previous version and a missing cached zip are
+    /// errors, each before anything is written.
+    pub fn rollback(&self, name: &str) -> Result<RolledBack> {
+        let loaded = self.load_state()?;
+        let mut state = loaded.state;
+        let scan = scan::scan_flavor(&self.flavor)?;
+        let dropped = state.reconcile(&scan);
+        let flavor = flavor_label(&self.flavor.id);
+        let Some((known, entry)) = state
+            .find(name)
+            .map(|(known, entry)| (known.to_string(), entry.clone()))
+        else {
+            let name = name.to_string();
+            return Err(if self.addons_dir().join(&name).is_dir() {
+                Error::NotManagedToMark {
+                    name,
+                    flavor,
+                    action: "rolled back",
+                }
+            } else {
+                Error::AddonNotFound { name, flavor }
+            });
+        };
+        let Some(target) = entry
+            .previous_version
+            .clone()
+            .filter(|previous| previous != &entry.version)
+        else {
+            return Err(Error::NoPreviousVersion {
+                name: known,
+                version: entry.version,
+                flavor,
+            });
+        };
+        let zip = self.home.cached_zip(&known, &target);
+        if !zip.is_file() {
+            return Err(Error::RollbackZipMissing {
+                name: known,
+                version: target,
+                path: zip,
+            });
+        }
+        let metadata = Metadata {
+            source: entry.source.clone(),
+            version: Some(target.clone()),
+            name: Some(known.clone()),
+            // The `nolib` flag of task 029 stays what the entry has: the rollback changes the version, not the
+            // build's shape.
+            nolib: entry.nolib,
+        };
+        let staged = self.stage(&zip, &metadata)?;
+        // The pin goes on before the commit, which keeps the replaced entry's marks: one sidecar write,
+        // and no warning that the pin differs from the version just installed.
+        if let Some(current) = state.addons.get_mut(&known) {
+            current.pin(Some(&target));
+        }
+        let mut installed = self.commit(staged, &mut state)?;
+        let mut warnings: Vec<String> = loaded.warning.into_iter().collect();
+        warnings.extend(dropped.into_iter().map(|name| {
+            format!("{name} was deleted by hand since its install and is no longer managed")
+        }));
+        warnings.append(&mut installed.warnings);
+        Ok(RolledBack {
+            name: installed.name,
+            version: installed.version,
+            previous_version: installed.previous_version.unwrap_or(entry.version),
+            pinned: target,
+            source: entry.source,
+            folders: installed.folders,
+            removed_folders: installed.removed_folders,
+            warnings,
+        })
     }
 
     /// Reads the sidecar, applies one change to the entry a name means (by name, else by folder) and

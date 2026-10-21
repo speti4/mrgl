@@ -3936,3 +3936,147 @@ fn a_mark_on_an_unknown_or_unmanaged_addon_is_exit_code_one_and_writes_nothing()
         "{stderr}"
     );
 }
+
+// --- task 022: `rollback` from the kept zip ---
+
+/// Installs fixture zips in a game, in order, through the exe.
+fn add_in(game: &Game, zips_in_order: &[&str]) {
+    for zip in zips_in_order {
+        let output = game
+            .mrgl()
+            .arg("add")
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+    }
+}
+
+#[test]
+fn rollback_puts_the_previous_version_back_pins_it_and_goes_forward_again() {
+    let game = Game::new("rollback");
+    add_in(&game, &["one-folder-1.0.0.zip", "one-folder-1.1.0.zip"]);
+    let updated_core = std::fs::read(game.addon("OneFolder").join("core.lua")).expect("core.lua");
+    assert_eq!(updated_core, b"-- OneFolder 1.1.0\n");
+
+    let output = run_in(&game, &["rollback", "onefolder"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output),
+        "rolling back onefolder in _forever_ from the kept zip\n\
+         rolled back OneFolder from 1.1.0 to 1.0.0 (1 folder: OneFolder) in _forever_; pinned at 1.0.0, `mrgl unpin OneFolder` lets updates reach it again\n"
+    );
+    assert_eq!(
+        std::fs::read(game.addon("OneFolder").join("core.lua")).expect("core.lua"),
+        b"-- OneFolder 1.0.0\n"
+    );
+    assert!(game.addon("OneFolder").join("old.lua").is_file());
+    assert!(!game.addon("OneFolder").join("new.lua").exists());
+    let output = run_in(&game, &["list"]);
+    assert!(
+        stdout(&output).contains("OneFolder  1.0.0  16001  pinned at 1.0.0\n"),
+        "{}",
+        stdout(&output)
+    );
+    let cache = game.home.join("wowf").join("cache").join("OneFolder");
+    assert!(cache.join("1.0.0.zip").is_file() && cache.join("1.1.0.zip").is_file());
+
+    // The murloc speaks on the progress and the success; JSON is one plain document.
+    let output = game
+        .mrgl()
+        .args(["--json", "rollback", "OneFolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "rollback");
+    assert_eq!(value["flavor"]["id"], "wowf");
+    assert_eq!(value["addon"]["name"], "OneFolder");
+    assert_eq!(value["addon"]["version"], "1.1.0", "forward again");
+    assert_eq!(value["addon"]["previous_version"], "1.0.0");
+    assert_eq!(value["addon"]["pinned"], "1.1.0");
+    assert_eq!(value["addon"]["folders"], serde_json::json!(["OneFolder"]));
+    assert_eq!(value["addon"]["removed_folders"], serde_json::json!([]));
+    assert!(
+        value["addon"]["source"]
+            .as_str()
+            .is_some_and(|source| source.ends_with("one-folder-1.1.0.zip"))
+    );
+    assert_eq!(value["warnings"], serde_json::json!([]));
+
+    let output = game
+        .mrgl()
+        .args(["rollback", "OneFolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(stdout(&output).lines().count(), 4, "{}", stdout(&output));
+    assert!(stdout_last_line(&output).starts_with("rolled back OneFolder from 1.1.0 to 1.0.0"));
+}
+
+#[test]
+fn rollback_errors_are_exit_code_one_and_change_nothing() {
+    let game = Game::new("rollback-errors");
+    addon_by_hand(&game, "ByHand", "0.1");
+    let output = run_in(&game, &["rollback", "Nope"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "addon not found: Nope (flavor forever)"
+    );
+    let output = run_in(&game, &["rollback", "ByHand"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "addon not managed by mrgl: ByHand (flavor forever); it was installed by hand or by another manager, and only an addon mrgl installed can be rolled back"
+    );
+    assert!(!game.state_path().exists(), "nothing was written");
+
+    add_in(&game, &["one-folder-1.0.0.zip"]);
+    let before = std::fs::read(game.state_path()).expect("the sidecar");
+    let output = run_in(&game, &["rollback", "OneFolder"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "nothing to roll back to: OneFolder 1.0.0 has no previous version (flavor forever); mrgl keeps the version an update replaces"
+    );
+
+    add_in(&game, &["one-folder-1.1.0.zip"]);
+    let kept = game
+        .home
+        .join("wowf")
+        .join("cache")
+        .join("OneFolder")
+        .join("1.0.0.zip");
+    std::fs::remove_file(&kept).expect("the kept zip deleted by hand");
+    let before_missing = std::fs::read(game.state_path()).expect("the sidecar");
+    assert_ne!(before_missing, before);
+    let output = game
+        .mrgl()
+        .args(["--json", "rollback", "OneFolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("one JSON error document");
+    assert_eq!(value["kind"], "error");
+    assert_eq!(
+        value["message"],
+        format!(
+            "cannot roll back OneFolder to 1.0.0: its zip is not in the cache ({}); install that version again with `mrgl add <zip>`",
+            kept.display()
+        )
+    );
+    assert!(output.stdout.is_empty(), "no progress line in JSON");
+    assert_eq!(
+        std::fs::read(game.state_path()).expect("the sidecar"),
+        before_missing,
+        "the sidecar is untouched"
+    );
+    assert_eq!(
+        std::fs::read(game.addon("OneFolder").join("core.lua")).expect("core.lua"),
+        b"-- OneFolder 1.1.0\n"
+    );
+}
