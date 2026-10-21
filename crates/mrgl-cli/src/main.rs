@@ -5,9 +5,10 @@
 //! `scan`, `list` and `root` are task 002, the game root discovery behind them is task 020;
 //! `add github:<owner>/<repo>` resolves a release (task 003); `add <file.zip>` and `remove` are task 004
 //! (the install engine); `backup` (the WTF backup, the listing and the restore) is task 013; the Forever
-//! notes on `add` and on `list` (the derived build signal and the curated note) are task 011; the other
-//! subcommands follow the M1 plan (`tasks/roadmap.md`) and answer "not implemented yet" with their task id
-//! until that task lands, so the help text and the voice are testable from the first commit.
+//! notes on `add` and on `list` (the derived build signal and the curated note) are task 011; `link` and
+//! `unlink` (the dev addon junctions) are task 005; the other subcommands follow the M1 plan
+//! (`tasks/roadmap.md`) and answer "not implemented yet" with their task id until that task lands, so the
+//! help text and the voice are testable from the first commit.
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
@@ -23,6 +24,7 @@ use mrgl_core::flavor::{self, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{Engine, Metadata};
+use mrgl_core::link;
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Source, SourceSpec, Target};
@@ -179,11 +181,12 @@ impl Command {
             | Command::Root { .. }
             | Command::Add { .. }
             | Command::Remove { .. }
+            | Command::Link { .. }
+            | Command::Unlink { .. }
             | Command::Backup { .. } => return None,
             Command::Doctor { .. } => return None,
             Command::Update { all: true, .. } => ("update --all", "006"),
             Command::Update { .. } => ("update", "006"),
-            Command::Link { .. } | Command::Unlink { .. } => ("link / unlink", "005"),
         };
         Some(Error::NotImplemented { command, task })
     }
@@ -305,6 +308,8 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             yes,
         } => backup_command(reporter, flavor.as_deref(), to, list, restore, yes)?,
         Command::Doctor { flavor, root } => doctor_command(reporter, flavor.as_deref(), root)?,
+        Command::Link { folder, flavor } => link_command(reporter, &folder, flavor.as_deref())?,
+        Command::Unlink { folder, flavor } => unlink_command(reporter, &folder, flavor.as_deref())?,
         _ => unreachable!("every other command answered with its task"),
     }
     Ok(())
@@ -894,6 +899,9 @@ fn add_zip(
         let staged = engine
             .stage(&zip, &metadata)
             .map_err(|error| error.to_string())?;
+        engine
+            .refuse_links(&loaded.state, &staged.folders())
+            .map_err(|error| error.to_string())?;
         let previous = loaded
             .state
             .entry(&staged.name)
@@ -1028,6 +1036,159 @@ fn remove_command(reporter: &Reporter, name: &str, flavor: Option<&str>) -> Resu
         ),
     );
     Ok(())
+}
+
+/// `mrgl link <folder> --flavor <id>` (task 005): a junction under `Interface\AddOns` for every addon of a
+/// development folder, recorded as `link:<folder>`; a name in the way is a warning, never replaced.
+fn link_command(reporter: &Reporter, folder: &Path, flavor: Option<&str>) -> Result<(), String> {
+    link::ensure_supported().map_err(|error| error.to_string())?;
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let folder_name = engine.flavor.folder_name();
+    if !reporter.json {
+        reporter.say(
+            Kind::Progress,
+            format!(
+                "linking the addons of {} into {folder_name}",
+                folder.display()
+            ),
+        );
+    }
+    let linked = link::link(&engine, folder).map_err(|error| error.to_string())?;
+    warnings.extend(linked.warnings.iter().cloned());
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "link",
+            "flavor": &engine.flavor,
+            "folder": linked.folder,
+            "source": linked.source,
+            "linked": linked.linked,
+            "skipped": linked.skipped,
+            "without_toc": linked.without_toc,
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    for skipped in &linked.skipped {
+        reporter.say(
+            Kind::Warning,
+            format!("skipped {}: {}", skipped.name, skipped.reason),
+        );
+    }
+    let names: Vec<&str> = linked
+        .linked
+        .iter()
+        .map(|addon| addon.name.as_str())
+        .collect();
+    let already = linked
+        .linked
+        .iter()
+        .filter(|addon| addon.already_linked)
+        .count();
+    let mut summary = if names.is_empty() {
+        format!(
+            "linked no addon from {} into {folder_name}",
+            linked.folder.display()
+        )
+    } else {
+        format!(
+            "linked {} from {} into {folder_name}: {}",
+            count_addons(names.len()),
+            linked.folder.display(),
+            names.join(", ")
+        )
+    };
+    if already > 0 {
+        summary.push_str(&format!(", {already} of them linked already"));
+    }
+    if !linked.skipped.is_empty() {
+        summary.push_str(&format!(", {} skipped", linked.skipped.len()));
+    }
+    match linked.without_toc.len() {
+        0 => {}
+        1 => summary.push_str(", 1 folder without a TOC left out"),
+        count => summary.push_str(&format!(", {count} folders without a TOC left out")),
+    }
+    let kind = if !linked.skipped.is_empty() {
+        Kind::Warning
+    } else if already == names.len() {
+        Kind::Nothing
+    } else {
+        Kind::Success
+    };
+    reporter.say(kind, summary);
+    Ok(())
+}
+
+/// `mrgl unlink <folder> --flavor <id>` (task 005): the junctions `link` made from the folder go, and
+/// their entries; a real folder or a junction pointing elsewhere stays.
+fn unlink_command(reporter: &Reporter, folder: &Path, flavor: Option<&str>) -> Result<(), String> {
+    link::ensure_supported().map_err(|error| error.to_string())?;
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let folder_name = engine.flavor.folder_name();
+    let unlinked = link::unlink(&engine, folder).map_err(|error| error.to_string())?;
+    warnings.extend(unlinked.warnings.iter().cloned());
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "unlink",
+            "flavor": &engine.flavor,
+            "folder": unlinked.folder,
+            "source": unlinked.source,
+            "unlinked": unlinked.unlinked,
+            "kept": unlinked.kept,
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    for kept in &unlinked.kept {
+        reporter.say(
+            Kind::Warning,
+            format!("kept {}: {}", kept.name, kept.reason),
+        );
+    }
+    if unlinked.unlinked.is_empty() && unlinked.kept.is_empty() {
+        reporter.say(
+            Kind::Nothing,
+            format!(
+                "nothing linked from {} in {folder_name}",
+                unlinked.folder.display()
+            ),
+        );
+        return Ok(());
+    }
+    let mut summary = format!(
+        "unlinked {} of {} from {folder_name}",
+        count_addons(unlinked.unlinked.len()),
+        unlinked.folder.display()
+    );
+    if !unlinked.unlinked.is_empty() {
+        summary.push_str(&format!(": {}", unlinked.unlinked.join(", ")));
+    }
+    if !unlinked.kept.is_empty() {
+        summary.push_str(&format!(", {} kept", unlinked.kept.len()));
+    }
+    let kind = if unlinked.kept.is_empty() {
+        Kind::Success
+    } else {
+        Kind::Warning
+    };
+    reporter.say(kind, summary);
+    Ok(())
+}
+
+fn count_addons(count: usize) -> String {
+    if count == 1 {
+        "1 addon".to_string()
+    } else {
+        format!("{count} addons")
+    }
 }
 
 fn count_folders(count: usize) -> String {

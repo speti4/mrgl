@@ -158,6 +158,36 @@ pub enum Error {
         reason: String,
         aside: PathBuf,
     },
+
+    /// `link` or `unlink` on a target without directory junctions (task 005).
+    #[error("junctions are Windows-only: link and unlink work on Windows")]
+    JunctionsWindowsOnly,
+
+    /// A development folder with no addon in it: no subfolder with a TOC named after it (task 005).
+    #[error("no addon in {path}: no subfolder with a TOC named after it")]
+    NoAddonInDevFolder { path: PathBuf },
+
+    /// An install or a removal over an addon `link` made (task 005): `unlink` is the way out, never
+    /// `remove`, and an install never replaces a junction.
+    #[error(
+        "refused to {action} {name} (flavor {flavor}): it is linked from {folder}; `mrgl unlink` with that folder removes the link"
+    )]
+    LinkedAddon {
+        action: &'static str,
+        name: String,
+        flavor: String,
+        folder: String,
+    },
+
+    /// An install over a junction or a symbolic link that mrgl did not make (task 005).
+    #[error(
+        "refused to install over {folder} (flavor {flavor}): it is a junction or a symbolic link mrgl did not make, to {target}; it is yours to remove"
+    )]
+    ForeignJunction {
+        folder: String,
+        flavor: String,
+        target: String,
+    },
 }
 
 /// The crate's result type.

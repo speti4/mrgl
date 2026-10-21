@@ -130,9 +130,15 @@ pub fn scan_addons(dir: &Path, chain: &[Option<TocSuffix>]) -> Result<Addons> {
             Ok(Some(addon)) => result.addons.push(addon),
             Ok(None) => result.skipped.push(folder),
             Err(reason) => {
+                // A dangling junction (its target gone) is reported as one, never followed (task 005).
+                let what = if linked {
+                    "a junction or link whose target cannot be read: "
+                } else {
+                    ""
+                };
                 result
                     .warnings
-                    .push(format!("skipped {}: {reason}", path.display()));
+                    .push(format!("skipped {}: {what}{reason}", path.display()));
                 result.skipped.push(folder);
             }
         }

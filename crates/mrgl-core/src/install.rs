@@ -342,13 +342,15 @@ impl Engine {
     }
 
     /// Installs a zip: reads the sidecar (dropping the entries whose folders were deleted by hand), stages
-    /// the zip, swaps the folders in and records the install.
+    /// the zip, refuses it over a linked addon or a junction it did not make (task 005,
+    /// [`Engine::refuse_links`]), swaps the folders in and records the install.
     pub fn install(&self, zip: &Path, metadata: &Metadata) -> Result<Installed> {
         let loaded = self.load_state()?;
         let mut state = loaded.state;
         let scan = scan::scan_flavor(&self.flavor)?;
         let dropped = state.reconcile(&scan);
         let staged = self.stage(zip, metadata)?;
+        self.refuse_links(&state, &staged.folders())?;
         let mut installed = self.commit(staged, &mut state)?;
         let mut warnings: Vec<String> = loaded.warning.into_iter().collect();
         warnings.extend(dropped.into_iter().map(|name| {
@@ -360,7 +362,8 @@ impl Engine {
     }
 
     /// Removes a managed addon: its folders under `Interface\AddOns`, its entry and its cache. A name the
-    /// sidecar does not know is an error that says whether the folder exists.
+    /// sidecar does not know is an error that says whether the folder exists; a linked addon is refused,
+    /// `unlink` takes it out (task 005).
     pub fn remove(&self, name: &str) -> Result<Removed> {
         let loaded = self.load_state()?;
         let mut state = loaded.state;
@@ -377,6 +380,7 @@ impl Engine {
                 Error::AddonNotFound { name, flavor }
             });
         };
+        self.refuse_remove_linked(&known, &entry)?;
         let client_warning = self.client_warning(RunningClient::remove_warning);
         let addons_dir = self.addons_dir();
         for folder in &entry.folders {

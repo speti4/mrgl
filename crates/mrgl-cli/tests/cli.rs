@@ -139,13 +139,13 @@ fn json_is_plain_json() {
 #[test]
 fn a_planned_command_fails_with_its_task_and_exit_code_one() {
     let output = mrgl()
-        .args(["link", "SomeFolder", "--flavor", "forever"])
+        .args(["update", "--all", "--flavor", "forever"])
         .output()
         .expect("run mrgl");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),
-        "link / unlink is not implemented yet (task 005)"
+        "update --all is not implemented yet (task 006)"
     );
 }
 
@@ -2606,4 +2606,277 @@ fn doctor_names_a_missing_flavor_and_refuses_an_unknown_one() {
         "unknown flavor: bogus (forever, retail, classic, era or a .flavor.info id)"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+// --- task 005: `link` and `unlink` over the synthetic development folder, in a temporary game folder ---
+
+/// A copy of the synthetic development folder of `mrgl-core` (`OneFolder` and `DevAddon` with a TOC,
+/// `Media` without one) next to the game folder, so no run can touch the fixture itself.
+#[cfg(windows)]
+fn dev_copy(game: &Game) -> PathBuf {
+    let dev = game.root.parent().expect("the base folder").join("dev");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/dev"),
+        &dev,
+    );
+    dev
+}
+
+#[cfg(windows)]
+fn addons_listing(game: &Game) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(game.addon(""))
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+#[cfg(windows)]
+#[test]
+fn link_lists_refuses_and_unlink_leaves_the_development_folder_untouched() {
+    let game = Game::new("link");
+    let dev = dev_copy(&game);
+    let before = snapshot(&dev);
+
+    let output = game
+        .mrgl()
+        .args(["--serious", "link"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(
+        lines[0],
+        format!("linking the addons of {} into _forever_", dev.display())
+    );
+    assert!(lines[1].starts_with("linked 2 addons from "), "{text}");
+    assert!(
+        lines[1].ends_with(" into _forever_: DevAddon, OneFolder, 1 folder without a TOC left out"),
+        "{text}"
+    );
+    assert_eq!(addons_listing(&game), ["DevAddon", "OneFolder"]);
+
+    // `list` reads through the junctions and flags them.
+    let output = game
+        .mrgl()
+        .args(["--serious", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let one = text
+        .lines()
+        .find(|line| line.starts_with("OneFolder"))
+        .expect("the OneFolder line");
+    // The Forever mark of task 011 follows the flags on a Forever listing.
+    assert!(
+        one.contains("9.9.9-dev") && one.contains("  linked"),
+        "{one}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("DevAddon") && line.contains("linked")),
+        "{text}"
+    );
+
+    // An install, a dry run or a removal over a linked addon is refused, and the junction stays.
+    for args in [vec!["add", "--dry-run"], vec!["add"]] {
+        let output = game
+            .mrgl()
+            .args(&args)
+            .arg(zips().join("one-folder-1.0.0.zip"))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let plain = stderr_last_line(&output);
+        assert!(
+            plain.starts_with(
+                "refused to install over OneFolder (flavor forever): it is linked from "
+            ),
+            "{plain}"
+        );
+        assert!(
+            plain.ends_with("; `mrgl unlink` with that folder removes the link"),
+            "{plain}"
+        );
+    }
+    let output = game
+        .mrgl()
+        .args(["remove", "OneFolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_last_line(&output).starts_with("refused to remove OneFolder (flavor forever): "),
+        "{}",
+        stderr_last_line(&output)
+    );
+    assert_eq!(addons_listing(&game), ["DevAddon", "OneFolder"]);
+    assert!(game.addon("OneFolder").join("OneFolder.lua").is_file());
+
+    // A second link says there is nothing new, with the murloc line on top of the plain one.
+    let output = game
+        .mrgl()
+        .arg("link")
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(stdout(&output).lines().count(), 4, "{}", stdout(&output));
+    assert!(
+        stdout_last_line(&output).contains(", 2 of them linked already"),
+        "{}",
+        stdout(&output)
+    );
+
+    let output = game
+        .mrgl()
+        .args(["--serious", "unlink"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let last = stdout_last_line(&output);
+    assert!(last.starts_with("unlinked 2 addons of "), "{last}");
+    assert!(
+        last.ends_with(" from _forever_: DevAddon, OneFolder"),
+        "{last}"
+    );
+    assert!(addons_listing(&game).is_empty());
+    assert_eq!(snapshot(&dev), before, "the development folder");
+    let state = std::fs::read_to_string(game.state_path()).expect("the sidecar");
+    assert!(!state.contains("link:"), "{state}");
+
+    let output = game
+        .mrgl()
+        .args(["--serious", "unlink"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout_last_line(&output).starts_with("nothing linked from "),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn link_and_unlink_json_are_one_document_each() {
+    let game = Game::new("link-json");
+    let dev = dev_copy(&game);
+    let output = game
+        .mrgl()
+        .args(["--json", "link"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "link");
+    assert_eq!(value["flavor"]["id"], "wowf");
+    let source = value["source"].as_str().expect("a source");
+    assert_eq!(
+        source,
+        format!("link:{}", value["folder"].as_str().expect("a folder"))
+    );
+    let linked = value["linked"].as_array().expect("linked");
+    assert_eq!(linked.len(), 2);
+    assert_eq!(linked[0]["name"], "DevAddon");
+    assert_eq!(linked[0]["version"], "unknown");
+    assert_eq!(linked[1]["name"], "OneFolder");
+    assert_eq!(linked[1]["version"], "9.9.9-dev");
+    assert_eq!(linked[1]["already_linked"], false);
+    assert!(
+        linked[1]["target"]
+            .as_str()
+            .expect("a target")
+            .ends_with("OneFolder")
+    );
+    assert_eq!(value["skipped"], serde_json::json!([]));
+    assert_eq!(value["without_toc"], serde_json::json!(["Media"]));
+
+    let state = std::fs::read_to_string(game.state_path()).expect("the sidecar");
+    let state: serde_json::Value = serde_json::from_str(&state).expect("JSON");
+    assert_eq!(state["addons"]["OneFolder"]["source"], source);
+
+    let output = game
+        .mrgl()
+        .args(["--json", "unlink"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "unlink");
+    assert_eq!(value["source"], source);
+    assert_eq!(
+        value["unlinked"],
+        serde_json::json!(["DevAddon", "OneFolder"])
+    );
+    assert_eq!(value["kept"], serde_json::json!([]));
+}
+
+#[cfg(windows)]
+#[test]
+fn link_skips_a_real_folder_with_a_warning_and_never_replaces_it() {
+    let game = Game::new("link-skip");
+    let dev = dev_copy(&game);
+    std::fs::create_dir_all(game.addon("DevAddon")).expect("a real folder");
+    std::fs::write(game.addon("DevAddon").join("mine.lua"), "-- mine\n").expect("a file");
+    let output = game
+        .mrgl()
+        .args(["--serious", "link"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line
+            == "skipped DevAddon: a folder of that name is in AddOns already and stays (not a junction)"),
+        "{text}"
+    );
+    assert!(
+        stdout_last_line(&output)
+            .ends_with(" into _forever_: OneFolder, 1 skipped, 1 folder without a TOC left out"),
+        "{text}"
+    );
+    assert_eq!(
+        std::fs::read(game.addon("DevAddon").join("mine.lua")).expect("kept"),
+        b"-- mine\n"
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn link_and_unlink_say_junctions_are_windows_only() {
+    for command in ["link", "unlink"] {
+        let output = mrgl()
+            .args([command, "SomeFolder", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(
+            stderr_last_line(&output),
+            "junctions are Windows-only: link and unlink work on Windows"
+        );
+    }
 }
