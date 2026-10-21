@@ -23,6 +23,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - Release notes before an update: the GitHub release body in one line ([030](https://github.com/speti4/mrgl/blob/main/tasks/done/030-release-notes-before-an-update.md))
 - `list` reads the sidecar: managed (source, version) and unmanaged addons ([037](https://github.com/speti4/mrgl/blob/main/tasks/done/037-list-reads-the-sidecar-managed-and-unmanaged.md))
 - `add github:<owner>/<repo>` installs the pick through the engine ([040](https://github.com/speti4/mrgl/blob/main/tasks/done/040-add-github-installs-the-pick-through-the-engine.md))
+- Offline resolve from the cached release list, with a warning ([041](https://github.com/speti4/mrgl/blob/main/tasks/done/041-offline-resolve-from-the-cached-release-list.md))
 - GitHub source: pagination past 30 releases, the rate-limit reset time, `release.json` cached per tag ([042](https://github.com/speti4/mrgl/blob/main/tasks/done/042-github-source-pagination-rate-limit-and-per-tag-cache.md))
 - The asset download's error path: a 404 names the asset, the size is checked ([046](https://github.com/speti4/mrgl/blob/main/tasks/done/046-asset-download-404-names-the-missing-asset.md))
 
