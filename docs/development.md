@@ -324,7 +324,8 @@ Pushing a tag `v<version>` runs the six jobs; when they pass, the `release` job 
 publishes it with the checksum file as a GitHub release titled `mrgl <version>`, with the notes file as its
 text, through the runner's `gh` CLI. The release job builds without the Rust cache, so nothing a pull request
 run cached reaches the zip. A downloaded zip is checked against its attestation with
-`gh attestation verify <zip> --repo speti4/mrgl`. A usage guide inside the zip and signed exes are M5.
+`gh attestation verify <zip> --repo speti4/mrgl`. A usage guide inside the zip and signed exes are M5. The steps
+of a release, from the version bump to closing its milestone, are the list in [The changelog](#the-changelog).
 
 ### The changelog
 
@@ -346,6 +347,20 @@ A release goes like this:
 3. Afterwards, `python -I scripts/changelog.py` stamps the section with the version and the tag's date; commit
    it with the next change. Until then `--check` reads the newest tag without a section as not there yet and
    prints a notice, so the pull requests opened in between, dependabot's included, stay green.
+4. Once the release is published, close the GitHub milestone it completes (task 033): the issue mirror creates
+   a milestone for every roadmap heading and never closes one, and an open milestone with every issue closed
+   tells a contributor the work is still going on. Find the milestone by its title, the roadmap heading, and
+   close it by its number when its `open` count is 0; a task of that milestone that the release does not ship
+   moves to a later milestone in its task file first (its `milestone:` field), and the mirror moves its
+   issue. A release that completes two milestones closes both. By hand, never from a script:
+
+   ```powershell
+   # The number, title and counts of the milestone with that title (the roadmap heading).
+   gh api "repos/speti4/mrgl/milestones?state=open&per_page=100" `
+     --jq '.[] | select(.title == "M2 Window MVP") | "\(.number)  \(.title)  open \(.open_issues), closed \(.closed_issues)"'
+   # Close it by that number once its open count is 0.
+   gh api -X PATCH repos/speti4/mrgl/milestones/<number> -f state=closed
+   ```
 
 ```powershell
 python -I scripts/changelog.py                 # rewrite CHANGELOG.md
@@ -369,9 +384,9 @@ decision's whole body), with a link to the file. The folder sets the state: `don
 completed, `dropped/` and a superseded decision as not planned. The labels `mirrored`, `stage:*`, `status:*`,
 `size:*`, `dropped` and `decision` are created by the script; every `## ` heading of `tasks/roadmap.md` is a
 milestone with the heading's paragraph as its description (the script never closes a milestone; a release
-does). An issue is found again by a hidden marker in its body, so a run patches only what differs; an issue
-whose file is gone is reported as an orphan and left alone, and a file without a numbered name is reported and
-not mirrored.
+does, by hand, step 4 of the list in [The changelog](#the-changelog)). An issue is found again by a hidden
+marker in its body, so a run patches only what differs; an issue whose file is gone is reported as an orphan
+and left alone, and a file without a numbered name is reported and not mirrored.
 
 The `sync-issues` workflow runs it on `main` with the job's token (`issues: write`, nothing else), so the first
 run after the workflow landed created every issue and milestone at once, and a run that follows a task commit
