@@ -46,4 +46,6 @@ The repository, the task standard and the empty workspace: no app yet.
 - Mirror the task files into GitHub issues and milestones ([016](https://github.com/speti4/mrgl/blob/main/tasks/done/016-task-to-github-issue-mirror.md))
 - GitHub repository settings after the first push: rulesets, CodeQL, private reporting, security updates ([018](https://github.com/speti4/mrgl/blob/main/tasks/done/018-github-repository-settings-after-the-first-push.md))
 - CONTRIBUTING.md names the mirrored issues as the task files' public face ([032](https://github.com/speti4/mrgl/blob/main/tasks/done/032-contributing-names-the-mirrored-issues.md))
+- Close the GitHub milestone a release ships: a step in the release checklist ([033](https://github.com/speti4/mrgl/blob/main/tasks/done/033-close-the-milestone-of-a-shipped-release.md))
 - One zip-entry check for the install engine and the backup restore ([044](https://github.com/speti4/mrgl/blob/main/tasks/done/044-one-zip-entry-check-for-the-engine-and-the-backup.md))
+- CI compiles the non-Windows paths of the core ([061](https://github.com/speti4/mrgl/blob/main/tasks/done/061-ci-compiles-the-non-windows-paths.md))

@@ -229,12 +229,13 @@ artwork.
 
 ## CI and releases
 
-`.github/workflows/ci.yml` runs five jobs on every push to `main` and every pull request: `test`
+`.github/workflows/ci.yml` runs six jobs on every push to `main` and every pull request: `test`
 (windows-latest: `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`), `lint` (ubuntu:
 `cargo fmt --check` and `scripts/changelog.py --check`, the latter skipped on a tag, see
 [The changelog](#the-changelog)), `msrv` (windows-latest: `cargo check` with the toolchain that `rust-version`
 in `Cargo.toml` names, so nothing newer than the declared minimum slips in; it runs on Windows because the
-Windows target needs tauri-build's resource compiler, which a Linux runner lacks), `deny` (`cargo deny check`
+Windows target needs tauri-build's resource compiler, which a Linux runner lacks), `non-windows` (ubuntu:
+`cargo check --all-targets --locked` over the workspace, below), `deny` (`cargo deny check`
 against `deny.toml` for the Windows target: licenses from the allowlist, no RustSec advisory or yanked crate,
 crates.io as the only source; and `about.toml` accepts the same licenses) and `workflow-lint` (zizmor over the
 workflows, the local action and `dependabot.yml`; a finding accepted on purpose carries
@@ -254,9 +255,17 @@ fails the build instead of being rewritten.
 The repo is public from its first commit (D-004), so the Actions minutes of the standard runners are free and
 the Windows jobs run on every change. A macOS job joins with the macOS preview (M6).
 
+The `non-windows` job (task 061) compiles the `cfg(not(windows))` branches (the junctions of `link`, the process
+list of `client`, the launcher lookup of `discover`, the time zone of `backup`, and the tests that only build off
+Windows), so a broken non-Windows path fails the pull request that breaks it instead of turning up at the macOS
+preview; a Windows machine never compiles them. It checks and does not test: the fixtures are shaped for Windows
+paths. The window's crate is in the check too: the job installs the WebKitGTK and D-Bus headers its Linux graph
+builds against (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`), which took 35 seconds of a run of about two minutes
+when the job landed; if that install ever outgrows a minute, the check narrows to `-p mrgl-core -p mrgl-cli`.
+
 Some of the setup lives in the repository settings, not in a file: CodeQL runs as GitHub's default setup; a
 ruleset protects `main` (changes arrive through a pull request with squash merge only, the checks `test`,
-`lint`, `msrv`, `deny`, `workflow-lint` and `commit-rules` must pass, the history stays linear, and force
+`lint`, `msrv`, `non-windows`, `deny`, `workflow-lint` and `commit-rules` must pass, the history stays linear, and force
 pushes and deletion are blocked); another ruleset keeps `v*` tags from being moved or deleted; squash merge
 is the only merge method, with the pull request title and description as the default commit message; private
 vulnerability reporting is on (the link in SECURITY.md and the code of conduct depends on it); Dependabot
@@ -310,12 +319,13 @@ cargo install cargo-about --version (Get-Content scripts\cargo-about-version.txt
 scripts\release.ps1                     # dist\: the zip, SHA256SUMS.txt, release-notes-<version>.md
 ```
 
-Pushing a tag `v<version>` runs the five jobs; when they pass, the `release` job checks that the tag is on
+Pushing a tag `v<version>` runs the six jobs; when they pass, the `release` job checks that the tag is on
 `main`, installs the pinned cargo-about, runs `release.ps1`, attests the build provenance of the zip and
 publishes it with the checksum file as a GitHub release titled `mrgl <version>`, with the notes file as its
 text, through the runner's `gh` CLI. The release job builds without the Rust cache, so nothing a pull request
 run cached reaches the zip. A downloaded zip is checked against its attestation with
-`gh attestation verify <zip> --repo speti4/mrgl`. A usage guide inside the zip and signed exes are M5.
+`gh attestation verify <zip> --repo speti4/mrgl`. A usage guide inside the zip and signed exes are M5. The steps
+of a release, from the version bump to closing its milestone, are the list in [The changelog](#the-changelog).
 
 ### The changelog
 
@@ -337,6 +347,20 @@ A release goes like this:
 3. Afterwards, `python -I scripts/changelog.py` stamps the section with the version and the tag's date; commit
    it with the next change. Until then `--check` reads the newest tag without a section as not there yet and
    prints a notice, so the pull requests opened in between, dependabot's included, stay green.
+4. Once the release is published, close the GitHub milestone it completes (task 033): the issue mirror creates
+   a milestone for every roadmap heading and never closes one, and an open milestone with every issue closed
+   tells a contributor the work is still going on. Find the milestone by its title, the roadmap heading, and
+   close it by its number when its `open` count is 0; a task of that milestone that the release does not ship
+   moves to a later milestone in its task file first (its `milestone:` field), and the mirror moves its
+   issue. A release that completes two milestones closes both. By hand, never from a script:
+
+   ```powershell
+   # The number, title and counts of the milestone with that title (the roadmap heading).
+   gh api "repos/speti4/mrgl/milestones?state=open&per_page=100" `
+     --jq '.[] | select(.title == "M2 Window MVP") | "\(.number)  \(.title)  open \(.open_issues), closed \(.closed_issues)"'
+   # Close it by that number once its open count is 0.
+   gh api -X PATCH repos/speti4/mrgl/milestones/<number> -f state=closed
+   ```
 
 ```powershell
 python -I scripts/changelog.py                 # rewrite CHANGELOG.md
@@ -360,9 +384,9 @@ decision's whole body), with a link to the file. The folder sets the state: `don
 completed, `dropped/` and a superseded decision as not planned. The labels `mirrored`, `stage:*`, `status:*`,
 `size:*`, `dropped` and `decision` are created by the script; every `## ` heading of `tasks/roadmap.md` is a
 milestone with the heading's paragraph as its description (the script never closes a milestone; a release
-does). An issue is found again by a hidden marker in its body, so a run patches only what differs; an issue
-whose file is gone is reported as an orphan and left alone, and a file without a numbered name is reported and
-not mirrored.
+does, by hand, step 4 of the list in [The changelog](#the-changelog)). An issue is found again by a hidden
+marker in its body, so a run patches only what differs; an issue whose file is gone is reported as an orphan
+and left alone, and a file without a numbered name is reported and not mirrored.
 
 The `sync-issues` workflow runs it on `main` with the job's token (`issues: write`, nothing else), so the first
 run after the workflow landed created every issue and milestone at once, and a run that follows a task commit

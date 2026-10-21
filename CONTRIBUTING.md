@@ -95,7 +95,8 @@ uvx zizmor .github    # .github/
 ```
 
 CI (`.github/workflows/ci.yml` and `commit-rules.yml`) runs all of them on every push to `main` and every pull
-request. A change in behavior comes with a test: Rust tests sit beside the code or under each crate's
+request, and one more that a Windows machine cannot: the `non-windows` job compiles the `cfg(not(windows))`
+branches on Linux, so a change to a Windows-only path keeps its non-Windows twin in step. A change in behavior comes with a test: Rust tests sit beside the code or under each crate's
 `tests/`, and the UI modules have Node tests under `crates/mrgl-app/tests/ui/`. Tests never touch the network
 or a real game folder: sources are tested against the fixtures and a local HTTP stub.
 
