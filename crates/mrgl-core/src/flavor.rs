@@ -35,6 +35,8 @@ pub const KNOWN_FLAVORS: [(&str, &str); 4] = [
 pub const FLAVOR_INFO: &str = ".flavor.info";
 /// The file at the install root that holds every product's version.
 pub const BUILD_INFO: &str = ".build.info";
+/// The CurseForge app's marker in a flavor folder it manages.
+pub const CURSE_CLIENT: &str = ".curseclient";
 
 /// A flavor id as `.flavor.info` spells it; an id the manager does not know is carried as it is.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -192,6 +194,8 @@ pub struct Flavor {
     pub folder: PathBuf,
     /// The installed build, when `.build.info` had it.
     pub version: Option<BuildVersion>,
+    /// The CurseForge app manages this folder's addons: its `.curseclient` marker is in the flavor folder.
+    pub curse_client: bool,
     /// Plain lines about what could not be read: an unknown id, a missing `.build.info` or row.
     pub warnings: Vec<String>,
 }
@@ -221,12 +225,13 @@ impl Serialize for Flavor {
         &self,
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("Flavor", 5)?;
+        let mut state = serializer.serialize_struct("Flavor", 6)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("folder", &self.folder)?;
         state.serialize_field("version", &self.version.map(|v| v.to_string()))?;
         state.serialize_field("interface", &self.interface())?;
         state.serialize_field("build", &self.version.map(|v| v.build))?;
+        state.serialize_field("curse_client", &self.curse_client)?;
         state.end()
     }
 }
@@ -390,10 +395,13 @@ pub fn read_flavor(folder: &Path) -> Result<Flavor> {
         }
     };
 
+    let curse_client = folder.join(CURSE_CLIENT).is_file();
+
     Ok(Flavor {
         id,
         folder,
         version,
+        curse_client,
         warnings,
     })
 }

@@ -11,9 +11,10 @@ BOM in a fixture survives every checkout.
   suffixes (`ThreeWays`, `Midnight`, `Camelot`, `ClassicOnly`), legacy `_BCC` and hyphen files next to the
   base (`OldSuffixes`), an uppercase suffix (`LoudCase`), `## Interface` lists with and without spaces
   (`ThreeWays`, `Spaced`), a BOM with CRLF (`BomCrlf`), color escapes (`Colored`), the dependency keys
-  (`Deps`), the three source hints with a `.curseclient` marker (`Hinted`), a repeated and a lowercase key
+  (`Deps`), the three source hints (`Hinted`), a repeated and a lowercase key
   with a localized title (`Repeated`), a `.toc` with a foreign stem (`ForeignStem`) and a folder with no TOC
-  (`NoToc`). `_classic_` and `_classic_era_` show the game-type pick, `_forever_` has no `Interface` folder
+  (`NoToc`); its `.curseclient` marker is the CurseForge app's, with a made-up id. `_classic_` and
+  `_classic_era_` show the game-type pick, `_forever_` has no `Interface` folder
   yet (the client before launch), `_unknown_` carries an id the manager does not know, and `_no_info_` has
   no `.flavor.info` at all.
 - `release-json/*.json` — `release.json` files in the shape the BigWigs packager writes, with `forever` next

@@ -133,15 +133,18 @@ fn legacy_and_foreign_tocs_are_listed_not_chosen() {
 #[test]
 fn hints_and_the_curse_marker_are_exposed() {
     let scan = scan_fixture("_retail_");
+    assert!(
+        scan.flavor.curse_client,
+        "the retail fixture carries the CurseForge app's marker"
+    );
+    assert!(!scan_fixture("_classic_").flavor.curse_client);
     let hinted = addon(&scan, "Hinted");
-    assert!(hinted.curse_client);
     assert!(!hinted.linked);
     let toc = &hinted.primary_toc().expect("a toc").toc;
     assert_eq!(toc.curse_project_id.as_deref(), Some("123456"));
     assert_eq!(toc.wago_id.as_deref(), Some("aB1cD2eF"));
     assert_eq!(toc.wowi_id.as_deref(), Some("7890"));
     assert!(toc.load_on_demand);
-    assert!(!addon(&scan, "PlainToc").curse_client);
 
     let deps = &addon(&scan, "Deps").primary_toc().expect("a toc").toc;
     assert_eq!(

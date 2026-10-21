@@ -1,7 +1,7 @@
 //! The AddOns scan (task 002): every folder under `Interface\AddOns` with a TOC becomes an installed addon,
 //! with its TOC files ([`crate::toc`]), the one the flavor loads, its source hints (`X-Curse-Project-ID`,
-//! `X-Wago-ID`, `X-WoWI-ID`), whether it is a junction and whether the CurseForge app marks it. The scan
-//! never writes. Whether the state sidecar knows an addon is task 004's layer on top of this.
+//! `X-Wago-ID`, `X-WoWI-ID`) and whether it is a junction. The scan never writes. Whether the state
+//! sidecar knows an addon is task 004's layer on top of this.
 
 use std::path::{Path, PathBuf};
 
@@ -40,8 +40,6 @@ pub struct Addon {
     pub chosen: Option<String>,
     /// The folder is a junction or a symbolic link (the dev linking of task 005).
     pub linked: bool,
-    /// A `.curseclient` file marks the folder as managed by the CurseForge app.
-    pub curse_client: bool,
 }
 
 impl Addon {
@@ -157,14 +155,9 @@ fn read_addon(
     let entries = std::fs::read_dir(path).map_err(|source| source.to_string())?;
     let mut tocs = Vec::new();
     let mut other_tocs = Vec::new();
-    let mut curse_client = false;
     for entry in entries {
         let entry = entry.map_err(|source| source.to_string())?;
         let file_name = entry.file_name().to_string_lossy().into_owned();
-        if file_name.eq_ignore_ascii_case(".curseclient") {
-            curse_client = true;
-            continue;
-        }
         let Some(name) = toc::classify_toc_name(&folder, &file_name) else {
             continue;
         };
@@ -203,7 +196,6 @@ fn read_addon(
         other_tocs,
         chosen,
         linked,
-        curse_client,
     }))
 }
 

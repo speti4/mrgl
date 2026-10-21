@@ -9,9 +9,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `toc`), the sources (`sources`: GitHub `release.json` first, later Wago, WoWInterface and CurseForge), the
   install engine (`install`), the state sidecar (`state`, D-003), backups and addon sets (`backup`) and the
   voice table (`voice`, D-005). Synthetic fixtures are under `tests/fixtures/`.
-- `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list`, `add`, `update`, `remove`, `link`, `unlink`,
-  `backup` (stubs that answer with the task that builds them until that task lands), with `--json` for
-  machines and `--serious` for the murloc-averse; its end-to-end tests under `tests/`.
+- `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002), `add`, `update`, `remove`,
+  `link`, `unlink`, `backup` (stubs that answer with the task that builds them until that task lands), with
+  `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under `tests/`.
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
   capability file and the icon.
 - `scripts/` — helper scripts for the icon, the release zip, the changelog and the commit rules.
@@ -169,9 +169,15 @@ the script after its rebase instead of merging the lists by hand.
 
 ## Fixtures
 
-Every test runs offline and against synthetic data under `crates/mrgl-core/tests/fixtures/`: generated AddOns
-folders (multi-TOC suffixes, `## Interface` lists, the `X-Curse-Project-ID` / `X-Wago-ID` / `X-WoWI-ID`
-headers), `release.json` files in the shape the BigWigs packager writes (`forever` next to other flavors), and
-small zips with several addon folders in one archive. A real addon zip, a real AddOns folder or a `WTF`
-folder never enters the repo; a manual round on a real game folder is a task of its own, and its result is a
-dated line in that task's Verification.
+Every test runs offline and against synthetic data under `crates/mrgl-core/tests/fixtures/`: a hand-written
+game folder (`flavors/`: a `.build.info` with a row per product and a flavor folder per id, whose made-up
+addons cover the multi-TOC suffixes, the `## Interface` lists, the `X-Curse-Project-ID` / `X-Wago-ID` /
+`X-WoWI-ID` headers and the other shapes its README lists), `release.json` files in the shape the BigWigs
+packager writes (`forever` next to other flavors), and small zips with several addon folders in one archive.
+A real addon zip, a real AddOns folder or a `WTF` folder never enters the repo; a manual round on a real game
+folder is a task of its own, and its result is a dated line in that task's Verification.
+
+The command line keeps `config.json` (the remembered game folder) under the mrgl home folder,
+`%LOCALAPPDATA%\mrgl\` (D-003); `MRGL_HOME` overrides the home folder, and the end-to-end tests set it to a
+temporary folder so no test reads or writes the real one. `MRGL_ROOT` names the game folder for one run,
+between the `--root` flag and the remembered one.
