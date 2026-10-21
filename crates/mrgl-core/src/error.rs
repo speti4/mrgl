@@ -124,6 +124,37 @@ pub enum Error {
         flavor: String,
         detail: String,
     },
+
+    /// Nothing to back up: the flavor folder has no `WTF` folder (task 013).
+    #[error("nothing to back up: no WTF folder in {path}")]
+    NoWtf { path: PathBuf },
+
+    /// The backup zip a restore was given does not exist (task 013).
+    #[error("backup not found: {path}")]
+    BackupNotFound { path: PathBuf },
+
+    /// A file a restore was given is not a zip it can read (task 013).
+    #[error("not a readable backup: {path} ({reason})")]
+    BackupUnreadable { path: PathBuf, reason: String },
+
+    /// An entry of a backup would land outside `WTF`: `..`, an absolute path, a drive letter, a symbolic
+    /// link (task 013). Nothing is written when one is found.
+    #[error("refused {path}: the entry `{entry}` would land outside WTF")]
+    BackupEntryEscapes { path: PathBuf, entry: String },
+
+    /// A restore failed and the previous `WTF` is back as it was (task 013).
+    #[error("restoring {path} failed and WTF is as it was: {reason}")]
+    RestoreFailed { path: PathBuf, reason: String },
+
+    /// A restore failed and the previous `WTF` could not be put back; it waits under the aside path.
+    #[error(
+        "restoring {path} failed and the previous WTF could not be put back: {reason}; it is at {aside}"
+    )]
+    RestoreRevertFailed {
+        path: PathBuf,
+        reason: String,
+        aside: PathBuf,
+    },
 }
 
 /// The crate's result type.

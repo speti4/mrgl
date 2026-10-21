@@ -1,0 +1,8 @@
+
+MrglFixtureDB = {
+	["profiles"] = {
+		["Default"] = {
+			["scale"] = 1,
+		},
+	},
+}

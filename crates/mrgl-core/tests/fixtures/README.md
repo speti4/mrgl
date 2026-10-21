@@ -43,3 +43,10 @@ BOM in a fixture survives every checkout.
   over, `_classic_\WowClassic.exe` has a resource section without a version resource, `_forever_` has no
   exe; `stubs\pe32.exe` (a 32-bit image) and `stubs\fixed-only.exe` (a version resource with the fixed
   info and no string table) serve the parser's unit tests.
+- `wtf/WTF/` — a hand-written settings tree in the shape the client writes, for the backup and restore of
+  task 013: `Config.wtf` at the root, an account folder (`Account/MRGLFIXTURE/`) with its `config-cache.wtf`,
+  `bindings-cache.wtf` and account-wide `SavedVariables/` (a `.lua` and its `.lua.bak`), and a realm with a
+  character (`Fixture Realm/Mrgltest/`) with its `AddOns.txt`, `layout-local.txt` and character
+  `SavedVariables/`. Every name and value is made up, a few hundred bytes in all; the tests copy the tree
+  into a temporary flavor folder and never write here. `.gitignore` allows a `WTF` folder here and nowhere
+  else.
