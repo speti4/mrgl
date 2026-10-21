@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 26 backlog (2 ready · 0 blocked · 2 waiting · 22 ideas) · 0 in progress · 27 done · 3 dropped · 5 decisions
+**State:** 27 backlog (2 ready · 0 blocked · 2 waiting · 23 ideas) · 1 in progress · 25 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -53,6 +53,7 @@ _none_
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](backlog/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | S | 2026-10-21 |
 | 046 | [The asset download's error path: a 404 names the asset, the size is checked](backlog/046-asset-download-404-names-the-missing-asset.md) | S | 2026-10-21 |
 | 055 | [One install path: a core helper for resolve, download and install, the link ref…](backlog/055-one-core-helper-for-resolve-download-and-install.md) | M | 2026-10-21 |
+| 061 | [CI compiles the non-Windows paths of the core](backlog/061-ci-compiles-the-non-windows-paths.md) | S | 2026-10-21 |
 
 #### M2 Window MVP
 
@@ -61,6 +62,7 @@ _none_
 | 009 | [Tauri shell with the flavor list](backlog/009-tauri-shell-with-the-flavor-list.md) | M | 2026-10-21 |
 | 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
+| 033 | [Close the GitHub milestone a release ships: a step in the release checklist](backlog/033-close-the-milestone-of-a-shipped-release.md) | S | 2026-10-21 |
 | 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
 | 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](backlog/043-second-registry-source-for-the-game-root.md) | S | 2026-10-21 |
 | 051 | [A Windows version line in the doctor report](backlog/051-windows-version-line-in-the-doctor-report.md) | S | 2026-10-21 |
@@ -71,7 +73,6 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 014 | [Addon sets with enable and disable](backlog/014-addon-sets-with-enable-and-disable.md) | M | 2026-10-21 |
-| 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](backlog/025-savedvariables-size-and-orphan-cleanup.md) | S | 2026-10-21 |
 | 027 | [Per-character addon sets](backlog/027-per-character-addon-sets.md) | S | 2026-10-21 |
 | 028 | [Lists as discovery: a shareable list format and a Forever starter list in the r…](backlog/028-lists-as-discovery-and-forever-starter-list.md) | S | 2026-10-21 |
 | 057 | [An import option that installs the listed version, not the current release](backlog/057-import-option-for-the-listed-version.md) | S | 2026-10-21 |
@@ -99,7 +100,11 @@ _none_
 
 ### In progress
 
-_none_
+#### M3 Toolbox
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](wip/025-savedvariables-size-and-orphan-cleanup.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
@@ -113,8 +118,6 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
-| 061 | [CI compiles the non-Windows paths of the core](done/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 |
-| 033 | [Close the GitHub milestone a release ships: a step in the release checklist](done/033-close-the-milestone-of-a-shipped-release.md) | 2026-10-22 |
 | 044 | [One zip-entry check for the install engine and the backup restore](done/044-one-zip-entry-check-for-the-engine-and-the-backup.md) | 2026-10-21 |
 | 040 | [add github:<owner>/<repo> installs the pick through the engine](done/040-add-github-installs-the-pick-through-the-engine.md) | 2026-10-21 |
 | 038 | [The install engine warns when the client runs](done/038-install-warns-when-the-client-runs.md) | 2026-10-21 |
@@ -123,8 +126,10 @@ _none_
 | 032 | [CONTRIBUTING.md names the mirrored issues as the task files' public face](done/032-contributing-names-the-mirrored-issues.md) | 2026-10-21 |
 | 030 | [Release notes before an update: the GitHub release body in one line](done/030-release-notes-before-an-update.md) | 2026-10-21 |
 | 029 | [Dependency check from the TOC ## Dependencies and ## RequiredDeps and the relea…](done/029-dependency-check-from-toc-and-nolib.md) | 2026-10-21 |
+| 024 | [mrgl doctor: a diagnostic report for a bug report](done/024-doctor-diagnostic-report.md) | 2026-10-21 |
+| 023 | [Game-running detection: no WTF write while the client runs](done/023-game-running-detection.md) | 2026-10-21 |
 
-_17 more in `done/`._
+_15 more in `done/`._
 
 ### Decisions
 
