@@ -4,6 +4,10 @@
 //! flavors without a window; the commands of [`crate::commands`] hand them the progress channel and the
 //! run's cancel flag ([`UpdateRun`]).
 //!
+//! A flavor folder with the CurseForge app's `.curseclient` marker warns once per run, the first of the
+//! answer's warnings, with the core's line of the command line's `update` (task 110 over task 098,
+//! `adopt::curse_client_warning`): the check, "update all" and a row's update alike.
+//!
 //! The cancel rule: the flag is read before each addon of the check and before each install, never during
 //! one. An install that has started runs to its end through the engine's own stage, swap and revert (task
 //! 004), so a cancel never leaves an addon half-written: it is either updated or as it was.
@@ -12,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use mrgl_core::adopt;
 use mrgl_core::install::{Engine, Mark, PickInstalled, PickStep, SourceInstalled};
 use mrgl_core::last_check::LastCheck;
 use mrgl_core::sources::{Channel, Source};
@@ -256,6 +261,10 @@ pub fn run<S: Source + ?Sized>(
             warnings.push(line);
         }
     };
+    // Task 110: a folder the CurseForge app manages too, once per run and first, as `update` warns.
+    adopt::curse_client_warning(&engine.flavor)
+        .into_iter()
+        .for_each(&mut warn);
     check.warnings.iter().cloned().for_each(&mut warn);
     // Task 041: a pick from the cached release list, offline, is a warning, as on the command line.
     check

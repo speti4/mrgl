@@ -108,7 +108,7 @@ test("the other flavors answer with the other kinds", async () => {
 
   const classic = await runOf((progress) => Data.checkUpdates("wow_classic", progress));
   assert.ok(classic.events.every((event) => event.phase === "checking" || event.phase === "checked"));
-  const checked = classic.answer.messages[0];
+  const checked = classic.answer.messages[classic.answer.messages.length - 1];
   assert.equal(checked.kind, "success");
   assert.match(checked.plain, /^checked _classic_: 1 update available, .*1 pinned, 1 ignored/);
   const pinned = classic.answer.flavor.addons.find((row) => row.pinned);
@@ -118,6 +118,27 @@ test("the other flavors answer with the other kinds", async () => {
   const unknown = await Data.updateAll("wow_mrgl", () => {});
   assert.equal(unknown.flavor, null);
   assert.equal(unknown.messages[0].kind, "error");
+});
+
+test("a run in a flavor the CurseForge app manages warns once, first, in the core's words (task 110)", async () => {
+  const warning = (folder) =>
+    `the CurseForge app manages ${folder} too (its .curseclient marker is there): it may update or replace what mrgl installs; a folder belongs to one manager`;
+  const { flavors } = await Data.flavors();
+  for (const [id, call] of [
+    ["wow_classic", (progress) => Data.checkUpdates("wow_classic", progress)],
+    ["wow", (progress) => Data.updateOne("wow", "Plater", progress)],
+    ["wow_classic_era", (progress) => Data.updateAll("wow_classic_era", progress)],
+  ]) {
+    const flavor = flavors.find((item) => item.id === id);
+    assert.equal(flavor.curse_client, true, id);
+    const { answer, events } = await runOf(call);
+    const warned = answer.messages.filter((message) => message.plain === warning(flavor.folder));
+    assert.equal(warned.length, 1, id);
+    assert.deepEqual([answer.messages[0].kind, answer.messages[0].plain], ["warning", warning(flavor.folder)], id);
+    assert.ok(events.every((event) => !event.message.plain.includes(".curseclient")), `${id}: no event repeats it`);
+  }
+  const forever = await runOf((progress) => Data.checkUpdates("wowf", progress));
+  assert.ok(forever.answer.messages.every((message) => !message.plain.includes(".curseclient")), "Forever has no marker");
 });
 
 test("a row of a source the sketch's build lacks says source not configured, as the core does (task 102)", async () => {
@@ -156,7 +177,7 @@ test("a cancel lets the addon in flight finish and starts no other", async () =>
 test("a row update and the marks answer the flavor as it is now", async () => {
   const one = await runOf((progress) => Data.updateOne("wow", "WeakAuras", progress));
   assert.ok(one.events.every((event) => event.folder === "WeakAuras"));
-  assert.equal(one.answer.messages[0].plain, "1 addon updated");
+  assert.equal(one.answer.messages[one.answer.messages.length - 1].plain, "1 addon updated");
   const pin = await Data.mark("wowf", "Questie", "pin");
   assert.deepEqual([pin.messages[0].kind, pin.messages[0].plain], ["success", "pinned Questie at 11.3.0 in _forever_"]);
   assert.equal(pin.flavor.addons.find((row) => row.folder === "Questie").pinned, "11.3.0");

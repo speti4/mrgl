@@ -16,7 +16,8 @@
 //   Data.updateOne(flavorId, folder, progress)  -> Promise<{ flavor, messages }>  the check of one addon,
 //                                       then its update; `progress(event)` per event as it happens, the
 //                                       answer the flavor as it is now and the messages, the summary last;
-//                                       one run at a time
+//                                       one run at a time; in a flavor with the CurseForge app's marker
+//                                       the first message is its warning (task 110)
 //   Data.cancelUpdate()              -> Promise<message>           the run stops before its next addon; the
 //                                       addon in flight finishes
 //   Data.mark(flavorId, folder, action, value) -> Promise<{ flavor, messages }>  pin (at `value`, else the
@@ -448,15 +449,26 @@
     return say(kind, text);
   }
 
+  // The warning of an install path in a folder the CurseForge app manages, as `adopt::curse_client_warning`
+  // says it (task 098); null without the marker.
+  function curseClientWarning(flavor) {
+    if (!flavor.curse_client) return null;
+    return say(
+      "warning",
+      `the CurseForge app manages ${flavor.folder} too (its .curseclient marker is there): it may update or replace what mrgl installs; a folder belongs to one manager`
+    );
+  }
+
   // The made-up run of `checkUpdates`, `updateAll` and `updateOne`: the check of every managed row (or the
   // one `folder` names), then, with `install`, every update it found. In era the first update fails, so the
-  // error and the warning show somewhere.
+  // error and the warning show somewhere. A flavor the CurseForge app manages warns first (task 110).
   async function runUpdate(flavorId, folder, progress, install) {
     const flavor = flavors.find((item) => item.id === flavorId);
     if (!flavor) return { flavor: null, messages: [say("error", `no flavor ${flavorId} under ${ROOT}`)] };
     if (run.going) return { flavor: null, messages: [say("warning", "an update is running already; wait for it to end or cancel it")] };
     run.going = true;
     run.cancel = false;
+    const warned = (messages) => [curseClientWarning(flavor), ...messages].filter(Boolean);
     const emit = (phase, row, index, total, kind, plain, check) =>
       typeof progress === "function" &&
       progress({ phase, folder: row ? row.folder : null, index, total, check: check || null, message: say(kind, plain) });
@@ -477,10 +489,10 @@
       }
       if (run.cancel) {
         const what = install ? "update" : "check";
-        return { flavor, messages: [say("nothing", `${what} cancelled after checking ${checked} of ${total} addons in ${flavor.folder}; nothing updated`)] };
+        return { flavor, messages: warned([say("nothing", `${what} cancelled after checking ${checked} of ${total} addons in ${flavor.folder}; nothing updated`)]) };
       }
       const states = rows.map((row) => row.check.state);
-      if (!install) return { flavor, messages: [summary(flavor, states, { check: true })] };
+      if (!install) return { flavor, messages: warned([summary(flavor, states, { check: true })]) };
       const due = rows.filter((row) => row.update);
       const of = { updated: 0, failed: 0, left: 0 };
       for (const [position, row] of due.entries()) {
@@ -507,7 +519,7 @@
         emit("updated", row, index, due.length, "progress", `updated ${row.name} from ${from} to ${row.version} in ${flavor.folder}`);
         of.updated += 1;
       }
-      return { flavor, messages: [summary(flavor, states, of)] };
+      return { flavor, messages: warned([summary(flavor, states, of)]) };
     } finally {
       run.going = false;
       run.cancel = false;

@@ -697,7 +697,8 @@ A folder belongs to one manager. A flavor folder with the CurseForge app's `.cur
 that the CurseForge app may still update or flag those folders and that its marker stays
 (`adopt::alongside_warning`). mrgl never removes the marker. Every install path warns in such a folder too:
 `add` (a zip or a source, not the dry run of a source, which reads no folder), `import` and `update` add
-`adopt::curse_client_warning` to their warnings, on the screen and in the JSON.
+`adopt::curse_client_warning` to their warnings, on the screen and in the JSON, and so do the window's
+update actions (task 110: "Check for updates", "Update all" and a row's "Update", once per run, below).
 
 ### The GitHub mapping
 
@@ -879,7 +880,10 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   folders (`NeedsLibrary needs the missing dependency LibMissing: install it or the addon does not load`)
   and an interface of the primary folder that is not for the build (`… of _forever_; the zip may be for
   another flavor`), each a warning of the answer; the row, read again, carries the dependency in its
-  `missing`. One run at a time: a second one is refused with a warning. A flavor without an AddOns folder
+  `missing`. In a flavor folder with the CurseForge app's `.curseclient` marker the first warning of the
+  answer is the core's `adopt::curse_client_warning` (task 110), once per run, as `mrgl update` warns
+  there; the window has no add or import of its own, so its update actions are its install paths. One
+  run at a time: a second one is refused with a warning. A flavor without an AddOns folder
   answers that the client has not been started for it yet. The window's "Check for updates" is the check
   alone; "Update all" and a row's "Update" run the check first, so they never install on an old answer.
 - `cancel_update`: asks the run going to stop. The cancel rule: the flag is read before each addon of the
