@@ -6080,6 +6080,7 @@ fn update_json_is_one_document_with_every_state_and_count() {
         serde_json::json!({
             "update-available": 1, "up-to-date": 2, "installed-newer": 2, "pinned": 1, "ignored": 1,
             "guess-only": 1, "source-gone": 2, "not-checked": 2, "rate-limited": 0, "failed": 0,
+            "pending": 0,
         })
     );
     assert_eq!(value["stopped"], serde_json::json!([]));
@@ -8046,7 +8047,7 @@ fn import_and_update_take_a_wowi_entry() {
     assert!(game.addon("MrglForever").join("MrglForever.toc").is_file());
 
     // The update check asks WoWInterface: a metadata pick is an update, a guess is reported, a pending
-    // file is a failed check that says why.
+    // file is a state of its own (task 104), not a failure: exit code 0.
     let game = managed_game(
         "wowi-update",
         &[
@@ -8067,12 +8068,7 @@ fn import_and_update_take_a_wowi_entry() {
         ])
         .output()
         .expect("run mrgl");
-    // A failed check is exit code 1, as for any source that cannot give its current release.
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        stderr_last_line(&output),
-        "1 addon of _forever_ failed: MrglPending; the other addons are done"
-    );
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
     let text = stdout(&output);
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
@@ -8083,10 +8079,82 @@ fn import_and_update_take_a_wowi_entry() {
             "checking MrglForever against wowi:1005 (2 of 3)",
             "MrglForever  3.0.0 -> 3.1.0  update available",
             "checking MrglPending against wowi:1003 (3 of 3)",
-            "MrglPending  1.0.0  check failed: the newest file of wowi:1003 waits for approval on WoWInterface: nothing is installed until it is approved",
-            "dry run: 1 update available, 1 guess only, 1 check failed; nothing written",
+            "MrglPending  1.0.0  pending approval: the newest file waits for approval on WoWInterface; nothing to install until it is approved",
+            "dry run: 1 update available, 1 pending approval, 1 guess only; nothing written",
         ],
         "{text}"
+    );
+    let output = game
+        .mrgl_sources()
+        .args([
+            "--json",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["addons"][2]["name"], "MrglPending");
+    assert_eq!(value["addons"][2]["state"], "pending");
+    assert_eq!(
+        value["addons"][2]["detail"],
+        "the newest file waits for approval on WoWInterface; nothing to install until it is approved"
+    );
+    assert_eq!(value["counts"]["pending"], 1);
+    assert_eq!(value["counts"]["failed"], 0);
+    // Pending entries alone end with exit code 0; a failed check next to them still ends with 1.
+    let pending = managed_game(
+        "wowi-pending",
+        &[
+            ("MrglPending", "wowi:1003", "1.0.0", ""),
+            ("Refused", "wago:MrglWg04", "1.0.0", ""),
+        ],
+    );
+    let output = pending
+        .mrgl_sources()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "nothing updated: 1 pending approval, 1 not checked"
+    );
+    let output = pending
+        .mrgl_wago()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "1 addon of _forever_ failed: Refused; the other addons are done"
+    );
+    assert!(
+        stdout(&output)
+            .lines()
+            .any(|line| line.starts_with("MrglPending  1.0.0  pending approval: ")),
+        "{}",
+        stdout(&output)
     );
     let output = game
         .mrgl_sources()

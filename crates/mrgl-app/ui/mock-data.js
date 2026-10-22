@@ -141,6 +141,7 @@
     "guess-only": "guess only",
     pinned: "pinned",
     ignored: "ignored",
+    pending: "pending approval",
     "source-gone": "source gone",
     "not-checked": "not checked",
     failed: "check failed",
@@ -159,7 +160,7 @@
     }
     if (state === "installed-newer") text = `newer than the current release ${latest}, left alone`;
     if (state === "ignored") text = "ignored, not checked";
-    if (detail && ["not-checked", "source-gone", "failed", "rate-limited"].includes(state)) text = `${text}: ${detail}`;
+    if (detail && ["not-checked", "pending", "source-gone", "failed", "rate-limited"].includes(state)) text = `${text}: ${detail}`;
     return { state, label: LABELS[state], latest: latest || null, order, detail: detail || null, line: `${row.name}  ${versions}  ${text}` };
   }
 
@@ -436,7 +437,7 @@
       if (of.failed) parts.push(`${of.failed} failed`);
       if (of.left) parts.push(`${of.left} not updated (cancelled)`);
     }
-    for (const state of ["up-to-date", "installed-newer", "pinned", "ignored", "guess-only", "source-gone", "not-checked", "rate-limited", "failed"]) {
+    for (const state of ["up-to-date", "installed-newer", "pinned", "ignored", "pending", "guess-only", "source-gone", "not-checked", "rate-limited", "failed"]) {
       const n = count(state);
       if (n) parts.push(`${n} ${LABELS[state]}`);
     }

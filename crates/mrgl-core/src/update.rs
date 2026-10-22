@@ -48,6 +48,9 @@ pub enum UpdateState {
     Pinned,
     /// Ignored (task 021): skipped without a request.
     Ignored,
+    /// The source's newest file waits for the site's approval (task 104: WoWInterface's pending file): no
+    /// release to install yet and nothing for the user to do, counted apart from a failed check.
+    Pending,
     /// The source has no release or no asset for the flavor any more, or the repository is gone (404).
     SourceGone,
     /// No source to ask: a zip in hand, a linked development folder, a source not configured (task 092).
@@ -61,12 +64,13 @@ pub enum UpdateState {
 
 impl UpdateState {
     /// Every state, in the order a summary counts them.
-    pub const ALL: [UpdateState; 10] = [
+    pub const ALL: [UpdateState; 11] = [
         UpdateState::UpdateAvailable,
         UpdateState::UpToDate,
         UpdateState::InstalledNewer,
         UpdateState::Pinned,
         UpdateState::Ignored,
+        UpdateState::Pending,
         UpdateState::GuessOnly,
         UpdateState::SourceGone,
         UpdateState::NotChecked,
@@ -83,6 +87,7 @@ impl UpdateState {
             UpdateState::GuessOnly => "guess only",
             UpdateState::Pinned => "pinned",
             UpdateState::Ignored => "ignored",
+            UpdateState::Pending => "pending approval",
             UpdateState::SourceGone => "source gone",
             UpdateState::NotChecked => "not checked",
             UpdateState::Failed => "check failed",
@@ -198,6 +203,7 @@ impl AddonUpdate {
             ),
             UpdateState::SourceGone
             | UpdateState::NotChecked
+            | UpdateState::Pending
             | UpdateState::Failed
             | UpdateState::RateLimited => {
                 format!("{}: {detail}", self.state.label())
@@ -698,6 +704,13 @@ fn check_entry<S: Source + ?Sized>(
             };
             addon.pick = Some(pick);
         }
+        // Task 104: a file that waits for the site's approval is not a failure; nothing to install yet.
+        Err(Error::ReleasePending { host, .. }) if entry.pinned.is_none() => {
+            addon.state = UpdateState::Pending;
+            addon.detail = Some(format!(
+                "the newest file waits for approval on {host}; nothing to install until it is approved"
+            ));
+        }
         Err(error) => {
             addon.state = if entry.pinned.is_some() {
                 UpdateState::Pinned
@@ -841,6 +854,11 @@ mod tests {
             addon(UpdateState::Pinned, Some("1.0.0"), None),
             addon(UpdateState::Pinned, None, Some("offline")),
             addon(UpdateState::Ignored, None, None),
+            addon(
+                UpdateState::Pending,
+                None,
+                Some("the newest file waits for approval on WoWInterface"),
+            ),
             addon(UpdateState::SourceGone, None, Some("no release in x")),
             addon(UpdateState::NotChecked, None, Some("a zip in hand")),
             addon(UpdateState::Failed, None, Some("cannot reach y")),
@@ -865,6 +883,7 @@ mod tests {
                 "Thing  1.0.0  pinned at 1.0.0, up to date",
                 "Thing  1.0.0  pinned at 1.0.0, not checked: offline",
                 "Thing  1.0.0  ignored, not checked",
+                "Thing  1.0.0  pending approval: the newest file waits for approval on WoWInterface",
                 "Thing  1.0.0  source gone: no release in x",
                 "Thing  1.0.0  not checked: a zip in hand",
                 "Thing  1.0.0  check failed: cannot reach y",
@@ -1075,6 +1094,29 @@ mod tests {
                 "checked _forever_: 1 up to date, 1 not checked (GitHub's rate limit), 2 not checked (Wago's rate limit)"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn a_pending_file_is_counted_apart_and_needs_no_look() {
+        let check = UpdateCheck {
+            addons: vec![
+                addon(UpdateState::UpToDate, Some("1.0.0"), None),
+                addon(UpdateState::Pending, None, None),
+            ],
+            warnings: Vec::new(),
+            stopped: Vec::new(),
+        };
+        assert_eq!(
+            check.summary(SummaryOf::Check, "_forever_"),
+            (
+                Kind::Nothing,
+                "checked _forever_: 1 up to date, 1 pending approval".to_string()
+            )
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateState::Pending).expect("serializes"),
+            "pending"
         );
     }
 

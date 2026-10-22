@@ -48,7 +48,8 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
 - **Updates you can read first.** `mrgl update --all --dry-run` checks every addon mrgl installed against
   its source, each on its own release channel, and says where each stands: up to date, update available, a
   guess only (no `release.json` names the flavor, so it is not installed blindly), source gone, pinned,
-  ignored, not checked (a zip in hand, a linked folder), or newer than the release (a deleted release, a
+  ignored, pending approval (a WoWInterface file the site has not approved yet), not checked (a zip in
+  hand, a linked folder), or newer than the release (a deleted release, a
   channel switch: never downgraded); `mrgl update --all` installs the updates after one confirmation
   (`--yes` for scripts), leaves a pinned addon alone and skips an ignored one. It says which addon it is
   checking as it goes, and without a GitHub token it stops asking GitHub before the 60 requests an hour run
@@ -167,8 +168,9 @@ A WoWInterface project has one file, and WoWInterface names no flavor for it: mr
 compatibility list (the game versions its author ticked) and takes the file for the flavor whose game the
 list names; without such an entry, and on Forever, which no project lists yet, the pick is a guess and says
 so, and the interface check after the install is the safety net. A file that waits for WoWInterface's
-approval is reported and not installed, and a download whose MD5 is not the one WoWInterface names is
-refused before anything opens it. The source needs no key.
+approval is reported and not installed; the update check counts it as `pending approval`, not as a failure,
+so a daily `mrgl update --all` stays green while the site approves it. A download whose MD5 is not the one
+WoWInterface names is refused before anything opens it. The source needs no key.
 
 The Wago API needs your own key (`MRGL_WAGO_KEY`, or `mrgl key set wago`; mrgl ships none). mrgl asks Wago
 for the flavor's own game version (`forever`, `retail`, `classic` for Classic Era, the progressing classic by

@@ -281,7 +281,12 @@ and reported with the current release, left alone; its line reads the installed 
 by the version order below (task 077): `pinned at 2.0.0, 2.1.0 is out, left alone` when the installed version
 is older (or the order cannot tell), `pinned at 1.1.0-beta, newer than the current release 1.0.0, left
 alone` when it is newer (with the `is no longer listed` reason as `installed-newer` has it), `pinned at
-1.0.0, up to date` when it is the same. `ignored`: skipped without a request. `source-gone`: no
+1.0.0, up to date` when it is the same. `ignored`: skipped without a request. `pending` (task 104): the
+source's newest file waits for the site's approval (WoWInterface's `UIPending`), so there is nothing to
+install yet and nothing for the user to do: its line is `MrglPending  1.0.0  pending approval: the newest
+file waits for approval on WoWInterface; nothing to install until it is approved`, it is counted apart
+(`1 pending approval`), it is no failure (a run with pending addons alone ends with exit code 0) and the
+summary needs no look for it. `source-gone`: no
 release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
 hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
 limit, a server error). `installed-newer` (task 068): the installed version is newer than the current
@@ -786,7 +791,9 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   (task 010: a row menu's items and why one is disabled, the progress slot each event of a run moves, a
   check's answer laid over its row, the note under a row's version, whose pin reads the check's `order` as
   the command line's pinned line does: `pinned at 1.1.0-beta, newer than the release`, or `pinned at 2.0.0,
-  2.1.0 is out`; task 077), `toolbox.js` (tasks 074 and 085: the target
+  2.1.0 is out`; task 077; the check states the note names, `NOTED`: `installed-newer`, `guess-only`,
+  `pending` of task 104, `source-gone`, `failed` and `rate-limited`, each by the core's label), `toolbox.js`
+  (tasks 074 and 085: the target
   picker's options and the `{ character, realm, account }` an option names, the account in an option's
   value and label only when the answer carries one, the set the picker shows, the set's addons in their
   order and each chip's toggle and drop, the state, label and title of the apply, undo and cleanup buttons,
@@ -1237,7 +1244,8 @@ The WoWInterface source (task 094, `sources::wowinterface`) asks the MMOUI API, 
 (`UIFileName`, `UIDownload`, `UIMD5`), its date in milliseconds (`UIDate`) and `UIPending`. A project has
 one file and both channels take it. `UIPending: "1"` (the newest file waits for the site's approval) is the
 error `the newest file of wowi:<id> waits for approval on WoWInterface: nothing is installed until it is
-approved`: `add` fails with it, `import` reports it as failed and the update check as a failed check. The
+approved`: `add` fails with it and `import` reports it as failed, while the update check reports it as the
+state `pending` (task 104), not as a failed check. The
 download (`cdn.wowinterface.com/downloads/getfile.php?id=<id>&d=<date>&minion`) is compared with `UIMD5`
 before it is written, so the engine never opens it: a mismatch is `refused <file> of wowi:<id> <version>: its
 MD5 is <md5>, the source names <md5>; the download was damaged or the file changed, try again`. The flavor

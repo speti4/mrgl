@@ -112,6 +112,8 @@ test("the note names the marks and a check state that needs a word", () => {
   assert.equal(Actions.noteOf(noted), "pinned at 1.0, ignored, prereleases, newer than the release");
   const gone = Object.assign({}, managed, { check: { state: "source-gone", label: "source gone" } });
   assert.equal(Actions.noteOf(gone), "source gone");
+  const pending = Object.assign({}, managed, { check: { state: "pending", label: "pending approval" } });
+  assert.equal(Actions.noteOf(pending), "pending approval", "a file that waits for approval (task 104)");
   const upToDate = Object.assign({}, managed, { check: { state: "up-to-date", label: "up to date" } });
   assert.equal(Actions.noteOf(upToDate), "");
   const held = Object.assign({}, managed, { pinned: "1.2.2", check: { state: "pinned", label: "pinned", latest: "1.2.3" } });

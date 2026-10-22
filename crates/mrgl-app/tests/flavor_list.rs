@@ -1052,3 +1052,58 @@ fn a_row_of_a_source_this_build_lacks_has_its_badge_and_says_what_is_missing() {
         assert_eq!((badge.kind, badge.id.as_str()), (kind, id), "{spec}");
     }
 }
+
+// --- task 104: a WoWInterface file that waits for approval is a state of its own ---
+
+#[test]
+fn a_row_of_a_file_waiting_for_approval_shows_the_pending_state() {
+    use mrgl_core::sources::wowinterface::{self, WowInterface};
+    use mrgl_core::sources::{Source, Target};
+    use mrgl_core::update::UpdateState;
+
+    let fixture = Fixture::game_named("pending");
+    let home = fixture.home();
+    fixture.addon(
+        "_forever_",
+        "MrglPending",
+        "## Interface: 16001\n## Title: Mrgl Pending\n## Version: 1.0.0\n",
+    );
+    let flavor_home = FlavorHome::at(&home, &FlavorId::Forever);
+    let mut forever = flavor_home
+        .read_state(&FlavorId::Forever)
+        .expect("sidecar")
+        .state;
+    forever.addons.insert(
+        "MrglPending".into(),
+        entry("wowi:1003", "1.0.0", &["MrglPending"]),
+    );
+    flavor_home.write_state(&forever).expect("forever sidecar");
+    // An online check fills the source's cache from the fixture answers; the list reads it offline.
+    let answers = Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/sources");
+    let online = WowInterface::new(
+        FolderHttp::new(answers),
+        Some(home.join(wowinterface::CACHE_SUBDIR)),
+    );
+    let spec = SourceSpec::parse("wowi:1003").expect("a spec");
+    assert!(matches!(
+        online.resolve(&spec, &Target::new(FlavorId::Forever)),
+        Err(mrgl_core::Error::ReleasePending { .. })
+    ));
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&home),
+        Voice::new(false),
+    );
+    let pending = row(flavor(&answer.flavors, "wowf"), "MrglPending");
+    let check = pending.check.as_ref().expect("the offline check's answer");
+    assert_eq!(check.state, UpdateState::Pending);
+    assert_eq!(check.label, "pending approval");
+    assert_eq!(
+        check.line,
+        "MrglPending  1.0.0  pending approval: the newest file waits for approval on WoWInterface; nothing to install until it is approved"
+    );
+    assert!(pending.update.is_none(), "nothing to install");
+    let json = serde_json::to_value(pending).expect("serializes");
+    assert_eq!(json["check"]["state"], "pending");
+}
