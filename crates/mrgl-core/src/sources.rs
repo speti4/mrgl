@@ -1276,6 +1276,7 @@ pub(crate) struct MapHttp {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 impl MapHttp {
     pub(crate) fn new() -> MapHttp {
         MapHttp {
@@ -1313,6 +1314,7 @@ impl MapHttp {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 impl Http for MapHttp {
     fn get(&self, request: &Request) -> Result<Response> {
         if let Ok(mut requests) = self.requests.lock() {
@@ -1331,6 +1333,7 @@ impl Http for MapHttp {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

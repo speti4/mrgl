@@ -12,6 +12,9 @@ publish.workspace = true
 name = "mrgl"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 mrgl-core.workspace = true
 clap.workspace = true

@@ -159,6 +159,7 @@ pub fn serious_of_process(flag: bool) -> (bool, SeriousSource) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

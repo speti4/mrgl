@@ -26,6 +26,10 @@
 //! talk and when to go online, which keeps every module testable against the fixtures under
 //! `tests/fixtures/`.
 
+// The `coverage(off)` attribute of the documented exclusions (docs/development.md, "Coverage"); the feature
+// gate exists only under cargo-llvm-cov's nightly cfg, so the stable build never sees it.
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 pub mod adopt;
 pub mod backup;
 pub mod client;

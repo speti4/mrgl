@@ -1652,6 +1652,7 @@ pub fn find_set(flavor: &FlavorId, sets_path: &Path, name: &str) -> Result<(Stri
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

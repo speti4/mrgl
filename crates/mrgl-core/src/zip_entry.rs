@@ -390,6 +390,7 @@ fn is_reserved_device_name(part: &str) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::io::{Cursor, Write};
     use std::path::PathBuf;

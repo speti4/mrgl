@@ -114,6 +114,7 @@ fn io_error(path: &Path, source: io::Error) -> Error {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

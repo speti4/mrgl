@@ -392,7 +392,10 @@ pub struct CredentialStore;
 /// The store's name in a line.
 const CREDENTIAL_MANAGER: &str = "the Windows Credential Manager";
 
+// coverage: off — the user's real Credential Manager; the unit tests run the same contract against the
+// memory store, the end-to-end tests run with the store off
 #[cfg(windows)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod credential_manager {
     use windows_sys::Win32::Foundation::{ERROR_NOT_FOUND, GetLastError};
     use windows_sys::Win32::Security::Credentials::{
@@ -529,6 +532,7 @@ impl KeyStore for CredentialStore {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

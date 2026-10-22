@@ -1783,6 +1783,7 @@ fn copy_dir_all(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

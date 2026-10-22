@@ -180,12 +180,14 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the release tag and the date, and the candidates without a Forever build yet are in task 028's Log. A
   change to the list changes its stub under `crates/mrgl-core/tests/fixtures/starter-list/` with it (see
   [Fixtures](#fixtures)).
-- `scripts/` — helper scripts for the icon, the release zip, the changelog and the commit rules.
+- `scripts/` — helper scripts for the icon, the release zip, the changelog, the commit rules and the coverage
+  table (`coverage-check.py`, with the pins `coverage-toolchain.txt` and `cargo-llvm-cov-version.txt`, see
+  [Coverage](#coverage)).
 - `docs/` — this page, the git workflow, the maintainer sessions, origin, research and the voice guide.
 - `tasks/` — the backlog, the work in flight, the history and the decisions (the task standard).
 - `.github/workflows/` — CI (fmt, clippy, test, the oldest supported Rust, the changelog check, the dependency
-  policy, the workflow lint, the commit rules), the tagged release, the weekly advisory check and the task-to-issue
-  mirror;
+  policy, the workflow lint, the coverage measurement, the commit rules), the tagged release, the weekly advisory
+  check and the task-to-issue mirror;
   `.github/actions/install-rust-toolchain/` — the toolchain install step the CI jobs share;
   `.github/dependabot.yml` — the weekly dependency updates.
 - `rust-toolchain.toml` — the pinned Rust version (see [The Rust toolchain](#the-rust-toolchain)).
@@ -1062,7 +1064,7 @@ uv run --with pillow python -I scripts\make-icon.py   # crates\mrgl-app\icons\ic
 
 ## CI and releases
 
-`.github/workflows/ci.yml` runs six jobs on every push to `main` and every pull request: `test`
+`.github/workflows/ci.yml` runs seven jobs on every push to `main` and every pull request: `test`
 (windows-latest: `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`), `lint` (ubuntu:
 `cargo fmt --check` and `scripts/changelog.py --check`, the latter skipped on a tag, see
 [The changelog](#the-changelog)), `msrv` (windows-latest: `cargo check` with the toolchain that `rust-version`
@@ -1073,7 +1075,9 @@ against `deny.toml` for the Windows target: licenses from the allowlist, no Rust
 crates.io as the only source; and `about.toml` accepts the same licenses) and `workflow-lint` (zizmor over the
 workflows, the local action and `dependabot.yml`; a finding accepted on purpose carries
 `# zizmor: ignore[<audit>]` on the name line of its step and its reason in the comment above, so the
-acceptance moves with the step and covers nothing else). `.github/workflows/commit-rules.yml` runs
+acceptance moves with the step and covers nothing else) and `coverage` (windows-latest: the tests once more
+under cargo-llvm-cov on a pinned nightly, the table in the job summary, red below the floors, see
+[Coverage](#coverage); not a required check yet). `.github/workflows/commit-rules.yml` runs
 `commit-rules` (`scripts/check-commit.sh` over every pushed commit and the pull request text, the rules of
 [git-workflow.md](git-workflow.md)) on the same pushes and pull requests. `.github/workflows/advisories.yml`
 runs `cargo deny check advisories` every Monday and by hand (`gh workflow run advisories.yml`), so a RustSec
@@ -1130,6 +1134,60 @@ deliberate pull request of its own:
 `rust-version` in `Cargo.toml` (the oldest supported Rust, which the `msrv` job checks) is a separate number and
 does not move with the pin.
 
+### Coverage
+
+The `coverage` job (task 117) measures how much of the three crates the tests run: line and branch coverage
+of the Windows build, with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) on a nightly toolchain,
+since branch coverage is nightly-only. The test files, the build scripts and the `cfg(not(windows))` twins (which
+the `non-windows` job compiles and nothing runs) are not counted. The whole suite runs once more under
+instrumentation; the exe the command line's end-to-end tests spawn writes its own profile, so its lines count
+like any other. Two pins, each the one place its number is written, read by the job and by the commands of
+CONTRIBUTING.md, "Checks before a commit": `scripts/coverage-toolchain.txt` (the nightly by date) and
+`scripts/cargo-llvm-cov-version.txt`. Dependabot sees neither; a bump is a hand edit in a `chore: bump the
+coverage nightly to <date>` pull request that re-measures (a nightly can change the branch count without a
+code change) and adjusts the floors with a sentence why.
+
+`scripts/coverage-check.py` reads the job's lcov export, prints the table (per crate, then per file by missed
+lines) into the job summary, and fails below its two floors, `LINES_FLOOR` and `BRANCHES_FLOOR` at its top: the
+one place they are written. They only rise: a pull request that lands tests raises them to what it measured,
+and they end at 100 when task 117 closes; from then on, a pull request that leaves a line or a branch untested
+is red before the merge. The lcov export, not the JSON summary, is the measure: the summary counts every
+instantiation of a generic function on its own, so a branch one instantiation never takes shows as missed there
+while the text and HTML reports, which merge the instantiations, show it covered; the lcov lines and branches
+are that merged view, the one a reader of the report can act on.
+
+What no test can reach is excluded in the code, never by a file pattern. There are two forms. The item carries
+`#[cfg_attr(coverage_nightly, coverage(off))]` under one comment line `// coverage: off — <reason>` (further
+comment lines continue the reason), and the list below carries the same path and the same words. The script
+checks the two against each other and fails on an attribute without a reason or on a list that differs from the
+code, so the list cannot go stale. `coverage_nightly` is the cfg cargo-llvm-cov sets on nightly; the attribute
+and the crate-level feature gate behind it exist only there, and the workspace's `unexpected_cfgs` lint
+(`[workspace.lints.rust]` in `Cargo.toml`) declares the cfg so the stable build stays warning-free. An
+exclusion is allowed only on a function or a module whose failure arms only the operating system or the desktop
+can provoke; the logic around such a call is split into a function a test reaches. Two classes need no entry
+below: every `#[cfg(test)]` module and item carries the attribute (the test code is not the subject, and its
+`assert!` arms would be phantom branches), and the `cfg(not(windows))` twins are not measured at all.
+
+The second form is for a single arm inside a tested function: a failure only the operating system can provoke
+(a read of a folder the code just listed, a write to a file it just created, a rename of a path it just made, a
+system call's own failure, a race between two reads of one path). Such a line ends with `// coverage: os`, or
+the lines sit between a `// coverage: os-begin` line and a `// coverage: os-end` line; the script leaves those
+lines and their branches out of the counts, and fails on a marked line a test does reach, so a mark cannot
+outlive the line's testability. An arm a test can provoke with a locked file, a file where a folder is expected,
+a read-only attribute, a stub process list or a stub rename is tested, never marked. The marks are the register
+of this form (`grep -rn "coverage: os" crates/`); the list below is the register of the attribute form, the
+reasoned exclusions:
+
+- `mrgl-app/src/main.rs`: the Tauri event loop needs a WebView2 window and a desktop session
+- `mrgl-app/src/lib.rs`: the Tauri event loop needs a WebView2 window and a desktop session
+- `mrgl-app/src/commands.rs`: the native folder dialog; the choice itself is `choose`, tested without a dialog
+- `mrgl-core/src/keys.rs`: the user's real Credential Manager; the unit tests run the same contract against the
+  memory store, the end-to-end tests run with the store off
+
+Branch coverage counts the conditions of `if`, `&&`, `||` and `let … else`, and macro expansions can add
+branches nothing reaches. A dead defensive condition is simplified with a comment rather than tested; a residue
+of phantom branches no code change removes is listed here with the measured number the branch floor is set to.
+
 ### The release
 
 `scripts\release.ps1` builds the release profile (fat LTO, stripped) and packs `target\release\mrgl.exe`,
@@ -1155,7 +1213,7 @@ cargo install cargo-about --version (Get-Content scripts\cargo-about-version.txt
 scripts\release.ps1                     # dist\: the zip, SHA256SUMS.txt, release-notes-<version>.md
 ```
 
-Pushing a tag `v<version>` runs the six jobs; when they pass, the `release` job checks that the tag is on
+Pushing a tag `v<version>` runs the same jobs; when the six the release needs pass, the `release` job checks that the tag is on
 `main`, installs the pinned cargo-about, runs `release.ps1`, attests the build provenance of the zip and
 publishes it with the checksum file as a GitHub release titled `mrgl <version>`, with the notes file as its
 text, through the runner's `gh` CLI. The release job builds without the Rust cache, so nothing a pull request

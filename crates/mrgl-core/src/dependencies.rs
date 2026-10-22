@@ -186,6 +186,7 @@ fn collect_subfolders(dir: &Path, depth: usize, names: &mut Vec<String>) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;

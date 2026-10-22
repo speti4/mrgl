@@ -354,6 +354,7 @@ const fn align4(at: usize) -> usize {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     //! Over the stubs of `tests/fixtures/client-exe/` (written by `make-stubs.py` next to them) and
     //! copies of them bent out of shape: every failure is a reason, never a panic.

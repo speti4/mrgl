@@ -7,6 +7,10 @@
 //! its SavedVariables, tasks 074 and 085, and the adopt report with its apply, task 109); the window only
 //! shows what the core says, in the voice's two lines (D-005).
 
+// The `coverage(off)` attribute of the documented exclusions (docs/development.md, "Coverage"); the feature
+// gate exists only under cargo-llvm-cov's nightly cfg, so the stable build never sees it.
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 pub mod actions;
 pub mod commands;
 pub mod list;
@@ -15,6 +19,8 @@ pub mod toolbox;
 use tauri::Manager;
 
 /// Builds the window and runs the event loop until it closes.
+// coverage: off — the Tauri event loop needs a WebView2 window and a desktop session
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

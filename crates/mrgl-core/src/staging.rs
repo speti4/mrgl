@@ -223,6 +223,7 @@ fn lock_is_free(lock: &Path) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

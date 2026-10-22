@@ -430,6 +430,7 @@ pub fn rfc3339_from_unix(seconds: u64) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::flavor::{BuildVersion, Flavor};

@@ -277,6 +277,7 @@ pub fn day_number(date: &str) -> Option<i64> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
