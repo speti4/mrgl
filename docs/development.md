@@ -31,7 +31,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `stable` or `prerelease`, with the queries and setters the update check and the CLI call, task 021; absent
   fields read as unpinned, not ignored, stable, and a reinstall keeps them), the toolbox (`backup`: the `WTF`
   backup into a dated zip, the listing and the restore that checks every entry through `zip_entry`, moves
-  the current `WTF` aside and reverts on a failure, task 013; later the addon sets), the zip entry check
+  the current `WTF` aside and reverts on a failure, task 013), the addon sets (`sets`, task 014, below),
+  the zip entry check
   both of them call (`zip_entry`, task 044: every entry readable, inside its folder and no link, checked
   before the first is written), the running-client check (`client`,
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
@@ -73,7 +74,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   and `import <file> --flavor <flavor> [--exact] [--dry-run]` (tasks 015 and 057), `pin <name> [version]`,
   `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
-  `rollback <name>` (task 022), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
+  `rollback <name>` (task 022), `set save|apply|list|show|remove` (task 014; `--character` on `save` and
+  `apply`, task 027; below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
   below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
   `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
@@ -81,8 +83,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
   `folder`, `required`, `met`, `embedded`, `missing` and `nolib` (`true`, `false` or `null` for unknown).
   `savedvars --flavor <flavor> [--clean]` (task 025) prints a data line per SavedVariables entry (size,
-  addon, `account` or `account / realm / character`, `orphan` or `client`) and a summary, `--clean` moves
-  the orphans; `--json` is the `savedvars` or the `savedvars-clean` document.
+  addon, `account-wide` or `realm / character`, never the account folder's name, which `--json` carries,
+  `orphan` or `client`) and a summary, `--clean` moves the orphans; `--json` is the `savedvars` or the
+  `savedvars-clean` document.
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
   capability file and the icon.
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
@@ -179,6 +182,36 @@ warning, never a refusal: `scan` and `list` mark the addon's line `interface mis
 line, their JSON carries `interface_mismatches`, and `add <file.zip>` and `import` add a warning after the
 install (`interface_mismatch` in their JSON). An unknown build, a TOC without an `## Interface` line and a
 folder the flavor loads no TOC from give no warning.
+
+The addon sets (task 014, `mrgl_core::sets`) are named lists of addons per flavor, each addon `enabled` or
+`disabled`, in `sets.json` under the flavor's folder of the mrgl home (`<home>\<flavor-id>\sets.json`, next to
+the sidecar: `format` `mrgl-sets`, `schema` 1, the `flavor` id and `sets`, each with `saved_at` and its
+`addons`). The file is the user's data, not a cache: one that cannot be read, or that belongs to another
+flavor or schema, is an error that names it, and mrgl never overwrites it. The characters are the folders
+`WTF\Account\<account>\<realm>\<character>\` (the account's `SavedVariables` is no realm), and each keeps
+the client's `AddOns.txt`, one `Name: enabled` or `Name: disabled` line per addon. `mrgl set save <name>`
+reads every character's file and keeps each addon with its state; an addon the characters disagree on is
+left out (an apply then leaves it alone) and named in a warning, and a set of the same name is replaced.
+`mrgl set apply <name>` is the second `WTF` write of D-002 and D-003: the guard of task 023 refuses it while
+the client runs, before anything is written; then exactly the set's addons get its state in every
+character's file and every other byte stays as the client wrote it (the line endings, a missing last one, a
+byte order mark, the order, a line mrgl does not understand); an addon a file does not name gets a line at
+its end with the file's line ending, a character without the file gets one (CRLF), and a file that would not
+change is not written. Every new content is worked out before the first write, each file goes through a
+temporary file renamed over it, and a failure part way puts the files already written back. No folder is
+deleted or moved; an addon of the set that is not installed is a warning and its line is written all the
+same. `set list`, `set show <name>` and `set remove <name>` read and edit `sets.json` only; every verb takes
+`--flavor` and `--json` (`kind` `set-save`, `set-apply`, `set-list`, `set-show`, `set-remove`).
+
+A set is per flavor, its target may be one character (task 027): `set apply <name> --character <name>
+[--realm <realm>]` writes that character's `AddOns.txt` only and leaves every other character's file byte for
+byte, and `set save <name> --character <name>` takes the set from that one file (so nothing is left out as a
+disagreement). The character is picked from the `WTF` account folders by its folder's name, ignoring case;
+`--realm` narrows a name more than one realm has. A name on two realms without `--realm` is refused with the
+realms listed, and a name no character has with the characters listed; when one realm and name are under
+two accounts the error names the accounts. The guard of task 023 holds as for every character: nothing is
+written while the client runs. In `mrgl_core::sets` the choice is `Target` (`EveryCharacter`, or
+`Character { name, realm }`) and `find_character` is the lookup the window can call.
 
 ## The unpacked-size bound
 
@@ -522,7 +555,10 @@ folder, a TOC with an interface for another build, a path that tries to escape t
 with an embedded and a missing required dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
 SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made
-up from the first line, task 013), a third game folder for the dependency check (`dependencies/`, task
+up from the first line, task 013), a second `WTF` tree for the addon sets (`addon-sets/WTF/`, task 014:
+two characters on two realms of one account, one `AddOns.txt` with CRLF endings, the other with LF, a line
+the client never wrote and no last line break, and the account's `SavedVariables` that is no realm), a
+third game folder for the dependency check (`dependencies/`, task
 029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency, and a
 library folder inside an addon that a `nolib` entry in a test's sidecar turns into a missing one), and a
 development folder for the junction links (`dev/`: two addons with a TOC and a folder without one, task
@@ -607,7 +643,8 @@ No stub is a game executable or a copy of one.
 
 The command line keeps `config.json` (the remembered game folder) under the mrgl home folder,
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
-sidecar `state.json`, the install engine's `staging\` (a zip is unpacked and checked here before anything
+sidecar `state.json`, the addon sets `sets.json` (task 014),
+the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves; emptied after every install) and `cache\<addon>\<version>.zip` (the current and the previous
 version's zip for `mrgl rollback`; never required, deleting it only disables the rollback), and the `WTF`
 backups under `backups\<flavor-id>\`: `WTF-<date>.zip` per backup (a plain zip, the date local, so the

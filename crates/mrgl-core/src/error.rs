@@ -295,6 +295,67 @@ pub enum Error {
         "not a shareable addon list: {path} ({entries}); a list names sources and versions, never a file or a folder of one machine"
     )]
     ListNotShareable { path: PathBuf, entries: String },
+    /// A sets file that is not one mrgl wrote for this flavor: not JSON, another format, schema or
+    /// flavor, or an addon name no `AddOns.txt` line could carry (task 014). It is the user's data, so it
+    /// is never overwritten.
+    #[error(
+        "not a readable sets file: {path} ({reason}); mrgl leaves it as it is, fix or delete it by hand"
+    )]
+    SetsUnreadable { path: PathBuf, reason: String },
+
+    /// A set name that cannot be stored: empty, too long, a control character in it (task 014).
+    #[error("not a set name: `{name}` ({reason})")]
+    SetName { name: String, reason: String },
+
+    /// A set name the flavor's sets file does not have (task 014); `known` lists the saved ones.
+    #[error("set not found: {name} (flavor {flavor}); {known}")]
+    SetNotFound {
+        name: String,
+        flavor: String,
+        known: String,
+    },
+
+    /// A `WTF` folder with no character folder in it (`Account\<account>\<realm>\<character>`), or none
+    /// at all (task 014).
+    #[error(
+        "no character in {path}: no Account\\<account>\\<realm>\\<character> folder; log in with a character once first"
+    )]
+    NoCharacters { path: PathBuf },
+
+    /// A set save that found no addon line in any character's `AddOns.txt` (task 014).
+    #[error("nothing to save: no AddOns.txt under WTF of {flavor} names an addon")]
+    NothingToSave { flavor: String },
+
+    /// A set apply whose write failed (task 014); `reverted` says whether the files written before it
+    /// are back as they were.
+    #[error(
+        "applying set {set} failed: {reason}; {}",
+        if *.reverted { "every AddOns.txt is as it was" } else { "the AddOns.txt files written before it could not all be put back" }
+    )]
+    SetApplyFailed {
+        set: String,
+        reason: String,
+        reverted: bool,
+    },
+
+    /// A character name (and realm) no character folder under `WTF` has (task 027); `known` lists them.
+    #[error("character not found: {name} (flavor {flavor}); the characters: {known}")]
+    CharacterNotFound {
+        name: String,
+        flavor: String,
+        known: String,
+    },
+
+    /// A character name more than one character folder has (task 027): the realms (or realms and
+    /// accounts) are listed, and the hint says how to pick one.
+    #[error("character {name} matches {count} characters (flavor {flavor}): {candidates}; {hint}")]
+    AmbiguousCharacter {
+        name: String,
+        count: usize,
+        flavor: String,
+        candidates: String,
+        hint: &'static str,
+    },
 }
 
 /// The crate's result type.

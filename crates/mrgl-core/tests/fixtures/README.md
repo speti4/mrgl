@@ -69,6 +69,12 @@ BOM in a fixture survives every checkout.
   into a temporary flavor folder and never write here; the SavedVariables tests of task 025 add their
   made-up files and an `Interface\AddOns` folder to such a copy. `.gitignore` allows a `WTF` folder here and
   nowhere else.
+- `addon-sets/WTF/` — a second hand-written settings tree, for the addon sets of task 014: `Config.wtf`, an
+  account (`Account/MRGLSETS/`) with its `config-cache.wtf` and an account-wide `SavedVariables/` (which is
+  no realm), and two characters on two realms, each with only an `AddOns.txt`: `Fixture Realm/Mrgltest/`
+  with CRLF line endings, `Second Realm/Grrlwave/` with LF endings, a line the client never wrote and no
+  last line break. The two disagree on two addons (`BossTimers`, `QuestArrows`), which a save leaves out.
+  Every name is made up; the tests copy the tree into a temporary flavor folder and never write here.
 - `dev/` — a development folder for the junction links of task 005: `OneFolder` (a TOC with `## Version:
   9.9.9-dev`, the same folder name as the `one-folder` zips, so an install over the linked addon can be
   refused) and `DevAddon` (a TOC without a version) are addons, `Media` holds a text file and no TOC. The

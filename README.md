@@ -39,9 +39,10 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
 - **A known-good set on another machine.** `mrgl export` writes the managed addons into a list file and
   `mrgl import` installs it elsewhere, at the current releases, or with `--exact` at the versions the list
   names; a version the source no longer offers is reported and skipped.
-- **A toolbox, not only a manager.** WTF backup and restore, addon sets, the SavedVariables sizes with the
-  cleanup of files whose addon is gone, a junction link for the addons you develop yourself, and a window on
-  top of it all.
+- **A toolbox, not only a manager.** WTF backup and restore, addon sets (a raid set, a levelling set: the
+  enabled addons of every character switched with one command), the SavedVariables sizes with the cleanup
+  of files whose addon is gone, a junction link for the addons you develop yourself, and a window on top of
+  it all.
 - **Lists instead of a catalog.** An exported list names sources and versions only, so a friend can import
   it: a zip in hand or a linked folder stays out of it, and a list that names a local path is refused. The
   repo keeps a Forever starter list, the usual addons whose GitHub releases carry a Forever build, at
@@ -80,6 +81,10 @@ target\release\mrgl.exe backup --list --flavor forever                      # th
 target\release\mrgl.exe backup --restore WTF-2026-10-21-193605.zip --flavor forever   # one back, asks first
 target\release\mrgl.exe savedvars --flavor forever                          # the SavedVariables by size, orphans marked
 target\release\mrgl.exe savedvars --clean --flavor forever                  # the orphans into a backup zip
+target\release\mrgl.exe set save raid --flavor forever                     # the characters' enabled addons as the set "raid"
+target\release\mrgl.exe set apply raid --flavor forever                    # every character's AddOns.txt switched to it
+target\release\mrgl.exe set apply raid --character Mrgl --flavor forever   # one character only (--realm for a name on two realms)
+target\release\mrgl.exe set list --flavor forever                          # the sets so far (show and remove take a name)
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
 target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
 target\release\mrgl.exe import forever-addons.json --flavor forever --dry-run   # what installing that list would do
@@ -126,6 +131,16 @@ largest first with its `.bak`, and a total. A file is an orphan when no addon fo
 `%LOCALAPPDATA%\mrgl\backups\<flavor-id>\SavedVariables-<date>.zip`, next to the backups, and is refused while
 the game client runs: nothing is deleted, and unzipping that zip into the `WTF` folder puts every file back
 where it was (`backup --restore` does not take it, a restore replaces the whole `WTF` folder).
+
+An addon set is a named list of addons, each enabled or disabled, kept per flavor under
+`%LOCALAPPDATA%\mrgl\<flavor-id>\sets.json`. `set save` takes it from the characters' `AddOns.txt` (an addon
+the characters disagree on is left out, with a warning), and `set apply` switches every character of the
+flavor to it by rewriting their `AddOns.txt` in the game's own format: exactly the set's addons change,
+every other line stays as the game wrote it, and no addon folder is deleted or moved. Like a restore, an
+apply is refused while the game client runs, since the game writes those files again when you log out.
+`--character <name>` (with `--realm <realm>` when two realms have a character of that name) applies a set
+to that one character and leaves the others as they are, so a raid character and a levelling alt of the
+same flavor can each have their own set; on `set save` it takes the set from that character alone.
 
 `list` and `add` check every addon's required dependencies (the TOC's `## Dependencies` and
 `## RequiredDeps`) and name what the game will not find, as a warning, never a refusal:
