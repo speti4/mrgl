@@ -39,8 +39,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `unknown` otherwise; `sources::wago`, the Wago source of task 095, see [Fixtures](#fixtures): the
   external API with the user's key, the game version per flavor, the three recent releases onto the
   channels, the rate limit its answers name, the Forever signal from a release for `forever` or the keyless
-  slug list, and the update check's bulk lookup of task 106 behind the trait's `prefetch` and `holds`; the
-  CurseForge source joins the router as it comes, M4; adopt's question to a source, whether it
+  slug list, and the update check's bulk lookup of task 106 behind the trait's `prefetch` and `holds`;
+  `sources::curseforge`, the CurseForge source of task 096, see [Fixtures](#fixtures): the Core API with the
+  user's key, the project and its files per game version type, the release types onto the channels, no
+  cache of any answer (the API's terms), the Forever signal recorded in the sidecar at install, and a
+  project whose author allows no download outside CurseForge named with its page; adopt's question to a source, whether it
   publishes a build for a flavor, is the trait's `offers`, and the folders a source names without a download
   are its `folders`, task 097), the adopt report (`adopt`, task 097, see [Adopt](#adopt)), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
@@ -62,7 +65,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   never a real folder or a junction mrgl did not make; Windows-only), the state
   sidecar (`state`, D-003; an entry's optional `pinned` version, `ignored` flag and release `channel`,
   `stable` or `prerelease`, with the queries and setters the update check and the CLI call, task 021; absent
-  fields read as unpinned, not ignored, stable, and a reinstall keeps them), the install engine's run
+  fields read as unpinned, not ignored, stable, and a reinstall keeps them; the optional `forever_build`,
+  the Forever signal a CurseForge pick named at install, task 096, since that source keeps no cache:
+  `list` and the window read a source's cache first and this field when the cache says `unknown`,
+  `sources::entry_forever_build`, and a reinstall from the same source that names none keeps it; every
+  such field is additive, absent when unset, and the schema stays 1), the install engine's run
   folders under `staging\` and the sweep of their leftovers (`staging`, task 084, below), the toolbox (`backup`: the `WTF`
   backup into a dated zip, the listing and the restore that checks every entry through `zip_entry`, moves
   the current `WTF` aside and reverts on a failure, task 013), the addon sets (`sets`, task 014, below),
@@ -120,8 +127,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   --flavor <flavor> [--dry-run]` (task 003: resolves and reports the pick, with the release notes' line and
   link under it when the release has notes, task 030; task 040 installs it through the engine or reports
   it installed already), `add
-  <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
-  task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
+  <file.zip> [--as <spec>]` and `remove` (task 004; a running client is a warning line and `client_warning`
+  in `--json`, task 038; `--as` records a spec as the zip's source instead of its path, task 096), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
   (task 024), `link <folder>` and `unlink <folder>` (task 005; the folder is a development folder or one
   addon folder, task 062, and `link --json` names it as `shape`, `development-folder` or `addon-folder`),
   `export --flavor <flavor> [--to <file>]`
@@ -628,7 +635,10 @@ A key's value lives in a `keys::Key`, whose `Debug` hides it, and no error, list
 goes to its source's hosts only, over HTTPS (`keys::may_send`): the GitHub token to `api.github.com`
 (never with an asset download), the Wago key to `addons.wago.io` (the external API and a download link
 there, never the keyless data endpoints, task 095), the CurseForge key to
-`api.curseforge.com` and `edge.forgecdn.net`. The unit tests run every store path against
+`api.curseforge.com` and `edge.forgecdn.net` in the `x-api-key` header (task 096; the CDN asks for it since
+2026-07-16). A CurseForge request goes with the client's own redirects off (`Request::no_redirects`) and
+the source follows a redirect itself, the key going along only to a next address on those two hosts, so a
+hop of the CDN to another host never carries it. The unit tests run every store path against
 `keys::MemoryStore`; the end-to-end tests set `MRGL_KEY_STORE=off` and remove the three variables, so no
 test reads or writes the real Credential Manager, and they assert that a key given in the environment
 appears in no output of `key`, `doctor` or `add`, text, JSON or error line.
@@ -656,10 +666,15 @@ day, with no request per project: `yes` for an entry of the flavor's game (Forev
 Forever version), `unknown` otherwise, never `no`. Wago answers from the keyless slug list of the flavor's
 game version, with or without the key: `yes` when it names the id, `no` when it does not. A source the run
 cannot ask (`Source::missing`) is `unknown` without a request; one whose key is not set reads
-`needs <KEY NAME>` (`keys::name_of`), and so does CurseForge, whose source this build does not have yet.
+`needs <KEY NAME>` (`keys::name_of`), and so does CurseForge without `MRGL_CURSEFORGE_KEY`. With the key
+(task 096) CurseForge answers from the project's `latestFilesIndexes` and its files of the flavor's game
+version type: `no` when the project names no file of the type, `yes` with the file the channel takes (and a
+note when its author allows no download outside CurseForge, so it installs from a zip in hand), `unknown`
+for a guess of the game type.
 
 The folders of one addon are one row, its folder group: the folders the source names (`Source::folders`:
-WoWInterface's `UIDir` from the file list) when they include the folder, else the folders whose TOCs or
+WoWInterface's `UIDir` from the file list, CurseForge's `modules` of the file its answer for the flavor
+took, task 096) when they include the folder, else the folders whose TOCs or
 mapping name the same source, else the folder alone. A folder joins one group only, never a managed or a
 linked one, and the folders with a source are grouped before the ones without, so an options folder without
 a header joins the group its addon's source names. The row's name is the install engine's
@@ -695,7 +710,7 @@ that differs from the TOC's (`unknown` always does) is an update, and installing
 the build does not have is removed as a folder of the previous version. A source whose version equals the
 TOC's reads `up to date` and installs nothing. A row the run cannot write (a key it lacks, CurseForge only)
 is a warning, `<name> not adopted: <why>`, never an entry: a CurseForge-only addon waits for the CurseForge
-source (decided 2026-10-22), and a Wago addon for the key; a row without a source is no line. A name or a
+key (decided 2026-10-22; the source is there since task 096), and a Wago addon for the key; a row without a source is no line. A name or a
 folder the sidecar knows already is skipped too, so the adopted folders are managed from then on and a
 second `--apply` writes nothing (the sidecar is written only when an entry was added). The lines are the
 report's, then `adopted <name> <version> as <spec> (<n> folders: …)` per entry, the warnings and the
@@ -1385,6 +1400,53 @@ and `MrglWg03` for Forever (`MrglWg05` is left out, so its single answer still u
 budget tests), `MrglWg01` to `MrglWg03` for retail. The tests pass a
 made-up key and assert that it goes to `addons.wago.io` only and reaches no output and no cache file.
 
+The CurseForge source (task 096, `sources::curseforge`) asks the Core API with the user's own key
+(`MRGL_CURSEFORGE_KEY` or the key store's `mrgl:curse`; without it a `curse:` spec is `source not configured:
+curse:<id> (MRGL_CURSEFORGE_KEY is not set: the CurseForge API needs your own key, `mrgl key set curse` stores
+it)` and nothing is asked). A resolve sends two requests with the key in `x-api-key`:
+`api.curseforge.com/v1/mods/<id>` (the project: its name, its page `links.websiteUrl`,
+`allowModDistribution`, `latestFilesIndexes`; a project whose `gameId` is not 1 is no addon) and
+`api.curseforge.com/v1/mods/<id>/files?gameVersionTypeId=<t>&pageSize=50` (the first page of its files of a
+game version type, which the API sorts newest first). The type per flavor is
+`sources::curseforge::game_version_type`: retail 517, Classic Era 67408, Forever 88568, and the progressing
+classic by the installed build, TBC 73246, Wrath 73713, Titan 81212 for `3.80`, Cataclysm 77522, Mists 79434
+(without a build Mists, a guess of the game type); the names in a message and the pick's flavor are Wago's
+(`retail`, `classic`, `forever`, `bc`, `wotlk`, `titan`, `cata`, `mop`). The ids are constants that another
+client extracted from `GET /v1/games/1/version-types`; they are re-read from that endpoint once a key exists
+(task 096 stays open for it). A file's `releaseType` maps onto the channels (`sources::curseforge::file_on`):
+the stable channel takes the newest release (1), else the newest file, the prerelease channel the newest file,
+a beta (2) or an alpha (3) included, newest by `fileDate`; a file that is not available or names only another
+type's game versions is left out. The pick's version is the file's `displayName`, its release the file id,
+its asset the `fileName` behind `downloadUrl`, its size `fileLength`, its MD5 the `hashes` entry of `algo` 2
+(the SHA-1 of `algo` 1 is not read: no SHA-1 is in the tree, and the length and the MD5 catch a damaged or a
+replaced file), its interface the newest `sortableGameVersions` entry of the type, its page the project's,
+and `import --exact` finds a version by `displayName` (or the file id) on that first page. The download goes
+to `edge.forgecdn.net` with the key; its length and MD5 are checked before it is written. A 401 (and a 403)
+is `CurseForge answered 401 for <url>: MRGL_CURSEFORGE_KEY is missing or not accepted: …`. A project whose
+author allows no download outside CurseForge (`allowModDistribution: false`, or a file whose `downloadUrl` is
+`null`) is `Error::DistributionOff`, `the author of curse:<id> (<name>) allows no download outside
+CurseForge: download the zip from <page> and install it with …`, the command `mrgl add <file.zip> --as
+curse:<id>` at its end: `add` fails with it and the update check
+reports it as failed; `mrgl add <file.zip> --as <spec>` installs a zip in hand with that spec as its
+recorded source (any spec but a Wago page address, which only a request turns into its id; `--as` without
+a zip is refused), the version from the TOC, so the update check asks the source. The API's terms allow no
+saving or caching of its data: nothing of an answer is written, an answer is kept in memory for the run alone
+(adopt asks the project once for its build and its folders), `listed_versions` stays `None` (the update check
+orders two `displayName`s by `update::lenient_order`), the source has no request budget (no limit is
+published), and the window's offline view has no key and asks nothing (`CurseForge::cached`: a `curse:`
+row has no offline answer). The Forever signal is `yes` for a Forever pick and otherwise the project's
+`latestFilesIndexes` naming type 88568 or not (`yes`, `no`; `unknown` without such a list); the install
+records it on the sidecar entry (`forever_build`) and `list` reads it there, else `unknown`. The fixture
+answers are under `tests/fixtures/sources/api.curseforge.com/v1/mods/` (`<id>.json` and
+`<id>/files@gameVersionTypeId=<t>&pageSize=50.json`, the stub's query mapping; made-up ids and names):
+`4242` has a Forever release with a newer beta and a retail release (its Forever file under
+`edge.forgecdn.net/files/7001/1/`, its retail one behind a 302 of the CDN, a `.headers` file, to
+`mediafilez.forgecdn.net/files/7002/2/`, both written by `zips/make-zips.py`), `4243` has retail files only,
+`4244`'s author allows no download outside CurseForge (its zip in hand is
+`zips/MrglNoDistribution-2.0.0.zip`), and `4245` answers 401. The tests pass a made-up key and assert that it
+reaches `api.curseforge.com` and `edge.forgecdn.net` only, never the redirect's other host, no output and no
+file under the home folder.
+
 The adopt fixture (task 097) is a game folder of its own, `adopt/`: a `.build.info` with a Forever and a
 retail row, `_forever_` with one addon folder per header shape, and `_retail_` with the CurseForge app's
 `.curseclient` marker (a made-up id) and `MrglCompat` (`X-WoWI-ID: 1001`). The Forever folders:
@@ -1422,7 +1484,9 @@ task 034, the second also the third source of the voice's serious switch),
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
 sidecar `state.json`, the addon sets `sets.json` (task 014), the last set apply's undo record
 `set-undo\` (task 073), the last online check's answers the window shows,
-`last-check.json` (task 078, written by the window's check and by `mrgl update`, task 087; a cache,
+`last-check.json` (task 078, written by the window's check and by `mrgl update`, task 087; a `curse:`
+entry's answer keeps its state and reason and never a version, since the CurseForge API's terms allow no
+saving of its data, task 096; a cache,
 deleting it only drops a source gone or a failed check until the next check),
 the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves, a download waits here; every run folder is removed when its run ends, and the leftovers of a run

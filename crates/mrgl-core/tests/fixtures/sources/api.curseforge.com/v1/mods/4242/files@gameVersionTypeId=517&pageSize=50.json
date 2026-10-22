@@ -1,0 +1,50 @@
+{
+ "data": [
+  {
+   "id": 7002,
+   "gameId": 1,
+   "modId": 4242,
+   "isAvailable": true,
+   "displayName": "1.0.0",
+   "fileName": "MrglCurseOnly-1.0.0-retail.zip",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "0000000000000000000000000000000000000000",
+     "algo": 1
+    },
+    {
+     "value": "dbd0fb3055579a397e51e8db220ddfb3",
+     "algo": 2
+    }
+   ],
+   "fileDate": "2026-10-01T11:00:00.000Z",
+   "fileLength": 559,
+   "downloadCount": 0,
+   "downloadUrl": "https://edge.forgecdn.net/files/7002/2/MrglCurseOnly-1.0.0-retail.zip",
+   "gameVersions": [
+    "12.1.5"
+   ],
+   "sortableGameVersions": [
+    {
+     "gameVersionName": "12.1.5",
+     "gameVersion": "12.1.5",
+     "gameVersionTypeId": 517
+    }
+   ],
+   "modules": [
+    {
+     "name": "MrglCurseOnly",
+     "fingerprint": 1000
+    }
+   ]
+  }
+ ],
+ "pagination": {
+  "index": 0,
+  "pageSize": 50,
+  "resultCount": 1,
+  "totalCount": 1
+ }
+}

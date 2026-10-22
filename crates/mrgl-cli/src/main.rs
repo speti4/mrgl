@@ -106,7 +106,8 @@ enum Command {
     },
     /// Install an addon from a source: the path of a zip in hand, or a source spec (the current release's
     /// asset for the flavor; an addon installed already at that version is left as it is):
-    /// `github:<owner>/<repo>`, or `wago:<id>`, `wowi:<id>`, `curse:<id>` once this build has that source.
+    /// `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>` or `curse:<id>`; a zip in hand with `--as <spec>`
+    /// records that source, so the update check asks it.
     Add {
         /// The source spec (`github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`, `curse:<id>`, or a page
         /// address: github.com/<owner>/<repo>, www.wowinterface.com/downloads/info<id>,
@@ -125,6 +126,11 @@ enum Command {
         /// (steps of 1024), for a known large addon.
         #[arg(long, value_name = "SIZE", value_parser = parse_max_unpacked)]
         max_unpacked: Option<u64>,
+        /// With a zip in hand: the source spec to record for it (`curse:<id>`, `wowi:<id>`, `wago:<id>`,
+        /// `github:<owner>/<repo>`) instead of the zip's path, so the update check asks that source; for a
+        /// CurseForge project whose author allows no download outside CurseForge, the zip from its page.
+        #[arg(long = "as", value_name = "SPEC")]
+        as_spec: Option<String>,
     },
     /// Check the managed addons against their sources, each on its own channel, and update them after one
     /// confirmation: a pinned addon is reported and left alone, an ignored one skipped.
@@ -578,14 +584,24 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             flavor,
             dry_run,
             max_unpacked,
-        } if is_zip_in_hand(&source) => {
-            add_zip(reporter, &source, flavor.as_deref(), dry_run, max_unpacked)?
-        }
+            as_spec,
+        } if is_zip_in_hand(&source) => add_zip(
+            reporter,
+            &source,
+            flavor.as_deref(),
+            dry_run,
+            max_unpacked,
+            as_spec.as_deref(),
+        )?,
+        Command::Add {
+            as_spec: Some(_), ..
+        } => return Err(AS_NEEDS_A_ZIP.to_string()),
         Command::Add {
             source,
             flavor,
             dry_run,
             max_unpacked,
+            as_spec: None,
         } => add_command(reporter, &source, flavor.as_deref(), dry_run, max_unpacked)?,
         Command::Remove { name, flavor } => remove_command(reporter, &name, flavor.as_deref())?,
         Command::Backup {
@@ -1285,7 +1301,9 @@ fn check_dependencies(scan: &Scan, warnings: &mut Vec<String>) -> Vec<AddonDepen
 /// Task 011: the Forever status of every managed addon of a Forever listing, by its primary folder in lower
 /// case; `None` for another flavor. Offline: the build signal comes from each source's cache alone (task
 /// 092: [`Source::cached_forever_build`]; GitHub's release list and the `release.json` the last `add`
-/// fetched), so without a cached list, or from a source that does not name Forever, it is `unknown`.
+/// fetched), else from what the sidecar recorded at install (task 096: CurseForge, which keeps no cache;
+/// [`sources::entry_forever_build`]), so without either, or from a source that does not name Forever, it is
+/// `unknown`.
 fn forever_statuses(
     scan: &Scan,
     warnings: &mut Vec<String>,
@@ -1308,10 +1326,7 @@ fn forever_statuses(
         let Some(folder) = entry.folders.first() else {
             continue;
         };
-        let build = match SourceSpec::parse(&entry.source) {
-            Ok(spec) => sources.cached_forever_build(&spec, entry.channel()),
-            Err(_) => ForeverBuild::Unknown,
-        };
+        let build = sources::entry_forever_build(&sources, entry);
         statuses.insert(
             folder.to_ascii_lowercase(),
             ForeverStatus::for_source(&entry.source, build),
@@ -1946,16 +1961,36 @@ fn with_bound(engine: Engine, max_unpacked: Option<u64>) -> Engine {
     }
 }
 
-/// `mrgl add <file.zip> --flavor <id>`: the fourth source of D-002, a zip in hand, through the install
-/// engine; `--dry-run` stages the zip, says what it would install and writes nothing. A client running from
-/// the flavor folder is a warning line and `client_warning` in the JSON (task 038), never a refusal.
+/// The refusal of `--as` without a zip in hand (task 096).
+const AS_NEEDS_A_ZIP: &str =
+    "--as goes with a zip in hand: mrgl add <file.zip> --as <spec> records the spec as its source";
+
+/// The spec `add <file.zip> --as <spec>` records (task 096), in its canonical spelling; a Wago page address
+/// is refused, since only a request turns it into its id.
+fn spec_of_zip(as_spec: &str) -> Result<String, String> {
+    match SourceSpec::parse(as_spec).map_err(|error| error.to_string())? {
+        SourceSpec::WagoPage { .. } => Err(format!(
+            "--as takes a spec, not a page address: {as_spec} (use wago:<id>, the X-Wago-ID line of the addon's TOC)"
+        )),
+        spec => Ok(spec.to_string()),
+    }
+}
+
+/// `mrgl add <file.zip> --flavor <id> [--as <spec>]`: the fourth source of D-002, a zip in hand, through the install
+/// engine, recorded with its path, or with the spec `--as` names (task 096: a CurseForge project whose author
+/// allows no download outside CurseForge installs from the zip downloaded from its page, and the update check
+/// asks its source; the version is the TOC's); `--dry-run` stages the zip, says what it would install and
+/// writes nothing. A client running from the flavor folder is a warning line and `client_warning` in the JSON
+/// (task 038), never a refusal.
 fn add_zip(
     reporter: &Reporter,
     source: &str,
     flavor: Option<&str>,
     dry_run: bool,
     max_unpacked: Option<u64>,
+    as_spec: Option<&str>,
 ) -> Result<(), String> {
+    let recorded = as_spec.map(spec_of_zip).transpose()?;
     let mut warnings = Vec::new();
     let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
     warnings.extend(adopt::curse_client_warning(&engine.flavor));
@@ -1966,7 +2001,7 @@ fn add_zip(
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| zip.display().to_string());
     let metadata = Metadata {
-        source: zip.display().to_string(),
+        source: recorded.unwrap_or_else(|| zip.display().to_string()),
         version: None,
         name: None,
         nolib: None,

@@ -1,0 +1,41 @@
+{
+ "data": [
+  {
+   "id": 7004,
+   "gameId": 1,
+   "modId": 4244,
+   "isAvailable": true,
+   "displayName": "2.0.0",
+   "fileName": "MrglNoDistribution-2.0.0.zip",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [],
+   "fileDate": "2026-10-02T10:00:00.000Z",
+   "fileLength": 600,
+   "downloadCount": 0,
+   "downloadUrl": null,
+   "gameVersions": [
+    "1.60.1"
+   ],
+   "sortableGameVersions": [
+    {
+     "gameVersionName": "1.60.1",
+     "gameVersion": "1.60.1",
+     "gameVersionTypeId": 88568
+    }
+   ],
+   "modules": [
+    {
+     "name": "MrglNoDistribution",
+     "fingerprint": 1000
+    }
+   ]
+  }
+ ],
+ "pagination": {
+  "index": 0,
+  "pageSize": 50,
+  "resultCount": 1,
+  "totalCount": 1
+ }
+}

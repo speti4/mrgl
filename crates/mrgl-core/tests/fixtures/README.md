@@ -36,7 +36,8 @@ BOM in a fixture survives every checkout.
   `releases.json.headers`, the `Link` header to `releases.page-2.json`, whose first release is the stable
   `v1.0.0` with a `release.json` that names `forever`; the folder stub serves a `page` above 1 from
   `<answer>.page-<n>.json` and adds the lines of a `<answer>.headers` file to the answer's headers.
-- `sources/` — the answers of the WoWInterface (task 094) and the Wago (task 095) sources, laid out like
+- `sources/` — the answers of the WoWInterface (task 094), the Wago (task 095) and the CurseForge (task 096)
+  sources, laid out like
   `releases/`. WoWInterface:
   `api.mmoui.com/v3/game/WOW/filedetails/<id>.json` per project (an array of one, as the API answers) and a
   trimmed `filelist.json` with the compatibility lists and the folders, and the files behind the download
@@ -59,7 +60,17 @@ BOM in a fixture survives every checkout.
   (the stub answers the POST from the file of its URL), hold the same answers under `addons` by id:
   `MrglWg01` and `MrglWg03` for Forever (`MrglWg02` has no Forever release, and `MrglWg05` is left out so
   its single answer still uses the limit up), `MrglWg01` to `MrglWg03` for retail. Every id, slug and name
-  is made up.
+  is made up. CurseForge (task 096): `api.curseforge.com/v1/mods/<id>.json` per project (`data` with
+  `name`, `links.websiteUrl`, `allowModDistribution`, `latestFilesIndexes`) and
+  `mods/<id>/files@gameVersionTypeId=<t>&pageSize=50.json` per game version type (the stub's query mapping;
+  `data` with `id`, `displayName`, `fileName`, `releaseType`, `fileDate`, `fileLength`, `hashes`,
+  `downloadUrl`, `sortableGameVersions`, `modules`): `4242` (`MrglCurseOnly`) has a Forever release
+  (88568), a newer Forever beta and a retail release (517), its Forever file under
+  `edge.forgecdn.net/files/7001/1/` and its retail one behind a 302 of the CDN (a `.headers` file) to
+  `mediafilez.forgecdn.net/files/7002/2/`, both stored zips written by `zips/make-zips.py`; `4243`
+  (`MrglNoList`'s id) has retail files only; `4244`'s author allows no download outside CurseForge
+  (`allowModDistribution: false`, `downloadUrl: null`), its zip in hand `zips/MrglNoDistribution-2.0.0.zip`;
+  `4245` answers 401 through a `.headers` file. Every id, name and file is made up.
 - `adopt/` — a fifth made-up game folder, for `mrgl adopt` (task 097) and the window's adopt card (task 109): a
   `.build.info` with a Forever and a retail row, `_forever_` with an addon folder per source header shape (each
   id header, a GitHub and a non-GitHub `X-Website`, the mapping alone, no hint, two folders grouped by the same
@@ -78,8 +89,10 @@ BOM in a fixture survives every checkout.
   number behind the Forever fixture build (16000 under 1.60.1), out of date for task 082
   (`behind-interface-1.0.0`), a path that tries to
   escape the staging folder (`escaping-path`), an addon that requires `LibEmbedded`, carried under its
-  `Libs/`, and `LibMissing`, carried nowhere (`needs-library-1.0.0`, task 029), and a zip with no addon at
-  all (`no-addon`). `.gitignore` allows zips here and nowhere else.
+  `Libs/`, and `LibMissing`, carried nowhere (`needs-library-1.0.0`, task 029), a zip with no addon at
+  all (`no-addon`), and the zip in hand of the CurseForge project `4244`, whose author allows no download
+  outside CurseForge (`MrglNoDistribution-2.0.0`, stored, task 096). `.gitignore` allows zips under the test
+  fixtures and nowhere else.
 - `dependencies/` — a third made-up game folder for the dependency check (task 029): a `.build.info` row
   and a `_forever_` flavor whose `Needy` requires `LibMet` (an addon folder of its own: met), `LibEmbedded`
   (a folder under `Needy/Libs/` only: embedded, and missing, since the client does not count it, task 076)

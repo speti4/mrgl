@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 10 backlog (0 ready · 0 blocked · 4 waiting · 6 ideas) · 0 in progress · 93 done · 5 dropped · 6 decisions
+**State:** 11 backlog (0 ready · 0 blocked · 3 waiting · 8 ideas) · 1 in progress · 93 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -37,7 +37,6 @@ _none_
 | # | Task | Waits for | Size | Created |
 |---|---|---|---|---|
 | 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
-| 096 | [The CurseForge source with the user's key](backlog/096-the-curseforge-source-with-the-users-key.md) | the CurseForge API key of task 007, for the manual round and the game version type ids | M | 2026-10-22 |
 
 #### M5 Trust
 
@@ -54,12 +53,14 @@ _none_
 | 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](backlog/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | S | 2026-10-22 |
 | 113 | [The window's adopt apply reuses the shown report's answers](backlog/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | S | 2026-10-22 |
 | 114 | [The window's update reports an entry folded into another during the run](backlog/114-the-windows-update-reports-an-entry-folded-into-another.md) | S | 2026-10-22 |
+| 116 | [The window installs a zip in hand with a recorded source](backlog/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
 | # | Task | Size | Created |
 |---|---|---|---|
 | 111 | [A read-only adopt round on the real retail and classic folders](backlog/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md) | S | 2026-10-22 |
+| 115 | [A distribution-off CurseForge entry is a state of its own in the update check](backlog/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md) | S | 2026-10-22 |
 
 #### M5 Trust
 
@@ -75,7 +76,11 @@ _none_
 
 ### In progress
 
-_none_
+#### M4 Sources
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 

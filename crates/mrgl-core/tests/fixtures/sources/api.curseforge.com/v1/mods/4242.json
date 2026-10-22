@@ -1,0 +1,35 @@
+{
+ "data": {
+  "id": 4242,
+  "gameId": 1,
+  "name": "Mrgl Curse Only",
+  "slug": "mrgl-curse-only",
+  "links": {
+   "websiteUrl": "https://www.curseforge.com/wow/addons/mrgl-curse-only"
+  },
+  "allowModDistribution": true,
+  "latestFilesIndexes": [
+   {
+    "gameVersion": "1.60.1",
+    "fileId": 7001,
+    "filename": "MrglCurseOnly-1.0.0.zip",
+    "releaseType": 1,
+    "gameVersionTypeId": 88568
+   },
+   {
+    "gameVersion": "1.60.1",
+    "fileId": 7003,
+    "filename": "MrglCurseOnly-1.1.0-beta.zip",
+    "releaseType": 2,
+    "gameVersionTypeId": 88568
+   },
+   {
+    "gameVersion": "12.1.5",
+    "fileId": 7002,
+    "filename": "MrglCurseOnly-1.0.0-retail.zip",
+    "releaseType": 1,
+    "gameVersionTypeId": 517
+   }
+  ]
+ }
+}

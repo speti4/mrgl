@@ -563,13 +563,10 @@ fn hinted_badge(toc: &mrgl_core::toc::Toc) -> Option<Badge> {
 }
 
 /// The Forever status of a managed addon, as `mrgl list` gives it: the build signal from its source's
-/// cache (`unknown` from a source that does not name Forever, task 092) and the curated note of its
-/// source spec.
+/// cache, else what the sidecar recorded at install (task 096: CurseForge, which keeps no cache; `unknown`
+/// from a source that does not name Forever, task 092), and the curated note of its source spec.
 fn forever_status<S: Source + ?Sized>(sources: &S, entry: &Entry) -> ForeverStatus {
-    let build = match SourceSpec::parse(&entry.source) {
-        Ok(spec) => sources.cached_forever_build(&spec, entry.channel()),
-        Err(_) => ForeverBuild::Unknown,
-    };
+    let build = mrgl_core::sources::entry_forever_build(sources, entry);
     ForeverStatus::for_source(&entry.source, build)
 }
 

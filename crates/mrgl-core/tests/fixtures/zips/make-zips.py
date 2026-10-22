@@ -187,6 +187,28 @@ for game, interface in [("forever", "16001"), ("retail", "120105")]:
         ("MrglWagoOne/core.lua", f"-- MrglWagoOne fixture 2.0.0 for {game}\n"),
     ], stored=True)
 
+# The files behind the `downloadUrl` of the CurseForge fixture project 4242 (task 096): the Forever file on
+# the CDN, the retail one where the CDN's redirect points; and the zip in hand of project 4244, whose author
+# allows no download outside CurseForge (it stays next to this script, as a zip the user downloaded).
+CURSE = SOURCES / "edge.forgecdn.net/files/7001/1"
+CURSE_MEDIA = SOURCES / "mediafilez.forgecdn.net/files/7002/2"
+for path, interface, game in [
+    (CURSE / "MrglCurseOnly-1.0.0.zip", "16001", "forever"),
+    (CURSE_MEDIA / "MrglCurseOnly-1.0.0-retail.zip", "120105", "retail"),
+]:
+    write(path, [
+        ("MrglCurseOnly/", ""),
+        ("MrglCurseOnly/MrglCurseOnly.toc", toc("MrglCurseOnly", "1.0.0", interface=interface,
+                                                extra="## X-Curse-Project-ID: 4242\r\n")),
+        ("MrglCurseOnly/core.lua", f"-- MrglCurseOnly fixture 1.0.0 for {game}\n"),
+    ], stored=True)
+write("MrglNoDistribution-2.0.0.zip", [
+    ("MrglNoDistribution/", ""),
+    ("MrglNoDistribution/MrglNoDistribution.toc", toc("MrglNoDistribution", "2.0.0",
+                                                      extra="## X-Curse-Project-ID: 4244\r\n")),
+    ("MrglNoDistribution/core.lua", "-- MrglNoDistribution fixture 2.0.0\n"),
+], stored=True)
+
 # Task 039, the bound on the unpacked size. A zip that declares 3 GiB in a few hundred bytes: refused by the
 # bound (2 GiB) before anything is written, installed under a higher one (its data is a few bytes).
 write("declares-too-much-1.0.0.zip", [

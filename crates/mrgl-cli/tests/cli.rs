@@ -1573,13 +1573,14 @@ fn add_of_a_source_this_build_lacks_names_what_is_missing() {
             "wago:something",
             "source not configured: wago:something (MRGL_WAGO_KEY is not set: the Wago API needs your own key, `mrgl key set wago` stores it)",
         ),
+        // Task 096: the build has the CurseForge source; without its key it says the key is missing.
         (
             "https://www.curseforge.com/projects/77",
-            "source not configured: curse:77 (this build has no CurseForge source)",
+            "source not configured: curse:77 (MRGL_CURSEFORGE_KEY is not set: the CurseForge API needs your own key, `mrgl key set curse` stores it)",
         ),
         (
             "curse:42",
-            "source not configured: curse:42 (this build has no CurseForge source)",
+            "source not configured: curse:42 (MRGL_CURSEFORGE_KEY is not set: the CurseForge API needs your own key, `mrgl key set curse` stores it)",
         ),
     ] {
         for dry_run in [false, true] {
@@ -1637,7 +1638,7 @@ fn import_reads_a_list_entry_of_a_source_this_build_lacks_as_not_configured() {
     let text = stdout(&output);
     assert!(
         text.lines().any(|line| line
-            == "Clique  source not configured (curse:123): this build has no CurseForge source"),
+            == "Clique  source not configured (curse:123): MRGL_CURSEFORGE_KEY is not set: the CurseForge API needs your own key, `mrgl key set curse` stores it"),
         "{text}"
     );
     assert!(
@@ -1657,7 +1658,7 @@ fn import_reads_a_list_entry_of_a_source_this_build_lacks_as_not_configured() {
     assert_eq!(value["addons"][1]["outcome"], "source-not-configured");
     assert_eq!(
         value["addons"][1]["detail"],
-        "this build has no CurseForge source"
+        "MRGL_CURSEFORGE_KEY is not set: the CurseForge API needs your own key, `mrgl key set curse` stores it"
     );
 }
 
@@ -5982,7 +5983,7 @@ fn update_does_not_ask_a_source_this_build_lacks_and_says_what_is_missing() {
     assert_eq!(
         lines[1..3],
         [
-            "Clique  1.0.0  not checked: source not configured: curse:123 (this build has no CurseForge source)",
+            "Clique  1.0.0  not checked: source not configured: curse:123 (MRGL_CURSEFORGE_KEY is not set: the CurseForge API needs your own key, `mrgl key set curse` stores it)",
             "checking Questie against github:Questie/Questie (2 of 2)",
         ],
         "{text}"
@@ -8704,4 +8705,217 @@ fn add_and_import_take_a_wago_page_address_and_record_its_id() {
         "wago:MrglWg01"
     );
     assert!(game.addon("MrglWagoOne").join("MrglWagoOne.toc").is_file());
+}
+
+// --- task 096: the CurseForge source, the code and the stubs before the key ---
+
+/// A made-up CurseForge key: no test reads or uses a real one.
+const CURSE_TEST_KEY: &str = "made-up-curseforge-key-for-the-cli-tests";
+
+impl Game {
+    /// `mrgl` against the sources stub with the made-up CurseForge key.
+    fn mrgl_curse(&self) -> Command {
+        let mut command = self.mrgl_sources();
+        command.env("MRGL_CURSEFORGE_KEY", CURSE_TEST_KEY);
+        command
+    }
+}
+
+#[test]
+fn add_curse_installs_from_the_stub_with_a_key_and_names_the_key_without_one() {
+    let game = Game::new("curse-add").with_retail();
+    // Without the key nothing is asked and the line names it.
+    let output = game
+        .mrgl_sources()
+        .args(["--serious", "add", "curse:4242", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "source not configured: curse:4242 (MRGL_CURSEFORGE_KEY is not set: the CurseForge API needs your own key, `mrgl key set curse` stores it)"
+    );
+
+    let output = game
+        .mrgl_curse()
+        .args(["--serious", "add", "curse:4242", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "resolving curse:4242 for forever",
+            "pick for forever: curse:4242 7001 (MrglCurseOnly-1.0.0.zip, flavor forever, interface 16001): CurseForge lists the release 1.0.0 for forever",
+            "downloading MrglCurseOnly-1.0.0.zip",
+            "installing MrglCurseOnly-1.0.0.zip into _forever_",
+            "forever build: yes (CurseForge lists a file for forever)",
+            "installed MrglCurseOnly 1.0.0 (1 folder: MrglCurseOnly) into _forever_",
+        ],
+        "{text}"
+    );
+    let state = sidecar(&game);
+    assert_eq!(state["addons"]["MrglCurseOnly"]["source"], "curse:4242");
+    assert_eq!(state["addons"]["MrglCurseOnly"]["forever_build"], "yes");
+    assert_eq!(state["schema"], 1);
+
+    // `list` reads the recorded signal: no CurseForge answer is cached, and no request is sent.
+    let list = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", game.home.join("no-network"))
+        .args(["--serious", "list", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(list.status.success(), "{}", stderr_last_line(&list));
+    let text = stdout(&list);
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("MrglCurseOnly  "))
+        .expect("the addon line");
+    assert!(line.ends_with("  forever:yes"), "{text}");
+
+    // The retail file hops off the CDN by a redirect, which gets no key.
+    let output = game
+        .mrgl_curse()
+        .args(["--serious", "add", "curse:4242", "--flavor", "retail"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let retail_toc = std::fs::read_to_string(
+        game.root
+            .join("_retail_/Interface/AddOns/MrglCurseOnly/MrglCurseOnly.toc"),
+    )
+    .expect("the retail TOC");
+    assert!(retail_toc.contains("## Interface: 120105"), "{retail_toc}");
+
+    // The key reaches no output and no file under the home folder, and no cache folder is made.
+    assert!(!all_output(&output).contains(CURSE_TEST_KEY));
+    for (path, bytes) in snapshot(&game.home) {
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains(CURSE_TEST_KEY),
+            "{path}"
+        );
+    }
+    assert!(!game.home.join("cache").join("curse").exists());
+}
+
+#[test]
+fn add_curse_names_the_page_of_a_project_without_distribution_and_takes_its_zip_with_as() {
+    let game = Game::new("curse-no-distribution");
+    let off = "the author of curse:4244 (Mrgl No Distribution) allows no download outside CurseForge: download the zip from https://www.curseforge.com/wow/addons/mrgl-no-distribution and install it with `mrgl add <file.zip> --as curse:4244`";
+    let output = game
+        .mrgl_curse()
+        .args(["--serious", "add", "curse:4244", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stderr_last_line(&output), off);
+    let zip = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../mrgl-core/tests/fixtures/zips/MrglNoDistribution-2.0.0.zip");
+    let output = game
+        .mrgl_curse()
+        .args(["--serious", "add"])
+        .arg(&zip)
+        .args(["--as", "curse:4244", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output).lines().last(),
+        Some("installed MrglNoDistribution 2.0.0 (1 folder: MrglNoDistribution) into _forever_")
+    );
+    let state = sidecar(&game);
+    assert_eq!(
+        state["addons"]["MrglNoDistribution"]["source"],
+        "curse:4244"
+    );
+    assert_eq!(state["addons"]["MrglNoDistribution"]["version"], "2.0.0");
+
+    // The update check asks the recorded source, and its line says how the next version goes in.
+    let output = game
+        .mrgl_curse()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1), "a failed check");
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("MrglNoDistribution  2.0.0  ") && line.ends_with(off)),
+        "{text}"
+    );
+
+    // `--as` goes with a zip in hand, and takes a spec, not a Wago page address.
+    let output = game
+        .mrgl_curse()
+        .args(["--serious", "add", "curse:4242", "--as", "curse:4242"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "--as goes with a zip in hand: mrgl add <file.zip> --as <spec> records the spec as its source"
+    );
+    let output = game
+        .mrgl_curse()
+        .args(["--serious", "add"])
+        .arg(&zip)
+        .args([
+            "--as",
+            "https://addons.wago.io/addons/mrgl-wago-one",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "--as takes a spec, not a page address: https://addons.wago.io/addons/mrgl-wago-one (use wago:<id>, the X-Wago-ID line of the addon's TOC)"
+    );
+}
+
+#[test]
+fn import_takes_a_curse_entry() {
+    let game = Game::new("curse-import");
+    let list = game.root.parent().expect("the base").join("curse.json");
+    std::fs::write(
+        &list,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [
+                { "name": "MrglCurseOnly", "source": "curse:4242", "version": "1.0.0",
+                  "folders": ["MrglCurseOnly"] },
+            ],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    let output = game
+        .mrgl_curse()
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let state = sidecar(&game);
+    assert_eq!(state["addons"]["MrglCurseOnly"]["source"], "curse:4242");
+    assert_eq!(state["addons"]["MrglCurseOnly"]["version"], "1.0.0");
+    assert!(
+        game.addon("MrglCurseOnly")
+            .join("MrglCurseOnly.toc")
+            .is_file()
+    );
+    assert!(!all_output(&output).contains(CURSE_TEST_KEY));
 }
