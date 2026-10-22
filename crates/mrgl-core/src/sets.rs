@@ -1001,39 +1001,30 @@ pub fn apply_set_in_account(
             },
         });
     }
-    let record = if plans.iter().any(|plan| !plan.change.changed.is_empty()) {
-        Some(UndoSwap::put_in_place(
-            &undo_dir_of(sets_path),
-            &flavor.id,
-            &name,
-            &plans,
-        )?)
-    } else {
-        None
+    let not_installed = not_installed(flavor, set.addons.keys());
+    let applied = |plans: Vec<Plan>| Applied {
+        name: name.clone(),
+        set: set.clone(),
+        characters: plans.into_iter().map(|plan| plan.change).collect(),
+        not_installed,
     };
+    if plans.iter().all(|plan| plan.change.changed.is_empty()) {
+        // Nothing to write: the record of the apply before stays.
+        return Ok(applied(plans));
+    }
+    let record = UndoSwap::put_in_place(&undo_dir_of(sets_path), &flavor.id, &name, &plans)?;
     if let Err(error) = write_plans(&mut plans, &name) {
-        if let Some(record) = record {
-            // Files back as they were: the record before this apply is the right one again. Files left
-            // half written: this apply's record is the way back.
-            if matches!(error, Error::SetApplyFailed { reverted: true, .. }) {
-                record.roll_back();
-            } else {
-                record.keep();
-            }
+        // Files back as they were: the record before this apply is the right one again. Files left
+        // half written: this apply's record is the way back.
+        if matches!(error, Error::SetApplyFailed { reverted: true, .. }) {
+            record.roll_back();
+        } else {
+            record.keep(); // coverage: os — a put-back failed right after the path was written
         }
         return Err(error);
     }
-    if let Some(record) = record {
-        record.keep();
-    }
-
-    let not_installed = not_installed(flavor, set.addons.keys());
-    Ok(Applied {
-        name,
-        set,
-        characters: plans.into_iter().map(|plan| plan.change).collect(),
-        not_installed,
-    })
+    record.keep();
+    Ok(applied(plans))
 }
 
 /// One character's file as an apply means to write it.
@@ -1142,9 +1133,11 @@ impl UndoSwap {
         };
         remove_dir_if_any(&fresh).map_err(|source| failed(&fresh, source))?;
         remove_dir_if_any(&aside).map_err(|source| failed(&aside, source))?;
+        // coverage: os-begin — a write into the fresh folder the code just made
         if let Err(source) = write_undo_folder(&fresh, flavor, set, plans) {
             let _ = fs::remove_dir_all(&fresh);
             return Err(failed(&fresh, source));
+            // coverage: os-end
         }
         let had_one = dir.exists();
         if had_one && let Err(source) = fs::rename(dir, &aside) {
@@ -1152,8 +1145,10 @@ impl UndoSwap {
             return Err(failed(dir, source));
         }
         if let Err(source) = fs::rename(&fresh, dir) {
+            // coverage: os-begin — a rename back of the path moved aside a moment ago
             if had_one {
                 let _ = fs::rename(&aside, dir);
+                // coverage: os-end
             }
             let _ = fs::remove_dir_all(&fresh);
             return Err(failed(dir, source));
@@ -1896,5 +1891,76 @@ mod tests {
         file.sets.insert("RAID".to_string(), set);
         assert_eq!(file.find("raid"), None, "two match ignoring case");
         assert_eq!(file.find("RAID").map(|(name, _)| name), Some("RAID"));
+    }
+
+    #[test]
+    fn the_edit_verbs_are_the_words_of_the_command_line() {
+        assert_eq!(SetEdit::Enable.as_str(), "enable");
+        assert_eq!(SetEdit::Disable.as_str(), "disable");
+        assert_eq!(SetEdit::Drop.as_str(), "drop");
+    }
+
+    #[test]
+    fn the_undo_summary_counts_the_files_and_warns_when_the_undo_did() {
+        let character = |name: &str| Character {
+            account: "ACC".into(),
+            realm: "Realm".into(),
+            name: name.into(),
+            folder: PathBuf::from("Realm").join(name),
+        };
+        let mut undone = Undone {
+            set: "raid".into(),
+            applied_at: "2026-10-22T10:00:00Z".into(),
+            restored: vec![character("One")],
+            removed: Vec::new(),
+            warnings: Vec::new(),
+        };
+        assert_eq!(
+            undone.summary("_forever_"),
+            (
+                Kind::Success,
+                "undid the apply of set raid to _forever_ (2026-10-22T10:00:00Z): 1 AddOns.txt put back"
+                    .to_string()
+            )
+        );
+        undone.restored.push(character("Two"));
+        undone.removed.push(character("Three"));
+        undone
+            .warnings
+            .push("Realm/Four: the character folder is gone".into());
+        assert_eq!(
+            undone.summary("_forever_"),
+            (
+                Kind::Warning,
+                "undid the apply of set raid to _forever_ (2026-10-22T10:00:00Z): 2 AddOns.txt files put back, 1 AddOns.txt the apply created removed"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn a_plain_name_is_one_component_and_never_a_dot_name() {
+        assert!(is_plain_name("1-before.txt"));
+        assert!(is_plain_name("Fixture Realm"));
+        for bad in ["", ".", "..", "a:b", "a/b", "a\\b", "a\u{1}b"] {
+            assert!(!is_plain_name(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_removal_of_what_is_not_there_is_nothing_and_a_file_is_no_folder() {
+        let dir = std::env::temp_dir().join(format!("mrgl-sets-removals-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("the folder");
+        assert!(remove_dir_if_any(&dir.join("missing")).is_ok());
+        assert!(remove_file_if_any(&dir.join("missing")).is_ok());
+        fs::write(dir.join("a-file"), b"").expect("a file");
+        let error = remove_dir_if_any(&dir.join("a-file")).expect_err("a file is no folder");
+        assert_ne!(error.kind(), io::ErrorKind::NotFound);
+        assert!(dir.join("a-file").exists());
+        fs::create_dir_all(dir.join("a-folder")).expect("a folder");
+        assert!(remove_dir_if_any(&dir.join("a-folder")).is_ok());
+        assert!(!dir.join("a-folder").exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

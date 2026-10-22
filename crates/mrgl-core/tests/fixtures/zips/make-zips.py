@@ -5,7 +5,9 @@ stored, not deflated, so their bytes and the MD5 their answers name never depend
 rerun changes no byte. Run it as `python -I <this file>` after editing a shape below; the zips are committed.
 Nothing here comes from a real addon."""
 
+import calendar
 from pathlib import Path
+import struct
 import zipfile
 
 HERE = Path(__file__).resolve().parent
@@ -234,3 +236,29 @@ write("wtf-lies-about-its-size.zip", [
     ("Config.wtf", 'SET portal "EU"\r\n' * 4000),
 ])
 declare_size("wtf-lies-about-its-size.zip", "Config.wtf", 16)
+
+
+def filetime(year, month, day, hour, minute, second):
+    """A Windows file time of a UTC moment: 100-nanosecond intervals since 1601-01-01."""
+    unix = calendar.timegm((year, month, day, hour, minute, second))
+    return (unix + 11_644_473_600) * 10_000_000
+
+
+# Task 117: the three shapes of an entry's date a restore reads when the extended timestamp field (0x5455)
+# a backup writes is missing: no DOS date at all (zero date fields, which read as no time), the default
+# 1980-01-01 00:00:00 (what every zip above carries), and a real DOS date next to an NTFS extra field
+# (0x000a), which the restore passes over for the zip's own fields read as local time.
+NTFS_FIELD = struct.pack("<HHIHHQQQ", 0x000A, 32, 0, 1, 24, *[filetime(2024, 3, 1, 12, 30, 10)] * 3)
+path = HERE / "wtf-dos-times.zip"
+with zipfile.ZipFile(path, "w") as archive:
+    for name, date_time, extra in [
+        ("Config.wtf", (1980, 0, 0, 0, 0, 0), b""),
+        ("Account/MRGLFIXTURE/config-cache.wtf", EPOCH, b""),
+        ("Account/MRGLFIXTURE/bindings-cache.wtf", (2024, 3, 1, 12, 30, 10), NTFS_FIELD),
+    ]:
+        info = zipfile.ZipInfo(name, date_time=date_time)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.external_attr = 0o644 << 16
+        info.extra = extra
+        archive.writestr(info, f'SET name "{name}"\r\n')
+print(path.name, "(no date, the default date, a dated entry with an NTFS field)")

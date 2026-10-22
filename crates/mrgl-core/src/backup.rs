@@ -130,14 +130,24 @@ fn dated_zip(
     prefix: &str,
     fill: impl FnOnce(&mut Writer, &Path) -> Result<()>,
 ) -> Result<PathBuf> {
+    dated_zip_at(into, prefix, SystemTime::now(), fill)
+}
+
+/// [`dated_zip`] with the moment the name is dated by.
+fn dated_zip_at(
+    into: &Path,
+    prefix: &str,
+    now: SystemTime,
+    fill: impl FnOnce(&mut Writer, &Path) -> Result<()>,
+) -> Result<PathBuf> {
     let io = |context: &'static str, path: &Path, source| Error::Io {
         context,
         path: path.to_path_buf(),
         source,
     };
     fs::create_dir_all(into).map_err(|source| io("creating the backups folder", into, source))?;
-    let zip =
-        fresh_path(into, prefix, ".zip").map_err(|source| io("naming the backup", into, source))?;
+    let zip = fresh_path_at(into, prefix, ".zip", now)
+        .map_err(|source| io("naming the backup", into, source))?;
     let part = zip.with_extension("zip.part");
     if let Err(error) = write_zip(&part, fill) {
         let _ = fs::remove_file(&part);
@@ -162,11 +172,13 @@ fn write_zip(zip: &Path, fill: impl FnOnce(&mut Writer, &Path) -> Result<()>) ->
     fill(&mut writer, zip)?;
     writer
         .finish()
+        // coverage: os-begin — a write to the zip the code just created
         .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?
         .into_inner()
         .map_err(|error| io("writing the backup", zip, error.into_error()))?
         .sync_all()
         .map_err(|source| io("writing the backup", zip, source))?;
+    // coverage: os-end
     Ok(())
 }
 
@@ -196,14 +208,14 @@ fn add_folder(
     let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
         .map_err(|source| io("reading WTF", dir, source))?
         .collect::<io::Result<_>>()
-        .map_err(|source| io("reading WTF", dir, source))?;
+        .map_err(|source| io("reading WTF", dir, source))?; // coverage: os
     entries.sort_by_key(fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         let file_type = entry
             .file_type()
-            .map_err(|source| io("reading WTF", &path, source))?;
+            .map_err(|source| io("reading WTF", &path, source))?; // coverage: os
         if file_type.is_symlink() {
             stats.warnings.push(format!(
                 "left out of the backup: {} is a link, not a folder or a file",
@@ -218,14 +230,16 @@ fn add_folder(
                 .last_modified_time(dos_time(modified(&path)));
             writer
                 .add_directory(format!("{entry_name}/"), options)
+                // coverage: os-begin — a write to the zip the code just created
                 .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?;
+            // coverage: os-end
             stats.folders += 1;
             add_folder(writer, &path, &format!("{entry_name}/"), zip, stats)?;
             continue;
         }
         let metadata = entry
             .metadata()
-            .map_err(|source| io("reading WTF", &path, source))?;
+            .map_err(|source| io("reading WTF", &path, source))?; // coverage: os
         stats.bytes += add_file(writer, &path, &entry_name, &metadata, zip)?;
         stats.files += 1;
     }
@@ -254,7 +268,9 @@ fn add_file(
     if let Some(field) = extended_timestamp(modified) {
         options
             .add_extra_field(EXTENDED_TIMESTAMP, field, false)
+            // coverage: os-begin — the writer refuses only an extra field past 64 KiB
             .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?;
+        // coverage: os-end
     }
     writer
         .start_file(entry_name, options)
@@ -297,10 +313,10 @@ fn extended_timestamp(time: Option<SystemTime>) -> Option<[u8; 5]> {
     Some([0b1, a, b, c, d])
 }
 
-/// A fresh name `<prefix><local date><suffix>` under a folder: the date as `YYYY-MM-DD-HHMMSS`, and a
-/// counter (`-2`, `-3`, …) when the name of this second is taken.
-fn fresh_path(dir: &Path, prefix: &str, suffix: &str) -> io::Result<PathBuf> {
-    let now = clock::local_civil(SystemTime::now());
+/// A fresh name `<prefix><local date><suffix>` under a folder: the date as `YYYY-MM-DD-HHMMSS` of the
+/// given moment, and a counter (`-2`, `-3`, …) when the name of that second is taken.
+fn fresh_path_at(dir: &Path, prefix: &str, suffix: &str, now: SystemTime) -> io::Result<PathBuf> {
+    let now = clock::local_civil(now);
     let stamp = format!(
         "{:04}-{:02}-{:02}-{:02}{:02}{:02}",
         now.year, now.month, now.day, now.hour, now.minute, now.second
@@ -373,10 +389,12 @@ pub fn list_backups(folder: &Path) -> Result<Listing> {
     };
     for entry in entries {
         let entry = entry.map_err(|source| Error::Io {
+            // coverage: os-begin — an entry error mid-listing
             context: "reading the backups folder",
             path: folder.to_path_buf(),
             source,
         })?;
+        // coverage: os-end
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
@@ -478,6 +496,31 @@ pub fn restore_wtf_bounded(
     backups: &Path,
     max_unpacked: u64,
 ) -> Result<Restored> {
+    restore_wtf_with(
+        flavor,
+        zip,
+        backups,
+        max_unpacked,
+        SystemTime::now(),
+        rename,
+    )
+}
+
+/// `fs::rename` as the restore takes it.
+fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    fs::rename(from, to)
+}
+
+/// [`restore_wtf_bounded`] with the moment the aside folder is dated by and the rename that moves a
+/// folder (`fs::rename` outside the tests, which answer it as another volume or a failure would).
+fn restore_wtf_with(
+    flavor: &Flavor,
+    zip: &Path,
+    backups: &Path,
+    max_unpacked: u64,
+    now: SystemTime,
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> Result<Restored> {
     if zip.file_name().is_some_and(|name| {
         name.to_string_lossy()
             .to_ascii_lowercase()
@@ -498,9 +541,10 @@ pub fn restore_wtf_bounded(
     let aside = if wtf.exists() {
         fs::create_dir_all(backups)
             .map_err(|source| io("creating the backups folder", backups, source))?;
-        let aside = fresh_path(backups, ASIDE_PREFIX, "")
+        let aside = fresh_path_at(backups, ASIDE_PREFIX, "", now)
             .map_err(|source| io("naming the aside folder", backups, source))?;
-        move_tree(&wtf, &aside).map_err(|source| io("moving WTF aside", &wtf, source))?;
+        move_tree_with(&wtf, &aside, &rename)
+            .map_err(|source| io("moving WTF aside", &wtf, source))?;
         Some(aside)
     } else {
         None
@@ -516,13 +560,12 @@ pub fn restore_wtf_bounded(
         Err(reason) => {
             // The bound's refusal (task 039) gives its own clause; anything else is the I/O error.
             let reason = match zip_entry::refusal(reason) {
-                Ok(Error::ZipTooLarge { excess, .. }) => excess.to_string(),
-                Ok(other) => other.to_string(),
+                Ok(refusal) => refusal.excess.to_string(),
                 Err(reason) => reason.to_string(),
             };
             let _ = fs::remove_dir_all(&wtf);
             let reverted = match &aside {
-                Some(aside) => !wtf.exists() && move_tree(aside, &wtf).is_ok(),
+                Some(aside) => !wtf.exists() && move_tree_with(aside, &wtf, &rename).is_ok(),
                 None => true,
             };
             match aside {
@@ -589,9 +632,9 @@ fn unpack(
             folders += 1;
             continue;
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| context("creating", parent, error))?;
-        }
+        // A file entry has at least one component, so its path has a parent under `WTF`.
+        let parent = path.parent().unwrap_or(wtf);
+        fs::create_dir_all(parent).map_err(|error| context("creating", parent, error))?;
         let entry = archive.by_index(checked.index).map_err(io::Error::other)?;
         let modified = entry_modified(&entry);
         let file = File::create(&path).map_err(|error| context("writing", &path, error))?;
@@ -604,10 +647,10 @@ fn unpack(
         })?;
         let file = output
             .into_inner()
-            .map_err(|error| context("writing", &path, error.into_error()))?;
+            .map_err(|error| context("writing", &path, error.into_error()))?; // coverage: os
         if let Some(modified) = modified {
             file.set_modified(modified)
-                .map_err(|error| context("dating", &path, error))?;
+                .map_err(|error| context("dating", &path, error))?; // coverage: os
         }
         files += 1;
     }
@@ -638,10 +681,15 @@ fn entry_modified<R: io::Read>(entry: &zip::read::ZipFile<'_, R>) -> Option<Syst
     }))
 }
 
-/// Moves a folder: one rename on the same volume; across volumes (the game on one drive, the mrgl home
-/// on another) a copy of the tree and then the removal of the original.
-fn move_tree(from: &Path, to: &Path) -> io::Result<()> {
-    match fs::rename(from, to) {
+/// Moves a folder: one rename on the same volume (`rename`, `fs::rename` outside the tests); across
+/// volumes (the game on one drive, the mrgl home on another) a copy of the tree and then the removal of
+/// the original.
+fn move_tree_with(
+    from: &Path,
+    to: &Path,
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    match rename(from, to) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
             copy_tree(from, to)?;
@@ -886,13 +934,98 @@ pub mod clock {
             let back = from_local_civil(&local);
             assert_eq!(unix_seconds(back), seconds, "{local:?}");
         }
+
+        #[test]
+        fn moments_before_1970_and_past_the_zone_range_keep_their_civil_fields() {
+            let before = UNIX_EPOCH - Duration::from_secs(86_401);
+            assert_eq!(unix_seconds(before), -86_401);
+            let local = local_civil(before);
+            assert_eq!(local.year, 1969, "{local:?}");
+            assert_eq!(unix_seconds(from_local_civil(&local)), -86_401, "{local:?}");
+            // A year the zone conversion refuses (Windows converts 1601 to 30827): UTC is the local time.
+            let far = Civil {
+                year: 30828,
+                month: 1,
+                day: 1,
+                hour: 12,
+                minute: 0,
+                second: 0,
+            };
+            let seconds = unix_from_civil(&far);
+            let moment = UNIX_EPOCH + Duration::from_secs(seconds as u64);
+            assert_eq!(local_civil(moment), far);
+            assert_eq!(unix_seconds(from_local_civil(&far)), seconds);
+        }
     }
 }
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use std::cell::Cell;
+    use std::io::Write;
+
     use super::*;
+
+    /// A temporary folder under the system temp dir, removed before use and when dropped.
+    struct Temp(PathBuf);
+
+    impl Temp {
+        fn new(name: &str) -> Temp {
+            let dir =
+                std::env::temp_dir().join(format!("mrgl-backup-{}-{name}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).expect("the folder");
+            Temp(dir)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A fixed moment and its stamp in a dated name.
+    fn moment() -> (SystemTime, String) {
+        let now = UNIX_EPOCH + Duration::from_secs(1_761_068_165);
+        let civil = clock::local_civil(now);
+        let stamp = format!(
+            "{:04}-{:02}-{:02}-{:02}{:02}{:02}",
+            civil.year, civil.month, civil.day, civil.hour, civil.minute, civil.second
+        );
+        (now, stamp)
+    }
+
+    /// The names of a folder's entries, sorted.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    /// A zip written by the test with the given entries (name, content).
+    fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let mut writer = ZipWriter::new(File::create(path).expect("the zip"));
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, content) in entries {
+            writer.start_file(*name, options).expect("a file");
+            writer.write_all(content).expect("content");
+        }
+        writer.finish().expect("finished");
+    }
 
     #[test]
     fn the_extended_timestamp_is_flags_and_little_endian_seconds() {
@@ -912,6 +1045,10 @@ mod tests {
             "2025-10-21T17:36:05Z"
         );
         assert_eq!(rfc3339_utc(UNIX_EPOCH), "1970-01-01T00:00:00Z");
+        assert_eq!(
+            rfc3339_utc(UNIX_EPOCH - Duration::from_secs(1)),
+            "1969-12-31T23:59:59Z"
+        );
     }
 
     #[test]
@@ -926,30 +1063,341 @@ mod tests {
         assert_eq!(dos.minute(), local.minute);
         assert_eq!(dos.second(), local.second & !1);
         assert_eq!(dos_time(None), DateTime::default());
+        // Before 1980 and after 2107 the zip's own fields cannot hold the time.
         assert_eq!(dos_time(Some(UNIX_EPOCH)), DateTime::default());
+        let past_2107 = clock::unix_from_civil(&clock::Civil {
+            year: 2108,
+            month: 7,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0,
+        });
+        assert_eq!(
+            dos_time(Some(UNIX_EPOCH + Duration::from_secs(past_2107 as u64))),
+            DateTime::default()
+        );
     }
 
     #[test]
-    fn a_fresh_name_counts_up_within_a_second() {
-        let dir = std::env::temp_dir().join(format!("mrgl-backup-names-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("the folder");
-        let first = fresh_path(&dir, BACKUP_PREFIX, ".zip").expect("a name");
-        let name = first.file_name().expect("a name").to_string_lossy();
-        assert!(name.starts_with("WTF-") && name.ends_with(".zip"), "{name}");
-        assert_eq!(name.len(), "WTF-2026-10-21-193605.zip".len(), "{name}");
+    fn a_fresh_name_counts_up_within_a_second_and_a_thousand_names_are_too_many() {
+        let temp = Temp::new("names");
+        let dir = temp.path();
+        let (now, stamp) = moment();
+        let first = fresh_path_at(dir, BACKUP_PREFIX, ".zip", now).expect("a name");
+        assert_eq!(first, dir.join(format!("WTF-{stamp}.zip")));
         fs::write(&first, b"").expect("taken");
-        let second = fresh_path(&dir, BACKUP_PREFIX, ".zip").expect("a name");
-        assert_ne!(second, first);
-        assert!(
-            second
-                .file_name()
-                .expect("a name")
-                .to_string_lossy()
-                .ends_with("-2.zip"),
-            "{}",
-            second.display()
+        let second = fresh_path_at(dir, BACKUP_PREFIX, ".zip", now).expect("a name");
+        assert_eq!(second, dir.join(format!("WTF-{stamp}-2.zip")));
+        fs::write(&second, b"").expect("taken");
+        let third = fresh_path_at(dir, BACKUP_PREFIX, ".zip", now).expect("a name");
+        assert_eq!(third, dir.join(format!("WTF-{stamp}-3.zip")));
+        for counter in 3..1000 {
+            fs::write(dir.join(format!("WTF-{stamp}-{counter}.zip")), b"").expect("taken");
+        }
+        let error = fresh_path_at(dir, BACKUP_PREFIX, ".zip", now).expect_err("every name taken");
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "a thousand names of this second are taken under {}",
+                dir.display()
+            )
         );
-        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_backups_path_that_is_a_file_or_has_every_name_taken_refuses_the_zip() {
+        let temp = Temp::new("dated-zip-names");
+        let (now, stamp) = moment();
+        let fill = |_: &mut Writer, _: &Path| Ok(());
+
+        let file = temp.path().join("a-file");
+        fs::write(&file, b"").expect("a file");
+        let error = dated_zip_at(&file, BACKUP_PREFIX, now, fill).expect_err("a file");
+        assert!(
+            matches!(&error, Error::Io { context: "creating the backups folder", path, .. } if path == &file),
+            "{error}"
+        );
+
+        let full = temp.path().join("full");
+        fs::create_dir_all(&full).expect("the folder");
+        fs::write(full.join(format!("WTF-{stamp}.zip")), b"").expect("taken");
+        for counter in 2..1000 {
+            fs::write(full.join(format!("WTF-{stamp}-{counter}.zip")), b"").expect("taken");
+        }
+        let error = dated_zip_at(&full, BACKUP_PREFIX, now, fill).expect_err("every name taken");
+        assert!(
+            matches!(&error, Error::Io { context: "naming the backup", path, .. } if path == &full),
+            "{error}"
+        );
+        assert_eq!(names(&full).len(), 999, "nothing was written");
+    }
+
+    #[test]
+    fn a_part_name_that_cannot_be_written_or_is_gone_before_the_rename_fails_the_zip() {
+        let temp = Temp::new("dated-zip-part");
+        let into = temp.path().join("backups");
+        let (now, stamp) = moment();
+        let zip = into.join(format!("WTF-{stamp}.zip"));
+        let part = into.join(format!("WTF-{stamp}.zip.part"));
+
+        // A folder where the `.part` file goes: the zip cannot be created.
+        fs::create_dir_all(&part).expect("a folder in the way");
+        let error = dated_zip_at(&into, BACKUP_PREFIX, now, |_, _| Ok(())).expect_err("in the way");
+        assert!(
+            matches!(&error, Error::Io { context: "writing the backup", path, .. } if path == &part),
+            "{error}"
+        );
+        assert!(!zip.exists());
+        fs::remove_dir(&part).expect("out of the way");
+
+        // The `.part` file gone while it is filled: the rename to the zip's name fails, no zip is left.
+        let error = dated_zip_at(&into, BACKUP_PREFIX, now, |_, part| {
+            fs::remove_file(part).expect("removed while open");
+            Ok(())
+        })
+        .expect_err("gone");
+        assert!(
+            matches!(&error, Error::Io { context: "finishing the backup", path, .. } if path == &zip),
+            "{error}"
+        );
+        assert_eq!(names(&into), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_or_a_repeated_entry_name_leaves_no_part_file() {
+        let temp = Temp::new("zip-files");
+        let into = temp.path().join("backups");
+        let missing = temp.path().join("missing.lua");
+        let error = zip_files(
+            &into,
+            savedvars::CLEANUP_PREFIX,
+            &[("A.lua".into(), missing.clone())],
+        )
+        .expect_err("missing");
+        assert!(
+            matches!(&error, Error::Io { context: "reading a WTF file", path, .. } if path == &missing),
+            "{error}"
+        );
+        assert_eq!(
+            names(&into),
+            Vec::<String>::new(),
+            "the part file is removed"
+        );
+
+        let file = temp.path().join("Twice.lua");
+        fs::write(&file, b"x").expect("a file");
+        let twice = [
+            ("Twice.lua".to_string(), file.clone()),
+            ("Twice.lua".into(), file),
+        ];
+        let error = zip_files(&into, savedvars::CLEANUP_PREFIX, &twice).expect_err("twice");
+        assert!(
+            matches!(
+                &error,
+                Error::Io {
+                    context: "writing the backup",
+                    ..
+                }
+            ),
+            "{error}"
+        );
+        assert!(error.to_string().contains("Duplicate filename"), "{error}");
+        assert_eq!(
+            names(&into),
+            Vec::<String>::new(),
+            "the part file is removed"
+        );
+    }
+
+    /// A flavor folder with a small `WTF` tree (a root file and a file under an account folder) and a
+    /// backup of it under `backups`; the flavor as `read_flavor` would give it.
+    fn flavor_with_backup(temp: &Temp) -> (Flavor, PathBuf, PathBuf) {
+        let folder = temp.path().join("_forever_");
+        let wtf = folder.join(WTF_DIR);
+        fs::create_dir_all(wtf.join("Account").join("ACC")).expect("the tree");
+        fs::write(wtf.join("Config.wtf"), b"SET portal \"EU\"\r\n").expect("a file");
+        fs::write(wtf.join("Account").join("ACC").join("x.txt"), b"x").expect("a file");
+        let flavor = Flavor {
+            id: FlavorId::Forever,
+            folder,
+            version: None,
+            version_source: None,
+            curse_client: false,
+            warnings: Vec::new(),
+        };
+        let backups = temp.path().join("backups");
+        let backup = backup_wtf(&flavor, &backups).expect("a backup");
+        (flavor, backups, backup.zip)
+    }
+
+    /// The files under a folder, relative, `/`-separated, sorted.
+    fn tree(dir: &Path) -> Vec<String> {
+        fn walk(dir: &Path, prefix: &str, into: &mut Vec<String>) {
+            for name in names(dir) {
+                let path = dir.join(&name);
+                if path.is_dir() {
+                    walk(&path, &format!("{prefix}{name}/"), into);
+                } else {
+                    into.push(format!("{prefix}{name}"));
+                }
+            }
+        }
+        let mut into = Vec::new();
+        walk(dir, "", &mut into);
+        into
+    }
+
+    #[test]
+    fn a_wtf_on_another_volume_is_copied_aside_and_removed() {
+        let temp = Temp::new("restore-volumes");
+        let (flavor, backups, zip) = flavor_with_backup(&temp);
+        let wtf = wtf_dir(&flavor);
+        fs::write(wtf.join("extra.txt"), b"not in the backup").expect("a change");
+        let other_volume = |_: &Path, _: &Path| Err(io::Error::from(io::ErrorKind::CrossesDevices));
+        let (now, _) = moment();
+        let restored = restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, other_volume)
+            .expect("restored");
+        let aside = restored.aside.expect("the previous WTF went aside");
+        assert_eq!(
+            tree(&aside),
+            ["Account/ACC/x.txt", "Config.wtf", "extra.txt"],
+            "the copy"
+        );
+        assert_eq!(tree(&wtf), ["Account/ACC/x.txt", "Config.wtf"]);
+        assert_eq!(restored.files, 2);
+        assert_eq!(restored.folders, 2);
+    }
+
+    #[test]
+    fn a_rename_that_fails_refuses_the_move_aside_before_anything_is_written() {
+        let temp = Temp::new("restore-rename");
+        let (flavor, backups, zip) = flavor_with_backup(&temp);
+        let wtf = wtf_dir(&flavor);
+        let before = tree(&wtf);
+        let refused = |_: &Path, _: &Path| Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        let (now, _) = moment();
+        let error =
+            restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, refused).expect_err("refused");
+        assert!(
+            matches!(&error, Error::Io { context: "moving WTF aside", path, .. } if path == &wtf),
+            "{error}"
+        );
+        assert_eq!(tree(&wtf), before);
+        assert_eq!(names(&backups).len(), 1, "the zip alone: no aside folder");
+    }
+
+    #[test]
+    fn a_thousand_aside_names_of_one_second_refuse_the_restore() {
+        let temp = Temp::new("restore-names");
+        let (flavor, backups, zip) = flavor_with_backup(&temp);
+        let (now, stamp) = moment();
+        fs::create_dir_all(backups.join(format!("{ASIDE_PREFIX}{stamp}"))).expect("taken");
+        for counter in 2..1000 {
+            fs::create_dir_all(backups.join(format!("{ASIDE_PREFIX}{stamp}-{counter}")))
+                .expect("taken");
+        }
+        let before = tree(&wtf_dir(&flavor));
+        let error = restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, rename)
+            .expect_err("every name taken");
+        assert!(
+            matches!(&error, Error::Io { context: "naming the aside folder", path, .. } if path == &backups),
+            "{error}"
+        );
+        assert_eq!(tree(&wtf_dir(&flavor)), before);
+    }
+
+    /// A zip whose second entry cannot be written: `Account` is a file first, then a folder is wanted
+    /// under it.
+    fn clash_zip(dir: &Path) -> PathBuf {
+        let zip = dir.join("clash.zip");
+        write_test_zip(
+            &zip,
+            &[
+                ("Account", &b"a file where a folder goes"[..]),
+                ("Account/ACC/x.txt", &b"x"[..]),
+            ],
+        );
+        zip
+    }
+
+    #[test]
+    fn a_revert_that_fails_names_the_aside_folder() {
+        let temp = Temp::new("restore-revert");
+        let (flavor, backups, _) = flavor_with_backup(&temp);
+        let wtf = wtf_dir(&flavor);
+        let before = tree(&wtf);
+        let zip = clash_zip(&backups);
+        // The move aside goes through; the move back is refused.
+        let renames = Cell::new(0);
+        let once = |from: &Path, to: &Path| {
+            renames.set(renames.get() + 1);
+            if renames.get() == 1 {
+                fs::rename(from, to)
+            } else {
+                Err(io::Error::from(io::ErrorKind::PermissionDenied))
+            }
+        };
+        let (now, _) = moment();
+        let error = restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, once)
+            .expect_err("the revert fails");
+        let Error::RestoreRevertFailed {
+            path,
+            reason,
+            aside,
+        } = &error
+        else {
+            panic!("{error}");
+        };
+        assert_eq!(path, &zip);
+        assert!(reason.starts_with("creating "), "{reason}");
+        assert_eq!(aside.parent(), Some(backups.as_path()));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "restoring {} failed and the previous WTF could not be put back: {reason}; it is at {}",
+                zip.display(),
+                aside.display()
+            )
+        );
+        assert_eq!(renames.get(), 2);
+        assert!(!wtf.exists(), "the half-written WTF is removed");
+        assert_eq!(tree(aside), before, "the previous WTF waits aside");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_half_written_wtf_that_cannot_be_removed_names_the_aside_folder() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let temp = Temp::new("restore-locked");
+        let (flavor, backups, _) = flavor_with_backup(&temp);
+        let wtf = wtf_dir(&flavor);
+        let before = tree(&wtf);
+        let zip = clash_zip(&backups);
+        // Once the previous WTF is aside, a file held open under the new one keeps it from being removed.
+        let lock = std::cell::RefCell::new(None);
+        let then_lock = |from: &Path, to: &Path| {
+            fs::rename(from, to)?;
+            fs::create_dir_all(&wtf)?;
+            let held = wtf.join("held.txt");
+            fs::write(&held, b"")?;
+            *lock.borrow_mut() = Some(
+                fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(0)
+                    .open(&held)?,
+            );
+            Ok(())
+        };
+        let (now, _) = moment();
+        let error = restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, then_lock)
+            .expect_err("the half-written WTF stays");
+        let Error::RestoreRevertFailed { aside, .. } = &error else {
+            panic!("{error}");
+        };
+        assert!(wtf.join("held.txt").exists(), "the half-written WTF stays");
+        assert_eq!(tree(aside), before, "the previous WTF waits aside");
+        drop(lock.borrow_mut().take());
     }
 }

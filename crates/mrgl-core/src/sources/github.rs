@@ -265,16 +265,15 @@ pub fn pick_by_metadata<'a>(
                 Some((asset_of(&entry.filename)?, metadata.interface, entry.nolib))
             })
             .collect();
-        if candidates.is_empty() {
-            continue;
-        }
         // Library-included first (stable, so the file order breaks the tie), then the build's major.
         candidates.sort_by_key(|(_, _, nolib)| *nolib);
-        let (asset, interface, nolib) = candidates
+        let Some(first) = candidates.first() else {
+            continue;
+        };
+        let (asset, interface, nolib) = *candidates
             .iter()
             .find(|(_, interface, _)| major.is_some_and(|major| interface / 10000 == major))
-            .or_else(|| candidates.first())
-            .copied()?;
+            .unwrap_or(first);
         let guess = game_type_unknown(target);
         let reason = if guess {
             format!(
@@ -454,15 +453,19 @@ impl<H: Http> GitHub<H> {
         self.cache_path(owner, repo, CACHE_FILE)
     }
 
-    /// A file of a repository's cache folder, `<cache>/<owner>/<repo>/<file>`, lower case.
-    fn cache_path(&self, owner: &str, repo: &str, file: &str) -> Option<PathBuf> {
+    /// The cache folder of a repository, `<cache>/<owner>/<repo>/`, lower case.
+    fn repo_cache(&self, owner: &str, repo: &str) -> Option<PathBuf> {
         Some(
             self.cache_dir
                 .as_ref()?
                 .join(owner.to_ascii_lowercase())
-                .join(repo.to_ascii_lowercase())
-                .join(file),
+                .join(repo.to_ascii_lowercase()),
         )
+    }
+
+    /// A file of a repository's cache folder, `<cache>/<owner>/<repo>/<file>`.
+    fn cache_path(&self, owner: &str, repo: &str, file: &str) -> Option<PathBuf> {
+        Some(self.repo_cache(owner, repo)?.join(file))
     }
 
     /// The cached `release.json` of one release: `<cache>/<owner>/<repo>/release-json/tag-<tag>.json`, the
@@ -472,18 +475,13 @@ impl<H: Http> GitHub<H> {
             .map(|dir| dir.join(release_json_cache_name(tag)))
     }
 
-    /// Drops what a repository's cache no longer needs once the API has answered with its release list
-    /// (task 072): every `tag-*.json` of a tag the list does not hold, and the old single
-    /// `release-json.json`. Best effort, as every cache write: a file that cannot be removed stays until the
-    /// next answer, and the list read offline (task 041) never comes here.
-    fn prune_release_json_cache(&self, owner: &str, repo: &str, releases: &serde_json::Value) {
-        if let Some(old) = self.cache_path(owner, repo, OLD_RELEASE_JSON_CACHE_FILE) {
-            let _ = std::fs::remove_file(old);
-        }
-        let Some(entries) = self
-            .cache_path(owner, repo, RELEASE_JSON_CACHE_DIR)
-            .and_then(|dir| std::fs::read_dir(dir).ok())
-        else {
+    /// Drops what a repository's cache folder (`<cache>/<owner>/<repo>/`) no longer needs once the API has
+    /// answered with its release list (task 072): every `tag-*.json` of a tag the list does not hold, and
+    /// the old single `release-json.json`. Best effort, as every cache write: a file that cannot be removed
+    /// stays until the next answer, and the list read offline (task 041) never comes here.
+    fn prune_release_json_cache(repo_cache: &Path, releases: &serde_json::Value) {
+        let _ = std::fs::remove_file(repo_cache.join(OLD_RELEASE_JSON_CACHE_FILE));
+        let Ok(entries) = std::fs::read_dir(repo_cache.join(RELEASE_JSON_CACHE_DIR)) else {
             return;
         };
         let current: Vec<String> = releases
@@ -570,19 +568,21 @@ impl<H: Http> GitHub<H> {
     /// cache's date, a 304 included.
     fn release_list(&self, owner: &str, repo: &str) -> Result<(Vec<Release>, Option<Stale>)> {
         let url = format!("{API_URL}/repos/{owner}/{repo}/releases?per_page={PER_PAGE}");
-        let cache_file = self.cache_file(owner, repo);
-        let cached: Option<CachedReleases<serde_json::Value>> = cache_file
-            .as_ref()
-            .and_then(|path| std::fs::read(path).ok())
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        let repo_cache = self.repo_cache(owner, repo);
+        // The cached list with the folder it was read from, so a confirmed list is written back there.
+        let cached: Option<(&Path, CachedReleases<serde_json::Value>)> =
+            repo_cache.as_deref().and_then(|dir| {
+                let bytes = std::fs::read(dir.join(CACHE_FILE)).ok()?;
+                Some((dir, serde_json::from_slice(&bytes).ok()?))
+            });
         let mut request = self.api_request(url.clone());
-        if let Some(etag) = cached.as_ref().and_then(|cached| cached.etag.as_ref()) {
+        if let Some(etag) = cached.as_ref().and_then(|(_, cached)| cached.etag.as_ref()) {
             request = request.header("If-None-Match", etag.clone());
         }
         let response = match self.api_get(&request) {
             Ok(response) => response,
             Err(error @ Error::Network { .. }) => {
-                let Some(cached) = cached else {
+                let Some((_, cached)) = cached else {
                     return Err(error);
                 };
                 let stale = Stale {
@@ -627,7 +627,7 @@ impl<H: Http> GitHub<H> {
                     pages += 1;
                 }
                 let releases = serde_json::Value::Array(releases);
-                if let Some(path) = &cache_file {
+                if let Some(dir) = &repo_cache {
                     let cached = CachedReleases {
                         etag: response.header("etag").map(str::to_string),
                         checked_at: Some(state::now_rfc3339()),
@@ -635,20 +635,18 @@ impl<H: Http> GitHub<H> {
                     };
                     // The cache is a convenience: a folder that cannot be written costs a request per
                     // run, never the command.
-                    if write_cache(path, &cached).is_ok() {
-                        self.prune_release_json_cache(owner, repo, &releases);
+                    if write_cache(&dir.join(CACHE_FILE), &cached).is_ok() {
+                        Self::prune_release_json_cache(dir, &releases);
                     }
                 }
                 releases
             }
             304 => match cached {
-                Some(mut cached) => {
+                Some((dir, mut cached)) => {
                     // Confirmed: the offline resolve dates the cache from here (task 041).
-                    if let Some(path) = &cache_file {
-                        cached.checked_at = Some(state::now_rfc3339());
-                        if write_cache(path, &cached).is_ok() {
-                            self.prune_release_json_cache(owner, repo, &cached.releases);
-                        }
+                    cached.checked_at = Some(state::now_rfc3339());
+                    if write_cache(&dir.join(CACHE_FILE), &cached).is_ok() {
+                        Self::prune_release_json_cache(dir, &cached.releases);
                     }
                     cached.releases
                 }
@@ -893,18 +891,21 @@ impl<H: Http> GitHub<H> {
     /// an answer (the network) is not counted.
     fn api_get(&self, request: &Request) -> Result<Response> {
         let response = self.http.get(request)?;
-        if let Ok(mut budget) = self.budget.lock() {
-            budget.sent += 1;
-            let remaining = response
-                .header("x-ratelimit-remaining")
-                .and_then(|value| value.trim().parse::<u32>().ok())
-                .or((response.status == 429).then_some(0));
-            if let Some(remaining) = remaining {
-                budget.remaining = Some((remaining, budget.sent));
-            }
-            if let Some(reset) = rate_limit_reset(&response) {
-                budget.reset = Some(reset);
-            }
+        // A poisoned lock (a panic while a count was being kept) still holds the count.
+        let mut budget = self
+            .budget
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        budget.sent += 1;
+        let remaining = response
+            .header("x-ratelimit-remaining")
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .or((response.status == 429).then_some(0));
+        if let Some(remaining) = remaining {
+            budget.remaining = Some((remaining, budget.sent));
+        }
+        if let Some(reset) = rate_limit_reset(&response) {
+            budget.reset = Some(reset);
         }
         Ok(response)
     }
@@ -1079,53 +1080,48 @@ impl<H: Http> Source for GitHub<H> {
         let (owner, repo) = repository(spec)?;
         let (releases, stale) = self.release_list(owner, repo)?;
         let candidates = releases_on(&releases, target.channel);
-        if candidates.is_empty() {
+        let Some((newest, older)) = candidates.split_first() else {
             return Err(Error::NoRelease {
                 spec: spec.to_string(),
             });
-        }
-        let mut newest_error = None;
-        for (newer, release) in candidates.iter().enumerate() {
-            match self.pick_of(spec, release, target, stale.clone()) {
-                Ok(mut pick) => {
-                    if newer > 0 {
-                        let releases = if newer == 1 { "release" } else { "releases" };
-                        pick.reason = format!(
-                            "{}; the newest release with a {} asset, {newer} newer {releases} without one",
-                            pick.reason,
-                            target.flavor_name()
-                        );
-                    }
-                    return Ok(pick);
-                }
-                Err(error @ Error::NoAssetForFlavor { .. }) => {
-                    newest_error.get_or_insert(error);
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        Err(match newest_error {
-            Some(Error::NoAssetForFlavor {
-                spec,
-                release,
-                flavor,
-                detail,
-            }) => {
-                let looked_at = match candidates.len() {
-                    1 => "looked at 1 release".to_string(),
-                    count => format!("looked at {count} releases, none has one"),
-                };
-                Error::NoAssetForFlavor {
+        };
+        // The newest release's error is the one reported when no release has an asset.
+        let (spec_text, newest_tag, flavor, detail) =
+            match self.pick_of(spec, newest, target, stale.clone()) {
+                Ok(pick) => return Ok(pick),
+                Err(Error::NoAssetForFlavor {
                     spec,
                     release,
                     flavor,
-                    detail: format!("{detail}; {looked_at}"),
+                    detail,
+                }) => (spec, release, flavor, detail),
+                Err(error) => return Err(error),
+            };
+        for (passed, release) in older.iter().enumerate() {
+            match self.pick_of(spec, release, target, stale.clone()) {
+                Ok(mut pick) => {
+                    let newer = passed + 1;
+                    let releases = if newer == 1 { "release" } else { "releases" };
+                    pick.reason = format!(
+                        "{}; the newest release with a {} asset, {newer} newer {releases} without one",
+                        pick.reason,
+                        target.flavor_name()
+                    );
+                    return Ok(pick);
                 }
+                Err(Error::NoAssetForFlavor { .. }) => {}
+                Err(error) => return Err(error),
             }
-            Some(error) => error,
-            None => Error::NoRelease {
-                spec: spec.to_string(),
-            },
+        }
+        let looked_at = match candidates.len() {
+            1 => "looked at 1 release".to_string(),
+            count => format!("looked at {count} releases, none has one"),
+        };
+        Err(Error::NoAssetForFlavor {
+            spec: spec_text,
+            release: newest_tag,
+            flavor,
+            detail: format!("{detail}; {looked_at}"),
         })
     }
 
@@ -1342,6 +1338,7 @@ mod tests {
         );
         assert_eq!(flavor_keys(&classic(5)), ["mists"]);
         assert_eq!(flavor_keys(&classic(4)), ["cata"]);
+        assert_eq!(flavor_keys(&classic(3)), ["wrath", "wotlkc"]);
         assert_eq!(flavor_keys(&classic(2)), ["bcc", "tbc"]);
         assert_eq!(flavor_keys(&Target::new(FlavorId::Classic))[0], "mists");
         assert_eq!(flavor_keys(&classic(9))[0], "mists");
@@ -1730,6 +1727,24 @@ mod tests {
     }
 
     #[test]
+    fn an_older_release_whose_release_json_is_missing_is_that_error() {
+        // The newest release has no forever asset; the older one's release.json answers 404, and that
+        // error stands instead of the count of releases looked at.
+        let list = r#"[
+            {"tag_name":"v2.0.0","assets":[{"name":"A-v2.0.0-classic.zip","browser_download_url":"https://dl.test/2"}]},
+            {"tag_name":"v1.0.0","assets":[{"name":"release.json","browser_download_url":"https://dl.test/release.json"},{"name":"A.zip","browser_download_url":"https://dl.test/1"}]}
+        ]"#;
+        let http = MapHttp::new().answer(RELEASES_URL, 200, list);
+        let error = GitHub::new(http, None, None)
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .unwrap_err();
+        assert!(
+            matches!(&error, Error::AssetMissing { release, asset, .. } if release == "v1.0.0" && asset == "release.json"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn a_missing_release_json_download_names_the_asset() {
         let http = MapHttp::new().answer(RELEASES_URL, 200, &releases_body(&["release.json"]));
         let error = GitHub::new(http, None, None)
@@ -1817,5 +1832,374 @@ mod tests {
         // A release list without the two fields at all, as the older fixtures have it.
         let pick = resolve(&releases_body(&["A-forever.zip"]));
         assert_eq!((pick.notes, pick.page), (None, None));
+    }
+
+    /// A temporary cache folder of one test, removed before use and when the guard drops.
+    struct TempCache(PathBuf);
+
+    impl TempCache {
+        fn new(name: &str) -> TempCache {
+            let dir =
+                std::env::temp_dir().join(format!("mrgl-github-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            TempCache(dir)
+        }
+
+        /// The cache folder of `github:o/r`.
+        fn repo(&self) -> PathBuf {
+            self.0.join("o").join("r")
+        }
+
+        /// Plants a file under the repository's cache folder.
+        fn plant(&self, file: &str, body: &str) {
+            let path = self.repo().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        }
+    }
+
+    impl Drop for TempCache {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A pick of `github:o/r` for a download test.
+    fn test_pick(url: &str, size: Option<u64>) -> Pick {
+        Pick {
+            source: "github:o/r".into(),
+            release: "v1".into(),
+            version: "1".into(),
+            published: None,
+            prerelease: false,
+            asset: "A.zip".into(),
+            url: url.into(),
+            size,
+            md5: None,
+            flavor: "forever".into(),
+            interface: None,
+            guess: false,
+            reason: String::new(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: ForeverBuild::Unknown,
+            stale: None,
+        }
+    }
+
+    /// The cached release list of `github:o/r` as the cache file writes it.
+    fn cached_list(releases: &str) -> String {
+        format!(
+            "{{\"etag\":\"\\\"tag\\\"\",\"checked_at\":\"2026-10-21T00:00:00Z\",\"releases\":{releases}}}"
+        )
+    }
+
+    #[test]
+    fn a_spec_of_another_source_is_not_the_github_sources_to_answer() {
+        let github = GitHub::new(MapHttp::new(), None, None);
+        let wago = SourceSpec::parse("wago:abc").unwrap();
+        let target = Target::new(FlavorId::Forever);
+        let error = github.resolve(&wago, &target).unwrap_err();
+        assert!(
+            matches!(error, Error::SourceNotConfigured { .. }),
+            "{error}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "source not configured: wago:abc (the GitHub source answers github: specs only)"
+        );
+        assert_eq!(
+            github.cached_forever_build(&wago, Channel::Stable),
+            ForeverBuild::Unknown
+        );
+        assert_eq!(github.listed_versions(&wago), None);
+        assert!(github.http().requests().is_empty(), "nothing was asked");
+    }
+
+    #[test]
+    fn the_token_goes_to_the_api_host_only() {
+        let github = GitHub::new(MapHttp::new(), Some("secret".into()), None);
+        let api = github.api_request(RELEASES_URL.to_string());
+        assert_eq!(api.header_value("Authorization"), Some("Bearer secret"));
+        let elsewhere = github.api_request("https://objects.example.test/releases".to_string());
+        assert_eq!(elsewhere.header_value("Authorization"), None);
+        assert_eq!(
+            elsewhere.header_value("Accept"),
+            Some("application/vnd.github+json")
+        );
+    }
+
+    #[test]
+    fn the_prune_keeps_what_is_no_cached_release_json() {
+        let cache = TempCache::new("prune");
+        cache.plant("release-json.json", "{}");
+        cache.plant("release-json/tag-v1.json", "{}");
+        cache.plant("release-json/tag-v0.json", "{}");
+        cache.plant("release-json/tag-v0.txt", "{}");
+        cache.plant("release-json/notes.json", "{}");
+        std::fs::create_dir_all(cache.repo().join("release-json").join("tag-dir.json")).unwrap();
+        GitHub::<MapHttp>::prune_release_json_cache(
+            &cache.repo(),
+            &serde_json::json!([{ "tag_name": "v1" }]),
+        );
+        let mut left: Vec<String> = std::fs::read_dir(cache.repo().join("release-json"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            ["notes.json", "tag-dir.json", "tag-v0.txt", "tag-v1.json"]
+        );
+        assert!(!cache.repo().join("release-json.json").exists(), "task 072");
+        // A repository without a release-json folder has nothing to prune.
+        GitHub::<MapHttp>::prune_release_json_cache(&cache.0.join("none"), &serde_json::json!([]));
+    }
+
+    #[test]
+    fn offline_a_cache_in_another_shape_is_a_document_error_and_another_failure_stands() {
+        let cache = TempCache::new("offline-shape");
+        cache.plant(CACHE_FILE, &cached_list("{\"a\":1}"));
+        let http = MapHttp::new().offline(RELEASES_URL, "no network");
+        let error = GitHub::new(http, None, Some(cache.0.clone()))
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .unwrap_err();
+        assert!(matches!(error, Error::SourceDocument { .. }), "{error}");
+        assert!(
+            error
+                .to_string()
+                .starts_with("unreadable release list from github:o/r: "),
+            "{error}"
+        );
+        // An error of the client that is not the network's is never answered from the cache.
+        let http = MapHttp::new().broken(RELEASES_URL);
+        let error = GitHub::new(http, None, Some(cache.0.clone()))
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .unwrap_err();
+        assert!(matches!(error, Error::Io { .. }), "{error}");
+        assert!(
+            error.to_string().starts_with("reading the stub answer: "),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_next_page_that_fails_and_a_304_without_a_cache_are_status_errors() {
+        let page_two = "https://api.github.com/repos/o/r/releases?per_page=30&page=2";
+        let http = MapHttp::new()
+            .answer(
+                RELEASES_URL,
+                200,
+                "[{\"tag_name\":\"v2.0.0-beta\",\"prerelease\":true,\"assets\":[]}]",
+            )
+            .with_header(RELEASES_URL, "Link", &format!("<{page_two}>; rel=\"next\""))
+            .answer(page_two, 500, "");
+        let error = GitHub::new(http, None, None)
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!(
+                "GitHub answered 500 for {page_two}: the server has a problem; try again later"
+            )
+        );
+        let http = MapHttp::new().answer(RELEASES_URL, 304, "");
+        let error = GitHub::new(http, None, None)
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!(
+                "GitHub answered 304 for {RELEASES_URL}: nothing changed, but there is no cached copy to read"
+            )
+        );
+    }
+
+    #[test]
+    fn a_cached_release_json_in_another_shape_is_downloaded_again() {
+        let cache = TempCache::new("release-json-shape");
+        cache.plant(
+            "release-json/tag-v1.0.0.json",
+            "{\"release\":\"v1.0.0\",\"url\":\"https://dl.test/release.json\",\"size\":3,\"release_json\":{\"releases\":\"nope\"}}",
+        );
+        let http = MapHttp::new()
+            .answer(
+                RELEASES_URL,
+                200,
+                &releases_body(&["release.json", "A-forever.zip"]),
+            )
+            .answer(
+                "https://dl.test/release.json",
+                200,
+                "{\"releases\":[{\"filename\":\"A-forever.zip\",\"metadata\":[{\"flavor\":\"forever\",\"interface\":16001}]}]}",
+            );
+        let github = GitHub::new(http, None, Some(cache.0.clone()));
+        let pick = github
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .expect("a pick");
+        assert!(!pick.guess, "{}", pick.reason);
+        assert_eq!(pick.interface, Some(16001));
+        assert_eq!(github.http().requests().len(), 2, "the list and the file");
+        // The download replaced the cached file: the next resolve reads it from there.
+        let pick = github
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .expect("a pick");
+        assert!(!pick.guess);
+        assert_eq!(github.http().requests().len(), 3, "the list alone");
+    }
+
+    #[test]
+    fn a_cache_file_without_a_parent_or_a_name_cannot_be_written() {
+        let error = write_cache(Path::new(""), &1).unwrap_err();
+        assert_eq!(error.to_string(), "no parent folder");
+        let cache = TempCache::new("write-cache");
+        // A path that ends in `..` has a parent and no file name: the rename onto a folder fails and the
+        // temporary file is removed.
+        assert!(write_cache(&cache.0.join(".."), &1).is_err());
+        assert_eq!(
+            std::fs::read_dir(&cache.0).unwrap().count(),
+            0,
+            "no temporary file left"
+        );
+    }
+
+    #[test]
+    fn a_cache_that_cannot_be_written_costs_nothing_but_the_cache() {
+        let cache = TempCache::new("unwritable");
+        // A folder where the temporary file of the cache write would be: the write fails, the rename
+        // never happens.
+        let temp_name = format!("{CACHE_FILE}.{}.tmp", std::process::id());
+        std::fs::create_dir_all(cache.repo().join(&temp_name)).unwrap();
+        cache.plant("release-json/tag-old.json", "{}");
+        let http = MapHttp::new().answer(RELEASES_URL, 200, &releases_body(&["A-forever.zip"]));
+        let pick = GitHub::new(http, None, Some(cache.0.clone()))
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .expect("a pick");
+        assert_eq!(pick.asset, "A-forever.zip");
+        assert!(!cache.repo().join(CACHE_FILE).exists(), "no cache written");
+        assert!(
+            cache.repo().join("release-json/tag-old.json").exists(),
+            "nothing pruned without a written list"
+        );
+        // The same when the API confirms a cached list: its date is not refreshed, nothing is pruned.
+        cache.plant(CACHE_FILE, &cached_list(&releases_body(&["A-forever.zip"])));
+        let http = MapHttp::new().answer(RELEASES_URL, 304, "");
+        let pick = GitHub::new(http, None, Some(cache.0.clone()))
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .expect("a pick from the confirmed cache");
+        assert_eq!(pick.asset, "A-forever.zip");
+        assert_eq!(pick.stale, None);
+        assert!(
+            std::fs::read_to_string(cache.repo().join(CACHE_FILE))
+                .unwrap()
+                .contains("2026-10-21T00:00:00Z"),
+            "the date stays"
+        );
+        assert!(cache.repo().join("release-json/tag-old.json").exists());
+    }
+
+    /// A full page of 30 releases of the 9.x line, none with an asset.
+    fn full_page() -> String {
+        let releases: Vec<String> = (0..30)
+            .map(|minor| format!("{{\"tag_name\":\"v9.{minor}.0\",\"assets\":[]}}"))
+            .collect();
+        format!("[{}]", releases.join(","))
+    }
+
+    #[test]
+    fn a_further_page_that_fails_or_cannot_be_read_stops_the_walk_for_a_version() {
+        let page_two = "https://api.github.com/repos/o/r/releases?per_page=30&page=2";
+        let target = Target::new(FlavorId::Forever);
+        let http = MapHttp::new()
+            .answer(RELEASES_URL, 200, &full_page())
+            .answer(page_two, 503, "");
+        let error = GitHub::new(http, None, None)
+            .resolve_version(&spec(), &target, "1.0.0")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with(&format!("GitHub answered 503 for {page_two}: ")),
+            "{error}"
+        );
+        let http = MapHttp::new()
+            .answer(RELEASES_URL, 200, &full_page())
+            .answer(page_two, 200, "{ not a list");
+        let error = GitHub::new(http, None, None)
+            .resolve_version(&spec(), &target, "1.0.0")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("unreadable release list from github:o/r: "),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn offline_a_version_the_cache_lacks_is_not_looked_for_on_further_pages() {
+        let cache = TempCache::new("offline-version");
+        cache.plant(CACHE_FILE, &cached_list(&releases_body(&["A-forever.zip"])));
+        let http = MapHttp::new().offline(RELEASES_URL, "no network");
+        let github = GitHub::new(http, None, Some(cache.0.clone()));
+        let target = Target::new(FlavorId::Forever);
+        let pick = github
+            .resolve_version(&spec(), &target, "1.0.0")
+            .expect("the cached release");
+        assert!(pick.stale.is_some());
+        let error = github
+            .resolve_version(&spec(), &target, "0.9.0")
+            .unwrap_err();
+        assert!(matches!(error, Error::VersionNotOffered { .. }), "{error}");
+        assert_eq!(
+            github.http().requests().len(),
+            2,
+            "one request per resolve, no page walk offline"
+        );
+    }
+
+    #[test]
+    fn the_reason_counts_the_newer_releases_without_an_asset() {
+        let list = r#"[
+            {"tag_name":"v3.0.0","assets":[{"name":"A-v3.0.0-classic.zip","browser_download_url":"https://dl.test/3"}]},
+            {"tag_name":"v2.0.0","assets":[{"name":"A-v2.0.0-classic.zip","browser_download_url":"https://dl.test/2"}]},
+            {"tag_name":"v1.0.0","assets":[{"name":"A-v1.0.0-forever.zip","browser_download_url":"https://dl.test/1"}]}
+        ]"#;
+        let github = GitHub::new(MapHttp::new().answer(RELEASES_URL, 200, list), None, None);
+        let pick = github
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .expect("the oldest release");
+        assert_eq!(pick.release, "v1.0.0");
+        assert!(
+            pick.reason.ends_with(
+                "; the newest release with a forever asset, 2 newer releases without one"
+            ),
+            "{}",
+            pick.reason
+        );
+    }
+
+    #[test]
+    fn a_download_that_cannot_be_written_names_the_step() {
+        let cache = TempCache::new("download-folder");
+        let http = MapHttp::new().answer("https://dl.test/A.zip", 200, "zip");
+        let github = GitHub::new(http, None, None);
+        let pick = test_pick("https://dl.test/A.zip", None);
+        // A file where the download folder would be.
+        let file = cache.0.join("a-file");
+        std::fs::write(&file, b"").unwrap();
+        let error = github.fetch(&pick, &file.join("A.zip")).unwrap_err();
+        assert!(matches!(error, Error::Io { .. }), "{error}");
+        assert!(
+            error
+                .to_string()
+                .starts_with("creating the download folder: "),
+            "{error}"
+        );
+        // An empty path has no parent to create and cannot be written.
+        let error = github.fetch(&pick, Path::new("")).unwrap_err().to_string();
+        assert!(error.starts_with("writing the download: "), "{error}");
     }
 }

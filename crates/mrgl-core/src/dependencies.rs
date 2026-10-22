@@ -275,6 +275,24 @@ mod tests {
     }
 
     #[test]
+    fn two_embedded_libraries_are_named_together() {
+        let scan = scan_of(vec![addon(
+            "Needy",
+            Some("## Dependencies: LibOne, LibTwo\n"),
+        )]);
+        let needy = &check_with(&scan, None, |_| {
+            vec!["LibOne".to_string(), "LibTwo".to_string()]
+        })[0];
+        assert_eq!(needy.embedded, ["LibOne", "LibTwo"]);
+        assert_eq!(
+            needy.warning().as_deref(),
+            Some(
+                "Needy needs the missing dependencies LibOne, LibTwo: install them or the addon does not load (LibOne, LibTwo are only embedded inside Needy, and the client does not count a library inside an addon's own folder)"
+            )
+        );
+    }
+
+    #[test]
     fn a_required_name_is_met_embedded_or_missing() {
         let checks = check_with(&needy_scan(), None, inside);
         assert_eq!(checks.len(), 2);

@@ -88,7 +88,7 @@ pub fn write_config_at(path: &Path, config: &Config) -> Result<()> {
     let mut object = read_object_at(path)?;
     let root = serde_json::to_value(&config.root).unwrap_or(serde_json::Value::Null);
     set_or_remove(&mut object, "root", root);
-    write_object_at(path, &object)
+    write_object_at(path, object)
 }
 
 /// The config file as a JSON object: empty for a missing file and for one that is not a JSON object (its
@@ -122,7 +122,7 @@ fn set_or_remove(
 }
 
 /// Writes the config object, creating its folder.
-fn write_object_at(path: &Path, object: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+fn write_object_at(path: &Path, object: serde_json::Map<String, serde_json::Value>) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|source| Error::Io {
             context: "creating the home folder",
@@ -130,12 +130,9 @@ fn write_object_at(path: &Path, object: &serde_json::Map<String, serde_json::Val
             source,
         })?;
     }
-    let text = serde_json::to_string_pretty(object).map_err(|source| Error::Io {
-        context: "writing the config",
-        path: path.to_path_buf(),
-        source: std::io::Error::other(source),
-    })?;
-    std::fs::write(path, text + "\n").map_err(|source| Error::Io {
+    // A map of string keys always serializes: `Display` with `#` is the pretty form, without a result.
+    let text = format!("{:#}\n", serde_json::Value::Object(object));
+    std::fs::write(path, text).map_err(|source| Error::Io {
         context: "writing the config",
         path: path.to_path_buf(),
         source,
@@ -199,7 +196,7 @@ pub fn update_preferences_at(
     if let Some(serious) = serious {
         object.insert("serious".into(), serious.into());
     }
-    write_object_at(path, &object)?;
+    write_object_at(path, object)?;
     Ok(read_preferences_at(path))
 }
 
@@ -345,5 +342,79 @@ mod tests {
         std::fs::write(&path, "{ not json").expect("write");
         assert_eq!(read_preferences_at(&path), Preferences::default());
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_config_that_cannot_be_read_is_an_error_and_sets_no_preference() {
+        // A folder where the file should be: not missing, not readable.
+        let home = temp_home("unreadable");
+        let path = home.join(CONFIG_FILE);
+        std::fs::create_dir_all(&path).expect("a folder in the way");
+        let error = read_config_at(&path).expect_err("not a missing file");
+        assert!(
+            matches!(
+                &error,
+                Error::Io {
+                    context: "reading the config",
+                    ..
+                }
+            ),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("reading the config: {}: ", path.display())),
+            "{error}"
+        );
+        let error = write_config_at(&path, &Config::default()).expect_err("read first");
+        assert!(
+            error.to_string().starts_with("reading the config: "),
+            "{error}"
+        );
+        let error = update_preferences_at(&path, Some("dark"), None).expect_err("read first");
+        assert!(
+            error.to_string().starts_with("reading the config: "),
+            "{error}"
+        );
+        assert_eq!(read_preferences_at(&path), Preferences::default());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_home_folder_that_cannot_be_made_is_an_error() {
+        let home = temp_home("blocked");
+        std::fs::create_dir_all(&home).expect("home");
+        let blocker = home.join("blocker");
+        std::fs::write(&blocker, "").expect("a file where the folder should be");
+        let path = blocker.join(CONFIG_FILE);
+        let error = write_config_at(&path, &Config::default()).expect_err("no folder");
+        assert!(
+            error.to_string().starts_with(&format!(
+                "creating the home folder: {}: ",
+                blocker.display()
+            )),
+            "{error}"
+        );
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_config_that_cannot_be_written_is_an_error() {
+        // The root of the temp folder's drive: nothing above it to create, and no file can be it.
+        let root = std::env::temp_dir()
+            .ancestors()
+            .last()
+            .expect("a root")
+            .to_path_buf();
+        assert_eq!(root.parent(), None);
+        let error = write_object_at(&root, serde_json::Map::new()).expect_err("a folder");
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("writing the config: {}: ", root.display())),
+            "{error}"
+        );
     }
 }

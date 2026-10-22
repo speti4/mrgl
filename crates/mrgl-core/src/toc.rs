@@ -156,14 +156,13 @@ pub fn classify_toc_name(folder: &str, file_name: &str) -> Option<TocName> {
     else {
         return Some(TocName::Other);
     };
-    let Some(separator) = rest.chars().next() else {
+    // `rest` is never empty here: a stem of the folder's own length is the base file, answered above.
+    let Some(suffix) = rest.strip_prefix(['_', '-']) else {
         return Some(TocName::Other);
     };
-    if separator != '_' && separator != '-' {
-        return Some(TocName::Other);
-    }
-    match TocSuffix::parse(&rest[separator.len_utf8()..]) {
-        Some(suffix) if separator == '-' || suffix.is_legacy() => Some(TocName::Legacy(suffix)),
+    let hyphen = rest.starts_with('-');
+    match TocSuffix::parse(suffix) {
+        Some(suffix) if hyphen || suffix.is_legacy() => Some(TocName::Legacy(suffix)),
         Some(suffix) => Some(TocName::Suffix(suffix)),
         None => Some(TocName::Other),
     }
@@ -324,6 +323,7 @@ pub fn github_repo_of_website(website: &str) -> Option<String> {
     let owner = parts.next()?;
     let repo = parts.next()?;
     let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    // A repository named `.git` alone is empty once the suffix is gone.
     let is_name = |part: &str| {
         !part.is_empty()
             && part
@@ -554,6 +554,7 @@ mod tests {
         assert_eq!(odd.wago_id.as_deref(), Some("short"));
         assert!(!is_wago_id("L6Jb2R6v9") && !is_wago_id("L6Jb-R6v"));
         assert!(is_number_id("1") && !is_number_id("12a") && !is_number_id("1234567890123"));
+        assert!(!is_number_id(""));
     }
 
     #[test]
@@ -569,7 +570,10 @@ mod tests {
             Some("v1.2.3")
         );
         assert!(is_packager_token(" @file-revision@ "));
+        assert!(is_packager_token("@file_revision@"));
         assert!(!is_packager_token("@@") && !is_packager_token("1.0 @beta@ x"));
+        assert!(!is_packager_token("@project-version"), "no closing @");
+        assert!(!is_packager_token("@a b@"), "a space is no token character");
     }
 
     #[test]
@@ -591,6 +595,13 @@ mod tests {
             ("https://github.com", None),
             ("https://owner.github.io/Repo", None),
             ("https://www.example.test/addon", None),
+            (
+                "https://github.com/some-owner/some_repo.v2",
+                Some("some-owner/some_repo.v2"),
+            ),
+            ("https://github.com/own er/Repo", None),
+            ("https://github.com/Owner/re@po", None),
+            ("https://github.com/Owner/.git", None),
         ] {
             assert_eq!(
                 github_repo_of_website(website).as_deref(),
@@ -638,6 +649,7 @@ mod tests {
         assert!(TocSuffix::Bcc.is_legacy() && TocSuffix::Wotlkc.is_legacy());
         assert!(!TocSuffix::Classic.is_legacy());
         assert_eq!(TocSuffix::Tbc.as_str(), "_TBC");
+        assert_eq!(TocSuffix::Tbc.to_string(), "_TBC");
         for suffix in TocSuffix::ALL {
             assert_eq!(TocSuffix::parse(&suffix.as_str()[1..]), Some(suffix));
         }

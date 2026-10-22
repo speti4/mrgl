@@ -623,7 +623,9 @@ UTF-8 blob, `CRED_PERSIST_LOCAL_MACHINE`: this user on this machine), through `w
 `Win32_Security_Credentials` (`CredReadW`, `CredWriteW`, `CredDeleteW`, `CredFree`), visible and removable
 under Control Panel, Credential Manager, Windows Credentials. Outside Windows the store is not available:
 reads find nothing and a write is refused (a key store there is M6). `MRGL_KEY_STORE=off` turns the store
-off for a run the same way.
+off for a run the same way, and `MRGL_KEY_STORE=folder:<path>` keeps the keys as files under that folder
+(`mrgl-<source>`, the key as the content), the tests' store, the mirror of `MRGL_HTTP_STUB`; any other value
+is the Credential Manager.
 
 `mrgl key set <source>` (`github`, `wago`, `curse`, a source's name, or the variable) reads the key from the
 standard input, all of it from a pipe (`Get-Clipboard | mrgl key set wago`) or one line from a terminal,

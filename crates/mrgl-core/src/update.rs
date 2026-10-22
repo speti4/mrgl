@@ -1126,6 +1126,168 @@ mod tests {
     }
 
     #[test]
+    fn no_managed_addon_is_nothing_to_update() {
+        let check = UpdateCheck {
+            addons: Vec::new(),
+            warnings: Vec::new(),
+            stopped: Vec::new(),
+        };
+        assert_eq!(
+            check.summary(SummaryOf::DryRun, "_forever_"),
+            (
+                Kind::Nothing,
+                "no managed addons in _forever_, nothing to update".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn an_addon_left_before_a_limit_without_a_spec_counts_under_the_plain_label() {
+        // A rate-limited addon whose source is no spec mrgl reads cannot be counted under a source.
+        let check = UpdateCheck {
+            addons: vec![AddonUpdate {
+                source: "C:\\Downloads\\Thing-1.0.0.zip".to_string(),
+                ..addon(UpdateState::RateLimited, None, None)
+            }],
+            warnings: Vec::new(),
+            stopped: Vec::new(),
+        };
+        assert_eq!(
+            check.summary(SummaryOf::Check, "_forever_").1,
+            "checked _forever_: 1 not checked (rate limit)"
+        );
+    }
+
+    #[test]
+    fn a_version_keeps_its_v_only_before_a_digit_and_an_empty_suffix_is_none() {
+        assert_eq!(split_suffix("v1.2.3-beta"), ("1.2.3", Some("beta")));
+        assert_eq!(split_suffix("vnext"), ("vnext", None));
+        assert_eq!(split_suffix("1.2.3-"), ("1.2.3", None));
+        assert_eq!(lenient_order("1.2.3-", "1.2.3"), Some(Ordering::Equal));
+    }
+
+    /// A source that answers one spec with one release, or with a file pending approval, and lists the
+    /// versions it is given.
+    struct StubSource {
+        current: &'static str,
+        pending: bool,
+        listed: Option<Vec<String>>,
+    }
+
+    impl Source for StubSource {
+        fn resolve(&self, spec: &SourceSpec, _target: &Target) -> Result<Pick> {
+            if self.pending {
+                return Err(Error::ReleasePending {
+                    spec: spec.to_string(),
+                    host: "WoWInterface",
+                });
+            }
+            Ok(pick(&spec.to_string(), self.current))
+        }
+
+        fn fetch(&self, _pick: &Pick, _to: &std::path::Path) -> Result<()> {
+            unreachable!("the check downloads nothing")
+        }
+
+        fn listed_versions(&self, _spec: &SourceSpec) -> Option<Vec<String>> {
+            self.listed.clone()
+        }
+    }
+
+    /// A forever flavor folder with no addons and its engine under a temporary home, with one entry in
+    /// its sidecar.
+    fn engine_with(name: &str, entry: Entry) -> (std::path::PathBuf, Engine) {
+        use crate::flavor::{BuildVersion, Flavor, FlavorId};
+        let base =
+            std::env::temp_dir().join(format!("mrgl-update-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let folder = base.join("game").join("_forever_");
+        let thing = scan::addons_dir(&folder).join("Thing");
+        std::fs::create_dir_all(&thing).expect("the folder");
+        std::fs::write(thing.join("Thing.toc"), "## Interface: 16001\n").expect("its TOC");
+        let flavor = Flavor {
+            id: FlavorId::Forever,
+            folder,
+            version: BuildVersion::parse("1.60.1.70245"),
+            version_source: None,
+            curse_client: false,
+            warnings: Vec::new(),
+        };
+        let engine = Engine::with_home(flavor, &base.join("home"));
+        let mut state = crate::state::State::new(&FlavorId::Forever);
+        state.addons.insert("Thing".to_string(), entry);
+        engine.home.write_state(&state).expect("the sidecar");
+        (base, engine)
+    }
+
+    fn entry(source: &str, version: &str) -> Entry {
+        Entry {
+            source: source.to_string(),
+            version: version.to_string(),
+            previous_version: None,
+            folders: vec!["Thing".to_string()],
+            files: std::collections::BTreeMap::new(),
+            installed_at: "2026-10-22T10:00:00Z".to_string(),
+            nolib: None,
+            pinned: None,
+            ignored: false,
+            channel: Channel::Stable,
+            forever_build: None,
+        }
+    }
+
+    #[test]
+    fn an_entry_whose_source_is_no_spec_is_not_checked() {
+        let (base, engine) = engine_with("no-spec", entry("something odd", "1.0.0"));
+        let source = StubSource {
+            current: "1.1.0",
+            pending: false,
+            listed: None,
+        };
+        let check = check(&engine, &source, None, &mut |_| {}).expect("checks");
+        assert_eq!(check.addons.len(), 1);
+        assert_eq!(check.addons[0].state, UpdateState::NotChecked);
+        assert_eq!(
+            check.addons[0].detail.as_deref(),
+            Some("not a source spec mrgl reads")
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_pinned_addon_whose_file_waits_for_approval_stays_pinned() {
+        let mut pinned = entry("wowi:1003", "1.0.0");
+        pinned.pin(None);
+        let (base, engine) = engine_with("pinned-pending", pinned);
+        let source = StubSource {
+            current: "1.1.0",
+            pending: true,
+            listed: None,
+        };
+        let check = check(&engine, &source, None, &mut |_| {}).expect("checks");
+        assert_eq!(check.addons[0].state, UpdateState::Pinned);
+        assert_eq!(check.addons[0].latest, None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_release_the_list_no_longer_names_is_ordered_leniently() {
+        // The installed version is in the source's list and the current one is not (a list cut short):
+        // the lenient order decides, and nothing says the installed version is unlisted.
+        let (base, engine) = engine_with("lenient", entry("github:Example/Thing", "1.0.0"));
+        let source = StubSource {
+            current: "2.0.0",
+            pending: false,
+            listed: Some(vec!["1.0.0".to_string()]),
+        };
+        let check = check(&engine, &source, None, &mut |_| {}).expect("checks");
+        assert_eq!(check.addons[0].state, UpdateState::UpdateAvailable);
+        assert_eq!(check.addons[0].order, Some(VersionOrder::Older));
+        assert_eq!(check.addons[0].detail, None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn a_pending_file_is_counted_apart_and_needs_no_look() {
         let check = UpdateCheck {
             addons: vec![
@@ -1148,6 +1310,30 @@ mod tests {
         );
     }
 
+    /// A pick of a source, as a check would have made it.
+    fn pick(source: &str, version: &str) -> Pick {
+        Pick {
+            source: source.to_string(),
+            release: format!("v{version}"),
+            version: version.to_string(),
+            published: None,
+            prerelease: false,
+            asset: "Some-Asset.zip".to_string(),
+            url: "https://github.test/Some-Asset.zip".to_string(),
+            size: None,
+            md5: None,
+            flavor: "forever".to_string(),
+            interface: Some(16001),
+            guess: false,
+            reason: "release.json names forever (interface 16001)".to_string(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: crate::forever::ForeverBuild::Unknown,
+            stale: None,
+        }
+    }
+
     #[test]
     fn only_an_available_update_has_a_request() {
         assert!(
@@ -1156,6 +1342,17 @@ mod tests {
                 .is_none(),
             "no pick, no request"
         );
+        let mut available = addon(UpdateState::UpdateAvailable, Some("1.1.0"), None);
+        available.pick = Some(pick("github:Example/Thing", "1.1.0"));
+        let request = available
+            .request()
+            .expect("a pick and the state: a request");
+        assert_eq!(request.spec.to_string(), "github:Example/Thing");
+        assert_eq!(request.name.as_deref(), Some("Thing"));
+        assert!(matches!(&request.wanted, Wanted::Pick(pick) if pick.version == "1.1.0"));
+        // An entry whose source is no spec (a zip in hand) has no request, whatever the pick says.
+        available.source = "C:\\Downloads\\Thing-1.0.0.zip".to_string();
+        assert!(available.request().is_none());
         assert!(
             addon(UpdateState::GuessOnly, Some("2.0.0"), None)
                 .request()

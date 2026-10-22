@@ -154,7 +154,7 @@ impl RootLookup for SystemLookup {
     }
 
     fn common_folders(&self) -> Vec<PathBuf> {
-        system::common_folders()
+        system::common_folders(&|name| std::env::var_os(name))
     }
 }
 
@@ -417,13 +417,25 @@ pub struct Resolution {
 /// remembered root), then the discovery through the lookup `MRGL_DISCOVERY` names (the system by
 /// default). The error is a config that cannot be read.
 pub fn resolve_root_of_process(flag: Option<PathBuf>) -> Result<Resolution> {
+    resolve_root_from(flag, &|name| std::env::var_os(name), home::read_config)
+}
+
+/// [`resolve_root_of_process`] over an environment reader and a config reader given explicitly:
+/// `MRGL_ROOT` and `MRGL_DISCOVERY` come from `env`, the remembered root from `read_config` (read only
+/// when the flag and the variable name nothing; [`Error::NoHome`] is no remembered root, its warning is
+/// kept, any other error is the result).
+pub fn resolve_root_from(
+    flag: Option<PathBuf>,
+    env: &dyn Fn(&str) -> Option<OsString>,
+    read_config: impl FnOnce() -> Result<home::LoadedConfig>,
+) -> Result<Resolution> {
     let mut warnings = Vec::new();
     let mut failure = None;
-    let lookup = lookup_from_env(std::env::var_os(DISCOVERY_ENV).as_deref());
+    let lookup = lookup_from_env(env(DISCOVERY_ENV).as_deref());
     let root = resolve_root(
         flag,
-        std::env::var_os(ROOT_ENV).as_deref(),
-        || match home::read_config() {
+        env(ROOT_ENV).as_deref(),
+        || match read_config() {
             Ok(loaded) => {
                 warnings.extend(loaded.warning);
                 loaded.config.root
@@ -454,7 +466,7 @@ mod system {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::path::PathBuf;
 
-    use windows_sys::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::System::Environment::ExpandEnvironmentStringsW;
     use windows_sys::Win32::System::Registry::{
         HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
@@ -503,8 +515,10 @@ mod system {
             // (none with a null pointer, which asks for the size only).
             let needed =
                 unsafe { ExpandEnvironmentStringsW(source.as_ptr(), destination, capacity) };
+            // coverage: os-begin — the call's own failure
             if needed == 0 {
                 return None;
+                // coverage: os-end
             }
             if needed <= capacity {
                 // `needed` counts the terminating NUL.
@@ -513,7 +527,7 @@ mod system {
             }
             capacity = needed;
         }
-        None
+        None // coverage: os — a value that grew on every round
     }
 
     pub(super) fn registry_dword(hive: Hive, key: &str, value: &str) -> Option<u32> {
@@ -534,7 +548,8 @@ mod system {
                 &mut size,
             )
         };
-        (status == ERROR_SUCCESS && kind == REG_DWORD && size == 4).then_some(data)
+        // A REG_DWORD that fits the four bytes is one: a size check would be a condition nothing reaches.
+        (status == ERROR_SUCCESS && kind == REG_DWORD).then_some(data)
     }
 
     /// The key opened for reading, closed when the handle drops; `None` when it is not there.
@@ -565,7 +580,9 @@ mod system {
                 &mut size,
             )
         };
-        if status != ERROR_SUCCESS && status != ERROR_MORE_DATA {
+        // With a null buffer the size query answers ERROR_SUCCESS, never ERROR_MORE_DATA (the API's
+        // contract), so success is the one status to go on with.
+        if status != ERROR_SUCCESS {
             return None;
         }
         if kind != REG_SZ && kind != REG_EXPAND_SZ {
@@ -585,8 +602,10 @@ mod system {
                 &mut size,
             )
         };
+        // coverage: os-begin — a read that fails after the size query passed
         if status != ERROR_SUCCESS {
             return None;
+            // coverage: os-end
         }
         buffer.truncate((size as usize) / 2);
         while buffer.last() == Some(&0) {
@@ -601,9 +620,11 @@ mod system {
         })
     }
 
-    pub(super) fn common_folders() -> Vec<PathBuf> {
+    /// The game folder under `ProgramFiles(x86)` and `ProgramFiles` as `env` reads them, each with its
+    /// `C:` default when unset or empty, once when the two are the same folder.
+    pub(super) fn common_folders(env: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
         let program_files = |name: &str, default: &str| {
-            std::env::var_os(name)
+            env(name)
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(default))
@@ -645,7 +666,7 @@ mod system {
         None
     }
 
-    pub(super) fn common_folders() -> Vec<PathBuf> {
+    pub(super) fn common_folders(_env: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
         Vec::new()
     }
 }
@@ -1041,6 +1062,377 @@ mod tests {
                 .to_lowercase()
                 .contains("program files")),
             "{folders:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_usual_folders_come_from_the_variables_with_their_defaults() {
+        let env_of = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| OsString::from(value))
+            }
+        };
+        assert_eq!(
+            system::common_folders(&env_of(&[])),
+            [
+                PathBuf::from(r"C:\Program Files (x86)\World of Warcraft"),
+                PathBuf::from(r"C:\Program Files\World of Warcraft"),
+            ],
+            "unset: the defaults"
+        );
+        assert_eq!(
+            system::common_folders(&env_of(&[("ProgramFiles(x86)", ""), ("ProgramFiles", "")])),
+            system::common_folders(&env_of(&[])),
+            "empty: the defaults"
+        );
+        assert_eq!(
+            system::common_folders(&env_of(&[
+                ("ProgramFiles(x86)", r"D:\Apps"),
+                ("ProgramFiles", r"D:\Apps")
+            ])),
+            [PathBuf::from(r"D:\Apps\World of Warcraft")],
+            "the same folder twice is tried once"
+        );
+        assert_eq!(
+            system::common_folders(&env_of(&[("ProgramFiles", r"D:\Apps")])),
+            [
+                PathBuf::from(r"C:\Program Files (x86)\World of Warcraft"),
+                PathBuf::from(r"D:\Apps\World of Warcraft"),
+            ]
+        );
+    }
+
+    /// A lookup that leaves the trait's default for the Uninstall entry.
+    struct Bare;
+
+    impl RootLookup for Bare {
+        fn launcher_install_path(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn common_folders(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn a_lookup_without_an_uninstall_entry_reads_none_by_default() {
+        assert!(Bare.uninstall_locations().is_empty());
+        assert_eq!(discover_root(&Bare), None);
+    }
+
+    #[test]
+    fn every_origin_has_a_description() {
+        assert_eq!(RootOrigin::Flag.description(), "--root");
+        assert_eq!(RootOrigin::Environment.description(), "MRGL_ROOT");
+        assert_eq!(RootOrigin::Remembered.description(), "remembered");
+        assert_eq!(
+            RootOrigin::Registry.description(),
+            "the launcher's registry key"
+        );
+        assert_eq!(
+            RootOrigin::UninstallEntry.description(),
+            "the game's Uninstall registry entry"
+        );
+        assert_eq!(
+            RootOrigin::CommonFolder.description(),
+            "a usual install folder"
+        );
+    }
+
+    #[test]
+    fn the_discovery_variable_picks_the_system_or_a_stub() {
+        let system = lookup_from_env(None);
+        assert_eq!(system.common_folders(), SystemLookup.common_folders());
+        assert_eq!(
+            system.launcher_install_path(),
+            SystemLookup.launcher_install_path()
+        );
+        let off = lookup_from_env(Some(OsStr::new("off")));
+        assert!(off.common_folders().is_empty());
+        assert_eq!(off.launcher_install_path(), None);
+        assert!(off.uninstall_locations().is_empty());
+        // An empty item between two separators is skipped; an empty candidate is no root.
+        assert_eq!(
+            parse_lookup(Some(OsStr::new("Q:\\one;;Q:\\two"))).map(|lookup| lookup.folders),
+            Some(vec![PathBuf::from("Q:\\one"), PathBuf::from("Q:\\two")])
+        );
+        assert_eq!(discover_root(&lookup(Some(PathBuf::new()), &[])), None);
+    }
+
+    #[test]
+    fn the_remembered_root_comes_from_the_config_and_its_failures_are_told() {
+        let env_of = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| OsString::from(value))
+            }
+        };
+        let off = env_of(&[("MRGL_DISCOVERY", "off")]);
+        let remembered = || {
+            Ok(home::LoadedConfig {
+                config: home::Config {
+                    root: Some(PathBuf::from("Q:\\remembered")),
+                },
+                warning: None,
+            })
+        };
+        let resolution = resolve_root_from(None, &off, remembered).expect("resolves");
+        assert_eq!(
+            resolution.root,
+            Some(GameRoot {
+                path: PathBuf::from("Q:\\remembered"),
+                origin: RootOrigin::Remembered,
+            })
+        );
+        assert!(resolution.warnings.is_empty());
+
+        // A corrupt config: its warning is kept, and the discovery (off here) answers.
+        let corrupt = || {
+            Ok(home::LoadedConfig {
+                config: home::Config::default(),
+                warning: Some("unreadable config: Q:\\config.json: trailing".to_string()),
+            })
+        };
+        let resolution = resolve_root_from(None, &off, corrupt).expect("resolves");
+        assert_eq!(resolution.root, None);
+        assert_eq!(
+            resolution.warnings,
+            ["unreadable config: Q:\\config.json: trailing"]
+        );
+
+        // No home folder is no remembered root and no warning; the stub finds the fixtures.
+        let stub = env_of(&[("MRGL_DISCOVERY", "registry=Q:\\no\\such")]);
+        let no_home = || Err(Error::NoHome);
+        let resolution = resolve_root_from(None, &stub, no_home).expect("resolves");
+        assert_eq!(resolution, Resolution::default());
+        let found = |name: &str| (name == DISCOVERY_ENV).then(|| fixtures().into_os_string());
+        let resolution = resolve_root_from(None, &found, no_home).expect("resolves");
+        assert_eq!(
+            resolution.root.map(|root| root.origin),
+            Some(RootOrigin::CommonFolder)
+        );
+
+        // A config that cannot be read is the error.
+        let unreadable = || {
+            Err(Error::Io {
+                context: "reading the config",
+                path: PathBuf::from("Q:\\config.json"),
+                source: std::io::Error::other("locked"),
+            })
+        };
+        let error = resolve_root_from(None, &off, unreadable).expect_err("the error");
+        assert_eq!(
+            error.to_string(),
+            "reading the config: Q:\\config.json: locked"
+        );
+
+        // The flag and the variable come first: the config is not read.
+        let not_read = || panic!("the config is not read");
+        let named = env_of(&[("MRGL_ROOT", "Q:\\named"), ("MRGL_DISCOVERY", "off")]);
+        let resolution = resolve_root_from(None, &named, not_read).expect("resolves");
+        assert_eq!(
+            resolution.root.map(|root| (root.path, root.origin)),
+            Some((PathBuf::from("Q:\\named"), RootOrigin::Environment))
+        );
+        let resolution =
+            resolve_root_from(Some(PathBuf::from("Q:\\flag")), &off, not_read).expect("resolves");
+        assert_eq!(
+            resolution.root.map(|root| root.origin),
+            Some(RootOrigin::Flag)
+        );
+    }
+
+    /// The key under `HKEY_LOCAL_MACHINE` with the Windows version: `ProductName` (`REG_SZ`) and
+    /// `CurrentMajorVersionNumber` (`REG_DWORD`) are there on every Windows 10 and 11.
+    #[cfg(windows)]
+    const VERSION_KEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+    /// The system's environment, whose `TEMP` is a `REG_EXPAND_SZ`.
+    #[cfg(windows)]
+    const ENVIRONMENT_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment";
+
+    #[cfg(windows)]
+    #[test]
+    fn the_registry_reads_a_string_an_expandable_string_and_a_dword() {
+        let name =
+            registry_text(Hive::LocalMachine, VERSION_KEY, "ProductName").expect("ProductName");
+        assert!(!name.expandable);
+        assert!(
+            name.text.to_string_lossy().starts_with("Windows"),
+            "{name:?}"
+        );
+        assert_eq!(
+            registry_string(Hive::LocalMachine, VERSION_KEY, "ProductName"),
+            Some(name.text)
+        );
+        let temp = registry_text(Hive::LocalMachine, ENVIRONMENT_KEY, "TEMP").expect("TEMP");
+        assert!(temp.expandable, "{temp:?}");
+        let expanded = registry_path(temp.clone(), expand_environment).expect("expands");
+        assert_ne!(expanded, PathBuf::from(&temp.text));
+        assert!(!expanded.to_string_lossy().contains('%'), "{expanded:?}");
+        let major = registry_dword(Hive::LocalMachine, VERSION_KEY, "CurrentMajorVersionNumber");
+        assert_eq!(major, Some(10), "Windows 10 and 11 both say 10");
+        // Asked as the other type, a value is nothing.
+        assert_eq!(
+            registry_string(Hive::LocalMachine, VERSION_KEY, "CurrentMajorVersionNumber"),
+            None,
+            "a dword is no string"
+        );
+        assert_eq!(
+            registry_dword(Hive::LocalMachine, VERSION_KEY, "ProductName"),
+            None,
+            "a string is no dword"
+        );
+        assert_eq!(
+            registry_dword(Hive::LocalMachine, VERSION_KEY, "DigitalProductId"),
+            None,
+            "a binary is no dword"
+        );
+        assert_eq!(
+            registry_string(Hive::LocalMachine, VERSION_KEY, "DigitalProductId"),
+            None,
+            "a binary is no string"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_missing_key_or_value_reads_as_none_in_both_hives() {
+        for hive in [Hive::LocalMachine, Hive::CurrentUser] {
+            assert_eq!(
+                registry_string(hive, r"Software\mrgl-no-such-key-020", "x"),
+                None
+            );
+            assert_eq!(
+                registry_dword(hive, r"Software\mrgl-no-such-key-020", "x"),
+                None
+            );
+        }
+        assert_eq!(
+            registry_string(Hive::LocalMachine, VERSION_KEY, "MrglNoSuchValue020"),
+            None
+        );
+        assert_eq!(
+            registry_dword(Hive::LocalMachine, VERSION_KEY, "MrglNoSuchValue020"),
+            None
+        );
+    }
+
+    /// A key under `HKEY_CURRENT_USER\Software` written by `reg.exe` for one test (a spawned system
+    /// exe, as the client tests spawn `ping.exe`) and deleted on drop.
+    #[cfg(windows)]
+    struct TestKey {
+        reg: PathBuf,
+        name: String,
+    }
+
+    #[cfg(windows)]
+    impl TestKey {
+        /// `None` when the system folder has no `reg.exe`; the test is then skipped with a message.
+        fn new(suffix: &str) -> Option<TestKey> {
+            let reg = PathBuf::from(std::env::var_os("SystemRoot")?)
+                .join("System32")
+                .join("reg.exe");
+            if !reg.is_file() {
+                return None;
+            }
+            let name = format!("Software\\mrgl-test-{}-{suffix}", std::process::id());
+            let key = TestKey { reg, name };
+            key.run(&["delete", &key.path(), "/f"]);
+            Some(key)
+        }
+
+        fn path(&self) -> String {
+            format!("HKCU\\{}", self.name)
+        }
+
+        fn run(&self, args: &[&str]) -> bool {
+            std::process::Command::new(&self.reg)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        }
+
+        fn add(&self, value: &str, kind: &str, data: &str) {
+            assert!(
+                self.run(&[
+                    "add",
+                    &self.path(),
+                    "/v",
+                    value,
+                    "/t",
+                    kind,
+                    "/d",
+                    data,
+                    "/f"
+                ]),
+                "reg add {value}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for TestKey {
+        fn drop(&mut self) {
+            self.run(&["delete", &self.path(), "/f"]);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_empty_string_value_reads_as_none_and_a_short_string_is_no_dword() {
+        let Some(key) = TestKey::new("values") else {
+            eprintln!("skipped: no reg.exe in the system folder to write the test key");
+            return;
+        };
+        key.add("Empty", "REG_SZ", "");
+        key.add("Short", "REG_SZ", "a");
+        key.add("Expand", "REG_EXPAND_SZ", "%SystemRoot%\\mrgl");
+        key.add("Number", "REG_DWORD", "42");
+        assert_eq!(registry_string(Hive::CurrentUser, &key.name, "Empty"), None);
+        assert_eq!(
+            registry_string(Hive::CurrentUser, &key.name, "Short"),
+            Some(OsString::from("a"))
+        );
+        // Four bytes with the type of a string: the size fits a dword, the type says no.
+        assert_eq!(registry_dword(Hive::CurrentUser, &key.name, "Short"), None);
+        assert_eq!(
+            registry_text(Hive::CurrentUser, &key.name, "Expand"),
+            Some(RegistryText {
+                text: OsString::from("%SystemRoot%\\mrgl"),
+                expandable: true,
+            })
+        );
+        assert_eq!(
+            registry_dword(Hive::CurrentUser, &key.name, "Number"),
+            Some(42)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_launcher_and_the_uninstall_entry_are_read_from_the_registry() {
+        // Whether the game is installed on this machine is not the test's to know: a value found is a
+        // path as written in the registry, absolute.
+        let lookup = SystemLookup;
+        if let Some(path) = lookup.launcher_install_path() {
+            assert!(path.is_absolute(), "{path:?}");
+        }
+        for path in lookup.uninstall_locations() {
+            assert!(path.is_absolute(), "{path:?}");
+        }
+        assert_eq!(
+            lookup.launcher_install_path(),
+            system_path(Hive::LocalMachine, LAUNCHER_KEY, LAUNCHER_VALUE)
         );
     }
 }

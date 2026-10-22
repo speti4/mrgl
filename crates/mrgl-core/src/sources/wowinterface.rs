@@ -434,9 +434,11 @@ impl<H: Http> WowInterface<H> {
             },
         };
         let list = Arc::new(list);
-        if let Ok(mut held) = self.file_list.lock() {
-            *held = Some(Arc::clone(&list));
-        }
+        // A poisoned lock (a panic while the list was being kept) still holds the slot.
+        *self
+            .file_list
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&list));
         Ok(list)
     }
 
@@ -717,6 +719,7 @@ impl<H: Http> Source for WowInterface<H> {
 mod tests {
     use super::*;
     use crate::flavor::BuildVersion;
+    use crate::sources::MapHttp;
 
     fn target(flavor: FlavorId, version: Option<&str>) -> Target {
         Target {
@@ -780,8 +783,13 @@ mod tests {
         // Titan's 3.80 is not Wrath's 3.4, and Mists is listed nowhere.
         assert_eq!(pick(FlavorId::Classic, Some("3.80.2.1")), None);
         assert_eq!(pick(FlavorId::Classic, Some("5.5.4.70531")), None);
-        // Without a build every classic entry fits, the newest first, and the game type is a guess.
+        // Without a build every classic entry fits, the newest first, and the game type is a guess; so
+        // with a build of no game type the list can name.
         assert_eq!(pick(FlavorId::Classic, None), Some(("4.4.2", true)));
+        assert_eq!(
+            pick(FlavorId::Classic, Some("9.0.0.1")),
+            Some(("4.4.2", true))
+        );
         // No project lists Forever today: no entry, a guess.
         assert_eq!(pick(FlavorId::Forever, Some("1.60.1.70245")), None);
         assert_eq!(pick(FlavorId::Other("wow_x".into()), None), None);
@@ -877,5 +885,287 @@ mod tests {
             serde_json::from_str(r#"{"UID":"1","UIMD5":"abc","UIPending":"0"}"#).expect("details");
         assert_eq!(short.md5_hex(), None);
         assert!(!short.is_pending());
+        // A field of another type than a string or a number reads as none; the id must be one.
+        let odd: FileDetails =
+            serde_json::from_str(r#"{"UID":1,"UIPending":true,"UIDate":true}"#).expect("details");
+        assert_eq!((odd.pending, odd.date), (None, None));
+        let error = serde_json::from_str::<FileDetails>(r#"{"UID":true}"#).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("expected a string or a number, found true"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_flavor_key_of_a_classic_entry_is_the_packagers() {
+        for (version, build, key) in [
+            ("5.5.0", "5.5.4.70531", "mists"),
+            ("4.4.2", "4.4.2.60000", "cata"),
+            ("3.4.3", "3.4.5.1", "wrath"),
+            ("2.5.4", "2.5.6.1", "bcc"),
+        ] {
+            let listing = Listing {
+                compatibility: entries(&[version]),
+                ..Listing::default()
+            };
+            let (flavor, guess, _) =
+                choose(Ok(Some(&listing)), &target(FlavorId::Classic, Some(build)));
+            assert_eq!((flavor.as_str(), guess), (key, false), "{version}");
+        }
+    }
+
+    const DETAILS_URL: &str = "https://api.mmoui.com/v3/game/WOW/filedetails/1.json";
+    const FILE_LIST_URL: &str = "https://api.mmoui.com/v3/game/WOW/filelist.json";
+    const FILE_LIST: &str =
+        r#"[{"UID":"1","UICompatibility":[{"version":"4.4.2","name":"Cata"}],"UIDir":["A"]}]"#;
+
+    fn spec() -> SourceSpec {
+        SourceSpec::WowInterface { id: "1".into() }
+    }
+
+    fn retail() -> Target {
+        target(FlavorId::Retail, None)
+    }
+
+    /// A temporary cache folder of one test, removed before use and when the guard drops.
+    struct TempCache(PathBuf);
+
+    impl TempCache {
+        fn new(name: &str) -> TempCache {
+            let dir =
+                std::env::temp_dir().join(format!("mrgl-wowi-unit-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            TempCache(dir)
+        }
+
+        fn plant(&self, file: &str, body: &str) {
+            std::fs::write(self.0.join(file), body).unwrap();
+        }
+    }
+
+    impl Drop for TempCache {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A pick of `wowi:1` for a download test.
+    fn test_pick(url: &str) -> Pick {
+        Pick {
+            source: "wowi:1".into(),
+            release: "v1".into(),
+            version: "1".into(),
+            published: None,
+            prerelease: false,
+            asset: "A-1.zip".into(),
+            url: url.into(),
+            size: None,
+            md5: None,
+            flavor: "mainline".into(),
+            interface: None,
+            guess: true,
+            reason: String::new(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: ForeverBuild::Unknown,
+            stale: None,
+        }
+    }
+
+    #[test]
+    fn an_answer_that_is_no_project_list_or_no_json_and_a_status_are_errors() {
+        let resolve = |http: MapHttp| {
+            WowInterface::new(http, None)
+                .resolve(&spec(), &retail())
+                .unwrap_err()
+        };
+        let error = resolve(MapHttp::new().answer(DETAILS_URL, 200, "{ not")).to_string();
+        assert!(
+            error.starts_with("unreadable file details from wowi:1: "),
+            "{error}"
+        );
+        let error =
+            resolve(MapHttp::new().answer(DETAILS_URL, 200, "[{\"UID\":true}]")).to_string();
+        assert!(
+            error.starts_with(
+                "unreadable file details from wowi:1: expected a string or a number, found true"
+            ),
+            "{error}"
+        );
+        let error = resolve(MapHttp::new().answer(DETAILS_URL, 200, "[]"));
+        assert!(matches!(error, Error::NoRelease { .. }), "{error}");
+        // A project whose answer names no file.
+        let error = resolve(MapHttp::new().answer(
+            DETAILS_URL,
+            200,
+            "[{\"UID\":\"1\",\"UIVersion\":\"v1\"}]",
+        ));
+        assert!(matches!(error, Error::NoRelease { .. }), "{error}");
+        // A download without a file name is no file either.
+        let error = resolve(MapHttp::new().answer(
+            DETAILS_URL,
+            200,
+            "[{\"UID\":\"1\",\"UIVersion\":\"v1\",\"UIDownload\":\"https://x.test/a\"}]",
+        ));
+        assert!(matches!(error, Error::NoRelease { .. }), "{error}");
+        for (status, hint) in [
+            (503, "the server has a problem; try again later"),
+            (418, "an unexpected status"),
+        ] {
+            let error = resolve(MapHttp::new().answer(DETAILS_URL, status, "")).to_string();
+            assert_eq!(
+                error,
+                format!("WoWInterface answered {status} for {DETAILS_URL}: {hint}")
+            );
+        }
+        // An error of the client that is not the network's is never answered from the cache.
+        let error = resolve(MapHttp::new().broken(DETAILS_URL));
+        assert!(matches!(error, Error::Io { .. }), "{error}");
+    }
+
+    #[test]
+    fn a_file_list_cached_without_a_date_is_read_again_and_stands_in_offline() {
+        let cache = TempCache::new("list-date");
+        let stale = r#"{"checked_at":null,"projects":{"9":{"compatibility":[],"dirs":["Old"],"page":null}}}"#;
+        cache.plant(FILE_LIST_CACHE, stale);
+        let http = MapHttp::new().answer(FILE_LIST_URL, 200, FILE_LIST);
+        let wowi = WowInterface::new(http, Some(cache.0.clone()));
+        let list = wowi.file_list().expect("the list");
+        assert!(list.projects.contains_key("1") && !list.projects.contains_key("9"));
+        assert_eq!(wowi.http().requests().len(), 1);
+        // The list held for the run answers the offline listing without reading the cache.
+        assert_eq!(
+            wowi.cached_listing("1").map(|listing| listing.dirs),
+            Some(vec!["A".to_string()])
+        );
+        assert_eq!(wowi.cached_listing("9"), None);
+        // Offline, the cached list of any age stands.
+        cache.plant(FILE_LIST_CACHE, stale);
+        let offline = WowInterface::new(
+            MapHttp::new().offline(FILE_LIST_URL, "no network"),
+            Some(cache.0.clone()),
+        );
+        assert_eq!(
+            offline
+                .listing("9")
+                .expect("the stale list")
+                .map(|listing| listing.dirs),
+            Some(vec!["Old".to_string()])
+        );
+        // Offline without a cached list the error stands.
+        let bare = WowInterface::new(MapHttp::new().offline(FILE_LIST_URL, "no network"), None);
+        let error = bare.file_list().unwrap_err();
+        assert!(matches!(error, Error::Network { .. }), "{error}");
+    }
+
+    #[test]
+    fn a_file_list_that_is_no_json_or_a_status_is_an_error() {
+        let error = WowInterface::new(MapHttp::new().answer(FILE_LIST_URL, 404, ""), None)
+            .file_list()
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!("WoWInterface answered 404 for {FILE_LIST_URL}: no file list there")
+        );
+        let error = WowInterface::new(MapHttp::new().answer(FILE_LIST_URL, 200, "{ not"), None)
+            .file_list()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("unreadable file list from wowi:: "),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_offer_says_what_the_list_cannot_tell() {
+        let wowi = WowInterface::new(MapHttp::new().answer(FILE_LIST_URL, 200, FILE_LIST), None);
+        let wago = SourceSpec::parse("wago:abc").unwrap();
+        let offer = wowi.offers(&wago, &retail());
+        assert_eq!(
+            (offer.build, offer.why.as_str()),
+            (Offered::Unknown, NOT_WOWI)
+        );
+        assert_eq!(
+            wowi.cached_forever_build(&wago, Channel::Stable),
+            ForeverBuild::Unknown
+        );
+        let offer = wowi.offers(&SourceSpec::WowInterface { id: "9".into() }, &retail());
+        assert_eq!(
+            (offer.build, offer.why.as_str()),
+            (
+                Offered::Unknown,
+                "the file list of WoWInterface does not have the project"
+            )
+        );
+        // The progressing classic without a build: a classic entry, the game type a guess.
+        let offer = wowi.offers(&spec(), &target(FlavorId::Classic, None));
+        assert_eq!(
+            (offer.build, offer.why.as_str()),
+            (
+                Offered::Unknown,
+                "WoWInterface lists compatibility 4.4.2; the installed build is unknown, so the game type is a guess"
+            )
+        );
+        // A list that cannot be read.
+        let offline = WowInterface::new(MapHttp::new().offline(FILE_LIST_URL, "no network"), None);
+        let offer = offline.offers(&spec(), &retail());
+        assert_eq!(
+            (offer.build, offer.why.as_str()),
+            (
+                Offered::Unknown,
+                "cannot reach https://api.mmoui.com/v3/game/WOW/filelist.json: no network"
+            )
+        );
+    }
+
+    #[test]
+    fn a_download_that_is_missing_or_refused_or_cannot_be_written_is_an_error() {
+        let url = "https://cdn.wowinterface.com/downloads/getfile.php?id=1";
+        let fetch =
+            |http: MapHttp, to: &Path| WowInterface::new(http, None).fetch(&test_pick(url), to);
+        let cache = TempCache::new("download");
+        let to = cache.0.join("nested").join("A-1.zip");
+        let error = fetch(MapHttp::new(), &to).unwrap_err();
+        assert!(matches!(error, Error::AssetMissing { .. }), "{error}");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "the asset A-1.zip of wowi:1 v1 is missing: WoWInterface answered 404 for {url} (removed or renamed after the release was listed)"
+            )
+        );
+        let error = fetch(MapHttp::new().answer(url, 500, ""), &to)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!(
+                "WoWInterface answered 500 for {url}: the server has a problem; try again later"
+            )
+        );
+        fetch(MapHttp::new().answer(url, 200, "zip"), &to).expect("fetched");
+        assert_eq!(std::fs::read(&to).unwrap(), b"zip");
+        // A file where the download folder would be, and an empty path that cannot be written.
+        let file = cache.0.join("a-file");
+        std::fs::write(&file, b"").unwrap();
+        let error = fetch(
+            MapHttp::new().answer(url, 200, "zip"),
+            &file.join("A-1.zip"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.starts_with("creating the download folder: "),
+            "{error}"
+        );
+        let error = fetch(MapHttp::new().answer(url, 200, "zip"), Path::new(""))
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with("writing the download: "), "{error}");
     }
 }

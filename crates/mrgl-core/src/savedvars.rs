@@ -286,6 +286,7 @@ struct Place<'a> {
     character: Option<&'a str>,
 }
 
+// coverage: os-begin — built only by the arms below that the operating system alone provokes
 fn io_error(context: &'static str, path: &Path, source: io::Error) -> Error {
     Error::Io {
         context,
@@ -293,6 +294,7 @@ fn io_error(context: &'static str, path: &Path, source: io::Error) -> Error {
         source,
     }
 }
+// coverage: os-end
 
 /// One `.lua` and one `.lua.bak` of an addon, as found in a folder.
 #[derive(Default)]
@@ -316,8 +318,15 @@ fn collect(
         }
         Ok(metadata) if metadata.is_dir() => {}
         Ok(_) => return Ok(()),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => return Err(io_error("reading WTF", dir, source)),
+        Err(source) => {
+            // A character without the folder is the usual case; any other failure is the system's.
+            // coverage: os-begin
+            if source.kind() != io::ErrorKind::NotFound {
+                return Err(io_error("reading WTF", dir, source));
+                // coverage: os-end
+            }
+            return Ok(());
+        }
     }
     let entries = fs::read_dir(dir).map_err(|source| io_error("reading WTF", dir, source))?;
     let mut pairs: BTreeMap<String, Pair> = BTreeMap::new();
@@ -330,7 +339,7 @@ fn collect(
         };
         let file_type = entry
             .file_type()
-            .map_err(|source| io_error("reading WTF", &path, source))?;
+            .map_err(|source| io_error("reading WTF", &path, source))?; // coverage: os
         if file_type.is_symlink() {
             warnings.push(link_warning(&path));
             continue;
@@ -340,7 +349,7 @@ fn collect(
         }
         let bytes = entry
             .metadata()
-            .map_err(|source| io_error("reading WTF", &path, source))?
+            .map_err(|source| io_error("reading WTF", &path, source))? // coverage: os
             .len();
         let pair = pairs.entry(addon.to_lowercase()).or_default();
         let found = Some((addon.to_string(), path, bytes));
@@ -763,5 +772,305 @@ mod tests {
         assert_eq!(json["status"], "orphan");
         assert_eq!(json["realm"], "Some Realm");
         assert_eq!(json["account"], "ACC", "the account stays in the JSON");
+    }
+
+    /// A temporary folder under the system temp dir, removed before use and when dropped.
+    struct Temp(PathBuf);
+
+    impl Temp {
+        fn new(name: &str) -> Temp {
+            let dir =
+                std::env::temp_dir().join(format!("mrgl-savedvars-{}-{name}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).expect("the folder");
+            Temp(dir)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// `WTF\Account\<account>[\<realm>\<character>]\SavedVariables`, created.
+    fn saved_variables(wtf: &Path, account: &str, character: Option<(&str, &str)>) -> PathBuf {
+        let mut dir = wtf.join("Account").join(account);
+        if let Some((realm, name)) = character {
+            dir = dir.join(realm).join(name);
+        }
+        let dir = dir.join(SAVED_VARIABLES_DIR);
+        fs::create_dir_all(&dir).expect("the folder");
+        dir
+    }
+
+    #[test]
+    fn files_of_one_size_sort_by_account_realm_character_and_addon() {
+        let temp = Temp::new("sort");
+        let wtf = temp.path().join("WTF");
+        let account_a = saved_variables(&wtf, "A", None);
+        let account_b = saved_variables(&wtf, "B", None);
+        let char_one = saved_variables(&wtf, "A", Some(("Realm", "One")));
+        let char_two = saved_variables(&wtf, "A", Some(("Realm", "Two")));
+        let other_realm = saved_variables(&wtf, "A", Some(("Other", "One")));
+        for (dir, name) in [
+            (&account_b, "Bb.lua"),
+            (&char_two, "Dd.lua"),
+            (&other_realm, "Cc.lua"),
+            (&char_one, "Cc.lua"),
+            (&account_a, "zz.lua"),
+            (&account_a, "Aa.lua"),
+        ] {
+            fs::write(dir.join(name), b"ten bytes!").expect("a file");
+        }
+        fs::write(account_a.join("Big.lua"), b"eleven bytes").expect("a file");
+        let listing = list_at(&wtf, None, Vec::new()).expect("a listing");
+        let order: Vec<String> = listing
+            .files
+            .iter()
+            .map(|file| format!("{} {} {}", file.account, file.place(), file.addon))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "A account-wide Big",
+                "A account-wide Aa",
+                "A account-wide zz",
+                "A Other / One Cc",
+                "A Realm / One Cc",
+                "A Realm / Two Dd",
+                "B account-wide Bb",
+            ]
+        );
+        assert!(listing.warnings.is_empty(), "{:?}", listing.warnings);
+    }
+
+    #[test]
+    fn a_saved_variables_folder_that_is_a_file_and_an_entry_that_is_a_folder_are_passed_over() {
+        let temp = Temp::new("shapes");
+        let wtf = temp.path().join("WTF");
+        let account = saved_variables(&wtf, "ACC", None);
+        fs::write(account.join("Real.lua"), b"x").expect("a file");
+        fs::create_dir_all(account.join("Folder.lua")).expect("a folder with the name");
+        let character = wtf.join("Account").join("ACC").join("Realm").join("Char");
+        fs::create_dir_all(&character).expect("the character");
+        fs::write(character.join(SAVED_VARIABLES_DIR), b"a file, not a folder").expect("a file");
+        let listing = list_at(&wtf, None, Vec::new()).expect("a listing");
+        let names: Vec<&str> = listing
+            .files
+            .iter()
+            .map(|file| file.addon.as_str())
+            .collect();
+        assert_eq!(names, ["Real"]);
+        assert!(listing.warnings.is_empty(), "{:?}", listing.warnings);
+    }
+
+    #[test]
+    fn a_character_without_a_saved_variables_folder_is_passed_over_without_a_warning() {
+        let temp = Temp::new("no-folder");
+        let wtf = temp.path().join("WTF");
+        let account = saved_variables(&wtf, "ACC", None);
+        fs::write(account.join("Real.lua"), b"x").expect("a file");
+        let character = wtf.join("Account").join("ACC").join("Realm").join("Char");
+        fs::create_dir_all(&character).expect("the character, with no SavedVariables folder");
+        let listing = list_at(&wtf, None, Vec::new()).expect("a listing");
+        let names: Vec<&str> = listing
+            .files
+            .iter()
+            .map(|file| file.addon.as_str())
+            .collect();
+        assert_eq!(names, ["Real"]);
+        assert!(listing.warnings.is_empty(), "{:?}", listing.warnings);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_as_the_folder_or_as_an_entry_is_a_warning_and_not_followed() {
+        let temp = Temp::new("junctions");
+        let wtf = temp.path().join("WTF");
+        let elsewhere = temp.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).expect("a folder");
+        fs::write(elsewhere.join("Linked.lua"), b"behind the junction").expect("a file");
+        let account = saved_variables(&wtf, "ACC", None);
+        fs::write(account.join("Real.lua"), b"x").expect("a file");
+        let entry_link = account.join("Entry.lua");
+        crate::link::create_junction(&entry_link, &elsewhere).expect("a junction");
+        let character = wtf.join("Account").join("ACC").join("Realm").join("Char");
+        fs::create_dir_all(&character).expect("the character");
+        let folder_link = character.join(SAVED_VARIABLES_DIR);
+        crate::link::create_junction(&folder_link, &elsewhere).expect("a junction");
+
+        let listing = list_at(&wtf, None, Vec::new()).expect("a listing");
+        let names: Vec<&str> = listing
+            .files
+            .iter()
+            .map(|file| file.addon.as_str())
+            .collect();
+        assert_eq!(names, ["Real"]);
+        assert_eq!(
+            listing.warnings,
+            [link_warning(&entry_link), link_warning(&folder_link)]
+        );
+        let _ = fs::remove_dir(&entry_link);
+        let _ = fs::remove_dir(&folder_link);
+    }
+
+    #[test]
+    fn an_entry_name_outside_wtf_keeps_the_plain_parts_of_the_path() {
+        let wtf = Path::new("Q:\\wow\\_forever_\\WTF");
+        assert_eq!(
+            entry_name(wtf, Path::new("Q:\\elsewhere\\Gone.lua")),
+            "elsewhere/Gone.lua"
+        );
+    }
+
+    #[test]
+    fn a_file_is_removed_only_once_its_copy_in_the_zip_reads_back_the_same() {
+        let temp = Temp::new("remove-checked");
+        let wtf = temp.path().join("WTF");
+        let dir = saved_variables(&wtf, "ACC", None);
+        let gone = dir.join("Gone.lua");
+        let same = dir.join("Same.lua");
+        fs::write(&gone, b"GoneDB = {}\n").expect("a file");
+        fs::write(&same, b"SameDB = {}\n").expect("a file");
+        let entries = vec![
+            (entry_name(&wtf, &same), same.clone()),
+            (entry_name(&wtf, &gone), gone.clone()),
+        ];
+        let (zip, _) = backup::zip_files(&temp.path().join("backups"), CLEANUP_PREFIX, &entries)
+            .expect("a zip");
+
+        // The zip gone: nothing is removed.
+        let missing = temp.path().join("missing.zip");
+        let error = remove_checked(&missing, &entries).expect_err("no zip");
+        let Error::CleanupIncomplete {
+            zip: named,
+            removed,
+            total,
+            reason,
+        } = &error
+        else {
+            panic!("{error}");
+        };
+        assert_eq!((named, *removed, *total), (&missing, 0, 2));
+        assert!(
+            reason.starts_with(&format!("reading {} back: ", missing.display())),
+            "{reason}"
+        );
+        assert!(gone.exists() && same.exists());
+
+        // A file that changed since the zip was written stays, and so does every file after it.
+        fs::write(&gone, b"GoneDB = { changed = true }\n").expect("changed");
+        let error = remove_checked(&zip, &entries).expect_err("differs");
+        let Error::CleanupIncomplete {
+            removed, reason, ..
+        } = &error
+        else {
+            panic!("{error}");
+        };
+        assert_eq!(*removed, 1, "the first file was the same and went");
+        assert_eq!(
+            reason,
+            &format!(
+                "{} differs from its copy in the zip, so it was not removed",
+                gone.display()
+            )
+        );
+        assert!(!same.exists() && gone.exists());
+
+        // An entry the zip does not hold: the check itself fails.
+        fs::write(&same, b"SameDB = {}\n").expect("back");
+        let other = dir.join("Other.lua");
+        fs::write(&other, b"x").expect("a file");
+        let unknown = vec![(entry_name(&wtf, &other), other.clone())];
+        let error = remove_checked(&zip, &unknown).expect_err("not in the zip");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("checking {} against the zip: ", other.display())),
+            "{error}"
+        );
+        assert!(other.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_that_cannot_be_removed_stops_the_cleanup_after_the_ones_before_it() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let temp = Temp::new("remove-locked");
+        let wtf = temp.path().join("WTF");
+        let dir = saved_variables(&wtf, "ACC", None);
+        let first = dir.join("First.lua");
+        let held = dir.join("Held.lua");
+        fs::write(&first, b"x").expect("a file");
+        fs::write(&held, b"y").expect("a file");
+        let entries = vec![
+            (entry_name(&wtf, &first), first.clone()),
+            (entry_name(&wtf, &held), held.clone()),
+        ];
+        let (zip, _) = backup::zip_files(&temp.path().join("backups"), CLEANUP_PREFIX, &entries)
+            .expect("a zip");
+        // A handle that shares reads and not the removal: the check reads the file, the removal fails.
+        const FILE_SHARE_READ: u32 = 0x1;
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&held)
+            .expect("a handle that shares reads");
+        let error = remove_checked(&zip, &entries).expect_err("held");
+        drop(lock);
+        let Error::CleanupIncomplete {
+            removed, reason, ..
+        } = &error
+        else {
+            panic!("{error}");
+        };
+        assert_eq!(*removed, 1);
+        assert!(
+            reason.starts_with(&format!("removing {}: ", held.display())),
+            "{reason}"
+        );
+        assert!(!first.exists() && held.exists());
+    }
+
+    /// A reader that is interrupted once, then hands over its bytes, then fails.
+    struct Flaky {
+        bytes: Vec<u8>,
+        interrupted: bool,
+        handed: usize,
+    }
+
+    impl Read for Flaky {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            if self.handed == self.bytes.len() {
+                return Err(io::Error::other("the reader broke"));
+            }
+            let count = buffer.len().min(self.bytes.len() - self.handed);
+            buffer[..count].copy_from_slice(&self.bytes[self.handed..self.handed + count]);
+            self.handed += count;
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn a_read_that_is_interrupted_goes_on_and_one_that_fails_stops() {
+        let mut flaky = Flaky {
+            bytes: b"abc".to_vec(),
+            interrupted: false,
+            handed: 0,
+        };
+        let mut buffer = [0u8; 2];
+        assert_eq!(read_full(&mut flaky, &mut buffer).expect("read"), 2);
+        assert_eq!(&buffer, b"ab");
+        let error = read_full(&mut flaky, &mut buffer).expect_err("broke after the last byte");
+        assert_eq!(error.to_string(), "the reader broke");
     }
 }

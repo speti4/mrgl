@@ -555,6 +555,267 @@ fn a_link_replaced_by_a_real_folder_is_forgotten_on_the_next_link() {
     assert!(state.entry("OneFolder").is_some());
 }
 
+#[cfg(windows)]
+#[test]
+fn a_file_is_no_development_folder() {
+    let sandbox = Sandbox::new("a-file");
+    let toc = sandbox.dev.join("OneFolder").join("OneFolder.toc");
+    assert!(toc.is_file());
+    let error = link::link(&sandbox.engine, &toc).expect_err("no addon in a file");
+    assert!(matches!(error, Error::NoAddonInDevFolder { .. }), "{error}");
+    assert_eq!(link::shape_of(&toc), link::Shape::DevelopmentFolder);
+    assert!(sandbox.addons_listing().is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn an_addon_managed_from_another_source_is_skipped() {
+    let sandbox = Sandbox::new("managed-already");
+    let zip = zip("one-folder-1.0.0.zip");
+    sandbox
+        .engine
+        .install(&zip, &metadata_for(&zip))
+        .expect("installs");
+    let linked = link::link(&sandbox.engine, &sandbox.dev).expect("links the rest");
+    let names: Vec<&str> = linked
+        .linked
+        .iter()
+        .map(|addon| addon.name.as_str())
+        .collect();
+    assert_eq!(names, ["DevAddon"]);
+    assert_eq!(linked.skipped.len(), 1);
+    assert_eq!(linked.skipped[0].name, "OneFolder");
+    assert_eq!(
+        linked.skipped[0].reason,
+        format!("OneFolder is managed already, from {}", zip.display())
+    );
+    assert!(!link::is_link(&sandbox.addon("OneFolder")));
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert_eq!(state.addons["OneFolder"].version, "1.0.0");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_managed_addon_deleted_by_hand_is_forgotten_when_the_link_runs() {
+    let sandbox = Sandbox::new("deleted-by-hand");
+    let zip = zip("several-folders-2.0.0.zip");
+    sandbox
+        .engine
+        .install(&zip, &metadata_for(&zip))
+        .expect("installs");
+    for name in [
+        "SeveralFolders",
+        "SeveralFolders_Options",
+        "SeveralFolders_Data",
+    ] {
+        std::fs::remove_dir_all(sandbox.addon(name)).expect("the folder goes");
+    }
+    // Real folders in the way of both dev addons: nothing is linked, and the sidecar is still written
+    // for the entry that was dropped.
+    for name in ["DevAddon", "OneFolder"] {
+        std::fs::create_dir_all(sandbox.addon(name)).expect("a real folder");
+    }
+    let linked = link::link(&sandbox.engine, &sandbox.dev).expect("runs");
+    assert!(linked.linked.is_empty(), "{:?}", linked.linked);
+    assert_eq!(linked.skipped.len(), 2);
+    assert_eq!(
+        linked.warnings,
+        ["SeveralFolders was deleted by hand since its install and is no longer managed"]
+    );
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert!(state.addons.is_empty(), "{state:?}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_link_whose_junctions_became_real_folders_is_forgotten_and_written() {
+    let sandbox = Sandbox::new("all-real");
+    link::link(&sandbox.engine, &sandbox.dev).expect("links");
+    for name in ["DevAddon", "OneFolder"] {
+        std::fs::remove_dir(sandbox.addon(name)).expect("the junction goes");
+        std::fs::create_dir(sandbox.addon(name)).expect("a real folder");
+    }
+    let linked = link::link(&sandbox.engine, &sandbox.dev).expect("runs");
+    assert!(linked.linked.is_empty());
+    assert!(linked.warnings.is_empty(), "{:?}", linked.warnings);
+    assert!(
+        linked
+            .skipped
+            .iter()
+            .all(|skipped| skipped.reason.ends_with("; its link entry is forgotten")),
+        "{:?}",
+        linked.skipped
+    );
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert!(state.addons.is_empty(), "{state:?}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_file_where_the_interface_folder_should_be_is_an_error() {
+    let sandbox = Sandbox::new("interface-file");
+    std::fs::write(sandbox.engine.flavor.folder.join("Interface"), "").expect("a file");
+    let error = link::link(&sandbox.engine, &sandbox.dev).expect_err("no AddOns folder");
+    assert!(
+        error
+            .to_string()
+            .starts_with("creating the AddOns folder: "),
+        "{error}"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_target_too_long_for_a_junction_is_skipped_with_the_reason() {
+    let sandbox = Sandbox::new("long-target");
+    // Eighteen names of 240 characters: beyond what a mount point's reparse data can carry, within
+    // what the file system takes with the `\\?\` prefix.
+    let mut deep = PathBuf::from(format!("\\\\?\\{}", sandbox.root.display()));
+    deep.push("deep");
+    for level in 0..18 {
+        deep.push(format!("{level:02}{}", "d".repeat(238)));
+    }
+    let addon = deep.join("LongAddon");
+    std::fs::create_dir_all(&addon).expect("the deep addon folder");
+    std::fs::write(
+        addon.join("LongAddon.toc"),
+        "## Interface: 16001\n## Title: Long\n",
+    )
+    .expect("a TOC");
+    let linked = link::link(&sandbox.engine, &deep).expect("runs");
+    assert!(linked.linked.is_empty(), "{:?}", linked.linked);
+    assert_eq!(linked.skipped.len(), 1);
+    assert_eq!(linked.skipped[0].name, "LongAddon");
+    assert_eq!(
+        linked.skipped[0].reason,
+        "the junction could not be made: the target path is too long for a junction"
+    );
+    assert!(sandbox.addons_listing().is_empty(), "no folder left behind");
+    assert!(
+        sandbox
+            .engine
+            .load_state()
+            .expect("the sidecar")
+            .state
+            .addons
+            .is_empty()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn unlink_forgets_a_junction_removed_by_hand_and_keeps_one_pointing_elsewhere() {
+    let sandbox = Sandbox::new("unlink-moved");
+    let solo = solo_copy(&sandbox);
+    link::link(&sandbox.engine, &solo).expect("links the addon folder");
+    link::link(&sandbox.engine, &sandbox.dev).expect("links the development folder");
+    // OneFolder's junction is gone by hand; SoloAddon's points elsewhere now.
+    std::fs::remove_dir(sandbox.addon("OneFolder")).expect("the junction goes");
+    let elsewhere = sandbox.root.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("another folder");
+    let elsewhere = link::dev_folder(&elsewhere).expect("canonical");
+    std::fs::remove_dir(sandbox.addon("SoloAddon")).expect("the junction goes");
+    link::create_junction(&sandbox.addon("SoloAddon"), &elsewhere).expect("a junction elsewhere");
+
+    let unlinked = link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
+    assert_eq!(unlinked.unlinked, ["DevAddon", "OneFolder"]);
+    assert!(unlinked.kept.is_empty(), "{:?}", unlinked.kept);
+    assert_eq!(
+        unlinked.warnings,
+        ["OneFolder was gone from AddOns already"]
+    );
+
+    let unlinked = link::unlink(&sandbox.engine, &solo).expect("unlinks");
+    assert!(unlinked.unlinked.is_empty());
+    assert_eq!(unlinked.kept.len(), 1);
+    assert_eq!(unlinked.kept[0].name, "SoloAddon");
+    assert_eq!(
+        unlinked.kept[0].reason,
+        format!(
+            "SoloAddon is a junction to {} now, not into {}; left in place",
+            elsewhere.display(),
+            unlinked.folder.display()
+        )
+    );
+    assert!(link::is_link(&sandbox.addon("SoloAddon")));
+    assert_eq!(sandbox.addons_listing(), ["SoloAddon"]);
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    let left: Vec<&str> = state.addons.keys().map(String::as_str).collect();
+    assert_eq!(left, ["SoloAddon"], "its entry stays with the junction");
+}
+
+#[cfg(windows)]
+#[test]
+fn unlink_keeps_a_junction_it_cannot_remove() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+    };
+    let sandbox = Sandbox::new("unlink-held");
+    let solo = solo_copy(&sandbox);
+    link::link(&sandbox.engine, &solo).expect("links");
+    // A handle on the junction itself that shares reads only: the removal needs the delete right.
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(sandbox.addon("SoloAddon"))
+        .expect("the handle");
+    let unlinked = link::unlink(&sandbox.engine, &solo).expect("unlinks");
+    drop(held);
+    assert!(unlinked.unlinked.is_empty());
+    assert_eq!(unlinked.kept.len(), 1);
+    assert!(
+        unlinked.kept[0]
+            .reason
+            .starts_with("the junction could not be removed: "),
+        "{}",
+        unlinked.kept[0].reason
+    );
+    assert!(link::is_link(&sandbox.addon("SoloAddon")));
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert!(state.entry("SoloAddon").is_some(), "its entry stays");
+    // With the handle gone the junction is removed.
+    let unlinked = link::unlink(&sandbox.engine, &solo).expect("unlinks");
+    assert_eq!(unlinked.unlinked, ["SoloAddon"]);
+}
+
+/// A folder name in the sidecar that Windows cannot look up (task 117): the entry stays with the error
+/// as its reason, and the junction of its other folder goes all the same.
+#[cfg(windows)]
+#[test]
+fn a_folder_name_windows_cannot_look_up_keeps_the_entry() {
+    let sandbox = Sandbox::new("unlink-bad-name");
+    link::link(&sandbox.engine, &sandbox.dev).expect("links");
+    let mut state = sandbox.engine.load_state().expect("the sidecar").state;
+    state
+        .addons
+        .get_mut("OneFolder")
+        .expect("its entry")
+        .folders
+        .push("Bad<Name".to_string());
+    sandbox.engine.home.write_state(&state).expect("writes");
+
+    let unlinked = link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
+    assert_eq!(unlinked.unlinked, ["DevAddon"]);
+    assert_eq!(unlinked.kept.len(), 1);
+    assert_eq!(unlinked.kept[0].name, "OneFolder");
+    assert!(
+        unlinked.kept[0]
+            .reason
+            .starts_with(&format!("{}: ", sandbox.addon("Bad<Name").display())),
+        "{}",
+        unlinked.kept[0].reason
+    );
+    assert!(
+        !link::is_link(&sandbox.addon("OneFolder")),
+        "its junction is gone"
+    );
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert!(state.entry("OneFolder").is_some(), "the entry stays");
+    assert!(sandbox.addons_listing().is_empty());
+}
+
 // --- task 055: the link guard sits in the commit, so every path that stages and commits refuses ---
 
 /// A source without the network: every spec resolves to one pick, served from one fixture zip.

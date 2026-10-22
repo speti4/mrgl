@@ -395,6 +395,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_source_this_build_lacks_keeps_a_spec_as_it_is_and_gets_no_prefetch() {
+        let sources = Sources::none().with(
+            SourceKind::Wago,
+            Named {
+                name: "wago",
+                missing: None,
+            },
+        );
+        let target = Target::new(FlavorId::Forever);
+        let github = spec("github:o/r");
+        assert_eq!(sources.canonical_spec(&github, &target).unwrap(), github);
+        // The GitHub slot is empty and is passed; the Wago source gets its own spec and holds nothing.
+        sources.prefetch(&[github.clone(), spec("wago:abc")], &target);
+        assert!(!sources.holds(&spec("wago:abc"), &target));
+        assert!(!sources.holds(&github, &target));
+    }
+
     /// A client that fails every request as the network does.
     struct Offline;
 

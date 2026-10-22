@@ -151,7 +151,12 @@ pub fn client_running(flavor: &Flavor) -> Result<Option<RunningClient>> {
 /// [`Error::ClientRunning`] with the refusal line when one does, and the process-list error when it
 /// cannot tell (a write is refused rather than risked).
 pub fn ensure_client_not_running(flavor: &Flavor) -> Result<()> {
-    match client_running(flavor)? {
+    ensure_client_not_running_among(&SystemProcesses, flavor)
+}
+
+/// [`ensure_client_not_running`] against the process list it is given.
+pub fn ensure_client_not_running_among(processes: &dyn ProcessList, flavor: &Flavor) -> Result<()> {
+    match client_running_among(processes, &flavor.folder)? {
         Some(client) => Err(client.refusal(flavor)),
         None => Ok(()),
     }
@@ -161,7 +166,15 @@ pub fn ensure_client_not_running(flavor: &Flavor) -> Result<()> {
 /// line when a client runs from the flavor folder, or when the process list cannot be taken (the install
 /// goes on either way); `None` when no client runs.
 pub fn warn_if_client_running(flavor: &Flavor) -> Option<String> {
-    match client_running(flavor) {
+    warn_if_client_running_among(&SystemProcesses, flavor)
+}
+
+/// [`warn_if_client_running`] against the process list it is given.
+pub fn warn_if_client_running_among(
+    processes: &dyn ProcessList,
+    flavor: &Flavor,
+) -> Option<String> {
+    match client_running_among(processes, &flavor.folder) {
         Ok(Some(client)) => Some(client.install_warning(flavor)),
         Ok(None) => None,
         Err(error) => Some(error.to_string()),
@@ -249,12 +262,15 @@ fn is_under(exe: &Path, forms: &[PathBuf]) -> bool {
 }
 
 /// Two path components, case-insensitively on Windows (the file systems there are), exactly elsewhere.
+#[cfg(windows)]
 fn same_component(found: &OsStr, wanted: &OsStr) -> bool {
-    if cfg!(windows) {
-        found.to_string_lossy().to_lowercase() == wanted.to_string_lossy().to_lowercase()
-    } else {
-        found == wanted
-    }
+    found.to_string_lossy().to_lowercase() == wanted.to_string_lossy().to_lowercase()
+}
+
+/// Two path components, exactly: the file systems outside Windows keep the case.
+#[cfg(not(windows))]
+fn same_component(found: &OsStr, wanted: &OsStr) -> bool {
+    found == wanted
 }
 
 #[cfg(windows)]
@@ -296,13 +312,16 @@ mod system {
             if length == 0 {
                 return None;
             }
-            if (length as usize) <= buffer.len() {
-                buffer.truncate(length as usize);
-                return Some(PathBuf::from(OsString::from_wide(&buffer)));
+            // coverage: os-begin — 1024 units hold every short form of a path this crate makes
+            if (length as usize) > buffer.len() {
+                buffer = vec![0u16; length as usize];
+                continue;
+                // coverage: os-end
             }
-            buffer = vec![0u16; length as usize];
+            buffer.truncate(length as usize);
+            return Some(PathBuf::from(OsString::from_wide(&buffer)));
         }
-        None
+        None // coverage: os — the short form grew between the two rounds
     }
 
     /// A kernel handle closed on drop.
@@ -319,8 +338,10 @@ mod system {
     pub(super) fn executables() -> std::io::Result<Vec<RunningProcess>> {
         // SAFETY: a plain call with constant flags; the process id argument is unused for a process snapshot.
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        // coverage: os-begin — the snapshot's own failure
         if snapshot == INVALID_HANDLE_VALUE {
             return Err(std::io::Error::last_os_error());
+            // coverage: os-end
         }
         let snapshot = Handle(snapshot);
         // SAFETY: PROCESSENTRY32W is a plain C struct; all-zero is a valid value, and dwSize is set
@@ -328,8 +349,10 @@ mod system {
         let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
         // SAFETY: the snapshot handle is valid and `entry` is a correctly sized, writable struct.
+        // coverage: os-begin — the walk's own failure
         if unsafe { Process32FirstW(snapshot.0, &mut entry) } == 0 {
             return Err(std::io::Error::last_os_error());
+            // coverage: os-end
         }
         let mut processes = Vec::new();
         loop {
@@ -563,5 +586,128 @@ mod tests {
             .expect("a list")
             .expect("the client");
         assert_eq!(client.pid, 9);
+    }
+
+    /// A process list that cannot be taken.
+    struct BrokenProcesses;
+
+    impl ProcessList for BrokenProcesses {
+        fn executables(&self) -> std::io::Result<Vec<RunningProcess>> {
+            Err(std::io::Error::other("no snapshot"))
+        }
+    }
+
+    #[test]
+    fn a_process_list_that_cannot_be_taken_refuses_the_write_and_warns_the_install() {
+        let flavor = flavor("Q:\\wow\\_forever_");
+        let error = ensure_client_not_running_among(&BrokenProcesses, &flavor)
+            .expect_err("refused rather than risked");
+        assert!(matches!(error, Error::ProcessList { .. }), "{error}");
+        assert_eq!(
+            error.to_string(),
+            "cannot list the running processes: no snapshot"
+        );
+        assert_eq!(
+            warn_if_client_running_among(&BrokenProcesses, &flavor).as_deref(),
+            Some("cannot list the running processes: no snapshot"),
+            "the install goes on with the line"
+        );
+        // The same two calls over a list: the client found, and none.
+        let running = FixedProcesses::new([(77, "Q:\\wow\\_forever_\\WowForever.exe")]);
+        assert_eq!(
+            ensure_client_not_running_among(&running, &flavor)
+                .expect_err("the client runs")
+                .to_string(),
+            "the client is running in _forever_ (WowForever.exe, pid 77): close the game first, nothing under WTF is written while it runs"
+        );
+        assert_eq!(
+            warn_if_client_running_among(&running, &flavor).as_deref(),
+            Some(
+                "the client is running in _forever_ (WowForever.exe, pid 77): the installed addons load at /reload or the next login"
+            )
+        );
+        let none = FixedProcesses::default();
+        assert!(ensure_client_not_running_among(&none, &flavor).is_ok());
+        assert_eq!(warn_if_client_running_among(&none, &flavor), None);
+    }
+
+    #[test]
+    fn an_executable_without_a_file_name_is_named_by_its_path() {
+        let client = RunningClient {
+            pid: 1,
+            exe: PathBuf::from("Q:\\"),
+        };
+        assert_eq!(client.exe_name(), "Q:\\");
+    }
+
+    #[test]
+    fn a_path_without_a_prefix_is_kept_as_it_is() {
+        assert_eq!(
+            strip_verbatim(Path::new("relative\\_forever_")),
+            PathBuf::from("relative\\_forever_")
+        );
+        // An empty path cannot be made absolute: it is taken as given, one form.
+        assert_eq!(resolved(Path::new("")), [PathBuf::new()]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_whose_names_are_short_already_has_one_form() {
+        let system_root = PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot"));
+        let forms = resolved(&system_root);
+        assert_eq!(forms.len(), 1, "{forms:?}");
+        assert!(
+            forms[0]
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&system_root.to_string_lossy()),
+            "{forms:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_long_name_gets_a_short_form_when_the_volume_keeps_one() {
+        let root =
+            std::env::temp_dir().join(format!("mrgl-client-long-name-test-{}", std::process::id()));
+        let folder = root.join("a folder name long enough for a short one");
+        std::fs::create_dir_all(&folder).expect("the folder");
+        let forms = resolved(&folder);
+        assert!(!forms[0].to_string_lossy().starts_with("\\\\?\\"));
+        match forms.as_slice() {
+            // The volume keeps no short names: the short form is the long one and is not repeated.
+            [_] => {}
+            [long, short] => {
+                assert_ne!(long, short);
+                assert_eq!(
+                    short,
+                    &short_form(&folder).expect("a short form"),
+                    "the second form is the 8.3 one"
+                );
+            }
+            other => panic!("one or two forms, not {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_path_longer_than_the_first_buffer_still_gets_its_short_form() {
+        // Six names of 200 characters each: beyond the 1024 units of the first buffer, within the
+        // 32K Windows allows with the `\\?\` prefix.
+        let root =
+            std::env::temp_dir().join(format!("mrgl-client-deep-path-test-{}", std::process::id()));
+        let mut deep = PathBuf::from(format!("\\\\?\\{}", root.display()));
+        for level in 0..6 {
+            deep.push(format!("{level}{}", "n".repeat(199)));
+        }
+        std::fs::create_dir_all(&deep).expect("the deep folder");
+        assert!(deep.as_os_str().len() > 1024);
+        let short = system::short_form(&deep).expect("a short form, after a second round");
+        assert!(
+            std::fs::metadata(&short).is_ok_and(|metadata| metadata.is_dir()),
+            "{}",
+            short.display()
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

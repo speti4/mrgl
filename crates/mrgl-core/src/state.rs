@@ -384,13 +384,14 @@ pub fn read_state_at(path: &Path, flavor: &FlavorId) -> Result<LoadedState> {
 /// Writes a sidecar file, creating its folder; the write goes through a temporary file next to it, so a
 /// crash mid-write leaves the old file whole.
 pub fn write_state_at(path: &Path, state: &State) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| Error::Io {
-            context: "creating the flavor's folder under the mrgl home",
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
+    // The sidecar lies in the flavor's folder; a bare file name's parent is the empty path, which
+    // `create_dir_all` takes as the current folder.
+    let parent = path.parent().unwrap_or(Path::new(""));
+    std::fs::create_dir_all(parent).map_err(|source| Error::Io {
+        context: "creating the flavor's folder under the mrgl home",
+        path: parent.to_path_buf(),
+        source,
+    })?;
     let io = |source| Error::Io {
         context: "writing the state sidecar",
         path: path.to_path_buf(),
@@ -684,6 +685,40 @@ mod tests {
                 .contains("flavor wow instead of wowf")
         );
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_sidecar_that_cannot_be_read_or_written_is_an_error() {
+        let home = temp_home("unreadable");
+        // A folder where the file goes: not missing, so not fresh, and not readable either.
+        let path = home.join("wowf").join(STATE_FILE);
+        std::fs::create_dir_all(&path).expect("a folder in the file's place");
+        let error = read_state_at(&path, &FlavorId::Forever).expect_err("cannot be read");
+        assert!(
+            error.to_string().starts_with("reading the state sidecar: "),
+            "{error}"
+        );
+        // The same folder refuses the rename of the written temporary file.
+        let error =
+            write_state_at(&path, &State::new(&FlavorId::Forever)).expect_err("cannot move in");
+        assert!(
+            error.to_string().starts_with("writing the state sidecar: "),
+            "{error}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+
+        // A file where the flavor's folder goes: the folder cannot be made.
+        let home = temp_home("home-is-a-file");
+        std::fs::write(&home, "not a folder").expect("a file");
+        let path = home.join("wowf").join(STATE_FILE);
+        let error = write_state_at(&path, &State::new(&FlavorId::Forever)).expect_err("no folder");
+        assert!(
+            error
+                .to_string()
+                .starts_with("creating the flavor's folder under the mrgl home: "),
+            "{error}"
+        );
+        let _ = std::fs::remove_file(&home);
     }
 
     #[test]

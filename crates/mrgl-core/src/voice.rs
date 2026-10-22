@@ -249,6 +249,20 @@ mod tests {
     }
 
     #[test]
+    fn every_serious_source_has_its_json_name() {
+        assert_eq!(
+            [
+                SeriousSource::Flag,
+                SeriousSource::Environment,
+                SeriousSource::File,
+                SeriousSource::Default,
+            ]
+            .map(SeriousSource::as_str),
+            ["flag", "environment", "file", "default"]
+        );
+    }
+
+    #[test]
     fn the_flag_alone_makes_it_serious() {
         // The environment case runs end to end in the CLI tests, where the variable can be set safely.
         assert!(Voice::from_env(true).is_serious());

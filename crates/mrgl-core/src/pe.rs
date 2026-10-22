@@ -456,6 +456,12 @@ mod tests {
             *byte = 0;
         }
         assert_eq!(version(&bent), Err("no resource section".to_string()));
+        // An entry with an address and no size is no section either.
+        let mut sizeless = ERA.to_vec();
+        for byte in &mut sizeless[0xdc..0xe0] {
+            *byte = 0;
+        }
+        assert_eq!(version(&sizeless), Err("no resource section".to_string()));
         assert_eq!(
             version(NO_VERSION),
             Err("no version resource (RT_VERSION)".to_string())
@@ -477,6 +483,152 @@ mod tests {
         assert_eq!(
             version(&bent),
             Err("the version resource is not a VS_VERSIONINFO block".to_string())
+        );
+    }
+
+    /// A copy of the Classic Era stub with little-endian numbers written over it.
+    fn bent(writes: &[(usize, &[u8])]) -> Vec<u8> {
+        let mut bytes = ERA.to_vec();
+        for (at, value) in writes {
+            bytes[*at..*at + value.len()].copy_from_slice(value);
+        }
+        bytes
+    }
+
+    // The stub's layout (`make-stubs.py`): the COFF header at 0x44 (its section count at +2, the optional
+    // header's size at +16), the PE32+ optional header at 0x58 (the resource directory entry at +128), the
+    // `.rsrc` section at 0x200 with the root directory (its count at +14 and its one entry at +16), the
+    // type directory at 0x218, the name directory at 0x230 (its entry at +16), the data entry at 0x248.
+    const SECTION_COUNT: usize = 0x46;
+    const OPTIONAL_SIZE: usize = 0x54;
+    const OPTIONAL: usize = 0x58;
+    const RESOURCE_ENTRY: usize = 0xd8;
+    const ROOT_COUNT: usize = 0x20e;
+    const TYPE_COUNT: usize = 0x226;
+    const NAME_ENTRY: usize = 0x240;
+    const DATA_ENTRY: usize = 0x248;
+
+    #[test]
+    fn a_header_bent_out_of_shape_is_a_reason() {
+        for (writes, reason) in [
+            (
+                vec![(OPTIONAL_SIZE, &0u16.to_le_bytes()[..])],
+                "no optional header".to_string(),
+            ),
+            (
+                vec![(OPTIONAL, &0u16.to_le_bytes()[..])],
+                "unknown optional header magic 0x0".to_string(),
+            ),
+            (
+                vec![(OPTIONAL_SIZE, &100u16.to_le_bytes()[..])],
+                "no resource directory entry in the optional header".to_string(),
+            ),
+            (
+                vec![(SECTION_COUNT, &0u16.to_le_bytes()[..])],
+                "0 sections".to_string(),
+            ),
+            (
+                vec![(SECTION_COUNT, &200u16.to_le_bytes()[..])],
+                "200 sections".to_string(),
+            ),
+            (
+                vec![(RESOURCE_ENTRY, &0x7fff_0000u32.to_le_bytes()[..])],
+                "the resource directory lies in no section".to_string(),
+            ),
+        ] {
+            assert_eq!(version(&bent(&writes)), Err(reason));
+        }
+    }
+
+    #[test]
+    fn a_resource_tree_bent_out_of_shape_is_a_reason() {
+        let subdirectory = 0x8000_0000u32;
+        for (writes, reason) in [
+            (
+                vec![(ROOT_COUNT, &5000u16.to_le_bytes()[..])],
+                "a resource directory with 5000 entries".to_string(),
+            ),
+            (
+                vec![(TYPE_COUNT, &0u16.to_le_bytes()[..])],
+                "an empty directory in the version resource tree".to_string(),
+            ),
+            // The name directory's entry points back at the type directory: a loop.
+            (
+                vec![(NAME_ENTRY + 4, &(0x18 | subdirectory).to_le_bytes()[..])],
+                "the version resource tree is deeper than the format allows".to_string(),
+            ),
+            (
+                vec![(DATA_ENTRY + 4, &0u32.to_le_bytes()[..])],
+                "a version resource of 0 bytes".to_string(),
+            ),
+            (
+                vec![(
+                    DATA_ENTRY + 4,
+                    &(MAX_VERSION_RESOURCE + 1).to_le_bytes()[..],
+                )],
+                format!("a version resource of {} bytes", MAX_VERSION_RESOURCE + 1),
+            ),
+            (
+                vec![(DATA_ENTRY, &0x7fff_0000u32.to_le_bytes()[..])],
+                "the version resource lies in no section".to_string(),
+            ),
+        ] {
+            assert_eq!(version(&bent(&writes)), Err(reason));
+        }
+    }
+
+    #[test]
+    fn a_version_block_with_neither_string_nor_fixed_info_is_a_reason() {
+        // A `VS_VERSION_INFO` block with an empty value and no children: the header, the key, padding.
+        let mut block = vec![0u8; 6];
+        block.extend_from_slice(VERSION_INFO_KEY);
+        block.resize(align4(block.len()), 0);
+        let length = block.len() as u16;
+        block[..2].copy_from_slice(&length.to_le_bytes());
+        assert_eq!(
+            version_of_block(&block),
+            Err(
+                "no FileVersion string and no VS_FIXEDFILEINFO in the version resource".to_string()
+            )
+        );
+        assert!(
+            Block::parse(&[4, 0, 0, 0, 0, 0, 0, 0]).is_none(),
+            "a block shorter than its header is none"
+        );
+    }
+
+    /// A reader whose seeks fail from an offset on: the DOS header reads, the PE header does not.
+    struct SeekFails {
+        inner: Cursor<&'static [u8]>,
+        from: u64,
+    }
+
+    impl Read for SeekFails {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl Seek for SeekFails {
+        fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+            match to {
+                SeekFrom::Start(offset) if offset >= self.from => {
+                    Err(std::io::Error::other("the device is gone"))
+                }
+                to => self.inner.seek(to),
+            }
+        }
+    }
+
+    #[test]
+    fn a_seek_that_fails_is_a_reason() {
+        let mut reader = SeekFails {
+            inner: Cursor::new(ERA),
+            from: 0x40,
+        };
+        assert_eq!(
+            file_version(&mut reader),
+            Err("cannot seek to the PE header at 0x40: the device is gone".to_string())
         );
     }
 

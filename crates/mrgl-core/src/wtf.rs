@@ -86,7 +86,7 @@ fn subfolders(dir: &Path, warnings: &mut Vec<String>) -> Result<Vec<(String, Pat
         let path = entry.path();
         let file_type = entry
             .file_type()
-            .map_err(|source| io_error(&path, source))?;
+            .map_err(|source| io_error(&path, source))?; // coverage: os
         if file_type.is_symlink() {
             warnings.push(link_warning(&path));
         } else if file_type.is_dir() {
@@ -187,6 +187,28 @@ mod tests {
         assert_eq!(visits(&wtf), (Vec::new(), Vec::new()));
         fs::create_dir_all(&wtf).expect("WTF");
         assert_eq!(visits(&wtf), (Vec::new(), Vec::new()));
+        let _ = fs::remove_dir_all(wtf.parent().expect("a parent"));
+    }
+
+    #[test]
+    fn an_account_folder_that_is_a_file_is_an_error_that_names_it() {
+        let wtf = temp_wtf("file");
+        let accounts = wtf.join(ACCOUNT_DIR);
+        fs::create_dir_all(&wtf).expect("WTF");
+        fs::write(&accounts, "a file where the folder goes").expect("a file");
+        let mut warnings = Vec::new();
+        let error = walk(&wtf, &mut warnings, |_, _| Ok(())).expect_err("not a folder");
+        assert!(
+            matches!(&error, Error::Io { context: "reading WTF", path, .. } if path == &accounts),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("reading WTF: {}: ", accounts.display())),
+            "{error}"
+        );
+        assert!(warnings.is_empty());
         let _ = fs::remove_dir_all(wtf.parent().expect("a parent"));
     }
 

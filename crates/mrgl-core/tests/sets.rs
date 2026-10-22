@@ -466,14 +466,23 @@ fn an_apply_is_refused_while_the_client_runs_and_a_save_is_not() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A write that fails part way (the second character's file is read-only, so the rename over it is
-/// refused) puts the first character's file back as it was.
+/// A write that fails part way (the last character's file is read-only, so the rename over it is
+/// refused) puts the files written before it back as they were: the first character's bytes, and no
+/// file where the apply created one (task 117). The record of the apply before is back too.
 #[cfg(windows)]
 #[test]
 fn a_failed_write_puts_the_files_written_before_it_back() {
     let root = temp_game_root("revert");
     let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "solo", &[("QuestArrows", AddonState::Enabled)]);
     write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    sets::apply_set(&flavor, &path, "solo", &Target::EveryCharacter).expect("the apply before");
+    let record_before =
+        std::fs::read(sets::undo_dir_of(&path).join(sets::UNDO_FILE)).expect("its record");
+    // A character without AddOns.txt, first by name: the apply creates its file before the failure.
+    std::fs::create_dir_all(wtf_of(&root).join("Account/MRGLSETS/Fixture Realm/Aaa"))
+        .expect("a character folder");
     let before = snapshot(&wtf_of(&root));
     let locked = wtf_of(&root).join(SECOND);
     let mut permissions = std::fs::metadata(&locked).expect("metadata").permissions();
@@ -497,15 +506,54 @@ fn a_failed_write_puts_the_files_written_before_it_back() {
             .ends_with("; every AddOns.txt is as it was"),
         "{error}"
     );
-    assert_eq!(snapshot(&wtf_of(&root)), before, "the first file is back");
-    assert!(
-        !sets::undo_dir_of(&sets_path_of(&root)).exists(),
-        "no undo record of an apply that wrote nothing in the end"
+    assert_eq!(
+        snapshot(&wtf_of(&root)),
+        before,
+        "the first file is back, the created one is gone"
+    );
+    assert_eq!(
+        std::fs::read(sets::undo_dir_of(&path).join(sets::UNDO_FILE)).expect("a record"),
+        record_before,
+        "the record of the apply before is back"
     );
 
     #[allow(clippy::permissions_set_readonly_false)]
     permissions.set_readonly(false);
     std::fs::set_permissions(&locked, permissions).expect("writable again");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The first apply of a flavor fails with every file put back (task 117): no record is left behind, so
+/// there is nothing to undo, as before the apply.
+#[cfg(windows)]
+#[test]
+fn a_failed_first_apply_leaves_no_record_behind() {
+    let root = temp_game_root("revert-first");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    let locked = wtf_of(&root).join(FIRST);
+    let mut permissions = std::fs::metadata(&locked).expect("metadata").permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&locked, permissions.clone()).expect("read-only");
+
+    let error =
+        sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("failed");
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(&locked, permissions).expect("writable again");
+    assert!(
+        matches!(&error, Error::SetApplyFailed { set, reverted: true, .. } if set == "raid"),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), before, "every file is as it was");
+    assert!(
+        !sets::undo_dir_of(&path).exists(),
+        "no record of an apply that wrote nothing"
+    );
+    let error = sets::undo_apply(&flavor, &path).expect_err("nothing to undo");
+    assert!(matches!(&error, Error::NothingToUndo { .. }), "{error}");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1050,5 +1098,482 @@ fn a_save_keeps_an_addon_that_is_not_installed_and_names_it() {
     assert_eq!(saved.set.addons.len(), 4, "every addon is kept");
     let file = sets::read_sets_at(&sets_path_of(&root), &flavor.id).expect("read");
     assert!(file.sets["raid"].addons.contains_key("RaidFrames"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// --- task 117: the arms the fixture round trips do not reach ---
+
+#[test]
+fn a_sets_file_of_another_format_schema_or_flavor_is_refused_and_one_that_is_a_folder_is_an_error()
+{
+    let root = temp_game_root("sets-file");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    std::fs::create_dir_all(path.parent().expect("a folder")).expect("the home");
+    for (text, reason) in [
+        (
+            r#"{"format":"other","schema":1,"flavor":"wowf"}"#,
+            "format other instead of mrgl-sets",
+        ),
+        (
+            r#"{"format":"mrgl-sets","schema":2,"flavor":"wowf"}"#,
+            "schema 2 instead of 1",
+        ),
+        (
+            r#"{"format":"mrgl-sets","schema":1,"flavor":"wow"}"#,
+            "flavor wow instead of wowf",
+        ),
+    ] {
+        std::fs::write(&path, text).expect("a sets file");
+        let error = sets::read_sets_at(&path, &flavor.id).expect_err(reason);
+        assert!(
+            matches!(&error, Error::SetsUnreadable { path: named, reason: given } if named == &path && given == reason),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("kept"),
+            text,
+            "never overwritten"
+        );
+    }
+    let error = sets::find_set(&flavor.id, &path, "raid").expect_err("unreadable");
+    assert!(matches!(&error, Error::SetsUnreadable { .. }), "{error}");
+
+    std::fs::remove_file(&path).expect("no sets file");
+    let error = sets::find_set(&flavor.id, &path, "raid").expect_err("no set");
+    assert!(matches!(&error, Error::SetNotFound { .. }), "{error}");
+    let characters = sets::targets(&flavor, &Target::EveryCharacter).expect("the characters");
+    assert_eq!(characters.len(), 2);
+
+    std::fs::create_dir_all(&path).expect("a folder where the file goes");
+    let error = sets::read_sets_at(&path, &flavor.id).expect_err("a folder");
+    assert!(
+        matches!(&error, Error::Io { context: "reading the sets file", path: named, .. } if named == &path),
+        "{error}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_sets_file_cannot_be_written_under_a_file_or_over_a_folder_or_at_a_root() {
+    let root = temp_game_root("sets-write");
+    let path = sets_path_of(&root);
+    let file = sets::SetsFile::new(&FlavorId::parse("wowf"));
+    let parent = path.parent().expect("a folder").to_path_buf();
+    std::fs::create_dir_all(parent.parent().expect("the home")).expect("the home");
+    std::fs::write(&parent, b"a file where the folder goes").expect("a file");
+    let error = sets::write_sets_at(&path, &file).expect_err("under a file");
+    assert!(
+        matches!(&error, Error::Io { context: "creating the flavor's folder under the mrgl home", path: named, .. } if named == &parent),
+        "{error}"
+    );
+    std::fs::remove_file(&parent).expect("gone");
+
+    std::fs::create_dir_all(&path).expect("a folder where the file goes");
+    let error = sets::write_sets_at(&path, &file).expect_err("over a folder");
+    assert!(
+        matches!(&error, Error::Io { context: "writing the sets file", path: named, .. } if named == &path),
+        "{error}"
+    );
+    assert!(path.is_dir(), "the folder stays");
+
+    // A path with no parent: no folder to create, and no file to write.
+    let drive_root = Path::new(if cfg!(windows) { "C:\\" } else { "/" });
+    let error = sets::write_sets_at(drive_root, &file).expect_err("a root");
+    assert!(
+        matches!(&error, Error::Io { context: "writing the sets file", path: named, .. } if named == drive_root),
+        "{error}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_save_passes_over_a_character_without_addons_txt_and_a_line_that_names_no_addon() {
+    let root = temp_game_root("save-shapes");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    std::fs::create_dir_all(wtf_of(&root).join("Account/MRGLSETS/Second Realm/Newbie"))
+        .expect("a character folder without AddOns.txt");
+    let first = wtf_of(&root)
+        .join("Account")
+        .join("MRGLSETS")
+        .join("Fixture Realm")
+        .join("Mrgltest")
+        .join("AddOns.txt");
+    let mut bytes = std::fs::read(&first).expect("AddOns.txt");
+    bytes.extend_from_slice(b"Bad/Name: enabled\r\n");
+    std::fs::write(&first, bytes).expect("a line that names a path");
+
+    let saved = sets::save_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("saved");
+    assert_eq!(
+        saved.characters.len(),
+        3,
+        "the character without a file is read as empty"
+    );
+    assert!(!saved.set.addons.contains_key("Bad/Name"));
+    assert_eq!(
+        saved.warnings,
+        [format!(
+            "left out of set raid: `Bad/Name` in {} is not an addon name",
+            first.display()
+        )]
+    );
+
+    // An AddOns.txt that is a folder cannot be read.
+    let newbie = wtf_of(&root).join(NEWBIE);
+    std::fs::create_dir_all(&newbie).expect("a folder where the file goes");
+    let error =
+        sets::save_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("a folder");
+    assert!(
+        matches!(&error, Error::Io { context: "reading AddOns.txt", path: named, .. } if named == &newbie),
+        "{error}"
+    );
+    std::fs::remove_dir(&newbie).expect("gone");
+
+    // No addon line anywhere: nothing to save.
+    for file in [FIRST, SECOND] {
+        std::fs::write(wtf_of(&root).join(file), b"# nothing the client wrote\r\n").expect("empty");
+    }
+    let error =
+        sets::save_set(&flavor, &path, "empty", &Target::EveryCharacter).expect_err("nothing");
+    assert!(matches!(&error, Error::NothingToSave { .. }), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "nothing to save: no AddOns.txt under WTF of _forever_ names an addon"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_undo_record_that_cannot_be_kept_refuses_the_apply_before_anything_is_written() {
+    let root = temp_game_root("undo-keep");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    let fresh = sets::undo_dir_of(&path).with_file_name("set-undo.new");
+    std::fs::write(&fresh, b"a file where the fresh record goes").expect("a file");
+    let error =
+        sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("in the way");
+    assert!(
+        matches!(&error, Error::Io { context: "keeping the undo record of the apply", path: named, .. } if named == &fresh),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), before, "nothing was written");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_record_that_cannot_be_set_aside_or_replaced_refuses_the_apply_before_anything_is_written() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = temp_game_root("undo-swap");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    let undo_dir = sets::undo_dir_of(&path);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    write_set(&root, "solo", &[("QuestArrows", AddonState::Enabled)]);
+    sets::apply_set(&flavor, &path, "solo", &Target::EveryCharacter).expect("the apply before");
+    let before = snapshot(&wtf_of(&root));
+
+    // The record before cannot move aside: a file held open under it.
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(undo_dir.join(sets::UNDO_FILE))
+        .expect("a handle with no sharing");
+    let error = sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("held");
+    drop(lock);
+    assert!(
+        matches!(&error, Error::Io { context: "keeping the undo record of the apply", path: named, .. } if named == &undo_dir),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), before, "nothing was written");
+    assert!(
+        undo_dir.join(sets::UNDO_FILE).is_file(),
+        "the record before stays"
+    );
+    assert!(!undo_dir.with_file_name("set-undo.new").exists());
+    assert!(!undo_dir.with_file_name("set-undo.old").exists());
+
+    // A junction whose target is gone where the record goes: nothing to set aside, and the fresh record
+    // cannot take the place.
+    std::fs::remove_dir_all(&undo_dir).expect("no record");
+    let target = root.join("gone");
+    std::fs::create_dir_all(&target).expect("a folder");
+    mrgl_core::link::create_junction(&undo_dir, &target).expect("a junction");
+    std::fs::remove_dir(&target).expect("the target gone");
+    let error =
+        sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("in the way");
+    assert!(
+        matches!(&error, Error::Io { context: "keeping the undo record of the apply", path: named, .. } if named == &undo_dir),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), before, "nothing was written");
+    assert!(!undo_dir.with_file_name("set-undo.new").exists());
+    let _ = std::fs::remove_dir(&undo_dir);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_undo_record_of_another_format_or_flavor_or_with_a_kept_file_missing_is_refused() {
+    let root = temp_game_root("undo-record");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    let applied = snapshot(&wtf_of(&root));
+    let undo_dir = sets::undo_dir_of(&path);
+    let record_path = undo_dir.join(sets::UNDO_FILE);
+    let original = std::fs::read_to_string(&record_path).expect("the record");
+    let record: serde_json::Value = serde_json::from_str(&original).expect("JSON");
+
+    let mut other_format = record.clone();
+    other_format["format"] = serde_json::json!("mrgl-other");
+    let mut other_schema = record.clone();
+    other_schema["schema"] = serde_json::json!(2);
+    let mut other_flavor = record.clone();
+    other_flavor["flavor"] = serde_json::json!("wow");
+    for (edited, reason) in [
+        (
+            other_format,
+            "format mrgl-other schema 1 instead of mrgl-set-undo schema 1",
+        ),
+        (
+            other_schema,
+            "format mrgl-set-undo schema 2 instead of mrgl-set-undo schema 1",
+        ),
+        (other_flavor, "flavor wow instead of wowf"),
+    ] {
+        std::fs::write(&record_path, edited.to_string()).expect("written");
+        let error = sets::undo_apply(&flavor, &path).expect_err(reason);
+        assert!(
+            matches!(&error, Error::SetUndoUnreadable { path: named, reason: given } if named == &undo_dir && given == reason),
+            "{error}"
+        );
+        let error = sets::undo_record(&flavor, &path).expect_err(reason);
+        assert!(matches!(&error, Error::SetUndoUnreadable { .. }), "{error}");
+    }
+    std::fs::write(&record_path, "{ not json").expect("written");
+    let error = sets::undo_apply(&flavor, &path).expect_err("not JSON");
+    assert!(matches!(&error, Error::SetUndoUnreadable { .. }), "{error}");
+
+    std::fs::write(&record_path, &original).expect("the record again");
+    std::fs::remove_file(undo_dir.join("1-before.txt")).expect("the kept file gone");
+    let error = sets::undo_apply(&flavor, &path).expect_err("a kept file missing");
+    assert!(
+        matches!(&error, Error::SetUndoUnreadable { reason, .. } if reason.starts_with("1-before.txt: ")),
+        "{error}"
+    );
+
+    std::fs::remove_file(&record_path).expect("no record file");
+    std::fs::create_dir_all(&record_path).expect("a folder where the record goes");
+    let error = sets::undo_apply(&flavor, &path).expect_err("a folder");
+    assert!(
+        matches!(&error, Error::Io { context: "reading the undo record", path: named, .. } if named == &record_path),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), applied, "nothing was written");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_undo_passes_over_a_character_folder_that_is_gone_and_a_file_that_is_as_it_was() {
+    let root = temp_game_root("undo-shapes");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    // The client put the first file back as it was; the second character is gone.
+    let first = wtf_of(&root).join(FIRST);
+    std::fs::write(&first, &before[FIRST]).expect("as it was");
+    let first_time = modified(&first);
+    std::fs::remove_dir_all(wtf_of(&root).join("Account/MRGLSETS/Second Realm/Grrlwave"))
+        .expect("the character gone");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    let undone = sets::undo_apply(&flavor, &path).expect("undone");
+    assert_eq!(
+        undone.warnings,
+        [
+            "Fixture Realm/Mrgltest: AddOns.txt changed since the apply (the client writes it at logout); put back as it was before the apply all the same",
+            "Second Realm/Grrlwave: the character folder is gone, nothing to put back",
+        ]
+    );
+    let restored: Vec<String> = undone.restored.iter().map(sets::Character::label).collect();
+    assert_eq!(restored, ["Fixture Realm/Mrgltest"]);
+    assert!(undone.removed.is_empty());
+    assert_eq!(
+        undone.summary("_forever_").0,
+        mrgl_core::voice::Kind::Warning
+    );
+    assert_eq!(
+        modified(&first),
+        first_time,
+        "a file that is as it was is not written"
+    );
+    assert_eq!(std::fs::read(&first).expect("bytes"), before[FIRST]);
+    assert!(!sets::undo_dir_of(&path).exists(), "the record is used");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_failed_undo_write_puts_the_files_written_before_it_back_and_keeps_the_record() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = temp_game_root("undo-revert");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    let applied = snapshot(&wtf_of(&root));
+    let second = wtf_of(&root)
+        .join("Account")
+        .join("MRGLSETS")
+        .join("Second Realm")
+        .join("Grrlwave")
+        .join("AddOns.txt");
+    // A handle that shares reads and not the replacement: the undo reads the file, the write over it
+    // fails.
+    const FILE_SHARE_READ: u32 = 0x1;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&second)
+        .expect("a handle that shares reads");
+    let error = sets::undo_apply(&flavor, &path).expect_err("the second file is held");
+    drop(lock);
+    assert!(
+        matches!(&error, Error::SetUndoFailed { set, reverted: true, .. } if set == "raid"),
+        "{error}"
+    );
+    let text = error.to_string();
+    assert!(
+        text.starts_with(&format!("undoing set raid failed: {}: ", second.display()))
+            && text.ends_with("; every AddOns.txt is as it was before the undo"),
+        "{text}"
+    );
+    assert_eq!(
+        snapshot(&wtf_of(&root)),
+        applied,
+        "the first file is back as applied"
+    );
+    assert!(
+        sets::undo_dir_of(&path).join(sets::UNDO_FILE).is_file(),
+        "the record stays for the next undo"
+    );
+    sets::undo_apply(&flavor, &path).expect("undone once the file is free");
+    assert_eq!(snapshot(&wtf_of(&root)), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// An undo whose removal of a created file fails (task 117): the files put back before it are put back
+/// as they were at the start of the undo, a file gone since the apply gone again, and the record stays.
+#[cfg(windows)]
+#[test]
+fn a_failed_removal_in_an_undo_puts_the_earlier_files_back_as_they_were() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = temp_game_root("undo-revert-removal");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    std::fs::create_dir_all(wtf_of(&root).join("Account/MRGLSETS/Second Realm/Newbie"))
+        .expect("a character folder");
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    // The first character's file is gone since the apply; the created one is held.
+    std::fs::remove_file(wtf_of(&root).join(FIRST)).expect("the first file gone");
+    let applied = snapshot(&wtf_of(&root));
+    let created = wtf_of(&root)
+        .join("Account")
+        .join("MRGLSETS")
+        .join("Second Realm")
+        .join("Newbie")
+        .join("AddOns.txt");
+    const FILE_SHARE_READ: u32 = 0x1;
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&created)
+        .expect("a handle that shares reads");
+    let error = sets::undo_apply(&flavor, &path).expect_err("the created file is held");
+    drop(held);
+    assert!(
+        matches!(&error, Error::SetUndoFailed { set, reverted: true, .. } if set == "raid"),
+        "{error}"
+    );
+    assert!(
+        error
+            .to_string()
+            .starts_with(&format!("undoing set raid failed: {}: ", created.display())),
+        "{error}"
+    );
+    assert_eq!(
+        snapshot(&wtf_of(&root)),
+        applied,
+        "the first file is gone again, the second is as the apply left it"
+    );
+    assert!(
+        sets::undo_dir_of(&path).join(sets::UNDO_FILE).is_file(),
+        "the record stays for another undo"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn an_undo_record_that_cannot_be_removed_is_a_warning() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = temp_game_root("undo-stays");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    let undo_dir = sets::undo_dir_of(&path);
+    let extra = undo_dir.join("extra.txt");
+    std::fs::write(&extra, b"not part of the record").expect("a file");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&extra)
+        .expect("a handle with no sharing");
+    let undone = sets::undo_apply(&flavor, &path).expect("undone");
+    drop(lock);
+    assert_eq!(undone.warnings.len(), 1, "{:?}", undone.warnings);
+    assert!(
+        undone.warnings[0].starts_with(&format!(
+            "the undo record {} could not be removed (",
+            undo_dir.display()
+        )) && undone.warnings[0].ends_with("); an undo now would put the same files back again"),
+        "{}",
+        undone.warnings[0]
+    );
+    assert_eq!(
+        undone.summary("_forever_").0,
+        mrgl_core::voice::Kind::Warning
+    );
+    assert_eq!(
+        snapshot(&wtf_of(&root)),
+        before,
+        "the files are back all the same"
+    );
+    assert!(undo_dir.join(sets::UNDO_FILE).is_file(), "the record stays");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_drop_from_a_set_without_addons_lists_none() {
+    let root = temp_game_root("edit-empty");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "empty", &[]);
+    let error =
+        sets::edit_set(&flavor, &path, "empty", "BagSorter", SetEdit::Drop).expect_err("not there");
+    assert_eq!(
+        error.to_string(),
+        "set empty (flavor forever) has no addon BagSorter; its addons: none"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

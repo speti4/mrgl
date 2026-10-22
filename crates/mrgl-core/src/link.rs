@@ -112,12 +112,15 @@ pub struct Unlinked {
 
 /// `Ok(())` where junctions exist (Windows), [`Error::JunctionsWindowsOnly`] elsewhere. `link` and
 /// `unlink` call it first, so the answer comes before anything else is read.
+#[cfg(windows)]
 pub fn ensure_supported() -> Result<()> {
-    if cfg!(windows) {
-        Ok(())
-    } else {
-        Err(Error::JunctionsWindowsOnly)
-    }
+    Ok(())
+}
+
+/// The answer outside Windows: no junctions ([`Error::JunctionsWindowsOnly`]).
+#[cfg(not(windows))]
+pub fn ensure_supported() -> Result<()> {
+    Err(Error::JunctionsWindowsOnly)
 }
 
 /// The sidecar source of the addons linked from a development folder: `link:<folder>`.
@@ -204,12 +207,16 @@ fn is_under(path: &Path, folder: &Path) -> bool {
     path.next().is_some()
 }
 
+/// Two path components, case-insensitively on Windows (the file systems there are).
+#[cfg(windows)]
 fn same_component(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
-    if cfg!(windows) {
-        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
-    } else {
-        a == b
-    }
+    a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+}
+
+/// Two path components, exactly: the file systems outside Windows keep the case.
+#[cfg(not(windows))]
+fn same_component(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
+    a == b
 }
 
 /// Whether a sidecar entry was linked from this development folder.
@@ -278,7 +285,9 @@ impl Engine {
                     flavor,
                     target: link_target(&path)
                         .map(|target| target.display().to_string())
+                        // coverage: os-begin — the link changed between `is_link` and `link_target`
                         .unwrap_or_else(|error| format!("an unreadable target ({error})")),
+                    // coverage: os-end
                 });
             }
         }
@@ -397,7 +406,9 @@ pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
                 skipped.push(Skipped { name, reason });
                 continue;
             }
+            // coverage: os-begin — the guard's other arm is the one below
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                // coverage: os-end
                 if let Err(error) = create_junction(&path, &target) {
                     skipped.push(Skipped {
                         name,
@@ -407,13 +418,15 @@ pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
                 }
                 false
             }
+            // coverage: os-begin — a `symlink_metadata` failure other than a missing path, on the
+            // name of a real folder
             Err(error) => {
                 skipped.push(Skipped {
                     name,
                     reason: format!("{}: {error}", path.display()),
                 });
                 continue;
-            }
+            } // coverage: os-end
         };
         let version = addon
             .version()
@@ -639,15 +652,19 @@ mod system {
                     std::ptr::null_mut(),
                 )
             };
+            // coverage: os-begin — the ioctl's own failure
             if ok == 0 {
                 Err(io::Error::last_os_error())
+                // coverage: os-end
             } else {
                 Ok(())
             }
         };
         let result = set();
+        // coverage: os-begin — the clean-up after the ioctl's failure
         if result.is_err() {
             let _ = std::fs::remove_dir(link);
+            // coverage: os-end
         }
         result
     }
@@ -741,5 +758,102 @@ mod tests {
             String::from_utf16_lossy(&names),
             "\\??\\C:\\dev\\Foo\0C:\\dev\\Foo\0"
         );
+    }
+
+    /// A fresh temporary folder for one test, removed first and on drop.
+    struct TempFolder(PathBuf);
+
+    impl TempFolder {
+        fn new(name: &str) -> TempFolder {
+            let dir =
+                std::env::temp_dir().join(format!("mrgl-link-unit-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("the folder");
+            TempFolder(dir)
+        }
+    }
+
+    impl Drop for TempFolder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_gone_folder_on_a_missing_drive_is_spelled_as_given() {
+        // Nothing above it exists to canonicalize, up to the root: the absolute path as written.
+        let gone = if cfg!(windows) {
+            PathBuf::from("Q:\\no\\such\\dev")
+        } else {
+            PathBuf::from("/no/such/dev")
+        };
+        assert_eq!(dev_folder_lenient(&gone), gone);
+        assert_eq!(shape_of(&gone), Shape::DevelopmentFolder);
+    }
+
+    #[test]
+    fn a_folder_that_is_no_link_is_described_as_unreadable() {
+        let folder = TempFolder::new("plain");
+        let text = describe_link(&folder.0);
+        assert!(
+            text.starts_with("a junction whose target cannot be read ("),
+            "{text}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_is_described_by_where_it_points_and_whether_that_is_there() {
+        let folder = TempFolder::new("described");
+        let target = folder.0.join("target");
+        std::fs::create_dir_all(&target).expect("the target");
+        let target = dev_folder(&target).expect("canonical");
+        let link = folder.0.join("link");
+        create_junction(&link, &target).expect("a junction");
+        assert_eq!(
+            describe_link(&link),
+            format!("a junction to {}", target.display())
+        );
+        std::fs::remove_dir(&target).expect("the target goes");
+        assert_eq!(
+            describe_link(&link),
+            format!(
+                "a dangling junction to {} (its target is gone)",
+                target.display()
+            )
+        );
+        std::fs::remove_dir(&link).expect("the junction goes");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_refuses_a_relative_or_a_remote_target_before_anything_is_made() {
+        let folder = TempFolder::new("refused-targets");
+        let link = folder.0.join("link");
+        for target in ["relative\\Foo", "\\\\server\\share\\Foo"] {
+            let error = create_junction(&link, Path::new(target)).expect_err(target);
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert_eq!(
+                error.to_string(),
+                "a junction points to a folder on a local drive, by its full path"
+            );
+            assert!(!link.exists(), "nothing made for {target}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_target_too_long_for_the_reparse_buffer_is_refused() {
+        let long = PathBuf::from(format!("C:\\{}", "n".repeat(8200)));
+        let error = system::reparse_buffer(&long).expect_err("too long");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "the target path is too long for a junction"
+        );
+        let folder = TempFolder::new("long-target");
+        let link = folder.0.join("link");
+        assert!(create_junction(&link, &long).is_err());
+        assert!(!link.exists(), "nothing made");
     }
 }

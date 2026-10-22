@@ -156,8 +156,10 @@ pub fn checked_entries<R: Read + Seek>(
             .map_err(|reason| unreadable(format!("entry {index}: {reason}")))?;
         let raw = entry
             .name()
+            // coverage: os-begin — `name` reads a non-UTF-8 name as CP437, which has every byte
             .map_err(|reason| unreadable(format!("entry {index}: {reason}")))?
             .into_owned();
+        // coverage: os-end
         let escapes = || Error::ZipEntryEscapes {
             role,
             path: zip.to_path_buf(),
@@ -238,7 +240,7 @@ impl Unpacked {
     }
 
     fn refuse(&self, excess: Excess) -> io::Error {
-        io::Error::other(Error::ZipTooLarge {
+        io::Error::other(Refusal {
             role: self.role,
             path: self.zip.clone(),
             excess,
@@ -299,9 +301,37 @@ fn outgrew_its_declared_size(error: &io::Error) -> bool {
             .contains("larger than its declared uncompressed size")
 }
 
-/// The [`Error::ZipTooLarge`] an I/O error from a [`Counted`] reader carries, or the I/O error as it was.
-pub fn refusal(error: io::Error) -> std::result::Result<Error, io::Error> {
-    error.downcast::<Error>()
+/// The bound's refusal as an I/O error from a [`Counted`] reader carries it: the fields of
+/// [`Error::ZipTooLarge`], which it prints as and converts into; a caller that prints the clause alone
+/// reads `excess`.
+#[derive(Debug, Clone)]
+pub struct Refusal {
+    pub role: ZipRole,
+    pub path: PathBuf,
+    pub excess: Excess,
+}
+
+impl From<Refusal> for Error {
+    fn from(refusal: Refusal) -> Error {
+        Error::ZipTooLarge {
+            role: refusal.role,
+            path: refusal.path,
+            excess: refusal.excess,
+        }
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Error::from(self.clone()).fmt(formatter)
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+/// The bound's [`Refusal`] an I/O error from a [`Counted`] reader carries, or the I/O error as it was.
+pub fn refusal(error: io::Error) -> std::result::Result<Refusal, io::Error> {
+    error.downcast::<Refusal>()
 }
 
 /// A byte count for a human: `512 B`, `16.0 KB`, `2.0 GB`, in steps of 1024. The one size formatter of
@@ -460,6 +490,7 @@ mod tests {
         assert_eq!(entry_path("COM10"), strings(&["COM10"]));
         assert!(is_reserved_device_name("lpt9.txt"));
         assert!(!is_reserved_device_name("lpt10"));
+        assert!(!is_reserved_device_name("COMA"));
         assert_eq!(
             entry_path("Foo/Console.lua"),
             strings(&["Foo", "Console.lua"])
@@ -701,7 +732,13 @@ mod tests {
         );
         let liar = entry("liar.txt", 10);
         let error = drain(unpacked.entry(&liar, &[7u8; 40][..]), 4).expect_err("past its size");
-        let error = refusal(error).expect("the bound's refusal");
+        let text = error.to_string();
+        let error = Error::from(refusal(error).expect("the bound's refusal"));
+        assert_eq!(
+            error.to_string(),
+            text,
+            "the I/O error prints as the refusal"
+        );
         assert_eq!(
             excess(&error),
             &Excess::Entry {
@@ -727,7 +764,7 @@ mod tests {
         drain(unpacked.entry(&first, &[7u8; 30][..]), 8).expect("within the bound");
         let second = entry("second.txt", 30);
         let error = drain(unpacked.entry(&second, &[7u8; 30][..]), 8).expect_err("past the bound");
-        let error = refusal(error).expect("the bound's refusal");
+        let error = Error::from(refusal(error).expect("the bound's refusal"));
         assert_eq!(
             excess(&error),
             &Excess::Written {
@@ -761,7 +798,8 @@ mod tests {
                 break;
             }
         }
-        let error = refusal(outcome.expect_err("refused")).expect("the bound's refusal");
+        let error =
+            Error::from(refusal(outcome.expect_err("refused")).expect("the bound's refusal"));
         let toc = entries[0].size;
         assert_eq!(
             excess(&error),
@@ -780,6 +818,40 @@ mod tests {
                 toc
             )
         );
+    }
+
+    /// A reader that fails with the given error on its first read.
+    struct Failing(Option<io::Error>);
+
+    impl Read for Failing {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(self.0.take().expect("read once"))
+        }
+    }
+
+    #[test]
+    fn a_read_failure_that_is_not_the_size_lie_comes_back_as_it_was() {
+        // Only the zip crate's own refusal of an entry past its declared size is the lie; any other
+        // failure, `InvalidData` with other words included, is the plain I/O error it was.
+        let checked = CheckedEntry {
+            index: 0,
+            parts: vec!["Foo".into(), "core.lua".into()],
+            is_dir: false,
+            size: 16,
+        };
+        for error in [
+            io::Error::new(io::ErrorKind::InvalidData, "Invalid checksum"),
+            io::Error::other("the disk went away"),
+        ] {
+            let kind = error.kind();
+            let text = error.to_string();
+            let mut unpacked = Unpacked::new(Path::new("x.zip"), ZipRole::Addon, MAX_UNPACKED);
+            let mut counted = unpacked.entry(&checked, Failing(Some(error)));
+            let failure = counted.read(&mut [0u8; 8]).expect_err("fails");
+            assert_eq!((failure.kind(), failure.to_string()), (kind, text.clone()));
+            assert!(refusal(failure).is_err(), "no refusal in {text}");
+            assert_eq!(unpacked.written(), 0);
+        }
     }
 
     #[test]

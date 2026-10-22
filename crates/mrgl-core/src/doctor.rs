@@ -662,17 +662,7 @@ pub struct Probes<'a> {
 /// the token from the environment, the system's process list, the network or `MRGL_HTTP_STUB`, and the
 /// registry or `MRGL_DISCOVERY`.
 pub fn report_of_process(root_flag: Option<PathBuf>, only: Option<FlavorId>) -> Report {
-    let mut warnings = Vec::new();
-    let root = match discover::resolve_root_of_process(root_flag) {
-        Ok(resolution) => {
-            warnings.extend(resolution.warnings);
-            resolution.root
-        }
-        Err(error) => {
-            warnings.push(error.to_string());
-            None
-        }
-    };
+    let (root, warnings) = root_and_warnings(discover::resolve_root_of_process(root_flag));
     let token = keys::of_process(crate::sources::SourceKind::GitHub).map(keys::Key::into_value);
     let inputs = Inputs {
         root,
@@ -693,6 +683,17 @@ pub fn report_of_process(root_flag: Option<PathBuf>, only: Option<FlavorId>) -> 
             runtime: runtime.as_ref(),
         },
     )
+}
+
+/// The root and the warnings of a run's resolution: a config that could not be read is a warning, never
+/// an error, so the report comes out whole.
+fn root_and_warnings(
+    resolution: crate::error::Result<discover::Resolution>,
+) -> (Option<GameRoot>, Vec<String>) {
+    match resolution {
+        Ok(resolution) => (resolution.root, resolution.warnings),
+        Err(error) => (None, vec![error.to_string()]),
+    }
 }
 
 /// The report from explicit inputs and probes. Every path and every line that may hold one goes through
@@ -819,10 +820,16 @@ fn addons_check(flavor_folder: &Path, redactor: &Redactor) -> AddonsCheck {
         std::process::id(),
         PROBE.fetch_add(1, Ordering::Relaxed)
     ));
-    match std::fs::File::create(&probe) {
+    probe_addons(&probe, redactor)
+}
+
+/// The probe itself: writable when the file is created, with the reason when it then cannot be removed;
+/// not writable with the reason when it cannot be created.
+fn probe_addons(probe: &Path, redactor: &Redactor) -> AddonsCheck {
+    match std::fs::File::create(probe) {
         Ok(file) => {
             drop(file);
-            let reason = std::fs::remove_file(&probe).err().map(|error| {
+            let reason = std::fs::remove_file(probe).err().map(|error| {
                 redactor.text(&format!(
                     "the probe file {} could not be removed: {error}",
                     probe.display()
@@ -1951,6 +1958,12 @@ mod tests {
             "Windows 24H2, build unknown"
         );
 
+        // A build below Windows 10 names no release by itself.
+        assert_eq!(
+            WindowsVersion::from_values(None, None, Some("9600"), None).text(),
+            "Windows, build 9600"
+        );
+
         // Nothing there.
         let absent = WindowsVersion::from_values(None, None, None, None);
         assert_eq!(absent, WindowsVersion::default());
@@ -2008,5 +2021,672 @@ mod tests {
         assert_eq!(zip_entry::size_text(1023), "1023 B");
         assert_eq!(zip_entry::size_text(2048), "2.0 KB");
         assert_eq!(zip_entry::size_text(3 * 1024 * 1024 / 2), "1.5 MB");
+    }
+
+    /// A found flavor with nothing to look at, for the lines and the concerns of every state.
+    fn plain_flavor() -> FlavorReport {
+        FlavorReport {
+            id: "wowf".to_string(),
+            folder: "_forever_".to_string(),
+            path: "Q:\\wow\\_forever_".to_string(),
+            found: true,
+            version: Some("1.60.1.70245".to_string()),
+            interface: Some(16001),
+            version_source: Some("build-info"),
+            version_file: Some(".build.info".to_string()),
+            curse_client: false,
+            addons: AddonsCheck {
+                status: AddonsStatus::Writable,
+                reason: None,
+            },
+            sidecar: SidecarCheck {
+                status: SidecarStatus::Missing,
+                managed: None,
+                reason: None,
+            },
+            cache: CacheCheck {
+                bytes: Some(0),
+                files: Some(0),
+                reason: None,
+            },
+            kept_staging: Vec::new(),
+            client: ClientCheck {
+                status: ClientStatus::NotRunning,
+                pid: None,
+                exe: None,
+                reason: None,
+            },
+            warnings: Vec::new(),
+        }
+    }
+
+    /// A report of nothing but the given flavors, with a home and a root the flag named.
+    fn report_of(flavors: Vec<FlavorReport>) -> Report {
+        Report {
+            mrgl_version: crate::VERSION.to_string(),
+            windows: WindowsVersion::default(),
+            root: Some("Q:\\wow".to_string()),
+            root_origin: Some(RootOrigin::Flag),
+            home: Some("Q:\\home".to_string()),
+            webview2: None,
+            github_rate_limit: RateLimit::default(),
+            api_keys: Vec::new(),
+            flavors,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// The line of a flavor's block that starts with the prefix.
+    fn line_of(flavor: &FlavorReport, prefix: &str) -> String {
+        flavor
+            .lines()
+            .into_iter()
+            .find(|line| line.starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix:?} line in {:#?}", flavor.lines()))
+    }
+
+    #[test]
+    fn the_flavor_lines_name_every_state() {
+        let mut flavor = plain_flavor();
+        assert_eq!(
+            line_of(&flavor, "  build:"),
+            "  build: 1.60.1.70245, interface 16001, from .build.info"
+        );
+        flavor.version_file = None;
+        assert_eq!(line_of(&flavor, "  build:"), "  build: 1.60.1.70245");
+        flavor.version = None;
+        assert_eq!(line_of(&flavor, "  build:"), "  build: unknown");
+        flavor.curse_client = true;
+        assert_eq!(line_of(&flavor, "  curseforge"), "  curseforge app: yes");
+
+        flavor.addons = AddonsCheck {
+            status: AddonsStatus::NotWritable,
+            reason: Some("Access is denied".to_string()),
+        };
+        assert_eq!(
+            line_of(&flavor, "  addons"),
+            "  addons folder: not writable (Access is denied)"
+        );
+
+        let sidecar = |status, managed| {
+            let mut flavor = plain_flavor();
+            flavor.sidecar = SidecarCheck {
+                status,
+                managed,
+                reason: None,
+            };
+            line_of(&flavor, "  sidecar:")
+        };
+        assert_eq!(
+            sidecar(SidecarStatus::Parsed, Some(3)),
+            "  sidecar: parsed, 3 managed addons"
+        );
+        assert_eq!(sidecar(SidecarStatus::Parsed, None), "  sidecar: parsed");
+        assert_eq!(
+            sidecar(SidecarStatus::Unreadable, None),
+            "  sidecar: unreadable"
+        );
+        assert_eq!(
+            sidecar(SidecarStatus::NoHome, None),
+            "  sidecar: unknown, no mrgl home folder"
+        );
+
+        let cache = |bytes, files, reason: Option<&str>| {
+            let mut flavor = plain_flavor();
+            flavor.cache = CacheCheck {
+                bytes,
+                files,
+                reason: reason.map(str::to_string),
+            };
+            line_of(&flavor, "  cache:")
+        };
+        assert_eq!(
+            cache(Some(3072), Some(2), None),
+            "  cache: 3.0 KB in 2 files"
+        );
+        assert_eq!(
+            cache(None, None, Some("no mrgl home folder")),
+            "  cache: unknown (no mrgl home folder)"
+        );
+
+        let kept = |age_seconds, bytes, files, previous: &[&str]| {
+            let mut flavor = plain_flavor();
+            flavor.kept_staging = vec![KeptStaging {
+                path: "~\\staging\\run".to_string(),
+                created: None,
+                age_seconds,
+                bytes,
+                files,
+                previous: previous.iter().map(|name| name.to_string()).collect(),
+                advice: KEPT_STAGING_ADVICE,
+            }];
+            line_of(&flavor, "  kept staging:")
+        };
+        assert_eq!(
+            kept(None, Some(10), Some(1), &[]),
+            "  kept staging: ~\\staging\\run (age unknown, 10 B in 1 file; previous: nothing)"
+        );
+        assert_eq!(
+            kept(Some(90), None, None, &["One", "Two"]),
+            "  kept staging: ~\\staging\\run (1 minute old, size unknown; previous: One, Two)"
+        );
+
+        let client = |status, pid, exe: Option<&str>| {
+            let mut flavor = plain_flavor();
+            flavor.client = ClientCheck {
+                status,
+                pid,
+                exe: exe.map(str::to_string),
+                reason: None,
+            };
+            line_of(&flavor, "  client:")
+        };
+        assert_eq!(
+            client(ClientStatus::Running, Some(7), Some("Q:\\")),
+            "  client: running (Q:\\, pid 7)",
+            "a path without a file name is named whole"
+        );
+        assert_eq!(
+            client(ClientStatus::Running, None, None),
+            "  client: running"
+        );
+        assert_eq!(
+            client(ClientStatus::Unknown, None, None),
+            "  client: unknown"
+        );
+    }
+
+    #[test]
+    fn the_concerns_name_every_thing_to_look_at_once() {
+        let mut forever = plain_flavor();
+        forever.addons.status = AddonsStatus::NotWritable;
+        forever.sidecar.status = SidecarStatus::Unreadable;
+        forever.client.status = ClientStatus::Unknown;
+        forever.warnings = vec!["build unknown: no row".to_string()];
+        forever.kept_staging = vec![
+            KeptStaging {
+                path: "~\\a".to_string(),
+                created: None,
+                age_seconds: None,
+                bytes: None,
+                files: None,
+                previous: Vec::new(),
+                advice: KEPT_STAGING_ADVICE,
+            };
+            2
+        ];
+        assert_eq!(
+            forever.concerns(),
+            [
+                "the AddOns folder of _forever_ is not writable",
+                "the sidecar of _forever_ is unreadable",
+                "2 kept staging folders of _forever_",
+                "the process list is unreadable",
+                "_forever_ has a warning",
+            ]
+        );
+        // A second flavor with the same unreadable process list names it once; a used-up rate limit
+        // and two warnings are concerns of the report.
+        let mut retail = plain_flavor();
+        retail.folder = "_retail_".to_string();
+        retail.client.status = ClientStatus::Unknown;
+        let mut report = report_of(vec![forever, retail]);
+        report.github_rate_limit = RateLimit {
+            remaining: Some(0),
+            limit: Some(60),
+            reset: None,
+            reason: None,
+        };
+        report.warnings = vec!["one".to_string(), "two".to_string()];
+        assert_eq!(
+            report.concerns(),
+            [
+                "the AddOns folder of _forever_ is not writable",
+                "the sidecar of _forever_ is unreadable",
+                "2 kept staging folders of _forever_",
+                "the process list is unreadable",
+                "_forever_ has a warning",
+                "the GitHub rate limit is used up",
+                "2 warnings",
+            ]
+        );
+        let (kind, summary) = report.summary();
+        assert_eq!(kind, Kind::Warning);
+        assert!(
+            summary.starts_with("diagnostics of 2 flavors, 7 things to look at ("),
+            "{summary}"
+        );
+        assert_eq!(report_of(vec![plain_flavor()]).summary().0, Kind::Success);
+    }
+
+    #[test]
+    fn the_general_lines_name_the_root_origin_the_home_and_a_per_user_runtime() {
+        let mut report = report_of(Vec::new());
+        report.webview2 = Some(WebView2 {
+            version: "131.0.2903.70".to_string(),
+            scope: Scope::User,
+        });
+        let line_of = |report: &Report, prefix: &str| {
+            report
+                .lines()
+                .into_iter()
+                .find(|line| line.starts_with(prefix))
+                .unwrap_or_else(|| panic!("no {prefix:?} line"))
+        };
+        assert_eq!(
+            line_of(&report, "webview2:"),
+            "webview2: 131.0.2903.70 (per-user)"
+        );
+        assert_eq!(line_of(&report, "root:"), "root: Q:\\wow (from --root)");
+        report.root_origin = Some(RootOrigin::Remembered);
+        assert_eq!(line_of(&report, "root:"), "root: Q:\\wow (remembered)");
+        report.root_origin = Some(RootOrigin::CommonFolder);
+        assert_eq!(
+            line_of(&report, "root:"),
+            "root: Q:\\wow (found in a usual install folder)"
+        );
+        report.root_origin = Some(RootOrigin::Environment);
+        assert_eq!(line_of(&report, "root:"), "root: Q:\\wow (from MRGL_ROOT)");
+        report.root_origin = None;
+        assert_eq!(line_of(&report, "root:"), "root: Q:\\wow");
+    }
+
+    #[test]
+    fn a_resolution_that_fails_is_a_warning_of_the_report() {
+        let (root, warnings) = root_and_warnings(Err(crate::Error::NoHome));
+        assert_eq!(root, None);
+        assert_eq!(
+            warnings,
+            ["no home folder for mrgl: neither MRGL_HOME nor LOCALAPPDATA is set"]
+        );
+        let (root, warnings) = root_and_warnings(Ok(discover::Resolution {
+            root: Some(GameRoot {
+                path: PathBuf::from("Q:\\wow"),
+                origin: RootOrigin::Flag,
+            }),
+            warnings: vec!["unreadable config".to_string()],
+        }));
+        assert_eq!(root.map(|root| root.path), Some(PathBuf::from("Q:\\wow")));
+        assert_eq!(warnings, ["unreadable config"]);
+    }
+
+    #[test]
+    fn the_discovery_variable_unset_is_the_system_runtime() {
+        let system = runtime_from_env(None);
+        assert_eq!(system.windows(), SystemRuntime.windows());
+        assert_eq!(system.webview2(), SystemRuntime.webview2());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_system_runtime_reads_the_registry() {
+        let windows = SystemRuntime.windows();
+        assert!(
+            windows
+                .name
+                .as_deref()
+                .is_some_and(|name| name.starts_with("Windows")),
+            "{windows:?}"
+        );
+        assert!(
+            windows.build.is_some_and(|build| build >= WINDOWS_10_BUILD),
+            "{windows:?}"
+        );
+        assert!(windows.product_name.is_some(), "{windows:?}");
+        assert!(windows.text().starts_with("Windows "), "{}", windows.text());
+        // The runtime as the first key that names a usable version holds it, or none.
+        let expected = WEBVIEW2_KEYS.iter().find_map(|(hive, key, scope)| {
+            let value = discover::registry_string(*hive, key, WEBVIEW2_VALUE)?;
+            usable_version(&value.to_string_lossy()).map(|version| (version, *scope))
+        });
+        assert_eq!(
+            SystemRuntime
+                .webview2()
+                .map(|runtime| (runtime.version, runtime.scope)),
+            expected
+        );
+    }
+
+    #[test]
+    fn a_root_that_cannot_be_read_and_one_without_flavors_still_report() {
+        let base = temp_dir("odd-roots");
+        let file = base.join("not-a-folder");
+        std::fs::write(&file, "").expect("a file");
+        let empty = base.join("empty");
+        std::fs::create_dir_all(&empty).expect("a folder");
+        let run = |root: &Path| {
+            report(
+                Inputs {
+                    root: Some(GameRoot {
+                        path: root.to_path_buf(),
+                        origin: RootOrigin::Flag,
+                    }),
+                    ..Inputs::default()
+                },
+                &Probes {
+                    processes: &FixedProcesses::default(),
+                    http: &MapHttp::new(),
+                    runtime: &FixedRuntime::default(),
+                },
+            )
+        };
+        let report = run(&file);
+        assert_eq!(report.flavors, []);
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert!(
+            report.warnings[0].starts_with("reading the game folder: "),
+            "{}",
+            report.warnings[0]
+        );
+        assert!(
+            report
+                .lines()
+                .iter()
+                .any(|line| line.starts_with("warning: reading the game folder: ")),
+            "{:#?}",
+            report.lines()
+        );
+        assert!(report.concerns().contains(&"1 warning".to_string()));
+        let report = run(&empty);
+        assert_eq!(report.flavors, []);
+        assert_eq!(report.warnings, Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_flavor_with_an_unknown_id_has_a_warning_and_an_asked_one_is_named_by_its_id() {
+        let base = temp_dir("unknown-id");
+        let profile = base.join("Users").join("someone");
+        let root = game_root(&profile.join("Games"));
+        std::fs::create_dir_all(root.join("_other_")).expect("the folder");
+        std::fs::write(
+            root.join("_other_").join(".flavor.info"),
+            "Product Flavor!STRING:0\nwowx\n",
+        )
+        .expect(".flavor.info");
+        let run = |only: Option<FlavorId>| {
+            report(
+                Inputs {
+                    root: Some(GameRoot {
+                        path: root.clone(),
+                        origin: RootOrigin::Flag,
+                    }),
+                    only,
+                    redactor: Redactor::new(Some(&profile)),
+                    ..Inputs::default()
+                },
+                &Probes {
+                    processes: &FixedProcesses::default(),
+                    http: &MapHttp::new(),
+                    runtime: &FixedRuntime::default(),
+                },
+            )
+        };
+        let report = run(None);
+        let other = report
+            .flavors
+            .iter()
+            .find(|flavor| flavor.folder == "_other_")
+            .expect("the unknown flavor");
+        assert!(other.found);
+        assert_eq!(other.id, "wowx");
+        assert_eq!(
+            other.warnings.first().map(String::as_str),
+            Some(
+                format!(
+                    "unknown flavor id wowx in ~{sep}Games{sep}World of Warcraft{sep}_other_",
+                    sep = std::path::MAIN_SEPARATOR
+                )
+                .as_str()
+            ),
+            "the warning goes through the redactor"
+        );
+        let profile_text = profile.display().to_string();
+        assert!(
+            other
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains(&profile_text)),
+            "{:?}",
+            other.warnings
+        );
+        assert!(
+            report
+                .concerns()
+                .contains(&"_other_ has a warning".to_string()),
+            "{:?}",
+            report.concerns()
+        );
+        // An unknown id asked for and not there is named by the id itself, there being no folder name.
+        let report = run(Some(FlavorId::Other("wowy".to_string())));
+        assert_eq!(report.flavors.len(), 1);
+        let missing = &report.flavors[0];
+        assert!(!missing.found);
+        assert_eq!(
+            (missing.id.as_str(), missing.folder.as_str()),
+            ("wowy", "wowy")
+        );
+        assert_eq!(
+            missing.warnings,
+            ["no flavor folder wowy with a .flavor.info under the game root"]
+        );
+        assert!(
+            report
+                .lines()
+                .contains(&"flavor: wowy (wowy), folder missing".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn without_a_home_folder_the_sidecar_and_the_cache_are_unknown() {
+        let base = temp_dir("no-home");
+        let root = game_root(&base);
+        let report = report(
+            Inputs {
+                root: Some(GameRoot {
+                    path: root.clone(),
+                    origin: RootOrigin::Flag,
+                }),
+                only: Some(FlavorId::Forever),
+                home: None,
+                ..Inputs::default()
+            },
+            &Probes {
+                processes: &FixedProcesses::default(),
+                http: &MapHttp::new(),
+                runtime: &FixedRuntime::default(),
+            },
+        );
+        let forever = &report.flavors[0];
+        assert_eq!(forever.sidecar.status, SidecarStatus::NoHome);
+        assert_eq!(
+            forever.cache,
+            CacheCheck {
+                bytes: None,
+                files: None,
+                reason: Some("no mrgl home folder".to_string()),
+            }
+        );
+        assert_eq!(forever.kept_staging, []);
+        let lines = report.lines();
+        for line in [
+            "home: none (neither MRGL_HOME nor LOCALAPPDATA is set)",
+            "  sidecar: unknown, no mrgl home folder",
+            "  cache: unknown (no mrgl home folder)",
+        ] {
+            assert!(
+                lines.contains(&line.to_string()),
+                "missing {line:?} in {lines:#?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn an_unreadable_sidecar_and_an_unreadable_cache_say_so() {
+        let base = temp_dir("unreadable");
+        let root = game_root(&base);
+        let home = base.join("home");
+        let forever = FlavorHome::at(&home, &FlavorId::Forever);
+        // A folder where the sidecar should be, a file where the cache folder should be.
+        std::fs::create_dir_all(forever.state_path()).expect("a folder in the way");
+        std::fs::write(forever.cache_dir(), "").expect("a file in the way");
+        let report = report(
+            Inputs {
+                root: Some(GameRoot {
+                    path: root.clone(),
+                    origin: RootOrigin::Flag,
+                }),
+                only: Some(FlavorId::Forever),
+                home: Some(home.clone()),
+                ..Inputs::default()
+            },
+            &Probes {
+                processes: &FixedProcesses::default(),
+                http: &MapHttp::new(),
+                runtime: &FixedRuntime::default(),
+            },
+        );
+        let flavor = &report.flavors[0];
+        assert_eq!(flavor.sidecar.status, SidecarStatus::Unreadable);
+        assert!(
+            flavor
+                .sidecar
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("reading the state sidecar: ")),
+            "{:?}",
+            flavor.sidecar
+        );
+        assert_eq!((flavor.cache.bytes, flavor.cache.files), (None, None));
+        assert!(
+            flavor.cache.reason.as_deref().is_some_and(
+                |reason| reason.starts_with(&forever.cache_dir().display().to_string())
+            ),
+            "{:?}",
+            flavor.cache
+        );
+        let lines = report.lines();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("  sidecar: unreadable (reading the state sidecar: ")),
+            "{lines:#?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("  cache: unknown (")),
+            "{lines:#?}"
+        );
+        assert!(
+            report
+                .concerns()
+                .contains(&"the sidecar of _forever_ is unreadable".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_cache_size_counts_every_file_and_skips_a_junction() {
+        let base = temp_dir("cache-size");
+        let root = game_root(&base);
+        let home = base.join("home");
+        let cache = FlavorHome::at(&home, &FlavorId::Forever).cache_dir();
+        std::fs::create_dir_all(cache.join("Made")).expect("the cache folder");
+        std::fs::write(cache.join("Made").join("1.0.0.zip"), [0u8; 1024]).expect("a zip");
+        std::fs::write(cache.join("Made").join("1.1.0.zip"), [0u8; 1024]).expect("a zip");
+        let elsewhere = base.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).expect("the folder");
+        std::fs::write(elsewhere.join("big.zip"), [0u8; 4096]).expect("a file behind the junction");
+        let canonical = crate::link::dev_folder(&elsewhere).expect("canonical");
+        crate::link::create_junction(&cache.join("Linked"), &canonical).expect("a junction");
+        let report = report(
+            Inputs {
+                root: Some(GameRoot {
+                    path: root.clone(),
+                    origin: RootOrigin::Flag,
+                }),
+                only: Some(FlavorId::Forever),
+                home: Some(home.clone()),
+                ..Inputs::default()
+            },
+            &Probes {
+                processes: &FixedProcesses::default(),
+                http: &MapHttp::new(),
+                runtime: &FixedRuntime::default(),
+            },
+        );
+        assert_eq!(
+            report.flavors[0].cache,
+            CacheCheck {
+                bytes: Some(2048),
+                files: Some(2),
+                reason: None,
+            },
+            "the junction's files are not counted"
+        );
+        assert!(
+            report
+                .lines()
+                .contains(&"  cache: 2.0 KB in 2 files".to_string())
+        );
+        let _ = std::fs::remove_dir(cache.join("Linked"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_addons_probe_reports_a_missing_folder_and_one_it_cannot_write() {
+        let base = temp_dir("probe");
+        let redactor = Redactor::default();
+        assert_eq!(
+            addons_check(&base.join("no-such-flavor"), &redactor),
+            AddonsCheck {
+                status: AddonsStatus::Missing,
+                reason: None,
+            },
+            "no flavor folder"
+        );
+        // A folder where the probe file would be: it cannot be created.
+        let probe = base.join("probe-in-the-way");
+        std::fs::create_dir_all(&probe).expect("a folder");
+        let check = probe_addons(&probe, &redactor);
+        assert_eq!(check.status, AddonsStatus::NotWritable);
+        assert!(check.reason.is_some(), "{check:?}");
+        assert!(probe.is_dir(), "left as it was");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_probe_that_cannot_be_removed_is_writable_with_the_reason() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        let base = temp_dir("probe-held");
+        let profile = base.join("Users").join("someone");
+        let addons = profile.join("AddOns");
+        std::fs::create_dir_all(&addons).expect("the folder");
+        let probe = addons.join(format!("{PROBE_PREFIX}held"));
+        std::fs::write(&probe, "").expect("the probe");
+        // A handle that shares reads and writes but no deletion: the probe is created over the file
+        // (truncated) and then cannot be removed.
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&probe)
+            .expect("the handle");
+        let check = probe_addons(&probe, &Redactor::new(Some(&profile)));
+        assert_eq!(check.status, AddonsStatus::Writable);
+        let reason = check.reason.expect("the reason");
+        assert!(
+            reason.starts_with(&format!(
+                "the probe file ~\\AddOns\\{PROBE_PREFIX}held could not be removed: "
+            )),
+            "{reason}"
+        );
+        drop(held);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

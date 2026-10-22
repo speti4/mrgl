@@ -443,7 +443,9 @@ pub fn read_flavor(folder: &Path) -> Result<Flavor> {
                 root.join(BUILD_INFO).display()
             )),
         },
+        // coverage: os-begin — a folder with no parent is a drive root
         None => Err(format!("{} has no parent folder", folder.display())),
+        // coverage: os-end
     };
     let (version, version_source) = match from_build_info {
         Ok(version) => (Some(version), Some(VersionSource::BuildInfo)),
@@ -483,10 +485,12 @@ pub fn list_flavors(root: &Path) -> Result<Vec<Flavor>> {
     let mut flavors = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| Error::Io {
+            // coverage: os-begin — an entry error mid-listing
             context: "reading the game folder",
             path: root.to_path_buf(),
             source,
         })?;
+        // coverage: os-end
         let path = entry.path();
         if !path.is_dir() || !path.join(FLAVOR_INFO).is_file() {
             continue;
@@ -662,6 +666,30 @@ us|1|e8c4ef4e67bd1d94d820254984258fa8|1.60.1.70245||wowf\n";
             ))
         );
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_folder_without_a_name_is_named_by_its_path() {
+        let flavor = Flavor {
+            id: FlavorId::Forever,
+            folder: PathBuf::from("Q:\\"),
+            version: None,
+            version_source: None,
+            curse_client: false,
+            warnings: Vec::new(),
+        };
+        assert_eq!(flavor.folder_name(), "Q:\\");
+    }
+
+    #[test]
+    fn an_empty_path_cannot_be_resolved() {
+        let error = read_flavor(Path::new("")).expect_err("no folder");
+        assert!(
+            error
+                .to_string()
+                .starts_with("resolving the flavor folder: "),
+            "{error}"
+        );
     }
 
     #[test]

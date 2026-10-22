@@ -468,9 +468,11 @@ impl<H: Http> CurseForge<H> {
                 spec: spec.to_string(),
                 reason: reason.to_string(),
             })?;
-        if let Ok(mut answers) = self.answers.lock() {
-            answers.insert(url.to_string(), raw.clone());
-        }
+        // A poisoned lock (a panic while an answer was being kept) still holds the answers.
+        self.answers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(url.to_string(), raw.clone());
         Ok(raw)
     }
 
@@ -537,9 +539,10 @@ impl<H: Http> CurseForge<H> {
         if file.modules.is_empty() {
             return;
         }
-        if let Ok(mut modules) = self.modules.lock() {
-            modules.insert(spec.to_string(), file.modules.clone());
-        }
+        self.modules
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(spec.to_string(), file.modules.clone());
     }
 
     /// The pick of a file, or [`Error::DistributionOff`] when its author allows no download outside
@@ -916,6 +919,11 @@ mod tests {
             );
         }
         assert_eq!(of(FlavorId::Classic, None), Some((79434, "mop", true)));
+        assert_eq!(
+            of(FlavorId::Classic, Some("9.0.0.1")),
+            Some((79434, "mop", true)),
+            "a build of no game type CurseForge names is a guess too"
+        );
         assert_eq!(of(FlavorId::Other("wow_x".into()), None), None);
     }
 
@@ -962,6 +970,19 @@ mod tests {
         assert!(one.fits(FOREVER) && !one.fits(RETAIL));
         assert_eq!(one.modules, ["A", "A_Options"]);
         assert!(parse_files(&serde_json::json!({ "data": {} })).is_err());
+        // A `data` of null is no envelope, a number written as text is a number, a hash that is no MD5
+        // is none, and the release types have their names.
+        let bare = parse_mod(&serde_json::json!({ "data": null, "id": "7", "gameId": 1 }))
+            .expect("a project");
+        assert_eq!(bare.id, Some(7));
+        let files = parse_files(&serde_json::json!([
+            { "id": 8, "releaseType": 3, "hashes": [ { "value": "abc", "algo": 2 } ] }
+        ]))
+        .expect("files");
+        assert_eq!(files[0].md5, None);
+        assert_eq!(files[0].kind(), "alpha");
+        assert_eq!(file(9, 2, "").kind(), "beta");
+        assert_eq!(page_of("9"), "https://www.curseforge.com/projects/9");
     }
 
     #[test]
@@ -984,6 +1005,13 @@ mod tests {
             next_url("https://edge.forgecdn.net/files/1/2/a.zip", "b.zip"),
             "https://edge.forgecdn.net/files/1/2/b.zip"
         );
+        assert_eq!(
+            next_url(
+                "https://edge.forgecdn.net/a.zip",
+                "http://plain.example.test/a.zip"
+            ),
+            "http://plain.example.test/a.zip"
+        );
         let http = MapHttp::new()
             .answer("https://edge.forgecdn.net/files/1/2/a.zip", 302, "")
             .with_header(
@@ -1002,5 +1030,377 @@ mod tests {
         assert!(requests.iter().all(|request| !request.follow_redirects));
         assert_eq!(requests[0].header_value(KEY_HEADER), Some("made-up-key"));
         assert_eq!(requests[1].header_value(KEY_HEADER), None, "another host");
+        // A redirect that never lands is given up after the bound.
+        let looping = "https://edge.forgecdn.net/files/1/2/loop.zip";
+        let http = MapHttp::new()
+            .answer(looping, 302, "")
+            .with_header(looping, "Location", looping);
+        let source = CurseForge::new(http, Some("made-up-key".into()));
+        let error = source.send(looping, false).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            format!("cannot reach {looping}: more than 5 redirects")
+        );
+        assert_eq!(source.http().requests().len(), MAX_REDIRECTS + 1);
+    }
+
+    const PROJECT_URL: &str = "https://api.curseforge.com/v1/mods/9";
+    const FILES_URL: &str =
+        "https://api.curseforge.com/v1/mods/9/files?gameVersionTypeId=88568&pageSize=50";
+    const MOP_FILES_URL: &str =
+        "https://api.curseforge.com/v1/mods/9/files?gameVersionTypeId=79434&pageSize=50";
+
+    fn spec() -> SourceSpec {
+        SourceSpec::CurseForge { id: "9".into() }
+    }
+
+    fn forever() -> Target {
+        Target::new(FlavorId::Forever)
+    }
+
+    /// A project answer: WoW, no page, distribution as given.
+    fn project_body(allow: &str) -> String {
+        format!(
+            "{{\"data\":{{\"id\":9,\"gameId\":1,\"name\":\"A\",\"allowModDistribution\":{allow}}}}}"
+        )
+    }
+
+    /// A file list of one file: its id, release type, and the fields given.
+    fn files_body(id: u64, release_type: u8, fields: &str) -> String {
+        format!(
+            "{{\"data\":[{{\"id\":{id},\"releaseType\":{release_type},\"fileDate\":\"2026-10-0{release_type}T00:00:00Z\",\"downloadUrl\":\"https://edge.forgecdn.net/files/{id}/A.zip\"{fields}}}]}}"
+        )
+    }
+
+    fn keyed(http: MapHttp) -> CurseForge<MapHttp> {
+        CurseForge::new(http, Some("made-up-key".into()))
+    }
+
+    /// A pick of `curse:9` for a download test.
+    fn test_pick(url: &str, size: Option<u64>) -> Pick {
+        Pick {
+            source: "curse:9".into(),
+            release: "7".into(),
+            version: "1.0.0".into(),
+            published: None,
+            prerelease: false,
+            asset: "A.zip".into(),
+            url: url.into(),
+            size,
+            md5: None,
+            flavor: "forever".into(),
+            interface: None,
+            guess: false,
+            reason: String::new(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: ForeverBuild::Yes,
+            stale: None,
+        }
+    }
+
+    #[test]
+    fn an_answer_that_is_no_project_or_no_json_and_another_game_are_errors() {
+        let resolve = |http: MapHttp| keyed(http).resolve(&spec(), &forever()).unwrap_err();
+        let error = resolve(MapHttp::new().answer(PROJECT_URL, 200, "{ not")).to_string();
+        assert!(
+            error.starts_with("unreadable project from curse:9: "),
+            "{error}"
+        );
+        let error = resolve(MapHttp::new().answer(PROJECT_URL, 200, "[]")).to_string();
+        assert_eq!(error, "unreadable project from curse:9: expected an object");
+        let error =
+            resolve(MapHttp::new().answer(PROJECT_URL, 200, "{\"data\":{\"id\":9,\"gameId\":2}}"))
+                .to_string();
+        assert_eq!(
+            error,
+            "unreadable project from curse:9: it is no World of Warcraft addon (game id 2)"
+        );
+        let error = resolve(
+            MapHttp::new()
+                .answer(PROJECT_URL, 200, &project_body("true"))
+                .answer(FILES_URL, 200, "{\"data\":{}}"),
+        )
+        .to_string();
+        assert_eq!(
+            error,
+            "unreadable file list from curse:9: expected a list of files"
+        );
+        let error = resolve(
+            MapHttp::new()
+                .answer(PROJECT_URL, 200, &project_body("true"))
+                .answer(FILES_URL, 200, "{\"data\":[]}"),
+        )
+        .to_string();
+        assert_eq!(
+            error,
+            "no asset for flavor forever in curse:9 game version type 88568 (forever) (CurseForge lists no release, beta or alpha file for it)"
+        );
+        // A flavor CurseForge names no type for, and a spec of another source.
+        let error = keyed(MapHttp::new())
+            .resolve(&spec(), &Target::new(FlavorId::Other("wow_x".into())))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "no asset for flavor wow_x in curse:9 - (CurseForge names no game version type for this flavor)"
+        );
+        let wago = SourceSpec::parse("wago:abc").unwrap();
+        let error = keyed(MapHttp::new())
+            .resolve(&wago, &forever())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "source not configured: wago:abc (the CurseForge source answers curse: specs only)"
+        );
+    }
+
+    #[test]
+    fn the_statuses_have_hints() {
+        let response = |headers: &[(&str, &str)]| Response {
+            status: 0,
+            headers: headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+            body: Vec::new(),
+        };
+        let hint = |status: u16, headers: &[(&str, &str)]| {
+            status_error(status, "u", &response(headers), NO_PROJECT)
+                .to_string()
+                .split_once(": ")
+                .map(|(_, hint)| hint.to_string())
+                .unwrap_or_default()
+        };
+        assert!(hint(401, &[]).contains(keys::CURSEFORGE_KEY));
+        assert!(hint(403, &[]).contains(keys::CURSEFORGE_KEY));
+        assert!(
+            hint(429, &[("x-ratelimit-reset", "1800000000")])
+                .starts_with("the rate limit is used up until ")
+        );
+        assert_eq!(
+            hint(429, &[]),
+            "the rate limit is used up; try again after a short wait"
+        );
+        assert_eq!(hint(404, &[]), NO_PROJECT);
+        assert_eq!(hint(502, &[]), "the server has a problem; try again later");
+        assert_eq!(hint(418, &[]), "an unexpected status");
+    }
+
+    #[test]
+    fn the_pick_fills_what_the_file_leaves_out_and_says_when_the_game_type_is_a_guess() {
+        // No page, no file name, no display name: the defaults; the stable channel takes a beta when
+        // no release file is there and says so.
+        let http = MapHttp::new()
+            .answer(PROJECT_URL, 200, &project_body("true"))
+            .answer(FILES_URL, 200, &files_body(7, 2, ""));
+        let curse = keyed(http);
+        let pick = curse.resolve(&spec(), &forever()).expect("a pick");
+        assert_eq!(
+            pick.page.as_deref(),
+            Some("https://www.curseforge.com/projects/9")
+        );
+        assert_eq!(pick.asset, "7.zip");
+        assert_eq!(pick.version, "7");
+        assert!(pick.prerelease);
+        assert_eq!(
+            pick.reason,
+            "CurseForge lists no release file for forever; the newest, the beta , is taken"
+        );
+        assert_eq!(curse.folders(&spec()), None, "a file without modules");
+        // The progressing classic without a build: the game type is a guess, in the reason.
+        let http = MapHttp::new()
+            .answer(PROJECT_URL, 200, &project_body("true"))
+            .answer(
+                MOP_FILES_URL,
+                200,
+                &files_body(7, 1, ",\"displayName\":\"1.0.0\""),
+            );
+        let pick = keyed(http)
+            .resolve(&spec(), &Target::new(FlavorId::Classic))
+            .expect("a pick");
+        assert!(pick.guess);
+        assert_eq!(
+            pick.reason,
+            "CurseForge lists the release 1.0.0 for mop; the installed build is unknown, so the game type is a guess"
+        );
+        // A download address with the distribution off is no download.
+        let http = MapHttp::new()
+            .answer(PROJECT_URL, 200, &project_body("false"))
+            .answer(FILES_URL, 200, &files_body(7, 1, ""));
+        let error = keyed(http).resolve(&spec(), &forever()).unwrap_err();
+        assert!(matches!(error, Error::DistributionOff { .. }), "{error}");
+    }
+
+    #[test]
+    fn a_version_is_found_among_the_files_that_fit_and_are_available() {
+        let files = "{\"data\":[\
+            {\"id\":1,\"displayName\":\"v2.0.0\",\"fileName\":\"A-2.zip\",\"downloadUrl\":\"https://edge.forgecdn.net/1/A.zip\",\"isAvailable\":false},\
+            {\"id\":2,\"displayName\":\"v2.0.0\",\"fileName\":\"A-2r.zip\",\"downloadUrl\":\"https://edge.forgecdn.net/2/A.zip\",\
+             \"sortableGameVersions\":[{\"gameVersion\":\"12.0.0\",\"gameVersionTypeId\":517}]},\
+            {\"id\":3,\"displayName\":\"v2.0.0\",\"fileName\":\"A-2f.zip\",\"downloadUrl\":\"https://edge.forgecdn.net/3/A.zip\",\
+             \"sortableGameVersions\":[{\"gameVersion\":\"1.60.1\",\"gameVersionTypeId\":88568}]},\
+            {\"id\":4,\"displayName\":\"1.0.0\",\"fileName\":\"A-1.zip\",\"downloadUrl\":\"https://edge.forgecdn.net/4/A.zip\"}\
+        ]}";
+        let http = MapHttp::new()
+            .answer(PROJECT_URL, 200, &project_body("true"))
+            .answer(FILES_URL, 200, files);
+        let curse = keyed(http);
+        let pick = curse
+            .resolve_version(&spec(), &forever(), "2.0.0")
+            .expect("the version without its v");
+        assert_eq!(
+            pick.release, "3",
+            "not the unavailable file, not the retail one"
+        );
+        assert_eq!(
+            curse
+                .resolve_version(&spec(), &forever(), "4")
+                .expect("by id")
+                .asset,
+            "A-1.zip"
+        );
+        let error = curse
+            .resolve_version(&spec(), &forever(), "3.0.0")
+            .unwrap_err();
+        assert!(matches!(error, Error::VersionNotOffered { .. }), "{error}");
+    }
+
+    #[test]
+    fn the_offer_says_what_the_project_cannot_tell() {
+        let offer = |http: MapHttp, target: &Target| {
+            let offer = keyed(http).offers(&spec(), target);
+            (offer.build, offer.why)
+        };
+        let other = Target::new(FlavorId::Other("wow_x".into()));
+        assert_eq!(
+            offer(MapHttp::new(), &other),
+            (
+                Offered::Unknown,
+                "CurseForge names no game version type for this flavor".to_string()
+            )
+        );
+        let (build, why) = offer(MapHttp::new(), &forever());
+        assert_eq!(build, Offered::No, "a project that is not there");
+        assert!(why.starts_with("CurseForge answered 404 for "), "{why}");
+        let (build, why) = offer(MapHttp::new().answer(PROJECT_URL, 500, ""), &forever());
+        assert_eq!(build, Offered::Unknown);
+        assert!(why.starts_with("CurseForge answered 500 for "), "{why}");
+        // The project is there and its file list is not, or cannot be read.
+        let project = || MapHttp::new().answer(PROJECT_URL, 200, &project_body("true"));
+        let (build, why) = offer(project(), &forever());
+        assert_eq!(build, Offered::No);
+        assert!(why.starts_with("CurseForge answered 404 for "), "{why}");
+        let (build, why) = offer(project().answer(FILES_URL, 200, "{ not"), &forever());
+        assert_eq!(build, Offered::Unknown);
+        assert!(
+            why.starts_with("unreadable file list from curse:9: "),
+            "{why}"
+        );
+        // A file with no download address still is the build; a guessed game type is unknown.
+        let files = files_body(7, 1, ",\"displayName\":\"1.0.0\"").replace(
+            "\"downloadUrl\":\"https://edge.forgecdn.net/files/7/A.zip\"",
+            "\"downloadUrl\":null",
+        );
+        let zip_in_hand = (
+            Offered::Yes,
+            "CurseForge lists the release 1.0.0 for forever; its author allows no download outside CurseForge, so it installs from a zip in hand".to_string(),
+        );
+        assert_eq!(
+            offer(project().answer(FILES_URL, 200, &files), &forever()),
+            zip_in_hand
+        );
+        // The same for a file with an address whose project allows no distribution.
+        let off = MapHttp::new()
+            .answer(PROJECT_URL, 200, &project_body("false"))
+            .answer(
+                FILES_URL,
+                200,
+                &files_body(7, 1, ",\"displayName\":\"1.0.0\""),
+            );
+        assert_eq!(offer(off, &forever()), zip_in_hand);
+        assert_eq!(
+            offer(
+                project().answer(MOP_FILES_URL, 200, &files_body(7, 1, ",\"displayName\":\"1.0.0\"")),
+                &Target::new(FlavorId::Classic)
+            ),
+            (
+                Offered::Unknown,
+                "CurseForge lists the release 1.0.0 for mop; the installed build is unknown, so the game type is a guess".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn a_download_that_is_missing_refused_or_cut_short_or_cannot_be_written_is_an_error() {
+        let url = "https://edge.forgecdn.net/files/7/A.zip";
+        let dir =
+            std::env::temp_dir().join(format!("mrgl-curse-unit-download-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let to = dir.join("nested").join("A.zip");
+        let fetch = |http: MapHttp, pick: &Pick, to: &Path| keyed(http).fetch(pick, to);
+        let error = fetch(MapHttp::new(), &test_pick(url, None), &to).unwrap_err();
+        assert!(matches!(error, Error::AssetMissing { .. }), "{error}");
+        let error = fetch(
+            MapHttp::new().answer(url, 500, ""),
+            &test_pick(url, None),
+            &to,
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            error,
+            format!("CurseForge answered 500 for {url}: the server has a problem; try again later")
+        );
+        let error = fetch(
+            MapHttp::new().answer(url, 200, "zip"),
+            &test_pick(url, Some(4)),
+            &to,
+        )
+        .unwrap_err();
+        assert!(matches!(error, Error::AssetSizeMismatch { .. }), "{error}");
+        assert_eq!(
+            error.to_string(),
+            "refused A.zip of curse:9 7: 3 bytes downloaded, the release list names 4; the download was cut short or the asset changed, try again"
+        );
+        fetch(
+            MapHttp::new().answer(url, 200, "zip"),
+            &test_pick(url, Some(3)),
+            &to,
+        )
+        .expect("fetched");
+        assert_eq!(std::fs::read(&to).unwrap(), b"zip");
+        // Without a key the download is sent without one.
+        let keyless = CurseForge::new(MapHttp::new().answer(url, 200, "zip"), None);
+        keyless
+            .fetch(&test_pick(url, Some(3)), &to)
+            .expect("fetched without a key");
+        assert_eq!(keyless.http().requests()[0].header_value(KEY_HEADER), None);
+        // A file where the download folder would be, and an empty path that cannot be written.
+        let file = dir.join("a-file");
+        std::fs::write(&file, b"").unwrap();
+        let error = fetch(
+            MapHttp::new().answer(url, 200, "zip"),
+            &test_pick(url, None),
+            &file.join("A.zip"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.starts_with("creating the download folder: "),
+            "{error}"
+        );
+        let error = fetch(
+            MapHttp::new().answer(url, 200, "zip"),
+            &test_pick(url, None),
+            Path::new(""),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.starts_with("writing the download: "), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
