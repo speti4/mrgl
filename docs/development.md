@@ -1079,7 +1079,7 @@ workflows, the local action and `dependabot.yml`; a finding accepted on purpose 
 `# zizmor: ignore[<audit>]` on the name line of its step and its reason in the comment above, so the
 acceptance moves with the step and covers nothing else) and `coverage` (windows-latest: the tests once more
 under cargo-llvm-cov on a pinned nightly, the table in the job summary, red below the floors, see
-[Coverage](#coverage); not a required check yet). `.github/workflows/commit-rules.yml` runs
+[Coverage](#coverage)). `.github/workflows/commit-rules.yml` runs
 `commit-rules` (`scripts/check-commit.sh` over every pushed commit and the pull request text, the rules of
 [git-workflow.md](git-workflow.md)) on the same pushes and pull requests. `.github/workflows/advisories.yml`
 runs `cargo deny check advisories` every Monday and by hand (`gh workflow run advisories.yml`), so a RustSec
@@ -1104,7 +1104,7 @@ when the job landed; if that install ever outgrows a minute, the check narrows t
 
 Some of the setup lives in the repository settings, not in a file: CodeQL runs as GitHub's default setup; a
 ruleset protects `main` (changes arrive through a pull request with squash merge only, the checks `test`,
-`lint`, `msrv`, `non-windows`, `deny`, `workflow-lint` and `commit-rules` must pass, the history stays linear, and force
+`lint`, `msrv`, `non-windows`, `deny`, `workflow-lint`, `coverage` and `commit-rules` must pass, the history stays linear, and force
 pushes and deletion are blocked); another ruleset keeps `v*` tags from being moved or deleted; squash merge
 is the only merge method, with the pull request title and description as the default commit message; private
 vulnerability reporting is on (the link in SECURITY.md and the code of conduct depends on it); Dependabot
@@ -1155,9 +1155,8 @@ code change) and adjusts the floors with a sentence why.
 
 `scripts/coverage-check.py` reads the job's lcov export, prints the table (per crate, then per file by missed
 lines) into the job summary, and fails below its two floors, `LINES_FLOOR` and `BRANCHES_FLOOR` at its top: the
-one place they are written. They only rise: a pull request that lands tests raises them to what it measured,
-and they end at 100 when task 117 closes; from then on, a pull request that leaves a line or a branch untested
-is red before the merge. The lcov export, not the JSON summary, is the measure: the summary counts every
+one place they are written. They rose with every pull request of task 117 and stand at 100 since its close, so
+a pull request that leaves a line or a branch untested is red before the merge. The lcov export, not the JSON summary, is the measure: the summary counts every
 instantiation of a generic function on its own, so a branch one instantiation never takes shows as missed there
 while the text and HTML reports, which merge the instantiations, show it covered; the lcov lines and branches
 are that merged view, the one a reader of the report can act on.

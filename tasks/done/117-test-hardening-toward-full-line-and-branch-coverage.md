@@ -3,6 +3,7 @@ size: L
 origin: session 2026-10-22
 created: 2026-10-22
 started: 2026-10-22
+closed: 2026-10-23
 plan: none
 milestone: M5 Trust
 ---
@@ -52,9 +53,9 @@ Manager calls are excluded with their reason.
        folder store, the rename of the backup move, the clock of the backup names, the registry reads on
        well-known keys) and the core's missing cases, file by file (pull request 2)
 3. [x] The command line's missing end-to-end cases and the unit tests of its pure helpers (pull request 3)
-4. [ ] The window's commands under Tauri's mock runtime, generic over the runtime, with the busy and
+4. [x] The window's commands under Tauri's mock runtime, generic over the runtime, with the busy and
        refused arms; the floors at 100; the close (pull request 4)
-5. [ ] Verification: the job summary's table at 100 / 100 outside the listed exclusions, the register check
+5. [x] Verification: the job summary's table at 100 / 100 outside the listed exclusions, the register check
        green, the release build without the `test` feature
 
 ## Log
@@ -86,20 +87,44 @@ Manager calls are excluded with their reason.
   update confirmation now ends in the summary's `not updated (cancelled)` count the core already worded; the
   quiet exit on a closed pipe writes the profile under `cfg(coverage)`, since `std::process::exit` skips the
   handler that writes it. The review of pull request 2 moved the folder key store behind `folder:<path>`.
+- 2026-10-23 — Pull request 4: mrgl-app at 100.00% lines and branches (1740 lines, 128 branches). The
+  commands that take a Tauri handle are generic over the runtime, so the command tests build them on
+  `tauri::test`'s mock runtime (the `test` feature as a dev-dependency only); the commands that read the
+  process environment run in a child of the test binary with the environment set on it, as the command line's
+  tests run the exe; the window's build script links the resource library into the test binaries, whose
+  manifest the menu crate's import needs to start at all. The floors stand at 100 / 100; `coverage` joins the
+  required checks of the ruleset. Follow-up filed: 118 (one stand-in client helper for the three crates).
+- 2026-10-23 — Closed with pull request 4.
 
 ## Deviations from the plan
 
-- none yet
+- The gate reads the lcov export, not the JSON summary (the summary counts every instantiation of a generic
+  function on its own and disagrees with the report a reader acts on), and a second exclusion form joined the
+  attribute: the `// coverage: os` line mark for a failure arm only the operating system can provoke, checked
+  against the measurement. The CLI's e2e tests reach core lines no core test does, so the measure is the
+  workspace run.
+- A cancelled `update` confirmation ends in the summary's `not updated (cancelled)` count instead of a return
+  before the summary (the core's wording, the window's behaviour); the folder key store is `folder:<path>`
+  after the review of pull request 2.
 
 ## Verification
 
-- (filled at the close)
+- 2026-10-23 — `cargo +nightly-2026-10-21 llvm-cov --workspace --branch --locked --lcov` (cargo-llvm-cov 0.9.1)
+  then `python -I scripts/coverage-check.py`: 100.00% lines (0 missed of 15577), 100.00% branches (0 missed of
+  2276); mrgl-core 11321 / 1756, mrgl-cli 2516 / 392, mrgl-app 1740 / 128; 86 lines and 22 branches marked
+  `coverage: os`; 4 reasoned `coverage(off)` sites in the code, 4 in the docs list, no stale mark. The
+  `coverage` job of pull requests 1 to 3 measured the same numbers as the local runs (2026-10-22: 86.35% /
+  81.57%; pull request 2: 94.93% / 95.67%; pull request 3: 96.58% / 98.25%).
+- 2026-10-23 — `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`
+  (27 targets green), `cargo +1.90 check --all-targets --locked`, `cargo deny check`, `uvx zizmor .github`,
+  `python -I scripts/changelog.py --check`; `cargo tree -e normal,build,features -p mrgl-app` names no
+  `tauri` feature `test`, so the exe never carries the mock runtime; `cargo build --release -p mrgl-app` builds.
 
 ## Closing checklist
 
-- [ ] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log
+- [x] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log
       (a task session of a parallel-sessions repo: listed in the pull request under `## Follow-ups`, the main session files them)
-- [ ] every doc under *Docs that move* changed in this change
-- [ ] Verification written, dated
-- [ ] `tasks_check` green, README index regenerated
-- [ ] moved to `done/` with `closed: YYYY-MM-DD`
+- [x] every doc under *Docs that move* changed in this change
+- [x] Verification written, dated
+- [x] `tasks_check` green, README index regenerated
+- [x] moved to `done/` with `closed: 2026-10-23`

@@ -1,7 +1,7 @@
 # Tests on Windows, the format check and the changelog check on Linux, the oldest supported Rust on Windows, a
 # check of the non-Windows code on Linux, the dependency policy, the workflow lint and the coverage measurement
-# on every push to main and every pull request; the ruleset on `main` requires them (coverage not yet), so no
-# path filter skips them (the commit rules have their own workflow, commit-rules.yml). The repo is public from its first commit (D-004), so the Windows
+# on every push to main and every pull request; the ruleset on `main` requires them, so no path filter skips
+# them (the commit rules have their own workflow, commit-rules.yml). The repo is public from its first commit (D-004), so the Windows
 # runners cost nothing and run on every change; a macOS job joins with the macOS preview (M6). A tag also packs and publishes the portable Windows zip, its
 # checksum, its build provenance attestation and the notes from the changelog, with the license page inside the
 # zip. The toolchain is the stable version `rust-toolchain.toml` pins, installed by the runner's own rustup
@@ -145,7 +145,7 @@ jobs:
   # `coverage: os` mark, or when an exclusion in the code and the list in docs/development.md differ. The stable toolchain of the local action
   # builds cargo-llvm-cov (pinned in scripts/cargo-llvm-cov-version.txt, installed as the release job installs
   # cargo-about); the nightly only runs the measurement. No Rust cache, as in the msrv job: llvm-cov builds in
-  # its own target folder anyway. Not a required check until the floors read 100.
+  # its own target folder anyway.
   coverage:
     runs-on: windows-latest
     timeout-minutes: 45

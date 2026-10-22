@@ -12,9 +12,9 @@ Every numbered file here is mirrored one way into a GitHub issue by `scripts/syn
 never the issue.
 
 <!-- tasks:index:start -->
-_Generated 2026-10-22 — edit the files, not this section._
+_Generated 2026-10-23 — edit the files, not this section._
 
-**State:** 9 backlog (0 ready · 0 blocked · 3 waiting · 6 ideas) · 2 in progress · 95 done · 5 dropped · 6 decisions
+**State:** 10 backlog (0 ready · 0 blocked · 3 waiting · 7 ideas) · 1 in progress · 96 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -65,6 +65,7 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
+| 118 | [One stand-in client helper for the tests of the three crates](backlog/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | S | 2026-10-23 |
 
 #### M6 macOS preview
 
@@ -80,12 +81,6 @@ _none_
 |---|---|---|---|
 | 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
 
-#### M5 Trust
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 117 | [Test hardening toward full line and branch coverage](wip/117-test-hardening-toward-full-line-and-branch-coverage.md) | 2026-10-22 | `none` |
-
 ### Closed – do not reopen
 
 | # | Task | Closed | Reason | Reopen when |
@@ -100,6 +95,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 117 | [Test hardening toward full line and branch coverage](done/117-test-hardening-toward-full-line-and-branch-coverage.md) | 2026-10-23 |
 | 113 | [The window's adopt apply reuses the shown report's answers](done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 |
 | 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](done/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 |
 | 110 | [The window's install paths warn in a folder the CurseForge app manages](done/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md) | 2026-10-22 |
@@ -109,9 +105,8 @@ _none_
 | 106 | [The Wago update check asks for its addons in bulk, one request per game version](done/106-the-wago-update-check-asks-in-bulk.md) | 2026-10-22 |
 | 105 | [A Wago page address resolves to its wago:<id> through the keyless slugs list](done/105-a-wago-page-address-resolves-to-its-id.md) | 2026-10-22 |
 | 104 | [A WoWInterface file waiting for approval is a state of its own in the update ch…](done/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md) | 2026-10-22 |
-| 102 | [The window's offline sketch says "source not configured" as the core does](done/102-the-ui-mock-says-source-not-configured-as-the-core-does.md) | 2026-10-22 |
 
-_85 more in `done/`._
+_86 more in `done/`._
 
 ### Decisions
 

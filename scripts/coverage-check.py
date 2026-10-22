@@ -14,8 +14,7 @@ reader of the report can act on.
 The table (Markdown, so the job summary renders it) has one row per crate and one per file with something
 missed, sorted by missed lines: lines covered with the missed count, branches covered with the missed count. The
 run fails when the workspace total of either is below its floor, the two constants below: they are the one
-place the floors are written, they only rise (every pull request that lands tests raises them to what it
-measured), and they end at 100 when task 117 closes.
+place the floors are written; they rose with every pull request of task 117 and stand at 100 since its close.
 
 Two kinds of exclusion are checked against the code. An item a test cannot reach carries
 `#[cfg_attr(coverage_nightly, coverage(off))]` under one comment line `// coverage: off — <reason>` (more
@@ -38,8 +37,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-LINES_FLOOR = 96.5
-BRANCHES_FLOOR = 98.0
+LINES_FLOOR = 100.0
+BRANCHES_FLOOR = 100.0
 
 ATTRIBUTE = "#[cfg_attr(coverage_nightly, coverage(off))]"
 REASON_PREFIX = "// coverage: off — "
