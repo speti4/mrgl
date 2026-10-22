@@ -13,6 +13,7 @@
 
 pub mod github;
 pub mod router;
+pub mod wago;
 pub mod wowinterface;
 
 pub use router::Sources;
@@ -509,13 +510,17 @@ pub fn version_of_tag(tag: &str) -> &str {
 }
 
 /// Why a source says what it says of the Forever build (tasks 011, 094), for the `forever build:` line: the
-/// GitHub source reads `release.json`, WoWInterface its compatibility list.
+/// GitHub source reads `release.json`, WoWInterface its compatibility list, Wago its releases per game
+/// version (task 095).
 pub fn forever_why(kind: SourceKind, build: ForeverBuild) -> &'static str {
     match (kind, build) {
         (SourceKind::WowInterface, ForeverBuild::Yes) => {
             "WoWInterface lists a Forever compatibility"
         }
         (SourceKind::WowInterface, _) => "WoWInterface lists no Forever compatibility",
+        (SourceKind::Wago, ForeverBuild::Yes) => "Wago lists a release for forever",
+        (SourceKind::Wago, ForeverBuild::No) => "Wago lists no release for forever",
+        (SourceKind::Wago, ForeverBuild::Unknown) => "Wago could not say",
         (_, ForeverBuild::Yes) => "release.json names forever",
         (_, ForeverBuild::No) => "release.json names no forever flavor",
         (_, ForeverBuild::Unknown) => "no release.json says",
@@ -611,6 +616,13 @@ pub struct RequestBudget {
     pub reset: Option<i64>,
     /// How to get a larger limit, for the message line.
     pub hint: String,
+    /// The limit's window as the message line says it after the count, with its leading space (` an hour
+    /// without a token`), empty when the source does not name one (task 095: Wago).
+    #[serde(skip)]
+    pub window: &'static str,
+    /// When the limit resets, in words, for a stop whose answers named no reset time (`within the hour`).
+    #[serde(skip)]
+    pub resets: &'static str,
 }
 
 /// One HTTP request, as a source issues it: a GET, or a POST with its body ([`Http::post`], task 092).

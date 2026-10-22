@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::error::{Error, Result};
 use crate::forever::ForeverBuild;
 use crate::sources::github::{self, GitHub};
+use crate::sources::wago::{self, Wago};
 use crate::sources::wowinterface::{self, WowInterface};
 use crate::sources::{
     Channel, Http, Pick, RequestBudget, Source, SourceKind, SourceSpec, Target, http_from_env,
@@ -36,11 +37,13 @@ impl Sources {
     /// The sources of this process over one client ([`http_from_env`]: the folder stub when
     /// `MRGL_HTTP_STUB` names one, else the network), each with its key and its cache under the mrgl home
     /// folder: GitHub with its token from `MRGL_GITHUB_TOKEN` or the key store ([`GitHub::from_env`],
-    /// [`crate::keys`]), WoWInterface without a key (task 094).
+    /// [`crate::keys`]), WoWInterface without a key (task 094), Wago with `MRGL_WAGO_KEY` or the key store
+    /// (task 095; without it a `wago:` spec says the key is missing).
     pub fn from_env() -> Sources {
         let http: Arc<dyn Http> = Arc::from(http_from_env());
         Sources::none()
             .with(SourceKind::GitHub, GitHub::from_env(Arc::clone(&http)))
+            .with(SourceKind::Wago, Wago::from_env(Arc::clone(&http)))
             .with(SourceKind::WowInterface, WowInterface::from_env(http))
     }
 
@@ -55,6 +58,13 @@ impl Sources {
                     Arc::clone(&http),
                     None,
                     home.map(|home| home.join(github::CACHE_SUBDIR)),
+                ),
+            )
+            .with(
+                SourceKind::Wago,
+                Wago::cached(
+                    Arc::clone(&http),
+                    home.map(|home| home.join(wago::CACHE_SUBDIR)),
                 ),
             )
             .with(
@@ -209,6 +219,8 @@ mod tests {
                 remaining: if self.name == "wago" { 3 } else { 59 },
                 reset: None,
                 hint: String::new(),
+                window: "",
+                resets: "soon",
             })
         }
     }
@@ -344,7 +356,10 @@ mod tests {
         let sources = Sources::cached(Arc::new(Offline), None);
         assert!(sources.has(SourceKind::GitHub));
         assert!(sources.has(SourceKind::WowInterface), "task 094");
-        assert!(!sources.has(SourceKind::Wago));
+        assert!(sources.has(SourceKind::Wago), "task 095");
+        assert!(!sources.has(SourceKind::CurseForge));
+        // The offline view asks no key of Wago: it answers from the cache alone.
+        assert_eq!(sources.missing(&spec("wago:abc")), None);
         let error = sources
             .resolve(&spec("github:o/r"), &Target::new(FlavorId::Forever))
             .unwrap_err();

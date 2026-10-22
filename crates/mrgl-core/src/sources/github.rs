@@ -858,7 +858,7 @@ fn status_error(status: u16, url: &str, response: &Response) -> Error {
 
 /// When the rate limit resets, in Unix seconds: `x-ratelimit-reset`, else now plus `retry-after` (the
 /// secondary limit's header).
-fn rate_limit_reset(response: &Response) -> Option<i64> {
+pub(crate) fn rate_limit_reset(response: &Response) -> Option<i64> {
     let number = |name: &str| {
         response
             .header(name)
@@ -944,6 +944,8 @@ impl<H: Http> GitHub<H> {
             remaining,
             reset: budget.reset,
             hint: format!("set {TOKEN_ENV} to a token of your own for 5000 requests an hour"),
+            window: " an hour without a token",
+            resets: "within the hour",
         })
     }
 }

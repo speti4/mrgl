@@ -1571,7 +1571,7 @@ fn add_of_a_source_this_build_lacks_names_what_is_missing() {
     for (spec, line) in [
         (
             "wago:something",
-            "source not configured: wago:something (this build has no Wago source)",
+            "source not configured: wago:something (MRGL_WAGO_KEY is not set: the Wago API needs your own key, `mrgl key set wago` stores it)",
         ),
         (
             "https://www.curseforge.com/projects/77",
@@ -1602,7 +1602,7 @@ fn add_of_a_source_this_build_lacks_names_what_is_missing() {
     assert!(stderr.lines().count() >= 2, "{stderr}");
     assert_eq!(
         stderr_last_line(&output),
-        "source not configured: wago:something (this build has no Wago source)"
+        "source not configured: wago:something (MRGL_WAGO_KEY is not set: the Wago API needs your own key, `mrgl key set wago` stores it)"
     );
 }
 
@@ -2056,7 +2056,7 @@ fn add_failures_are_plain_lines_with_exit_code_one() {
     let cases = [
         (
             vec!["add", "wago:abc", "--flavor", "forever", "--dry-run"],
-            "source not configured: wago:abc (this build has no Wago source)",
+            "source not configured: wago:abc (MRGL_WAGO_KEY is not set: the Wago API needs your own key, `mrgl key set wago` stores it)",
         ),
         (
             vec!["add", "github:Questie/Questie", "--dry-run"],
@@ -8100,4 +8100,203 @@ fn import_and_update_take_a_wowi_entry() {
         .expect("run mrgl");
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     assert_eq!(sidecar(&game)["addons"]["MrglForever"]["version"], "3.1.0");
+}
+
+// --- task 095: the Wago source against the fixture answers under `sources/addons.wago.io/` ---
+
+/// A made-up Wago key: no test reads or uses a real one.
+const WAGO_TEST_KEY: &str = "made-up-wago-key-for-the-cli-tests";
+
+impl Game {
+    /// The same game with a `_retail_` flavor next to `_forever_`, at build 12.1.5.
+    fn with_retail(self) -> Game {
+        std::fs::write(
+            self.root.join(".build.info"),
+            "Version!STRING:0|Product!STRING:0\n1.60.1.70245|wowf\n12.1.5.70448|wow\n",
+        )
+        .expect(".build.info");
+        std::fs::create_dir_all(self.root.join("_retail_")).expect("the flavor folder");
+        std::fs::write(
+            self.root.join("_retail_").join(".flavor.info"),
+            "Product Flavor!STRING:0\nwow\n",
+        )
+        .expect(".flavor.info");
+        self
+    }
+
+    /// `mrgl` against the sources stub with the made-up Wago key.
+    fn mrgl_wago(&self) -> Command {
+        let mut command = self.mrgl_sources();
+        command.env("MRGL_WAGO_KEY", WAGO_TEST_KEY);
+        command
+    }
+}
+
+#[test]
+fn add_wago_installs_the_forever_and_the_retail_answer_of_one_url() {
+    let game = Game::new("wago-add").with_retail();
+    let output = game
+        .mrgl_wago()
+        .args(["--serious", "add", "wago:MrglWg01", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "resolving wago:MrglWg01 for forever",
+            "pick for forever: wago:MrglWg01 2.0.0 (mrgl-wago-one-2.0.0.zip, flavor forever, interface 16001): Wago lists a stable release for forever (patch 1.60.1)",
+            "downloading mrgl-wago-one-2.0.0.zip",
+            "installing mrgl-wago-one-2.0.0.zip into _forever_",
+            "forever build: yes (Wago lists a release for forever)",
+            "installed MrglWagoOne 2.0.0 (1 folder: MrglWagoOne) into _forever_",
+        ],
+        "{text}"
+    );
+    let forever_toc = std::fs::read_to_string(game.addon("MrglWagoOne").join("MrglWagoOne.toc"))
+        .expect("the Forever TOC");
+    assert!(forever_toc.contains("## Interface: 16001"), "{forever_toc}");
+    assert_eq!(
+        sidecar(&game)["addons"]["MrglWagoOne"]["source"],
+        "wago:MrglWg01"
+    );
+
+    let output = game
+        .mrgl_wago()
+        .args(["--serious", "add", "wago:MrglWg01", "--flavor", "retail"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line
+            == "pick for retail: wago:MrglWg01 2.0.0 (mrgl-wago-one-2.0.0.zip, flavor retail, interface 120105): Wago lists a stable release for retail (patch 12.1.5)"),
+        "{text}"
+    );
+    let retail_toc = std::fs::read_to_string(
+        game.root
+            .join("_retail_/Interface/AddOns/MrglWagoOne/MrglWagoOne.toc"),
+    )
+    .expect("the retail TOC");
+    assert!(retail_toc.contains("## Interface: 120105"), "{retail_toc}");
+    let retail_state: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(game.home.join("wow").join("state.json")).expect("the retail sidecar"),
+    )
+    .expect("JSON");
+    assert_eq!(
+        retail_state["addons"]["MrglWagoOne"]["source"],
+        "wago:MrglWg01"
+    );
+    // The key reaches no output and no file under the home folder.
+    assert!(!all_output(&output).contains(WAGO_TEST_KEY));
+    for (path, bytes) in snapshot(&game.home) {
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains(WAGO_TEST_KEY),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn add_wago_names_the_key_on_a_401() {
+    let game = Game::new("wago-401");
+    let output = game
+        .mrgl_wago()
+        .args(["--serious", "add", "wago:MrglWg04", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "Wago answered 401 for https://addons.wago.io/api/external/addons/MrglWg04?game_version=forever: MRGL_WAGO_KEY is missing or not accepted: the Wago API needs your own key, `mrgl key set wago` stores it"
+    );
+    assert!(!all_output(&output).contains(WAGO_TEST_KEY));
+}
+
+#[test]
+fn import_takes_a_wago_entry_and_update_stops_before_wagos_rate_limit() {
+    let game = Game::new("wago-import");
+    let list = game.root.parent().expect("the base").join("wago.json");
+    std::fs::write(
+        &list,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [
+                { "name": "MrglWagoOne", "source": "wago:MrglWg01", "version": "2.0.0",
+                  "folders": ["MrglWagoOne"] },
+            ],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    let output = game
+        .mrgl_wago()
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(sidecar(&game)["addons"]["MrglWagoOne"]["version"], "2.0.0");
+    assert!(game.addon("MrglWagoOne").join("MrglWagoOne.toc").is_file());
+
+    // The first answer says no request is left: the check stops before Wago's limit.
+    let game = managed_game(
+        "wago-budget",
+        &[
+            ("Five", "wago:MrglWg05", "0.9.0", ""),
+            ("One", "wago:MrglWg01", "1.0.0", ""),
+            ("Three", "wago:MrglWg03", "3.0.0", ""),
+        ],
+    );
+    let output = game
+        .mrgl_wago()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "checking the managed addons of _forever_ against their sources",
+            "checking Five against wago:MrglWg05 (1 of 3)",
+            "Five  0.9.0 -> 1.0.0  update available",
+            "stopped the check before Wago's rate limit of 60 requests: 2 addons not checked, the limit resets after a short wait (Wago does not say when); run the check again then",
+            "One  1.0.0  not checked (rate limit): the check stopped before Wago's rate limit",
+            "Three  3.0.0  not checked (rate limit): the check stopped before Wago's rate limit",
+            "dry run: 1 update available, 2 not checked (rate limit); nothing written",
+        ],
+        "{text}"
+    );
+    // Without the key the entries are not checked and say what is missing.
+    let output = game
+        .mrgl_sources()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line
+            == "One  1.0.0  not checked: source not configured: wago:MrglWg01 (MRGL_WAGO_KEY is not set: the Wago API needs your own key, `mrgl key set wago` stores it)"),
+        "{text}"
+    );
 }

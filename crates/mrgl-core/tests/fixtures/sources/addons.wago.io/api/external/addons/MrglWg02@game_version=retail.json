@@ -1,0 +1,16 @@
+{
+ "id": "MrglWg02",
+ "slug": "mrgl-wago-two",
+ "display_name": "Mrgl Wago Two",
+ "website_url": "https://example.invalid/mrgl",
+ "recent_release": {
+  "stable": {
+   "label": "1.0.0",
+   "download_link": "https://addons.wago.io/downloads/made-up/1.0.0-retail.zip",
+   "created_at": "2026-09-01T10:00:00Z",
+   "supported_retail_patches": [
+    "12.1.5"
+   ]
+  }
+ }
+}

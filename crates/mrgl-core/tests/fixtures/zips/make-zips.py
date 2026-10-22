@@ -176,6 +176,17 @@ for project, folder, version in [
         (f"{folder}/core.lua", f"-- {folder} fixture {version}\n"),
     ], stored=True)
 
+# The files behind the `download_link` of the Wago fixture addon `MrglWg01` (task 095): one per game version,
+# each with the TOC of its flavor, so a test sees the Forever and the retail answer of one URL install apart.
+WAGO = SOURCES / "addons.wago.io/downloads/MrglWg01"
+for game, interface in [("forever", "16001"), ("retail", "120105")]:
+    write(WAGO / f"2.0.0-{game}.zip", [
+        ("MrglWagoOne/", ""),
+        ("MrglWagoOne/MrglWagoOne.toc", toc("MrglWagoOne", "2.0.0", interface=interface,
+                                            extra="## X-Wago-ID: MrglWg01\r\n")),
+        ("MrglWagoOne/core.lua", f"-- MrglWagoOne fixture 2.0.0 for {game}\n"),
+    ], stored=True)
+
 # Task 039, the bound on the unpacked size. A zip that declares 3 GiB in a few hundred bytes: refused by the
 # bound (2 GiB) before anything is written, installed under a higher one (its data is a few bytes).
 write("declares-too-much-1.0.0.zip", [

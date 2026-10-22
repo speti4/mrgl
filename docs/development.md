@@ -33,7 +33,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a key, the flavor from the compatibility list of the all-projects file list, read once a day, a pending
   file reported, the download checked against the API's MD5 before it is written (`Pick::md5`,
   `sources::check_md5`, on RustCrypto's `md-5`), the Forever signal `yes` for a Forever compatibility and
-  `unknown` otherwise; the Wago and CurseForge sources join the router as they come, M4), the install engine (`install`: a zip into
+  `unknown` otherwise; `sources::wago`, the Wago source of task 095, see [Fixtures](#fixtures): the
+  external API with the user's key, the game version per flavor, the three recent releases onto the
+  channels, the rate limit its answers name, the Forever signal from a release for `forever` or the keyless
+  slug list; the CurseForge source joins the router as it comes, M4), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
@@ -588,7 +591,8 @@ available and the count; `--json` is `kind: "keys"` with `api_keys[]` (`source`,
 
 A key's value lives in a `keys::Key`, whose `Debug` hides it, and no error, listing or JSON carries it. It
 goes to its source's hosts only, over HTTPS (`keys::may_send`): the GitHub token to `api.github.com`
-(never with an asset download), the Wago key to `addons.wago.io`, the CurseForge key to
+(never with an asset download), the Wago key to `addons.wago.io` (the external API and a download link
+there, never the keyless data endpoints, task 095), the CurseForge key to
 `api.curseforge.com` and `edge.forgecdn.net`. The unit tests run every store path against
 `keys::MemoryStore`; the end-to-end tests set `MRGL_KEY_STORE=off` and remove the three variables, so no
 test reads or writes the real Credential Manager, and they assert that a key given in the environment
@@ -1134,6 +1138,41 @@ their query mapped to the file name, written by `zips/make-zips.py`): `1001` lis
 Cataclysm Classic, `1002` no compatibility, `1003` waits for approval, `1004` names an MD5 its file does not
 have, `1005` lists a made-up Forever version, and `1006` is in the file list alone with two folders; the
 end-to-end tests point `MRGL_HTTP_STUB` at that folder for a `wowi:` spec.
+
+The Wago source (task 095, `sources::wago`) asks the external API with the user's own key
+(`MRGL_WAGO_KEY` or the key store's `mrgl:wago`; without it a `wago:` spec is `source not configured:
+wago:<id> (MRGL_WAGO_KEY is not set: the Wago API needs your own key, `mrgl key set wago` stores it)` and
+nothing is asked): `addons.wago.io/api/external/addons/<id>?game_version=<v>` with `Authorization: Bearer
+<key>`, the game version per flavor (`sources::wago::game_version`: `retail`, `classic` for Classic Era,
+`forever`, and the progressing classic by the installed build, `bc`, `wotlk`, `titan` for `3.80`, `cata`,
+`mop`; without a build `mop`, a guess of the game type). The answer's `recent_release.{stable,beta,alpha}`
+map onto the channels (`sources::wago::release_on`): the stable channel takes `stable`, else the newest of
+the other two (a prerelease, and the reason says so), the prerelease channel the newest of the three by
+`created_at`. The pick's version is the `label` (without a leading `v`), its asset `<slug>-<label>.zip`, its
+interface the newest of `supported_<v>_patches` (`supported_<v>_patch` or `supported_patches` when that is
+missing), and `import --exact` finds a version among the three recent releases; the download link is
+fetched with the same key when it is on `addons.wago.io`. A 401 is `Wago answered 401 for <url>:
+MRGL_WAGO_KEY is missing or not accepted: …`; an answer without a release for the game version is `no asset
+for flavor <flavor> in wago:<id> game version <v> (Wago lists no stable, beta or alpha release for it)`. Every
+request to Wago's host counts against the limit its answers name (`x-ratelimit-limit`, 60 until one says,
+and `x-ratelimit-remaining`): the update check reads it before each addon and stops at none left,
+`stopped the check before Wago's rate limit of 60 requests: <n> addons not checked, the limit resets after a
+short wait (Wago does not say when); run the check again then` (the words for the limit's window come with
+the budget, `RequestBudget::window` and `resets`). The answers are cached per addon, one per game version,
+under `<home>/cache/wago/<id>.json` with `checked_at`, and the offline rule of the GitHub source holds; the
+window's offline view (`Sources::cached`) has no key and reads that cache alone. The Forever signal is `yes`
+when the addon has a release for `forever` and `no` when Wago answers without one; the keyless data endpoint
+`addons.wago.io/api/data/slugs?game_version=forever` (every addon with a release for that game version, slug
+and id) answers it without a key, and the id of a slug (`Wago::id_of_slug`), read at most once a day and
+cached under `<home>/cache/wago/slugs-<v>.json`. `list` reads the signal from the cached `forever` answer,
+else the cached slug list. The fixture answers are under `tests/fixtures/sources/addons.wago.io/`
+(`api/external/addons/<id>@game_version=<v>.json`, the stub's query mapping): `MrglWg01` has a Forever and a
+retail release with a stored zip behind each (`downloads/MrglWg01/2.0.0-<v>.zip`, written by
+`zips/make-zips.py`), `MrglWg02` answers for Forever without a release, `MrglWg03` has the three
+stabilities for retail, none stable for Forever and one for `mop`, `MrglWg04` answers 401 and `MrglWg05`
+answers with `X-RateLimit-Remaining: 0` (both through a `.headers` file), and
+`api/data/slugs@game_version=forever.json` names `MrglWg01`, `MrglWg03` and `MrglWg05`. The tests pass a
+made-up key and assert that it goes to `addons.wago.io` only and reaches no output and no cache file.
 
 The Forever starter list (`lists/forever-starter.json`, task 028) has a stub of its own,
 `starter-list/`: one release per entry's repository in the shape that repository's latest release had at

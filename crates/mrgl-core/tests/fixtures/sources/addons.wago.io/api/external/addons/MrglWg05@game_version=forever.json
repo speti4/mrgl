@@ -1,0 +1,16 @@
+{
+ "id": "MrglWg05",
+ "slug": "mrgl-wago-five",
+ "display_name": "Mrgl Wago Five",
+ "website_url": "https://example.invalid/mrgl",
+ "recent_release": {
+  "stable": {
+   "label": "1.0.0",
+   "download_link": "https://addons.wago.io/downloads/made-up/1.0.0-forever.zip",
+   "created_at": "2026-10-01T10:00:00Z",
+   "supported_forever_patches": [
+    "1.60.1"
+   ]
+  }
+ }
+}

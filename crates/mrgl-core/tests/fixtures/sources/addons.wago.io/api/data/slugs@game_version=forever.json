@@ -1,0 +1,16 @@
+{
+ "addons": {
+  "mrgl-wago-one": {
+   "id": "MrglWg01",
+   "download_count": 12
+  },
+  "mrgl-wago-three": {
+   "id": "MrglWg03",
+   "download_count": 3
+  },
+  "mrgl-wago-five": {
+   "id": "MrglWg05",
+   "download_count": 0
+  }
+ }
+}
