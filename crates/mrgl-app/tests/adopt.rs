@@ -715,3 +715,86 @@ fn the_answer_serializes_with_the_keys_of_the_contract() {
         ["build", "missing", "why"]
     );
 }
+
+// --- task 117: the arms the fixture can provoke ---
+
+#[test]
+fn a_sidecar_that_cannot_be_read_refuses_the_report_and_the_apply() {
+    let game = Game::new("state-folder");
+    // A folder where the sidecar file should be: the read fails, and nothing is reported or written.
+    std::fs::create_dir_all(game.state_path("wowf")).expect("the folder");
+    let report = game.report("wowf", false);
+    assert_eq!(report.adopt, None);
+    assert_eq!(report.messages.len(), 1);
+    assert_eq!(report.messages[0].kind, "error");
+    assert!(
+        report.messages[0].plain.contains("state.json"),
+        "{}",
+        report.messages[0].plain
+    );
+    let apply = game.apply("wowf", false, false);
+    assert_eq!((apply.adopt.clone(), apply.flavor.clone()), (None, None));
+    assert!(apply.adopted.is_empty());
+    assert_eq!(plains(&apply), plains(&report));
+}
+
+#[test]
+fn a_rebuilt_sidecar_is_the_first_warning_of_the_report() {
+    let game = Game::new("state-rebuilt");
+    let path = game.state_path("wowf");
+    std::fs::create_dir_all(path.parent().expect("the folder of the flavor")).expect("the folder");
+    std::fs::write(&path, "{").expect("a sidecar that is not JSON");
+    let report = game.report("wowf", false);
+    assert!(report.adopt.is_some());
+    assert_eq!(report.messages[0].kind, "warning");
+    assert!(
+        report.messages[0]
+            .plain
+            .starts_with("unreadable state sidecar, starting over"),
+        "{}",
+        report.messages[0].plain
+    );
+    assert_eq!(report.messages.last().expect("the summary").kind, "success");
+}
+
+#[test]
+fn an_unknown_flavor_refuses_the_apply() {
+    let game = Game::new("apply-unknown");
+    let apply = game.apply("wow_mrgl", true, false);
+    assert_eq!(apply.adopt, None);
+    assert_eq!(
+        plains(&apply),
+        [(
+            "error",
+            format!(
+                "no flavor wow_mrgl: no such flavor folder under {}",
+                game.root().display()
+            )
+            .as_str()
+        )]
+    );
+    assert!(!game.home().exists());
+}
+
+#[test]
+fn a_sidecar_that_cannot_be_written_keeps_the_report_and_adopts_nothing() {
+    let game = Game::new("state-unwritable");
+    // A folder where the temporary file of the sidecar goes: the write fails after the sources answered.
+    let temporary = game.state_path("wowf").with_extension("json.tmp");
+    std::fs::create_dir_all(&temporary).expect("the folder");
+    let apply = game.apply("wowf", false, false);
+    let adopt = apply
+        .adopt
+        .as_ref()
+        .expect("the report it would have written from");
+    assert_eq!(adopt.counts.adoptable_now, 5, "{:?}", lines(adopt));
+    assert!(apply.adopted.is_empty() && apply.flavor.is_none());
+    assert_eq!(apply.messages.len(), 1);
+    assert_eq!(apply.messages[0].kind, "error");
+    assert!(
+        apply.messages[0].plain.contains("state.json"),
+        "{}",
+        apply.messages[0].plain
+    );
+    assert!(!game.state_path("wowf").exists(), "nothing written");
+}

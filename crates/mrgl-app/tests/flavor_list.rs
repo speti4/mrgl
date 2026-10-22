@@ -1123,3 +1123,305 @@ fn a_row_of_a_file_waiting_for_approval_shows_the_pending_state() {
     let json = serde_json::to_value(pending).expect("serializes");
     assert_eq!(json["check"]["state"], "pending");
 }
+
+// --- task 117: the arms the fixture can provoke ---
+
+#[test]
+fn a_root_that_is_a_file_cannot_be_listed() {
+    let fixture = Fixture::new("root-file");
+    fixture.write("World of Warcraft", "not a folder");
+    let answer = list::load(
+        Some(GameRoot {
+            path: fixture.root(),
+            origin: RootOrigin::Environment,
+        }),
+        Vec::new(),
+        None,
+        Voice::new(true),
+    );
+    assert_eq!(answer.message.kind, "error");
+    assert!(
+        answer.message.plain.contains("World of Warcraft"),
+        "{}",
+        answer.message.plain
+    );
+    assert!(answer.flavors.is_empty());
+    assert!(list::flavor_views(&fixture.root(), None).is_err());
+}
+
+#[test]
+fn a_root_with_an_empty_flavor_counts_no_addons_and_is_chosen_for_the_run_without_a_home() {
+    let fixture = Fixture::new("empty-flavor");
+    fixture.write("World of Warcraft/.build.info", BUILD_INFO);
+    fixture.write(
+        "World of Warcraft/_forever_/.flavor.info",
+        "Product Flavor!STRING:0\nwowf\n",
+    );
+    assert_eq!(list::count_noun(0, "addon"), "no addons");
+    let choice = commands::choose(&fixture.root(), None, None, Voice::new(false));
+    assert_eq!(choice.message, None);
+    let answer = choice.flavors.expect("the flavors");
+    assert_eq!(answer.root_origin, Some(RootOrigin::Remembered));
+    assert_eq!(answer.message.kind, "warning");
+    assert_eq!(
+        answer.message.plain,
+        format!(
+            "game root chosen for this run, not remembered (no mrgl home folder): {} (flavors: forever), no addons",
+            fixture.root().display()
+        )
+    );
+    assert!(answer.flavors[0].addons.is_empty());
+}
+
+#[test]
+fn the_chosen_folder_is_the_game_root_itself_or_a_flavor_folder_under_it() {
+    let fixture = Fixture::game_named("root-of");
+    assert_eq!(
+        commands::game_root_of(&fixture.root()),
+        Some(fixture.root())
+    );
+    assert_eq!(
+        commands::game_root_of(&fixture.root().join("_retail_")),
+        Some(fixture.root())
+    );
+    assert_eq!(commands::game_root_of(&fixture.dir), None);
+    assert_eq!(
+        commands::game_root_of(&fixture.root().join("_retail_/Interface")),
+        None,
+        "two levels down is no game root"
+    );
+}
+
+#[test]
+fn a_config_that_cannot_be_read_or_written_refuses_the_choice() {
+    let fixture = Fixture::game_named("config-broken");
+    // A folder where the config file should be: the read fails.
+    let folder = fixture.dir.join("config-folder/config.json");
+    std::fs::create_dir_all(&folder).expect("the folder");
+    let choice = commands::choose(
+        &fixture.root(),
+        Some(&folder),
+        Some(&fixture.home()),
+        Voice::new(true),
+    );
+    assert!(choice.flavors.is_none());
+    let message = choice.message.expect("why");
+    assert_eq!(message.kind, "error");
+    assert!(message.plain.contains("config.json"), "{}", message.plain);
+    // A file where the home folder should be: there is no config to read, and the write fails.
+    fixture.write("home-file", "not a folder");
+    let under_file = fixture.dir.join("home-file/config.json");
+    let choice = commands::choose(
+        &fixture.root(),
+        Some(&under_file),
+        Some(&fixture.home()),
+        Voice::new(true),
+    );
+    assert!(choice.flavors.is_none());
+    let message = choice.message.expect("why");
+    assert_eq!(message.kind, "error");
+    assert!(message.plain.contains("home-file"), "{}", message.plain);
+}
+
+#[test]
+fn an_addons_folder_that_is_a_file_is_a_flavor_without_rows_and_a_warning() {
+    let fixture = Fixture::new("addons-file");
+    fixture.write("World of Warcraft/.build.info", BUILD_INFO);
+    fixture.write(
+        "World of Warcraft/_forever_/.flavor.info",
+        "Product Flavor!STRING:0\nwowf\n",
+    );
+    fixture.write(
+        "World of Warcraft/_forever_/Interface/AddOns",
+        "not a folder",
+    );
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&fixture.home()),
+        Voice::new(true),
+    );
+    assert_eq!(answer.message.kind, "banner");
+    let forever = flavor(&answer.flavors, "wowf");
+    assert!(forever.addons.is_empty() && !forever.addons_folder);
+    assert_eq!(forever.warnings.len(), 1);
+    assert!(
+        forever.warnings[0].contains("AddOns"),
+        "{}",
+        forever.warnings[0]
+    );
+}
+
+#[test]
+fn a_sidecar_that_cannot_be_read_lists_every_addon_as_unmanaged_with_a_warning() {
+    let fixture = Fixture::game_named("state-folder");
+    let state = fixture.home().join("wowf/state.json");
+    std::fs::remove_file(&state).expect("the sidecar removed");
+    std::fs::create_dir_all(&state).expect("a folder in its place");
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&fixture.home()),
+        Voice::new(true),
+    );
+    let forever = flavor(&answer.flavors, "wowf");
+    assert!(
+        forever.warnings.iter().any(|warning| warning
+            .starts_with("state sidecar not read, every addon listed as unmanaged: ")),
+        "{:?}",
+        forever.warnings
+    );
+    assert!(
+        forever
+            .addons
+            .iter()
+            .all(|row| !row.managed && row.check.is_none())
+    );
+    let retail = flavor(&answer.flavors, "wow");
+    assert!(
+        row(retail, "Questie").managed,
+        "the other sidecar reads as ever"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_is_a_linked_row_with_its_target_as_the_badge() {
+    let fixture = Fixture::game_named("junction");
+    // The target as the junction records it: one separator kind, since a reparse point is not normalized.
+    let target = fixture.dir.join("dev").join("Linked");
+    fixture.write(
+        "dev/Linked/Linked.toc",
+        "## Interface: 16001\n## Title: Linked\n",
+    );
+    let link = fixture
+        .root()
+        .join("_forever_")
+        .join("Interface")
+        .join("AddOns")
+        .join("Linked");
+    mrgl_core::link::create_junction(&link, &target).expect("the junction");
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&fixture.home()),
+        Voice::new(true),
+    );
+    let linked = row(flavor(&answer.flavors, "wowf"), "Linked");
+    assert!(linked.linked && !linked.managed && !linked.guessed);
+    let badge = linked.source.as_ref().expect("the badge");
+    assert_eq!(badge.kind, "linked");
+    assert_eq!(
+        Path::new(&badge.id),
+        mrgl_core::link::link_target(&link).expect("the target")
+    );
+}
+
+#[test]
+fn a_badge_names_a_wago_page_by_its_slug_and_a_bare_zip_by_its_text() {
+    let page = list::badge_of_source("https://addons.wago.io/addons/mrgl-slug");
+    assert_eq!((page.kind, page.id.as_str()), ("wago", "mrgl-slug"));
+    let bare = list::badge_of_source("..");
+    assert_eq!((bare.kind, bare.id.as_str()), ("zip", ".."));
+}
+
+#[test]
+fn a_resolve_needs_a_flavor_a_spec_and_an_answer_and_says_when_nothing_is_newer() {
+    let fixture = Fixture::game_named("resolve-arms");
+    let home = fixture.home();
+    let source = fixture_source(&home);
+    let resolve = |folder: &Path, name: &str| {
+        list::resolve(&source, folder, name, Some(&home), Voice::new(true))
+    };
+    let no_flavor = resolve(&fixture.dir, "Questie");
+    assert!(no_flavor.pick.is_none());
+    assert_eq!(no_flavor.message.kind, "error");
+    let forever = fixture.root().join("_forever_");
+    let zip = resolve(&forever, "ZipOne");
+    assert!(zip.pick.is_none());
+    assert!(
+        zip.message.plain.starts_with("ZipOne cannot be resolved: "),
+        "{}",
+        zip.message.plain
+    );
+    // Forever's Questie is at the fixture's current release already.
+    let current = resolve(&forever, "Questie");
+    assert_eq!(current.pick.expect("the pick").version, "1.2.3");
+    assert_eq!(current.message.kind, "nothing");
+    assert!(
+        current
+            .message
+            .plain
+            .starts_with("Questie is up to date at 1.2.3: "),
+        "{}",
+        current.message.plain
+    );
+    // A source the stub has no answer for.
+    let mut state = FlavorHome::at(&home, &FlavorId::Forever)
+        .read_state(&FlavorId::Forever)
+        .expect("the sidecar")
+        .state;
+    state.addons.insert(
+        "Gone".into(),
+        entry("github:Nobody/Nothing", "1.0", &["Gone"]),
+    );
+    FlavorHome::at(&home, &FlavorId::Forever)
+        .write_state(&state)
+        .expect("the sidecar");
+    let gone = resolve(&forever, "Gone");
+    assert!(gone.pick.is_none());
+    assert_eq!(gone.message.kind, "error");
+    assert!(
+        gone.message.plain.contains("Nobody/Nothing"),
+        "{}",
+        gone.message.plain
+    );
+}
+
+#[test]
+fn a_row_whose_toc_the_flavor_does_not_load_takes_its_name_from_the_first_toc() {
+    // Only a `_Vanilla` TOC under Forever: the flavor loads none of its TOCs, and the row still reads the
+    // title and the version from the one it has.
+    let fixture = Fixture::new("other-toc");
+    fixture.write("World of Warcraft/.build.info", BUILD_INFO);
+    fixture.write(
+        "World of Warcraft/_forever_/.flavor.info",
+        "Product Flavor!STRING:0\nwowf\n",
+    );
+    fixture.write(
+        "World of Warcraft/_forever_/Interface/AddOns/EraOnly/EraOnly_Vanilla.toc",
+        "## Interface: 11508\n## Title: Era Only\n## Version: 2.0\n",
+    );
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        None,
+        Voice::new(true),
+    );
+    let era_only = row(flavor(&answer.flavors, "wowf"), "EraOnly");
+    assert_eq!(era_only.name, "Era Only");
+    assert_eq!(era_only.version.as_deref(), Some("2.0"));
+}
+
+#[test]
+fn the_flavor_folder_of_an_unknown_id_is_found_by_its_flavor_info() {
+    let fixture = Fixture::new("unknown-id");
+    fixture.write(
+        "World of Warcraft/_wowz_/.flavor.info",
+        "Product Flavor!STRING:0\nwowz\n",
+    );
+    assert_eq!(
+        list::flavor_folder(&fixture.root(), "wowz"),
+        Some(fixture.root().join("_wowz_"))
+    );
+    assert_eq!(
+        list::flavor_folder(&fixture.root(), "wowf"),
+        Some(fixture.root().join("_forever_")),
+        "a known id names its folder without a look"
+    );
+    assert_eq!(list::flavor_folder(&fixture.root(), "wowq"), None);
+    assert_eq!(
+        list::flavor_folder(&fixture.dir.join("nowhere"), "wowz"),
+        None
+    );
+}

@@ -461,7 +461,9 @@ fn view_of(
     let client = match client::client_running(flavor) {
         Ok(None) => None,
         Ok(Some(running)) => Some(say(Kind::Warning, running.refusal(flavor).to_string())),
+        // coverage: os-begin — the system's process list could not be taken
         Err(error) => Some(say(Kind::Warning, error.to_string())),
+        // coverage: os-end
     };
 
     ToolboxView {

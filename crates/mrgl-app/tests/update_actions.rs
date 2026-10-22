@@ -6,14 +6,15 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
 use mrgl_app_lib::actions::{self, ActionAnswer, Phase, Plan, UpdateEvent};
+use mrgl_app_lib::commands::Message;
 use mrgl_app_lib::list::{self, FlavorView};
 use mrgl_core::error::Result;
 use mrgl_core::flavor;
 use mrgl_core::forever::ForeverBuild;
 use mrgl_core::install::{Engine, Mark, Metadata};
-use mrgl_core::sources::{Pick, RequestBudget, Source, SourceKind, SourceSpec, Target};
+use mrgl_core::sources::{Pick, RequestBudget, Source, SourceKind, SourceSpec, Stale, Target};
 use mrgl_core::update::UpdateState;
-use mrgl_core::voice::Voice;
+use mrgl_core::voice::{Kind, Voice};
 
 const BUILD_INFO: &str = "Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|Version!STRING:0|Tags!STRING:0|Product!STRING:0\n\
 eu|1|e8c4ef4e67bd1d94d820254984258fa8|1.60.1.70245||wowf\n";
@@ -128,6 +129,8 @@ struct Stub {
     budget: Option<u32>,
     /// A spec whose repository is gone: a 404, as the GitHub source says it.
     gone: Option<&'static str>,
+    /// Every pick comes from the cache, offline (task 041): each carries the stale warning.
+    stale: bool,
 }
 
 impl Stub {
@@ -136,6 +139,7 @@ impl Stub {
             asked: Cell::new(0),
             budget: None,
             gone: None,
+            stale: false,
         }
     }
 
@@ -186,7 +190,10 @@ impl Source for Stub {
             page: None,
             nolib: false,
             forever_build: ForeverBuild::Yes,
-            stale: None,
+            stale: self.stale.then(|| Stale {
+                checked_at: None,
+                reason: "the network is off".to_string(),
+            }),
         })
     }
 
@@ -1022,6 +1029,232 @@ fn a_folder_the_curseforge_app_manages_warns_once_per_run() {
     assert_eq!(game.toc_version("OneFolder"), "1.1.0");
     assert_eq!(game.toc_version("SeveralFolders"), "2.1.0");
     assert!(marker.is_file());
+}
+
+// --- task 117: the arms the fixture can provoke ---
+
+#[test]
+fn a_refused_answer_is_the_one_line_and_no_flavor() {
+    let answer = ActionAnswer::refused(Message::new(
+        Voice::new(true),
+        Kind::Warning,
+        actions::busy_line(),
+    ));
+    assert_eq!(answer.flavor, None);
+    assert_eq!(answer.messages.len(), 1);
+    assert_eq!(
+        (answer.messages[0].kind, answer.messages[0].plain.as_str()),
+        (
+            "warning",
+            "an update is running already; wait for it to end or cancel it"
+        )
+    );
+}
+
+#[test]
+fn a_sidecar_that_cannot_be_read_fails_the_check() {
+    let game = Game::new("state-folder");
+    let state = game.home().join("wowf").join("state.json");
+    std::fs::remove_file(&state).expect("the sidecar removed");
+    std::fs::create_dir_all(&state).expect("a folder in its place");
+    let source = Stub::new();
+    let (answer, events) = run_with(&game, &source, Plan::All, None);
+    assert!(
+        events.is_empty() && source.asked.get() == 0,
+        "nothing asked"
+    );
+    assert_eq!(answer.messages.len(), 1);
+    assert_eq!(answer.messages[0].kind, "error");
+    assert!(
+        answer.messages[0].plain.contains("state.json"),
+        "{}",
+        answer.messages[0].plain
+    );
+    let flavor = answer.flavor.expect("the flavor, drawn all the same");
+    assert!(flavor.addons.iter().all(|row| !row.managed), "nothing read");
+    assert_eq!(game.toc_version("OneFolder"), "1.0.0");
+}
+
+#[test]
+fn the_answers_of_a_check_that_cannot_be_kept_are_a_warning() {
+    let game = Game::new("last-check-folder");
+    let last_check = game
+        .home()
+        .join("wowf")
+        .join(mrgl_core::last_check::LAST_CHECK_FILE);
+    std::fs::create_dir_all(&last_check).expect("a folder where the file goes");
+    let (answer, _) = run_with(&game, &Stub::new(), Plan::Check, None);
+    let kinds: Vec<&str> = answer.messages.iter().map(|message| message.kind).collect();
+    assert_eq!(kinds, ["warning", "success"]);
+    assert!(
+        answer.messages[0]
+            .plain
+            .starts_with("the answers of this check are not kept for the next start: "),
+        "{}",
+        answer.messages[0].plain
+    );
+    assert!(last_check.is_dir(), "left as it was");
+}
+
+#[test]
+fn a_cancel_keeps_the_warnings_met_before_it() {
+    let game = Game::new("cancel-warned");
+    std::fs::write(game.flavor_folder().join(".curseclient"), "").expect("the marker");
+    let at_first: &dyn Fn(&UpdateEvent) -> bool = &|event| event.phase == Phase::Checked;
+    let (answer, _) = run_with(&game, &Stub::new(), Plan::All, Some(at_first));
+    let plains: Vec<(&str, &str)> = answer
+        .messages
+        .iter()
+        .map(|message| (message.kind, message.plain.as_str()))
+        .collect();
+    assert_eq!(
+        plains,
+        [
+            ("warning", CURSE_CLIENT_WARNING),
+            (
+                "nothing",
+                "update cancelled after checking 1 of 4 addons in _forever_; nothing updated"
+            )
+        ]
+    );
+}
+
+#[test]
+fn a_stale_pick_of_one_source_warns_once_for_its_two_entries() {
+    // Task 041: offline, both entries of `github:Example/Twice` resolve from the same cached list, and
+    // the answer carries the one line once.
+    let game = two_entries_of_one_source("stale-twice");
+    let source = Stub {
+        stale: true,
+        ..Stub::new()
+    };
+    let (answer, _) = run_with(&game, &source, Plan::Check, None);
+    let stale: Vec<&str> = answer
+        .messages
+        .iter()
+        .filter(|message| {
+            message
+                .plain
+                .starts_with("offline: github:Example/Twice v1.1.0 ")
+        })
+        .map(|message| message.kind)
+        .collect();
+    assert_eq!(stale, ["warning"], "{:?}", answer.messages);
+    assert!(
+        answer.messages[0]
+            .plain
+            .ends_with(", the pick may be stale (the network is off)"),
+        "{}",
+        answer.messages[0].plain
+    );
+}
+
+#[test]
+fn without_a_home_folder_the_answers_of_a_check_are_not_kept_and_every_row_is_unmanaged() {
+    let game = Game::new("no-home");
+    let engine = game.engine();
+    let answer = actions::run(
+        &engine,
+        &Stub::new(),
+        &Plan::Check,
+        &|| false,
+        None,
+        Voice::new(true),
+        &mut |_| {},
+    );
+    assert_eq!(
+        last_plain(&answer),
+        "checked _forever_: 3 updates available, 1 up to date"
+    );
+    let flavor = answer.flavor.expect("the flavor");
+    assert!(
+        flavor
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("no mrgl home folder: ")),
+        "{:?}",
+        flavor.warnings
+    );
+    assert!(
+        flavor
+            .addons
+            .iter()
+            .all(|row| !row.managed && row.check.is_none())
+    );
+    assert!(
+        !game
+            .home()
+            .join("wowf")
+            .join(mrgl_core::last_check::LAST_CHECK_FILE)
+            .exists(),
+        "nothing kept"
+    );
+}
+
+#[test]
+fn an_addon_deleted_since_the_check_is_not_updated_when_a_second_entry_has_the_pick() {
+    // Task 099: the install path finds the pick's version under another entry of the same source once the
+    // addon's own entry is gone (its folder deleted by hand between the check and the install): a warning
+    // that names the other entry, the addon counted as installed already, and no row read again.
+    let game = two_entries_of_one_source("deleted-since");
+    let engine = game.engine();
+    let home = game.home();
+    let events = RefCell::new(Vec::new());
+    let answer = actions::run(
+        &engine,
+        &Stub::new(),
+        &Plan::One("OneFolder".into()),
+        &|| false,
+        Some(&home),
+        Voice::new(true),
+        &mut |event| {
+            if event.phase == Phase::Updating {
+                std::fs::remove_dir_all(game.addons().join("OneFolder")).expect("deleted by hand");
+            }
+            events.borrow_mut().push(event);
+        },
+    );
+    let events = events.into_inner();
+    assert_eq!(
+        phases(&events),
+        [
+            (Phase::Checking, Some("OneFolder")),
+            (Phase::Checked, Some("OneFolder")),
+            (Phase::Updating, Some("OneFolder")),
+            (Phase::InstalledAlready, Some("OneFolder")),
+        ]
+    );
+    let last = &events.last().expect("an event").message;
+    assert_eq!(last.kind, "warning");
+    assert!(
+        last.plain
+            .starts_with("OneFolder not updated: OldOneFolder, a second entry of github:Example/Twice, has 1.1.0 installed already in _forever_"),
+        "{}",
+        last.plain
+    );
+    assert_eq!(last_plain(&answer), "nothing updated: 1 installed already");
+    let flavor = answer.flavor.expect("the flavor");
+    assert!(
+        flavor.addons.iter().all(|row| row.folder != "OneFolder"),
+        "the deleted folder is no row"
+    );
+    assert!(
+        game.addons().join("OldOneFolder").is_dir(),
+        "the other entry's folder stays"
+    );
+}
+
+#[test]
+fn a_channel_change_needs_a_value() {
+    assert_eq!(
+        actions::mark_of("channel", None),
+        Err("a channel change needs stable or prerelease".to_string())
+    );
+    assert_eq!(
+        actions::mark_of("channel", Some("  ")),
+        Err("a channel change needs stable or prerelease".to_string())
+    );
+    assert!(actions::mark_of("channel", Some("prerelease")).is_ok());
 }
 
 #[test]

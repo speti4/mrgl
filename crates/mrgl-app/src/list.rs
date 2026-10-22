@@ -249,23 +249,10 @@ pub fn load(
             message: Message::new(voice, Kind::Nothing, plain),
         };
     };
-    let flavors = match flavor::list_flavors(&root.path) {
-        Ok(flavors) if !flavors.is_empty() => flavors,
-        Ok(_) => {
-            return failed(
-                &root,
-                voice,
-                mrgl_core::Error::NotAGameRoot {
-                    path: root.path.clone(),
-                },
-            );
-        }
+    let views = match flavor_views(&root.path, home) {
+        Ok(views) => views,
         Err(error) => return failed(&root, voice, error),
     };
-    let views: Vec<FlavorView> = flavors
-        .into_iter()
-        .map(|flavor| flavor_view(flavor, home, &[]))
-        .collect();
     let count: usize = views.iter().map(|view| view.addons.len()).sum();
     let mut plain = format!(
         "{} under {}, {}",
@@ -286,6 +273,21 @@ pub fn load(
         flavors: views,
         message: Message::new(voice, Kind::Banner, plain),
     }
+}
+
+/// The flavors of a game root with their rows, in the folder order: a root without a flavor folder is
+/// [`mrgl_core::Error::NotAGameRoot`], one that cannot be listed is its error.
+pub fn flavor_views(root: &Path, home: Option<&Path>) -> mrgl_core::error::Result<Vec<FlavorView>> {
+    let flavors = flavor::list_flavors(root)?;
+    if flavors.is_empty() {
+        return Err(mrgl_core::Error::NotAGameRoot {
+            path: root.to_path_buf(),
+        });
+    }
+    Ok(flavors
+        .into_iter()
+        .map(|flavor| flavor_view(flavor, home, &[]))
+        .collect())
 }
 
 /// The answer for a root that cannot be listed: no flavors, the reason as an error.
@@ -590,6 +592,16 @@ pub struct ResolveAnswer {
     pub message: Message,
 }
 
+impl ResolveAnswer {
+    /// An answer of one message and no pick: nothing was asked.
+    pub fn refused(message: Message) -> ResolveAnswer {
+        ResolveAnswer {
+            pick: None,
+            message,
+        }
+    }
+}
+
 /// Resolves a managed addon of a flavor folder through its source, on its channel, for the flavor's build:
 /// the [`Pick`] the install engine takes. The source decides whether that goes to the network.
 pub fn resolve<S: Source>(
@@ -599,10 +611,7 @@ pub fn resolve<S: Source>(
     home: Option<&Path>,
     voice: Voice,
 ) -> ResolveAnswer {
-    let error = |plain: String| ResolveAnswer {
-        pick: None,
-        message: Message::new(voice, Kind::Error, plain),
-    };
+    let error = |plain: String| ResolveAnswer::refused(Message::new(voice, Kind::Error, plain));
     let flavor = match flavor::read_flavor(flavor_folder) {
         Ok(flavor) => flavor,
         Err(error_) => return error(error_.to_string()),
