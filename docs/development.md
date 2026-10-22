@@ -22,7 +22,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the running-client check once before the first folder moves, and a running client is a warning on the
   result, never a refusal, task 038; its commit, `Engine::commit`, refuses to install over a linked addon
   or a junction it did not make before the first folder moves, so every path that stages and commits does,
-  task 055; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
+  task 055, and the guard covers the staged folders and the previous version's folders the new one drops,
+  so a dropped folder that is now a junction is refused instead of moved aside and deleted, task 067; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
   below; the rollback, `Engine::rollback`, sends the entry's previous
   version and its zip from the cache through the same stage and swap with the entry's source, pins the
   addon there and leaves both zips in the cache, so a second rollback goes forward again, task 022), the

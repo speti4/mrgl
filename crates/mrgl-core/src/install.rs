@@ -25,7 +25,8 @@
 //!
 //! The link guard (task 005, [`Engine::refuse_links`]) runs in [`Engine::commit`], before the first folder
 //! moves, so every path that stages and commits (a zip, a source, a rollback) refuses to install over a
-//! linked addon or a junction mrgl did not make.
+//! linked addon or a junction mrgl did not make, among the staged folders and the folders of the previous
+//! version the new one drops (task 067).
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
@@ -399,16 +400,11 @@ impl Engine {
     /// Swaps the staged folders into `Interface\AddOns` one at a time, removes the folders the previous
     /// version had and this one lacks, records the install in the state (and writes it) and keeps the zip
     /// in the cache. When a swap fails, every folder moved so far is put back and the error says so.
-    /// Before anything moves, a staged folder that is a linked addon or a junction mrgl did not make is
-    /// refused (task 005, [`Engine::refuse_links`]): here, so no path that stages and commits can skip it.
+    /// Before anything moves, a staged folder or a folder of the previous version this one drops that is a
+    /// linked addon or a junction mrgl did not make is refused (tasks 005 and 067,
+    /// [`Engine::refuse_links`]): here, so no path that stages and commits can skip it, and a dropped
+    /// folder is never moved aside into the staging folder and deleted with it.
     pub fn commit(&self, mut staged: Staged, state: &mut State) -> Result<Installed> {
-        self.refuse_links(state, &staged.folders())?;
-        let addons_dir = self.addons_dir();
-        std::fs::create_dir_all(&addons_dir).map_err(|source| Error::Io {
-            context: "creating the AddOns folder",
-            path: addons_dir.clone(),
-            source,
-        })?;
         let previous = state
             .entry(&staged.name)
             .map(|(name, entry)| (name.to_string(), entry.clone()));
@@ -419,6 +415,14 @@ impl Engine {
             .filter(|folder| !contains_folder(&new_folders, folder))
             .cloned()
             .collect();
+        let guarded: Vec<String> = new_folders.iter().chain(&stale).cloned().collect();
+        self.refuse_links(state, &guarded)?;
+        let addons_dir = self.addons_dir();
+        std::fs::create_dir_all(&addons_dir).map_err(|source| Error::Io {
+            context: "creating the AddOns folder",
+            path: addons_dir.clone(),
+            source,
+        })?;
 
         // The running-client check (task 023), once per commit and before the first folder moves: a running
         // client loads the new folders at `/reload`, so it is a warning, never a refusal (task 038).

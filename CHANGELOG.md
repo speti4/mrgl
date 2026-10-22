@@ -30,6 +30,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - The dependency check counts the client's own `Blizzard_*` addons as present ([064](https://github.com/speti4/mrgl/blob/main/tasks/done/064-blizzard-addons-are-not-missing-dependencies.md))
 - The install engine names a multi-folder addon after the zip or the repository, not the first folder ([065](https://github.com/speti4/mrgl/blob/main/tasks/done/065-derive-name-prefers-the-zip-or-repository-folder.md))
 - The GitHub source looks past the newest release for the flavor's asset and for a named version ([066](https://github.com/speti4/mrgl/blob/main/tasks/done/066-github-source-looks-past-the-newest-release.md))
+- The link guard also covers the folders a new version drops ([067](https://github.com/speti4/mrgl/blob/main/tasks/done/067-link-guard-covers-dropped-folders.md))
 
 ### M2 Window MVP
 

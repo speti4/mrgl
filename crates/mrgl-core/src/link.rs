@@ -218,14 +218,24 @@ fn flavor_label(id: &FlavorId) -> String {
 }
 
 impl Engine {
-    /// The install engine's guard (task 005): an install whose folders include an addon `link` made, or
-    /// a junction or a symbolic link that mrgl did not make, is refused before anything moves.
+    /// The install engine's guard (task 005): an install whose folders (the staged ones and the ones it
+    /// drops, task 067) include an addon `link` made, or a junction or a symbolic link that mrgl did not
+    /// make, is refused before anything moves. A folder two entries list (a dropped folder that a link
+    /// entry names too) is the linked addon when one of them is.
     pub fn refuse_links(&self, state: &State, folders: &[String]) -> Result<()> {
         let flavor = flavor_label(&self.flavor.id);
         for folder in folders {
-            if let Some((name, entry)) = state.entry_for_folder(folder)
-                && let Some(dev) = linked_folder(&entry.source)
-            {
+            let linked = state.addons.iter().find_map(|(name, entry)| {
+                let listed = entry
+                    .folders
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(folder));
+                listed
+                    .then(|| linked_folder(&entry.source))
+                    .flatten()
+                    .map(|dev| (name, dev))
+            });
+            if let Some((name, dev)) = linked {
                 return Err(Error::LinkedAddon {
                     action: "install over",
                     name: name.to_string(),
