@@ -1,8 +1,10 @@
 ---
-status: idea
 size: M
 origin: session 2026-10-21
 created: 2026-10-21
+closed: 2026-10-22
+reason: split into 097 (the adopt report) and 098 (adopt --apply) after the M4 planning round of 2026-10-22
+reopen-when: never
 milestone: M4 Sources
 ---
 
