@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 15 backlog (0 ready · 0 blocked · 3 waiting · 12 ideas) · 0 in progress · 72 done · 5 dropped · 5 decisions
+**State:** 14 backlog (0 ready · 0 blocked · 3 waiting · 11 ideas) · 1 in progress · 72 done · 5 dropped · 5 decisions
 
 ### Ready
 
@@ -49,12 +49,6 @@ _none_
 | 089 | [update <name> says what happened when another entry of the same source already …](backlog/089-update-one-reports-a-second-entry-of-the-same-source.md) | S | 2026-10-22 |
 | 090 | [import runs the dependency check after an install, as add and update do](backlog/090-import-runs-the-dependency-check-after-an-install.md) | S | 2026-10-22 |
 
-#### M3 Toolbox
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 091 | [The remaining toolbox lines move into the core: the set list note, the not-inst…](backlog/091-the-remaining-toolbox-lines-move-into-the-core.md) | S | 2026-10-22 |
-
 #### M4 Sources
 
 | # | Task | Size | Created |
@@ -80,7 +74,11 @@ _none_
 
 ### In progress
 
-_none_
+#### M3 Toolbox
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 091 | [The remaining toolbox lines move into the core: the set list note, the not-inst…](wip/091-the-remaining-toolbox-lines-move-into-the-core.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
