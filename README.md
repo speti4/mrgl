@@ -122,6 +122,8 @@ target\release\mrgl.exe savedvars --clean --flavor forever                  # th
 target\release\mrgl.exe set save raid --flavor forever                     # the characters' enabled addons as the set "raid"
 target\release\mrgl.exe set apply raid --flavor forever                    # every character's AddOns.txt switched to it
 target\release\mrgl.exe set apply raid --character Mrgl --flavor forever   # one character only (--realm for a name on two realms)
+target\release\mrgl.exe set undo --flavor forever                          # the AddOns.txt files the last apply replaced, back
+target\release\mrgl.exe set disable raid BagSorter --flavor forever        # edit a stored set (enable, disable, drop one addon)
 target\release\mrgl.exe set list --flavor forever                          # the sets so far (show and remove take a name)
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
 target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
@@ -179,6 +181,11 @@ apply is refused while the game client runs, since the game writes those files a
 `--character <name>` (with `--realm <realm>` when two realms have a character of that name) applies a set
 to that one character and leaves the others as they are, so a raid character and a levelling alt of the
 same flavor can each have their own set; on `set save` it takes the set from that character alone.
+`--account <name>` tells apart a realm and name that sit under two account folders. An apply keeps the
+`AddOns.txt` files it replaced, so `set undo` puts the last apply back byte for byte (refused while the
+game runs, like the apply); `set enable`, `set disable` and `set drop <set> <addon>` change one addon of a
+stored set without touching any `AddOns.txt`, and `set save` keeps an addon that is no longer installed,
+with a warning that names it.
 
 `list` and `add` check every addon's required dependencies (the TOC's `## Dependencies` and
 `## RequiredDeps`) and name what the game will not find, as a warning, never a refusal:

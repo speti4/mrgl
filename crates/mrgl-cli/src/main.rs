@@ -15,7 +15,7 @@
 //! zip, then pinned) is task 022; `savedvars` (the SavedVariables sizes and the orphan cleanup) is task
 //! 025; every source-backed install takes the one install path of the engine (task 055); `update` (the
 //! update check and `update --all`) is task 006; `set` (the addon sets) is task 014, its
-//! `--character` and `--realm` task 027.
+//! `--character` and `--realm` task 027, `set undo`, `set enable|disable|drop` and `--account` task 073.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, IsTerminal};
@@ -39,7 +39,7 @@ use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
-use mrgl_core::sets::{self, AddonSet};
+use mrgl_core::sets::{self, AddonSet, AddonState};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
@@ -304,8 +304,8 @@ enum Command {
         clean: bool,
     },
     /// Addon sets: save the enabled and disabled addons of the characters' AddOns.txt under a name, apply
-    /// a set to every character, list, show or remove sets (the toolbox). An apply is refused while the
-    /// client runs.
+    /// a set to every character, undo the last apply, edit, list, show or remove sets (the toolbox). An
+    /// apply and an undo are refused while the client runs.
     Set {
         #[command(subcommand)]
         action: SetAction,
@@ -2875,9 +2875,13 @@ enum SetAction {
         /// The realm of `--character`, for a name more than one realm has.
         #[arg(long, requires = "character")]
         realm: Option<String>,
+        /// The account folder of `--character`, for a realm and name under more than one account.
+        #[arg(long, requires = "character")]
+        account: Option<String>,
     },
     /// Apply a set to every character, or to one with `--character`: exactly the set's addons get its
-    /// state in AddOns.txt, every other line stays as it is. Refused while the client runs.
+    /// state in AddOns.txt, every other line stays as it is; the files it replaces are kept for `set
+    /// undo`. Refused while the client runs.
     Apply {
         /// The set's name.
         name: String,
@@ -2890,6 +2894,46 @@ enum SetAction {
         /// The realm of `--character`, for a name more than one realm has.
         #[arg(long, requires = "character")]
         realm: Option<String>,
+        /// The account folder of `--character`, for a realm and name under more than one account.
+        #[arg(long, requires = "character")]
+        account: Option<String>,
+    },
+    /// Put back the AddOns.txt files the last apply replaced, byte for byte, and remove the ones it
+    /// created; once. Refused while the client runs.
+    Undo {
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Enable one addon in a stored set (added when the set does not have it); no AddOns.txt is touched.
+    Enable {
+        /// The set's name.
+        name: String,
+        /// The addon's folder name.
+        addon: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Disable one addon in a stored set (added when the set does not have it); no AddOns.txt is touched.
+    Disable {
+        /// The set's name.
+        name: String,
+        /// The addon's folder name.
+        addon: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Drop one addon from a stored set, so an apply leaves its lines alone; no AddOns.txt is touched.
+    Drop {
+        /// The set's name.
+        name: String,
+        /// The addon's folder name.
+        addon: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
     },
     /// List the flavor's sets.
     List {
@@ -2915,13 +2959,18 @@ enum SetAction {
     },
 }
 
-/// `mrgl set save|apply|list|show|remove … --flavor <id>` (task 014): the sets live in `sets.json` under
-/// the flavor's folder of the mrgl home; an apply rewrites the characters' `AddOns.txt` and is refused
-/// while the client runs (task 023), before anything is written.
+/// `mrgl set save|apply|undo|enable|disable|drop|list|show|remove … --flavor <id>` (tasks 014 and 073):
+/// the sets live in `sets.json` under the flavor's folder of the mrgl home; an apply rewrites the
+/// characters' `AddOns.txt` and keeps what it replaced for `undo`, and both are refused while the client
+/// runs (task 023), before anything is written; an edit changes `sets.json` only.
 fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
     let spec = match &action {
         SetAction::Save { flavor, .. }
         | SetAction::Apply { flavor, .. }
+        | SetAction::Undo { flavor }
+        | SetAction::Enable { flavor, .. }
+        | SetAction::Disable { flavor, .. }
+        | SetAction::Drop { flavor, .. }
         | SetAction::List { flavor }
         | SetAction::Show { flavor, .. }
         | SetAction::Remove { flavor, .. } => flavor.clone(),
@@ -2942,11 +2991,13 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             name,
             character,
             realm,
+            account,
             ..
         } => {
             let target = set_target(character, realm);
-            let saved = sets::save_set(&flavor, &path, &name, &target)
-                .map_err(|error| error.to_string())?;
+            let saved =
+                sets::save_set_in_account(&flavor, &path, &name, &target, account.as_deref())
+                    .map_err(|error| error.to_string())?;
             warnings.extend(saved.warnings.iter().cloned());
             if reporter.json {
                 reporter.document(serde_json::json!({
@@ -2958,6 +3009,7 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
                     "replaced": saved.replaced,
                     "characters": &saved.characters,
                     "conflicts": &saved.conflicts,
+                    "not_installed": &saved.not_installed,
                     "warnings": warnings,
                 }));
                 return Ok(());
@@ -2967,6 +3019,13 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
                     "left out of set {}, the characters disagree on them: {}",
                     saved.name,
                     saved.conflicts.join(", ")
+                ));
+            }
+            if !saved.not_installed.is_empty() {
+                warnings.push(format!(
+                    "set {} names addons that are not installed in {folder_name}, kept in the set all the same: {}",
+                    saved.name,
+                    saved.not_installed.join(", ")
                 ));
             }
             warn(&warnings);
@@ -2985,6 +3044,7 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             name,
             character,
             realm,
+            account,
             ..
         } => {
             let target = set_target(character, realm);
@@ -3004,9 +3064,30 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
                     format!("applying set {name} to {whom} of {folder_name}"),
                 );
             }
-            let applied = sets::apply_set(&flavor, &path, &name, &target)
-                .map_err(|error| error.to_string())?;
+            let applied =
+                sets::apply_set_in_account(&flavor, &path, &name, &target, account.as_deref())
+                    .map_err(|error| error.to_string())?;
             report_applied(reporter, &flavor, &target, &applied, warnings);
+        }
+        SetAction::Undo { .. } => {
+            let undone = sets::undo_apply(&flavor, &path).map_err(|error| error.to_string())?;
+            warnings.extend(undone.warnings.iter().cloned());
+            report_undone(reporter, &flavor, &undone, warnings);
+        }
+        SetAction::Enable { name, addon, .. } => {
+            let edited = sets::edit_set(&flavor, &path, &name, &addon, sets::SetEdit::Enable)
+                .map_err(|error| error.to_string())?;
+            report_edited(reporter, &flavor, &edited, warnings);
+        }
+        SetAction::Disable { name, addon, .. } => {
+            let edited = sets::edit_set(&flavor, &path, &name, &addon, sets::SetEdit::Disable)
+                .map_err(|error| error.to_string())?;
+            report_edited(reporter, &flavor, &edited, warnings);
+        }
+        SetAction::Drop { name, addon, .. } => {
+            let edited = sets::edit_set(&flavor, &path, &name, &addon, sets::SetEdit::Drop)
+                .map_err(|error| error.to_string())?;
+            report_edited(reporter, &flavor, &edited, warnings);
         }
         SetAction::List { .. } => {
             let file = sets::read_sets_at(&path, &flavor.id).map_err(|error| error.to_string())?;
@@ -3209,6 +3290,141 @@ fn report_applied(
                 applied.name
             ),
         ),
+    }
+}
+
+/// The outcome of `set undo` (task 073): one data line per character, the warnings and the summary; or
+/// the one JSON document.
+fn report_undone(
+    reporter: &Reporter,
+    flavor: &Flavor,
+    undone: &sets::Undone,
+    warnings: Vec<String>,
+) {
+    let folder_name = flavor.folder_name();
+    if reporter.json {
+        let listed = |characters: &[sets::Character]| -> Vec<serde_json::Value> {
+            characters
+                .iter()
+                .map(|character| {
+                    serde_json::json!({
+                        "account": &character.account,
+                        "realm": &character.realm,
+                        "name": &character.name,
+                        "addons_txt": character.addons_txt(),
+                    })
+                })
+                .collect()
+        };
+        reporter.document(serde_json::json!({
+            "kind": "set-undo",
+            "flavor": flavor,
+            "name": &undone.set,
+            "applied_at": &undone.applied_at,
+            "restored": listed(&undone.restored),
+            "removed": listed(&undone.removed),
+            "warnings": warnings,
+        }));
+        return;
+    }
+    for character in &undone.restored {
+        reporter.line(format!(
+            "{}: AddOns.txt put back as it was",
+            character.label()
+        ));
+    }
+    for character in &undone.removed {
+        reporter.line(format!(
+            "{}: AddOns.txt removed, the apply had created it",
+            character.label()
+        ));
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let mut summary = format!(
+        "undid the apply of set {} to {folder_name} ({}): {} put back",
+        undone.set,
+        undone.applied_at,
+        count_addons_txt(undone.restored.len())
+    );
+    if !undone.removed.is_empty() {
+        summary.push_str(&format!(
+            ", {} the apply created removed",
+            count_addons_txt(undone.removed.len())
+        ));
+    }
+    let kind = if warnings.is_empty() {
+        Kind::Success
+    } else {
+        Kind::Warning
+    };
+    reporter.say(kind, summary);
+}
+
+/// The outcome of `set enable|disable|drop` (task 073): a warning for an addon that is not installed and
+/// the summary; or the one JSON document.
+fn report_edited(
+    reporter: &Reporter,
+    flavor: &Flavor,
+    edited: &sets::Edited,
+    mut warnings: Vec<String>,
+) {
+    let folder_name = flavor.folder_name();
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "set-edit",
+            "flavor": flavor,
+            "name": &edited.name,
+            "addon": &edited.addon,
+            "action": edited.edit,
+            "before": edited.before,
+            "after": edited.after,
+            "changed": edited.changed,
+            "installed": edited.installed,
+            "set": &edited.set,
+            "warnings": warnings,
+        }));
+        return;
+    }
+    if edited.after.is_some() && !edited.installed {
+        warnings.push(format!(
+            "{} is not installed in {folder_name}; the set keeps it all the same",
+            edited.addon
+        ));
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let (name, addon, count) = (&edited.name, &edited.addon, count_set(&edited.set));
+    let summary = match (edited.before, edited.after) {
+        _ if !edited.changed => {
+            let state = edited.after.map(AddonState::as_str).unwrap_or("dropped");
+            reporter.say(
+                Kind::Nothing,
+                format!("set {name} of {folder_name} has {addon} {state} already, nothing changed"),
+            );
+            return;
+        }
+        (None, Some(state)) => {
+            format!("added {addon} to set {name} of {folder_name}, {state}: {count}")
+        }
+        (Some(before), Some(state)) => {
+            format!("{addon} is {state} in set {name} of {folder_name} now, was {before}: {count}")
+        }
+        (_, None) => format!("dropped {addon} from set {name} of {folder_name}: {count}"),
+    };
+    reporter.say(
+        Kind::Success,
+        format!("{summary}; no AddOns.txt was touched"),
+    );
+}
+
+fn count_addons_txt(count: usize) -> String {
+    if count == 1 {
+        "1 AddOns.txt".to_string()
+    } else {
+        format!("{count} AddOns.txt files")
     }
 }
 

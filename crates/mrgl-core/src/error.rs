@@ -350,6 +350,55 @@ pub enum Error {
         candidates: String,
         hint: &'static str,
     },
+
+    /// An account name (`--account`, task 073) no account folder with a character under `WTF\Account`
+    /// has; `known` lists the accounts that have one.
+    #[error(
+        "no character under the account {account} (flavor {flavor}); the accounts with characters: {known}"
+    )]
+    AccountNotFound {
+        account: String,
+        flavor: String,
+        known: String,
+    },
+
+    /// `set undo` with no apply recorded since the last undo (task 073).
+    #[error(
+        "nothing to undo in {flavor}: no set apply is recorded; an apply that changes a file keeps what it replaced, and an undo puts it back once"
+    )]
+    NothingToUndo { flavor: String },
+
+    /// An undo record that is not one mrgl wrote for this flavor, or whose kept files are missing (task
+    /// 073). Nothing is written.
+    #[error(
+        "not a readable undo record: {path} ({reason}); nothing was written, delete the folder by hand to start over"
+    )]
+    SetUndoUnreadable { path: PathBuf, reason: String },
+
+    /// A set undo whose write failed (task 073); `reverted` says whether the files written before it are
+    /// back as they were.
+    #[error(
+        "undoing set {set} failed: {reason}; {}",
+        if *.reverted { "every AddOns.txt is as it was before the undo" } else { "the AddOns.txt files written before it could not all be put back" }
+    )]
+    SetUndoFailed {
+        set: String,
+        reason: String,
+        reverted: bool,
+    },
+
+    /// An addon name an edit of a set names that no `AddOns.txt` line could carry (task 073).
+    #[error("not an addon name: `{name}` (an AddOns.txt line cannot carry it)")]
+    AddonName { name: String },
+
+    /// `set drop` of an addon the set does not have (task 073); `known` lists the set's addons.
+    #[error("set {set} (flavor {flavor}) has no addon {addon}; its addons: {known}")]
+    AddonNotInSet {
+        set: String,
+        addon: String,
+        flavor: String,
+        known: String,
+    },
 }
 
 /// The crate's result type.

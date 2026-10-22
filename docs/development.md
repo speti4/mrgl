@@ -86,7 +86,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
   `rollback <name>` (task 022), `set save|apply|list|show|remove` (task 014; `--character` on `save` and
-  `apply`, task 027; below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
+  `apply`, task 027; `set undo`, `set enable|disable|drop <set> <addon>` and `--account`, task 073;
+  below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
   below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
   `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
@@ -268,7 +269,8 @@ change is not written. Every new content is worked out before the first write, e
 temporary file renamed over it, and a failure part way puts the files already written back. No folder is
 deleted or moved; an addon of the set that is not installed is a warning and its line is written all the
 same. `set list`, `set show <name>` and `set remove <name>` read and edit `sets.json` only; every verb takes
-`--flavor` and `--json` (`kind` `set-save`, `set-apply`, `set-list`, `set-show`, `set-remove`).
+`--flavor` and `--json` (`kind` `set-save`, `set-apply`, `set-undo`, `set-edit`, `set-list`, `set-show`,
+`set-remove`).
 
 A set is per flavor, its target may be one character (task 027): `set apply <name> --character <name>
 [--realm <realm>]` writes that character's `AddOns.txt` only and leaves every other character's file byte for
@@ -276,9 +278,35 @@ byte, and `set save <name> --character <name>` takes the set from that one file 
 disagreement). The character is picked from the `WTF` account folders by its folder's name, ignoring case;
 `--realm` narrows a name more than one realm has. A name on two realms without `--realm` is refused with the
 realms listed, and a name no character has with the characters listed; when one realm and name are under
-two accounts the error names the accounts. The guard of task 023 holds as for every character: nothing is
+two accounts the error names the accounts, and `--account <name>` on `save` and `apply` (task 073, with
+`--character`) picks the account folder, ignoring case; an account with no character is refused with the
+accounts listed. The guard of task 023 holds as for every character: nothing is
 written while the client runs. In `mrgl_core::sets` the choice is `Target` (`EveryCharacter`, or
-`Character { name, realm }`) and `find_character` is the lookup the window can call.
+`Character { name, realm }`) and `find_character` is the lookup the window can call; the account narrows
+them through `targets_in_account`, `find_character_in_account`, `save_set_in_account` and
+`apply_set_in_account`, so `save_set`, `apply_set` and `find_character` keep their signatures and results.
+
+A set apply can be undone (task 073). Every apply that changes a file keeps an undo record under the
+flavor's folder of the mrgl home, next to `sets.json` (`<home>\<flavor-id>\set-undo\`: `undo.json`
+with `format` `mrgl-set-undo`, `schema` 1, the `flavor` id, the `set`, `applied_at` and per file the
+account, realm and character folder names, the `<n>-before.txt` copy of the bytes it replaced, absent for
+a file the apply created, and the `<n>-after.txt` copy of what it wrote). The record is the last apply's
+only: it is written into `set-undo.new\` before the first `AddOns.txt` write and moved in place of the
+one before, which is put back when the apply fails and its files are as they were; an apply that changes
+nothing leaves the record of the one before. `mrgl set undo` (`sets::undo_apply`) reads the record and
+every kept file first (a record of another flavor or schema, a name that is a path, or a missing copy is
+refused before anything is written), runs the guard of task 023, puts every replaced file back byte for
+byte and removes every file the apply created, each write through a temporary file with the files
+written so far put back on a failure, and then deletes the record, so it undoes once; a file that changed
+since the apply (the client writes it at logout) is put back all the same with a warning, and a character
+folder that is gone is passed over with one. `mrgl set enable|disable|drop <set> <addon>`
+(`sets::edit_set`) changes one addon of a stored set in `sets.json` only: the name is matched ignoring
+ASCII case and keeps the set's spelling, an enable or a disable of an addon the set does not have adds it
+(an addon that is not installed is a warning), a drop of one it does not have is refused with the set's
+addons listed, an edit to the state the addon has already writes nothing, and one that changes the set
+moves its `saved_at`; no `AddOns.txt` is touched and no undo record is written. `set save` keeps an addon
+of the characters' files that has no folder under `Interface\AddOns` and names it in a warning
+(`not_installed` in `--json`): a set is the user's data, and `set apply` already writes such a line.
 
 ## The unpacked-size bound
 
@@ -820,7 +848,8 @@ The command line and the window keep `config.json` under the mrgl home folder (`
 folder, written by `mrgl root` and the window's chooser; `theme` and `serious`, the window's preferences of
 task 034, the second also the third source of the voice's serious switch),
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
-sidecar `state.json`, the addon sets `sets.json` (task 014),
+sidecar `state.json`, the addon sets `sets.json` (task 014) and the last set apply's undo record
+`set-undo\` (task 073),
 the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves; emptied after every install) and `cache\<addon>\<version>.zip` (the current and the previous
 version's zip for `mrgl rollback`; never required, deleting it only disables the rollback), and the `WTF`

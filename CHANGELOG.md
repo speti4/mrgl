@@ -18,6 +18,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 ### M3 Toolbox
 
 - `link` takes a single addon folder as well as a development folder ([062](https://github.com/speti4/mrgl/blob/main/tasks/done/062-link-takes-a-single-addon-folder.md))
+- Addon sets: undo an apply, edit a stored set, `--account`, and uninstalled addons on save ([073](https://github.com/speti4/mrgl/blob/main/tasks/done/073-addon-sets-undo-edit-and-account.md))
 
 ### Project housekeeping
 

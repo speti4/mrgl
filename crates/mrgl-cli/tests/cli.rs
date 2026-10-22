@@ -6262,6 +6262,7 @@ fn set_save_list_show_apply_and_remove_speak_plain_lines() {
         stdout(&output).lines().collect::<Vec<_>>(),
         [
             "left out of set everyday, the characters disagree on them: BossTimers, QuestArrows",
+            "set everyday names addons that are not installed in _forever_, kept in the set all the same: BagSorter, RaidFrames",
             "saved set everyday of _forever_ from 2 characters: 2 addons (2 enabled, 0 disabled)",
         ]
     );
@@ -6368,6 +6369,10 @@ fn set_json_is_one_document_per_command() {
         serde_json::json!(["BossTimers", "QuestArrows"])
     );
     assert_eq!(value["replaced"], false);
+    assert_eq!(
+        value["not_installed"],
+        serde_json::json!(["BagSorter", "RaidFrames"])
+    );
 
     let output = set_run(&root, &home, &["--json", "set", "apply", "everyday"]);
     assert!(output.status.success(), "{output:?}");
@@ -6617,6 +6622,292 @@ fn set_apply_to_one_character_is_refused_while_the_client_runs() {
     );
     assert_eq!(snapshot(&wtf), before, "nothing was written");
     child.stop();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Task 073: `set undo`, `set enable|disable|drop`, `--account` and the save warning, over the same
+// `addon-sets` tree.
+
+#[test]
+fn set_undo_puts_the_last_apply_back_byte_for_byte() {
+    let (root, home) = temp_game_root_with_sets("undo");
+    let wtf = root.join("_forever_").join("WTF");
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "save",
+            "raid",
+            "--character",
+            "Mrgltest",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let before = snapshot(&wtf);
+
+    let output = set_run(&root, &home, &["--serious", "set", "apply", "raid"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_ne!(snapshot(&wtf), before);
+    assert!(
+        home.join("wowf")
+            .join("set-undo")
+            .join("undo.json")
+            .is_file()
+    );
+
+    let output = set_run(&root, &home, &["--serious", "set", "undo"]);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(
+        lines[0],
+        "Second Realm/Grrlwave: AddOns.txt put back as it was"
+    );
+    assert!(
+        lines[1].starts_with("undid the apply of set raid to _forever_ (20"),
+        "{text}"
+    );
+    assert!(lines[1].ends_with("): 1 AddOns.txt put back"), "{text}");
+    assert_eq!(snapshot(&wtf), before, "byte for byte");
+
+    let output = set_run(&root, &home, &["--serious", "set", "undo"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "nothing to undo in _forever_: no set apply is recorded; an apply that changes a file keeps what it replaced, and an undo puts it back once"
+    );
+
+    let output = set_run(&root, &home, &["--json", "set", "apply", "raid"]);
+    assert!(output.status.success(), "{output:?}");
+    let output = set_run(&root, &home, &["--json", "set", "undo"]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "set-undo");
+    assert_eq!(value["name"], "raid");
+    assert_eq!(value["restored"].as_array().map(Vec::len), Some(1));
+    assert_eq!(value["restored"][0]["name"], "Grrlwave");
+    assert_eq!(value["removed"], serde_json::json!([]));
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    assert_eq!(snapshot(&wtf), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn set_undo_is_refused_while_the_client_runs() {
+    let (root, home) = temp_game_root_with_sets("undo-client");
+    let wtf = root.join("_forever_").join("WTF");
+    let output = set_run(&root, &home, &["--serious", "set", "save", "everyday"]);
+    assert!(output.status.success(), "{output:?}");
+    let before = snapshot(&wtf);
+    let output = set_run(&root, &home, &["--serious", "set", "apply", "everyday"]);
+    assert!(output.status.success(), "{output:?}");
+    let applied = snapshot(&wtf);
+    let Some(mut child) = spawn_stand_in(&root.join("_forever_")) else {
+        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        return;
+    };
+    let output = set_run(&root, &home, &["--serious", "set", "undo"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "the client is running in _forever_ (client-stand-in.exe, pid {}): close the game first, nothing under WTF is written while it runs",
+            child.id()
+        )
+    );
+    assert_eq!(snapshot(&wtf), applied, "nothing was written");
+    child.stop();
+    let output = set_run(&root, &home, &["--serious", "set", "undo"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(snapshot(&wtf), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn set_enable_disable_and_drop_edit_one_addon_of_a_stored_set() {
+    let (root, home) = temp_game_root_with_sets("edit");
+    let wtf = root.join("_forever_").join("WTF");
+    std::fs::create_dir_all(root.join("_forever_/Interface/AddOns/BagSorter")).expect("addon");
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "save",
+            "raid",
+            "--character",
+            "Mrgltest",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let before = snapshot(&wtf);
+
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "disable", "raid", "bagsorter"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "BagSorter is disabled in set raid of _forever_ now, was enabled: 4 addons (2 enabled, 2 disabled); no AddOns.txt was touched"
+        ]
+    );
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "disable", "raid", "BagSorter"],
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "set raid of _forever_ has BagSorter disabled already, nothing changed"
+    );
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "enable", "raid", "NewMeter"],
+    );
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "NewMeter is not installed in _forever_; the set keeps it all the same",
+            "added NewMeter to set raid of _forever_, enabled: 5 addons (3 enabled, 2 disabled); no AddOns.txt was touched",
+        ]
+    );
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "drop", "raid", "QuestArrows"],
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "dropped QuestArrows from set raid of _forever_: 4 addons (3 enabled, 1 disabled); no AddOns.txt was touched"
+    );
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "drop", "raid", "QuestArrows"],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "set raid (flavor forever) has no addon QuestArrows; its addons: BagSorter, BossTimers, NewMeter, RaidFrames"
+    );
+
+    let output = set_run(
+        &root,
+        &home,
+        &["--json", "set", "enable", "raid", "BagSorter"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "set-edit");
+    assert_eq!(value["name"], "raid");
+    assert_eq!(value["addon"], "BagSorter");
+    assert_eq!(value["action"], "enable");
+    assert_eq!(value["before"], "disabled");
+    assert_eq!(value["after"], "enabled");
+    assert_eq!(value["changed"], true);
+    assert_eq!(value["installed"], true);
+    assert_eq!(
+        value["set"]["addons"],
+        serde_json::json!({
+            "BagSorter": "enabled",
+            "BossTimers": "enabled",
+            "NewMeter": "enabled",
+            "RaidFrames": "enabled",
+        })
+    );
+    assert_eq!(snapshot(&wtf), before, "an edit never touches WTF");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn set_account_picks_a_character_under_two_accounts() {
+    let (root, home) = temp_game_root_with_sets("account");
+    let wtf = root.join("_forever_").join("WTF");
+    let twin = "Account/MRGLTWO/Fixture Realm/Mrgltest/AddOns.txt";
+    std::fs::create_dir_all(wtf.join("Account/MRGLTWO/Fixture Realm/Mrgltest")).expect("a twin");
+    std::fs::write(wtf.join(twin), b"BagSorter: enabled\r\n").expect("its file");
+    let output = set_run(&root, &home, &["--serious", "set", "save", "everyday"]);
+    assert!(output.status.success(), "{output:?}");
+    let mut file: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(home.join("wowf").join("sets.json")).expect("sets.json"),
+    )
+    .expect("JSON");
+    file["sets"]["raid"] = serde_json::json!({
+        "saved_at": "2026-10-22T00:00:00Z",
+        "addons": { "BagSorter": "disabled" },
+    });
+    std::fs::write(home.join("wowf").join("sets.json"), file.to_string()).expect("written");
+    let before = snapshot(&wtf);
+
+    let args = |extra: &[&'static str]| {
+        let mut args = vec![
+            "--serious",
+            "set",
+            "apply",
+            "raid",
+            "--character",
+            "Mrgltest",
+            "--realm",
+            "Fixture Realm",
+        ];
+        args.extend_from_slice(extra);
+        args
+    };
+    let output = set_run(&root, &home, &args(&[]));
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLSETS), Fixture Realm (MRGLTWO); the same realm is under more than one account: name one with --account"
+    );
+    assert_eq!(snapshot(&wtf), before, "nothing was written");
+
+    let output = set_run(&root, &home, &args(&["--account", "mrgltwo"]));
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        stdout_last_line(&output),
+        "applied set raid to Fixture Realm/Mrgltest of _forever_: 1 addon line changed"
+    );
+    let after = snapshot(&wtf);
+    assert_eq!(after[SETS_FIRST], before[SETS_FIRST], "the other account");
+    assert_eq!(after[twin], b"BagSorter: disabled\r\n");
+
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--json",
+            "set",
+            "save",
+            "twin",
+            "--character",
+            "Mrgltest",
+            "--account",
+            "MRGLTWO",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["characters"][0]["account"], "MRGLTWO");
+    assert_eq!(
+        value["set"]["addons"],
+        serde_json::json!({ "BagSorter": "disabled" })
+    );
+
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "apply", "raid", "--account", "MRGLTWO"],
+    );
+    assert_eq!(output.status.code(), Some(2), "--account needs --character");
     let _ = std::fs::remove_dir_all(&root);
 }
 

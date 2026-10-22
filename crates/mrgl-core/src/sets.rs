@@ -19,7 +19,17 @@
 //!
 //! A save or an apply takes a [`Target`]: every character of the flavor, or one picked by name (and
 //! realm) from the `WTF` account folders (task 027, [`find_character`]); an apply to one character leaves
-//! every other character's file byte for byte.
+//! every other character's file byte for byte. The `_in_account` functions (task 073) narrow the
+//! characters to one account folder first, for a realm and name that sit under two accounts.
+//!
+//! An apply that changes a file keeps an undo record (task 073) under the flavor's folder of the mrgl
+//! home, next to the sets file (`<home>\<flavor-id>\set-undo\`): the bytes of every `AddOns.txt` it
+//! replaced, the names of the ones it created and what it wrote, for the last such apply only (an apply
+//! that writes nothing leaves the record of the one before). [`undo_apply`] puts those files back byte for
+//! byte and removes the ones the apply created, once, behind the same guard of task 023.
+//!
+//! [`edit_set`] enables, disables or drops one addon of a stored set in `sets.json` only (task 073); a save
+//! keeps an addon that is no longer installed and names it ([`Saved::not_installed`]).
 //!
 //! `sets.json` is the user's own data, not a cache: a file that cannot be read is an error that names it,
 //! and mrgl never overwrites it.
@@ -39,7 +49,7 @@ use crate::flavor::{Flavor, FlavorId};
 use crate::home;
 use crate::scan;
 use crate::state;
-use crate::wtf::{self, WtfFolder};
+use crate::wtf::{self, ACCOUNT_DIR, WtfFolder};
 
 /// The sets file's name under the flavor's folder of the mrgl home.
 pub const SETS_FILE: &str = "sets.json";
@@ -51,6 +61,14 @@ pub const SETS_SCHEMA: u32 = 1;
 pub const ADDONS_TXT: &str = "AddOns.txt";
 /// The longest set name, in characters.
 pub const SET_NAME_MAX_CHARS: usize = 64;
+/// The folder of the last apply's undo record, next to the sets file (task 073).
+pub const UNDO_DIR: &str = "set-undo";
+/// The undo record's file in [`UNDO_DIR`].
+pub const UNDO_FILE: &str = "undo.json";
+/// The `format` value of an undo record.
+pub const UNDO_FORMAT: &str = "mrgl-set-undo";
+/// The schema of an undo record; a record with another number is refused.
+pub const UNDO_SCHEMA: u32 = 1;
 
 const BOM: &[u8] = b"\xEF\xBB\xBF";
 
@@ -344,18 +362,74 @@ pub enum Target {
 /// The characters of a target: every character of the flavor, or the one [`find_character`] picks.
 /// No character at all is [`Error::NoCharacters`].
 pub fn targets(flavor: &Flavor, target: &Target) -> Result<Vec<Character>> {
+    targets_in_account(flavor, target, None)
+}
+
+/// The characters of a target within one account folder (`--account`, task 073; compared ignoring
+/// case), or within every account without one. An account with no character is
+/// [`Error::AccountNotFound`] with the accounts listed.
+pub fn targets_in_account(
+    flavor: &Flavor,
+    target: &Target,
+    account: Option<&str>,
+) -> Result<Vec<Character>> {
     let characters = characters(flavor)?;
     if characters.is_empty() {
         return Err(Error::NoCharacters {
             path: flavor.folder.join(WTF_DIR),
         });
     }
+    let characters = in_account(&characters, account, &flavor.id)?;
     match target {
         Target::EveryCharacter => Ok(characters),
         Target::Character { name, realm } => {
             find_character(&characters, name, realm.as_deref(), &flavor.id).map(|found| vec![found])
         }
     }
+}
+
+/// [`find_character`] within one account folder (task 073): the same name on the same realm under two
+/// accounts is told apart by the account.
+pub fn find_character_in_account(
+    characters: &[Character],
+    name: &str,
+    realm: Option<&str>,
+    account: Option<&str>,
+    flavor: &FlavorId,
+) -> Result<Character> {
+    let characters = in_account(characters, account, flavor)?;
+    find_character(&characters, name, realm, flavor)
+}
+
+/// The characters under one account folder, its name compared ignoring case; all of them without an
+/// account.
+fn in_account(
+    characters: &[Character],
+    account: Option<&str>,
+    flavor: &FlavorId,
+) -> Result<Vec<Character>> {
+    let Some(account) = account else {
+        return Ok(characters.to_vec());
+    };
+    let wanted = account.trim().to_lowercase();
+    let found: Vec<Character> = characters
+        .iter()
+        .filter(|character| character.account.to_lowercase() == wanted)
+        .cloned()
+        .collect();
+    if found.is_empty() {
+        let mut known: Vec<&str> = characters
+            .iter()
+            .map(|character| character.account.as_str())
+            .collect();
+        known.dedup();
+        return Err(Error::AccountNotFound {
+            account: account.to_string(),
+            flavor: flavor_label(flavor),
+            known: known.join(", "),
+        });
+    }
+    Ok(found)
 }
 
 /// One character by name (and realm, when given), both compared ignoring case. A name no character has
@@ -406,7 +480,7 @@ pub fn find_character(
                     .collect();
                 (
                     labels.join(", "),
-                    "the same realm is under more than one account, which --realm cannot tell apart",
+                    "the same realm is under more than one account: name one with --account",
                 )
             };
             Err(Error::AmbiguousCharacter {
@@ -645,6 +719,9 @@ pub struct Saved {
     pub characters: Vec<Character>,
     /// Addons left out because the characters disagree on them, by name.
     pub conflicts: Vec<String>,
+    /// Addons of the set with no folder under `Interface\AddOns`, by name: kept in the set all the same
+    /// (task 073), a set is the user's data.
+    pub not_installed: Vec<String>,
     /// Plain lines about what was passed over.
     pub warnings: Vec<String>,
 }
@@ -652,12 +729,23 @@ pub struct Saved {
 /// Saves a set from the `AddOns.txt` files of the target's characters (every character of the flavor, or
 /// the one [`Target::Character`] names, task 027): every addon a file names, with its state; an addon
 /// the characters disagree on is left out (an apply then leaves it alone) and named in
-/// [`Saved::conflicts`]. A set of the same name is replaced. Reads `WTF` only, so it goes on while the
-/// client runs.
+/// [`Saved::conflicts`]; an addon that is not installed is kept and named in [`Saved::not_installed`]
+/// (task 073). A set of the same name is replaced. Reads `WTF` only, so it goes on while the client runs.
 pub fn save_set(flavor: &Flavor, sets_path: &Path, name: &str, target: &Target) -> Result<Saved> {
+    save_set_in_account(flavor, sets_path, name, target, None)
+}
+
+/// [`save_set`] from the characters of one account folder (`--account`, task 073).
+pub fn save_set_in_account(
+    flavor: &Flavor,
+    sets_path: &Path,
+    name: &str,
+    target: &Target,
+    account: Option<&str>,
+) -> Result<Saved> {
     let name = checked_set_name(name)?;
     let mut sets = read_sets_at(sets_path, &flavor.id)?;
-    let characters = targets(flavor, target)?;
+    let characters = targets_in_account(flavor, target, account)?;
     let mut states: BTreeMap<String, (String, Option<AddonState>)> = BTreeMap::new();
     let mut warnings = Vec::new();
     for character in &characters {
@@ -702,6 +790,7 @@ pub fn save_set(flavor: &Flavor, sets_path: &Path, name: &str, target: &Target) 
         saved_at: state::now_rfc3339(),
         addons,
     };
+    let not_installed = not_installed(flavor, set.addons.keys());
     let previous = sets.find(&name).map(|(key, _)| key.to_string());
     let replaced = previous.is_some();
     if let Some(previous) = previous {
@@ -715,8 +804,18 @@ pub fn save_set(flavor: &Flavor, sets_path: &Path, name: &str, target: &Target) 
         replaced,
         characters,
         conflicts,
+        not_installed,
         warnings,
     })
+}
+
+/// The addons of a list with no folder under the flavor's `Interface\AddOns`, by name.
+fn not_installed<'a>(flavor: &Flavor, addons: impl Iterator<Item = &'a String>) -> Vec<String> {
+    let addons_dir = scan::addons_dir(&flavor.folder);
+    addons
+        .filter(|addon| !addons_dir.join(addon).is_dir())
+        .cloned()
+        .collect()
 }
 
 /// What an apply changed in one character's `AddOns.txt`.
@@ -756,20 +855,33 @@ impl Applied {
 /// order: the set read (an unknown name is [`Error::SetNotFound`]), the characters listed (none is
 /// [`Error::NoCharacters`], a name [`find_character`] cannot pin down its error), the guard of task
 /// 023 (a running client refuses the apply before anything is written), every new `AddOns.txt` worked
-/// out, then only the files that change written, each through a temporary file. A failed write puts the
-/// files already written back and is [`Error::SetApplyFailed`].
+/// out, the undo record of the files that change put in place (task 073, [`undo_apply`]; under
+/// [`UNDO_DIR`] next to `sets_path`, replacing the last one; an apply that changes nothing keeps it), then
+/// only the files that change written, each through a temporary file. A failed write puts the files
+/// already written back and is [`Error::SetApplyFailed`]; the record before it is back too when they are.
 pub fn apply_set(
     flavor: &Flavor,
     sets_path: &Path,
     name: &str,
     target: &Target,
 ) -> Result<Applied> {
+    apply_set_in_account(flavor, sets_path, name, target, None)
+}
+
+/// [`apply_set`] to the characters of one account folder (`--account`, task 073).
+pub fn apply_set_in_account(
+    flavor: &Flavor,
+    sets_path: &Path,
+    name: &str,
+    target: &Target,
+    account: Option<&str>,
+) -> Result<Applied> {
     let sets = read_sets_at(sets_path, &flavor.id)?;
     let (name, set) = sets
         .find(name)
         .map(|(key, set)| (key.to_string(), set.clone()))
         .ok_or_else(|| sets.not_found(name, &flavor.id))?;
-    let characters = targets(flavor, target)?;
+    let characters = targets_in_account(flavor, target, account)?;
     client::ensure_client_not_running(flavor)?;
 
     let mut plans = Vec::new();
@@ -795,15 +907,33 @@ pub fn apply_set(
             },
         });
     }
-    write_plans(&mut plans, &name)?;
+    let record = if plans.iter().any(|plan| !plan.change.changed.is_empty()) {
+        Some(UndoSwap::put_in_place(
+            &undo_dir_of(sets_path),
+            &flavor.id,
+            &name,
+            &plans,
+        )?)
+    } else {
+        None
+    };
+    if let Err(error) = write_plans(&mut plans, &name) {
+        if let Some(record) = record {
+            // Files back as they were: the record before this apply is the right one again. Files left
+            // half written: this apply's record is the way back.
+            if matches!(error, Error::SetApplyFailed { reverted: true, .. }) {
+                record.roll_back();
+            } else {
+                record.keep();
+            }
+        }
+        return Err(error);
+    }
+    if let Some(record) = record {
+        record.keep();
+    }
 
-    let addons_dir = scan::addons_dir(&flavor.folder);
-    let not_installed = set
-        .addons
-        .keys()
-        .filter(|addon| !addons_dir.join(addon).is_dir())
-        .cloned()
-        .collect();
+    let not_installed = not_installed(flavor, set.addons.keys());
     Ok(Applied {
         name,
         set,
@@ -857,6 +987,467 @@ fn write_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+/// The undo record's folder next to a sets file: `<home>\<flavor-id>\set-undo\` (task 073).
+pub fn undo_dir_of(sets_path: &Path) -> PathBuf {
+    sets_path.with_file_name(UNDO_DIR)
+}
+
+/// The undo record of the last apply that changed a file (task 073), `undo.json` in [`UNDO_DIR`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UndoRecord {
+    /// Always [`UNDO_FORMAT`].
+    pub format: String,
+    /// Always [`UNDO_SCHEMA`].
+    pub schema: u32,
+    /// The flavor id the apply wrote to.
+    pub flavor: String,
+    /// The set applied, its name as stored.
+    pub set: String,
+    /// When it was applied, RFC 3339 in UTC.
+    pub applied_at: String,
+    /// Every `AddOns.txt` the apply wrote.
+    pub files: Vec<UndoFile>,
+}
+
+/// One `AddOns.txt` an apply wrote, in an [`UndoRecord`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UndoFile {
+    /// The account folder's name.
+    pub account: String,
+    /// The realm folder's name.
+    pub realm: String,
+    /// The character folder's name.
+    pub character: String,
+    /// The file in the record's folder with the bytes the apply replaced; `None` when the apply created
+    /// the file.
+    pub kept: Option<String>,
+    /// The file in the record's folder with the bytes the apply wrote, to tell a change since.
+    pub written: String,
+}
+
+/// An undo record moved into place before an apply writes, with the record before it set aside until the
+/// apply is through.
+struct UndoSwap {
+    dir: PathBuf,
+    aside: PathBuf,
+}
+
+impl UndoSwap {
+    /// Writes the record of the plans that change into a fresh folder next to `dir`, sets the record
+    /// there aside and moves the new one in. Nothing under `WTF` is written yet, so a failure here
+    /// refuses the apply with every file as it was.
+    fn put_in_place(dir: &Path, flavor: &FlavorId, set: &str, plans: &[Plan]) -> Result<UndoSwap> {
+        let fresh = dir.with_file_name(format!("{UNDO_DIR}.new"));
+        let aside = dir.with_file_name(format!("{UNDO_DIR}.old"));
+        let failed = |path: &Path, source: io::Error| Error::Io {
+            context: "keeping the undo record of the apply",
+            path: path.to_path_buf(),
+            source,
+        };
+        remove_dir_if_any(&fresh).map_err(|source| failed(&fresh, source))?;
+        remove_dir_if_any(&aside).map_err(|source| failed(&aside, source))?;
+        if let Err(source) = write_undo_folder(&fresh, flavor, set, plans) {
+            let _ = fs::remove_dir_all(&fresh);
+            return Err(failed(&fresh, source));
+        }
+        let had_one = dir.exists();
+        if had_one && let Err(source) = fs::rename(dir, &aside) {
+            let _ = fs::remove_dir_all(&fresh);
+            return Err(failed(dir, source));
+        }
+        if let Err(source) = fs::rename(&fresh, dir) {
+            if had_one {
+                let _ = fs::rename(&aside, dir);
+            }
+            let _ = fs::remove_dir_all(&fresh);
+            return Err(failed(dir, source));
+        }
+        Ok(UndoSwap {
+            dir: dir.to_path_buf(),
+            aside,
+        })
+    }
+
+    /// The apply went through: the record before it goes.
+    fn keep(self) {
+        let _ = fs::remove_dir_all(&self.aside);
+    }
+
+    /// The apply wrote nothing in the end: the record before it is put back.
+    fn roll_back(self) {
+        let _ = fs::remove_dir_all(&self.dir);
+        if self.aside.exists() {
+            let _ = fs::rename(&self.aside, &self.dir);
+        }
+    }
+}
+
+fn remove_dir_if_any(path: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+fn remove_file_if_any(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+/// The record of the plans that change, written into `folder`: per file `<n>-before.txt` (the bytes it
+/// replaces, when there were any) and `<n>-after.txt` (the bytes it writes), and `undo.json`.
+fn write_undo_folder(
+    folder: &Path,
+    flavor: &FlavorId,
+    set: &str,
+    plans: &[Plan],
+) -> io::Result<()> {
+    fs::create_dir_all(folder)?;
+    let mut files = Vec::new();
+    let changing = plans.iter().filter(|plan| !plan.change.changed.is_empty());
+    for (index, plan) in changing.enumerate() {
+        let number = index + 1;
+        let kept = match &plan.before {
+            Some(bytes) => {
+                let kept = format!("{number}-before.txt");
+                fs::write(folder.join(&kept), bytes)?;
+                Some(kept)
+            }
+            None => None,
+        };
+        let written = format!("{number}-after.txt");
+        fs::write(folder.join(&written), &plan.after)?;
+        let character = &plan.change.character;
+        files.push(UndoFile {
+            account: character.account.clone(),
+            realm: character.realm.clone(),
+            character: character.name.clone(),
+            kept,
+            written,
+        });
+    }
+    let record = UndoRecord {
+        format: UNDO_FORMAT.to_string(),
+        schema: UNDO_SCHEMA,
+        flavor: flavor.as_str().to_string(),
+        set: set.to_string(),
+        applied_at: state::now_rfc3339(),
+        files,
+    };
+    let text = serde_json::to_string_pretty(&record).map_err(io::Error::other)?;
+    fs::write(folder.join(UNDO_FILE), text + "\n")
+}
+
+/// A name the record may carry for a folder or a file: one path component, never `.` or `..`.
+fn is_plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, ':' | '/' | '\\'))
+}
+
+/// One file of a read record: its character, the bytes to put back (`None`: remove the file) and the
+/// bytes the apply wrote.
+struct UndoEntry {
+    character: Character,
+    then: Option<Vec<u8>>,
+    written: Vec<u8>,
+}
+
+/// Reads the undo record of a flavor: `None` when there is none; a record that is not one of this flavor
+/// and schema, names a path, or misses a kept file is [`Error::SetUndoUnreadable`].
+fn read_undo(dir: &Path, flavor: &Flavor) -> Result<Option<(UndoRecord, Vec<UndoEntry>)>> {
+    let path = dir.join(UNDO_FILE);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(Error::Io {
+                context: "reading the undo record",
+                path,
+                source,
+            });
+        }
+    };
+    let unreadable = |reason: String| Error::SetUndoUnreadable {
+        path: dir.to_path_buf(),
+        reason,
+    };
+    let record: UndoRecord =
+        serde_json::from_str(&text).map_err(|reason| unreadable(reason.to_string()))?;
+    if record.format != UNDO_FORMAT || record.schema != UNDO_SCHEMA {
+        return Err(unreadable(format!(
+            "format {} schema {} instead of {UNDO_FORMAT} schema {UNDO_SCHEMA}",
+            record.format, record.schema
+        )));
+    }
+    if record.flavor != flavor.id.as_str() {
+        return Err(unreadable(format!(
+            "flavor {} instead of {}",
+            record.flavor, flavor.id
+        )));
+    }
+    let accounts = flavor.folder.join(WTF_DIR).join(ACCOUNT_DIR);
+    let mut entries = Vec::new();
+    for file in &record.files {
+        let names = [&file.account, &file.realm, &file.character, &file.written];
+        if let Some(name) = names
+            .into_iter()
+            .chain(file.kept.as_ref())
+            .find(|name| !is_plain_name(name))
+        {
+            return Err(unreadable(format!(
+                "`{}` is not a plain folder or file name",
+                name.escape_debug()
+            )));
+        }
+        let read = |name: &str| {
+            fs::read(dir.join(name)).map_err(|source| unreadable(format!("{name}: {source}")))
+        };
+        entries.push(UndoEntry {
+            character: Character {
+                account: file.account.clone(),
+                realm: file.realm.clone(),
+                name: file.character.clone(),
+                folder: accounts
+                    .join(&file.account)
+                    .join(&file.realm)
+                    .join(&file.character),
+            },
+            then: file.kept.as_deref().map(read).transpose()?,
+            written: read(&file.written)?,
+        });
+    }
+    Ok(Some((record, entries)))
+}
+
+/// An undo that finished (task 073).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Undone {
+    /// The set whose apply was undone.
+    pub set: String,
+    /// When that apply ran, RFC 3339 in UTC.
+    pub applied_at: String,
+    /// The characters whose `AddOns.txt` is back as it was before the apply.
+    pub restored: Vec<Character>,
+    /// The characters whose `AddOns.txt` the apply had created, removed again.
+    pub removed: Vec<Character>,
+    /// Plain lines: a file changed since the apply, a character folder gone, a record that stays.
+    pub warnings: Vec<String>,
+}
+
+/// Undoes the last apply that changed a file (task 073): every `AddOns.txt` it replaced is put back byte
+/// for byte and every one it created is removed, then the record is forgotten, so a second undo has
+/// nothing to do ([`Error::NothingToUndo`]). In this order: the record read (every kept file with it), the
+/// guard of task 023 (a running client refuses the undo before anything is written), then the files
+/// written, each through a temporary file. A file that changed since the apply (the client writes it at
+/// logout) is put back all the same, with a warning; a character folder that is gone is passed over with
+/// one. A failed write puts the files already written back and is [`Error::SetUndoFailed`].
+pub fn undo_apply(flavor: &Flavor, sets_path: &Path) -> Result<Undone> {
+    let dir = undo_dir_of(sets_path);
+    let Some((record, entries)) = read_undo(&dir, flavor)? else {
+        return Err(Error::NothingToUndo {
+            flavor: flavor.folder_name(),
+        });
+    };
+    client::ensure_client_not_running(flavor)?;
+
+    let mut warnings = Vec::new();
+    let mut steps = Vec::new();
+    for entry in entries {
+        let label = entry.character.label();
+        if !entry.character.folder.is_dir() {
+            warnings.push(format!(
+                "{label}: the character folder is gone, nothing to put back"
+            ));
+            continue;
+        }
+        let path = entry.character.addons_txt();
+        let now = read_addons_txt(&path)?;
+        if now.as_deref() != Some(entry.written.as_slice()) {
+            warnings.push(format!(
+                "{label}: AddOns.txt changed since the apply (the client writes it at logout); put back as it was before the apply all the same"
+            ));
+        }
+        steps.push((entry.character, path, now, entry.then));
+    }
+
+    let mut done: Vec<usize> = Vec::new();
+    for (index, (_, path, now, then)) in steps.iter().enumerate() {
+        if now == then {
+            continue;
+        }
+        let result = match then {
+            Some(bytes) => write_file(path, bytes),
+            None => remove_file_if_any(path),
+        };
+        if let Err(error) = result {
+            let reverted = done.iter().all(|&earlier| {
+                let (_, path, now, _) = &steps[earlier];
+                match now {
+                    Some(bytes) => write_file(path, bytes).is_ok(),
+                    None => remove_file_if_any(path).is_ok(),
+                }
+            });
+            return Err(Error::SetUndoFailed {
+                set: record.set,
+                reason: format!("{}: {error}", path.display()),
+                reverted,
+            });
+        }
+        done.push(index);
+    }
+    if let Err(error) = fs::remove_dir_all(&dir) {
+        warnings.push(format!(
+            "the undo record {} could not be removed ({error}); an undo now would put the same files back again",
+            dir.display()
+        ));
+    }
+    let mut restored = Vec::new();
+    let mut removed = Vec::new();
+    for (character, _, _, then) in steps {
+        if then.is_some() {
+            restored.push(character);
+        } else {
+            removed.push(character);
+        }
+    }
+    Ok(Undone {
+        set: record.set,
+        applied_at: record.applied_at,
+        restored,
+        removed,
+        warnings,
+    })
+}
+
+/// An edit of one addon in a stored set (task 073).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SetEdit {
+    /// The addon gets `enabled` in the set (added when the set does not have it).
+    Enable,
+    /// The addon gets `disabled` in the set (added when the set does not have it).
+    Disable,
+    /// The addon leaves the set: an apply then leaves its lines alone.
+    Drop,
+}
+
+impl SetEdit {
+    /// The verb: `enable`, `disable` or `drop`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            SetEdit::Enable => "enable",
+            SetEdit::Disable => "disable",
+            SetEdit::Drop => "drop",
+        }
+    }
+}
+
+/// An edit of a stored set that finished.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Edited {
+    /// The set's name as stored.
+    pub name: String,
+    /// The addon, spelled as the set has it (as given when the edit added it).
+    pub addon: String,
+    pub edit: SetEdit,
+    /// The addon's state in the set before the edit; `None` when the set did not have it.
+    pub before: Option<AddonState>,
+    /// The addon's state in the set after the edit; `None` once dropped.
+    pub after: Option<AddonState>,
+    /// Whether `sets.json` was written (an edit to the state the addon has already writes nothing).
+    pub changed: bool,
+    /// The set after the edit.
+    pub set: AddonSet,
+    /// Whether the addon has a folder under `Interface\AddOns`.
+    pub installed: bool,
+}
+
+/// Enables, disables or drops one addon of a stored set (task 073), in `sets.json` only: no `AddOns.txt`
+/// is touched, so it goes on while the client runs. The addon is matched ignoring ASCII case and keeps the
+/// set's spelling; an enable or a disable of an addon the set does not have adds it, a drop of one is
+/// [`Error::AddonNotInSet`]. An edit that changes the set stores it again (its `saved_at` moves); one that
+/// changes nothing writes nothing.
+pub fn edit_set(
+    flavor: &Flavor,
+    sets_path: &Path,
+    name: &str,
+    addon: &str,
+    edit: SetEdit,
+) -> Result<Edited> {
+    let addon = addon.trim();
+    if !is_addon_name(addon) {
+        return Err(Error::AddonName {
+            name: addon.to_string(),
+        });
+    }
+    let mut sets = read_sets_at(sets_path, &flavor.id)?;
+    let key = sets
+        .find(name)
+        .map(|(key, _)| key.to_string())
+        .ok_or_else(|| sets.not_found(name, &flavor.id))?;
+    let set = sets.sets.get_mut(&key).expect("the key was just found");
+    let known = set
+        .addons
+        .keys()
+        .find(|known| known.eq_ignore_ascii_case(addon))
+        .cloned();
+    let before = known
+        .as_ref()
+        .and_then(|known| set.addons.get(known).copied());
+    let stored = known.unwrap_or_else(|| addon.to_string());
+    let after = match edit {
+        SetEdit::Enable => Some(AddonState::Enabled),
+        SetEdit::Disable => Some(AddonState::Disabled),
+        SetEdit::Drop => None,
+    };
+    if edit == SetEdit::Drop && before.is_none() {
+        let names: Vec<&str> = set.addons.keys().map(String::as_str).collect();
+        return Err(Error::AddonNotInSet {
+            set: key,
+            addon: addon.to_string(),
+            flavor: flavor_label(&flavor.id),
+            known: if names.is_empty() {
+                "none".to_string()
+            } else {
+                names.join(", ")
+            },
+        });
+    }
+    let changed = before != after;
+    if changed {
+        match after {
+            Some(state) => {
+                set.addons.insert(stored.clone(), state);
+            }
+            None => {
+                set.addons.remove(&stored);
+            }
+        }
+        set.saved_at = state::now_rfc3339();
+    }
+    let set = set.clone();
+    if changed {
+        write_sets_at(sets_path, &sets)?;
+    }
+    let installed = scan::addons_dir(&flavor.folder).join(&stored).is_dir();
+    Ok(Edited {
+        name: key,
+        addon: stored,
+        edit,
+        before,
+        after,
+        changed,
+        set,
+        installed,
+    })
 }
 
 /// Removes a set from the flavor's sets file; no `AddOns.txt` is touched. The removed set is returned.
