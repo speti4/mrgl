@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 9 backlog (0 ready · 0 blocked · 4 waiting · 5 ideas) · 2 in progress · 91 done · 5 dropped · 6 decisions
+**State:** 9 backlog (0 ready · 0 blocked · 3 waiting · 6 ideas) · 1 in progress · 95 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -37,7 +37,6 @@ _none_
 | # | Task | Waits for | Size | Created |
 |---|---|---|---|---|
 | 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
-| 096 | [The CurseForge source with the user's key](backlog/096-the-curseforge-source-with-the-users-key.md) | the CurseForge API key of task 007, for the manual round and the game version type ids | M | 2026-10-22 |
 
 #### M5 Trust
 
@@ -47,23 +46,19 @@ _none_
 
 ### Ideas
 
-#### M1 Core + CLI
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 108 | [update --all over two entries of one source whose first install takes the secon…](backlog/108-update-all-over-two-entries-of-one-source-whose-first-install-takes-the-second-folder.md) | S | 2026-10-22 |
-
 #### M2 Window MVP
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 107 | [The window's row menu and the offline sketch follow the sources of this build](backlog/107-the-windows-row-menu-and-offline-sketch-follow-the-sources-of-this-build.md) | S | 2026-10-22 |
+| 114 | [The window's update reports an entry folded into another during the run](backlog/114-the-windows-update-reports-an-entry-folded-into-another.md) | S | 2026-10-22 |
+| 116 | [The window installs a zip in hand with a recorded source](backlog/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
 | # | Task | Size | Created |
 |---|---|---|---|
 | 111 | [A read-only adopt round on the real retail and classic folders](backlog/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md) | S | 2026-10-22 |
+| 115 | [A distribution-off CurseForge entry is a state of its own in the update check](backlog/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md) | S | 2026-10-22 |
 
 #### M5 Trust
 
@@ -79,12 +74,11 @@ _none_
 
 ### In progress
 
-#### M2 Window MVP
+#### M4 Sources
 
 | # | Task | Started | Plan |
 |---|---|---|---|
-| 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](wip/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 | `none` |
-| 113 | [The window's adopt apply reuses the shown report's answers](wip/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 | `none` |
+| 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
@@ -100,18 +94,18 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 113 | [The window's adopt apply reuses the shown report's answers](done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 |
+| 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](done/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 |
 | 110 | [The window's install paths warn in a folder the CurseForge app manages](done/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md) | 2026-10-22 |
 | 109 | [The window's adopt view: the report and --apply in the toolbox](done/109-the-windows-adopt-view.md) | 2026-10-22 |
+| 108 | [update --all over two entries of one source whose first install takes the secon…](done/108-update-all-over-two-entries-of-one-source-whose-first-install-takes-the-second-folder.md) | 2026-10-22 |
+| 107 | [The window's row menu and the offline sketch follow the sources of this build](done/107-the-windows-row-menu-and-offline-sketch-follow-the-sources-of-this-build.md) | 2026-10-22 |
 | 106 | [The Wago update check asks for its addons in bulk, one request per game version](done/106-the-wago-update-check-asks-in-bulk.md) | 2026-10-22 |
 | 105 | [A Wago page address resolves to its wago:<id> through the keyless slugs list](done/105-a-wago-page-address-resolves-to-its-id.md) | 2026-10-22 |
 | 104 | [A WoWInterface file waiting for approval is a state of its own in the update ch…](done/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md) | 2026-10-22 |
 | 102 | [The window's offline sketch says "source not configured" as the core does](done/102-the-ui-mock-says-source-not-configured-as-the-core-does.md) | 2026-10-22 |
-| 101 | [The update check stops per source at a rate limit, not as a whole](done/101-the-update-check-stops-per-source-at-a-rate-limit.md) | 2026-10-22 |
-| 100 | [The install path picks the named entry among two sidecar entries of one source](done/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md) | 2026-10-22 |
-| 099 | [The window's update reports a second entry of the same source that has the pick…](done/099-the-windows-update-reports-a-second-entry-of-the-same-source.md) | 2026-10-22 |
-| 098 | [Adopt --apply: sidecar entries without a reinstall, and the .curseclient guard](done/098-adopt-apply-writes-sidecar-entries-without-a-reinstall.md) | 2026-10-22 |
 
-_81 more in `done/`._
+_85 more in `done/`._
 
 ### Decisions
 
