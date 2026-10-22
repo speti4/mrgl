@@ -48,11 +48,13 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
 - **Updates you can read first.** `mrgl update --all --dry-run` checks every addon mrgl installed against
   its source, each on its own release channel, and says where each stands: up to date, update available, a
   guess only (no `release.json` names the flavor, so it is not installed blindly), source gone, pinned,
-  ignored, not checked (a zip in hand, a linked folder), or newer than the release (a deleted release, a
+  ignored, pending approval (a WoWInterface file the site has not approved yet), not checked (a zip in
+  hand, a linked folder), or newer than the release (a deleted release, a
   channel switch: never downgraded); `mrgl update --all` installs the updates after one confirmation
   (`--yes` for scripts), leaves a pinned addon alone and skips an ignored one. It says which addon it is
-  checking as it goes, and without a GitHub token it stops before the 60 requests an hour run out, with the
-  time the limit resets, instead of failing addon after addon. The window does the same per flavor: "Check
+  checking as it goes, and without a GitHub token it stops asking GitHub before the 60 requests an hour run
+  out, with the time the limit resets, instead of failing addon after addon; a source's limit stops that
+  source alone, and the addons of the other sources are still checked. The window does the same per flavor: "Check
   for updates", "Update all" with a progress bar per addon and a cancel that lets the addon in flight
   finish, and on each row its update, pin, ignore and release channel, and the interface mark of `scan`
   and `list` (`interface mismatch`, `out of date`) with the warning's line in its tooltip; what the last
@@ -111,6 +113,7 @@ target\release\mrgl.exe add github:<owner>/<repo> --flavor forever            # 
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # which asset it would be, nothing installed
 target\release\mrgl.exe add wowi:<id> --flavor retail                       # a WoWInterface project's file, no key needed
 target\release\mrgl.exe add wago:<id> --flavor forever                      # a Wago addon's release, with your MRGL_WAGO_KEY
+target\release\mrgl.exe add https://addons.wago.io/addons/<slug> --flavor forever  # the same by its Wago page, recorded as wago:<id>
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe adopt --flavor retail                               # where the addons mrgl did not install come from
 target\release\mrgl.exe adopt --flavor forever --apply                      # let mrgl manage them from now on, nothing downloaded
@@ -155,10 +158,13 @@ release notes: Quest arrows point the right way again (https://github.com/<owner
 ```
 
 A source spec names where an addon comes from: `github:<owner>/<repo>` (or the repository's address),
-`wago:<id>`, `wowi:<id>` (or the WoWInterface page, `www.wowinterface.com/downloads/info<id>…`) and
-`curse:<id>` (or `www.curseforge.com/projects/<id>`). A Wago or CurseForge addon page names the addon by a
-slug, not its id, so mrgl refuses it and says where the id is (the `X-Wago-ID` or `X-Curse-Project-ID` line
-of the addon's TOC). This build has the GitHub, the WoWInterface and the Wago sources: `add` with a spec of
+`wago:<id>` (or the addon's Wago page, `addons.wago.io/addons/<slug>`), `wowi:<id>` (or the WoWInterface
+page, `www.wowinterface.com/downloads/info<id>…`) and `curse:<id>` (or `www.curseforge.com/projects/<id>`).
+A Wago page names the addon by its slug: mrgl looks the slug up in Wago's public list of the flavor's game
+version and installs and records the addon as `wago:<id>` (a slug that list lacks says which game version
+it was looked up in). A CurseForge addon page names a slug only the keyed API knows, so mrgl refuses it and
+says where the id is (the `X-Curse-Project-ID` line of the addon's TOC, or the project id on the page).
+This build has the GitHub, the WoWInterface and the Wago sources: `add` with a spec of
 another source, or of Wago without your key, says `source not configured` and what is missing, an imported
 list reports such an entry the same way, and the update check leaves it not checked.
 
@@ -166,14 +172,16 @@ A WoWInterface project has one file, and WoWInterface names no flavor for it: mr
 compatibility list (the game versions its author ticked) and takes the file for the flavor whose game the
 list names; without such an entry, and on Forever, which no project lists yet, the pick is a guess and says
 so, and the interface check after the install is the safety net. A file that waits for WoWInterface's
-approval is reported and not installed, and a download whose MD5 is not the one WoWInterface names is
-refused before anything opens it. The source needs no key.
+approval is reported and not installed; the update check counts it as `pending approval`, not as a failure,
+so a daily `mrgl update --all` stays green while the site approves it. A download whose MD5 is not the one
+WoWInterface names is refused before anything opens it. The source needs no key.
 
 The Wago API needs your own key (`MRGL_WAGO_KEY`, or `mrgl key set wago`; mrgl ships none). mrgl asks Wago
 for the flavor's own game version (`forever`, `retail`, `classic` for Classic Era, the progressing classic by
 its build), takes the stable release or, on an addon's `prerelease` channel, the newest of the stable, beta
-and alpha ones, sends the key to `addons.wago.io` only, and stops an update check before the rate limit
-Wago's answers name. A 401 says the key is missing or not accepted.
+and alpha ones, sends the key to `addons.wago.io` only, asks for every Wago addon of a flavor in one request
+when it checks for updates, and stops asking Wago in an update check before the rate limit Wago's answers
+name, while the other sources are still asked. A 401 says the key is missing or not accepted.
 
 `mrgl adopt` looks at the addons mrgl did not install and says where each one comes from: the Wago,
 WoWInterface and CurseForge ids and the GitHub website its TOC names, or, for an addon whose TOC names none,

@@ -109,8 +109,9 @@ enum Command {
     /// `github:<owner>/<repo>`, or `wago:<id>`, `wowi:<id>`, `curse:<id>` once this build has that source.
     Add {
         /// The source spec (`github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`, `curse:<id>`, or a page
-        /// address with the id: github.com/<owner>/<repo>, www.wowinterface.com/downloads/info<id>,
-        /// www.curseforge.com/projects/<id>), or a zip path (a `.zip` name or an existing file).
+        /// address: github.com/<owner>/<repo>, www.wowinterface.com/downloads/info<id>,
+        /// www.curseforge.com/projects/<id>, or addons.wago.io/addons/<slug>, recorded as `wago:<id>`), or a
+        /// zip path (a `.zip` name or an existing file).
         source: String,
         /// The flavor to install into: `forever`, `retail`, `classic`, `era`, a `.flavor.info` id or a
         /// flavor folder. The installed build is read from the game folder (`MRGL_ROOT` or `mrgl root`)
@@ -1466,6 +1467,24 @@ fn addon_json(addon: &Addon, status: Option<&Status>) -> serde_json::Value {
     serde_json::Value::Object(object)
 }
 
+/// The spec `add` resolves and records for the one typed (task 105): a Wago page address becomes
+/// `wago:<id>` through the slug list of the target's game version, and a progress line says so; an unknown
+/// slug is the error that names the game version. Every other spec is its own.
+fn recorded_spec(
+    reporter: &Reporter,
+    sources: &Sources,
+    spec: SourceSpec,
+    target: &Target,
+) -> Result<SourceSpec, String> {
+    let recorded = sources
+        .canonical_spec(&spec, target)
+        .map_err(|error| error.to_string())?;
+    if recorded != spec && !reporter.json {
+        reporter.say(Kind::Progress, format!("{spec} is {recorded}"));
+    }
+    Ok(recorded)
+}
+
 /// The target of an `add`: the flavor the spec names and, when a game folder is known and holds that
 /// flavor, its installed build. A flavor folder path gives both; a name or an id alone gives the flavor
 /// only, so the pick for the progressing classic is a guess.
@@ -1522,6 +1541,12 @@ fn add_command(
         let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
         warnings.extend(adopt::curse_client_warning(&engine.flavor));
         let folder_name = engine.flavor.folder_name();
+        let spec = recorded_spec(
+            reporter,
+            &sources,
+            spec,
+            &Target::from_flavor(&engine.flavor),
+        )?;
         let SourceInstalled { pick, outcome } = engine
             .install_from_source(
                 &sources,
@@ -1584,6 +1609,7 @@ fn add_command(
     }
     let target = add_target(flavor, &mut warnings)?;
     let name = target.flavor_name().to_string();
+    let spec = recorded_spec(reporter, &sources, spec, &target)?;
     if !reporter.json {
         reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
     }
@@ -2850,9 +2876,9 @@ impl InstalledAlready {
 /// check made, and the summary that counts every state (`2 addons updated, 12 up to date, 1 pinned, 1
 /// ignored`). `--dry-run` checks and writes nothing. An update or a check that fails does not stop the
 /// others; the command then ends with exit code 1. Task 068: a progress line before each addon the source
-/// is asked about and its data line as soon as it is checked; a stop before GitHub's rate limit is one
-/// warning line with the reset time, and the addons it leaves are counted (`2 not checked (rate limit)`),
-/// a warning, not a failure.
+/// is asked about and its data line as soon as it is checked; a stop before a source's rate limit is one
+/// warning line with the reset time, and the addons it leaves are counted per source (task 101: `2 not
+/// checked (GitHub's rate limit)`, the other sources still asked), a warning, not a failure.
 fn update_command(
     reporter: &Reporter,
     name: Option<&str>,
@@ -3067,12 +3093,17 @@ fn update_command(
                 (key, check.count(*state).into())
             })
             .collect();
-        // Task 068: the stop before the rate limit, with its line; `null` when the check asked about every addon.
-        let stopped = check.stopped.as_ref().map(|stop| {
-            let mut value = serde_json::to_value(stop).unwrap_or_default();
-            value["message"] = stop.line().into();
-            value
-        });
+        // Tasks 068, 101: the stops before a source's rate limit, one per source with its line; empty when
+        // the check asked about every addon.
+        let stopped: Vec<serde_json::Value> = check
+            .stopped
+            .iter()
+            .map(|stop| {
+                let mut value = serde_json::to_value(stop).unwrap_or_default();
+                value["message"] = stop.line().into();
+                value
+            })
+            .collect();
         reporter.document(serde_json::json!({
             "kind": "update",
             "flavor": &engine.flavor,

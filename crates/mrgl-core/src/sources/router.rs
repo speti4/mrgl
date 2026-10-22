@@ -143,6 +143,37 @@ impl Source for Sources {
         self.slot(spec)?.request_budget_for(spec)
     }
 
+    /// The source of the spec's kind turns it into the spec it records (task 105: a Wago page address into
+    /// `wago:<id>`); a spec of a source this build lacks stays as it is.
+    fn canonical_spec(&self, spec: &SourceSpec, target: &Target) -> Result<SourceSpec> {
+        match self.slot(spec) {
+            Some(source) => source.canonical_spec(spec, target),
+            None => Ok(spec.clone()),
+        }
+    }
+
+    /// Each source gets the specs it answers, in their order, and only those it can ask (task 106).
+    fn prefetch(&self, specs: &[SourceSpec], target: &Target) {
+        for kind in SourceKind::ALL {
+            let Some(source) = self.slots[kind.index()].as_deref() else {
+                continue;
+            };
+            let own: Vec<SourceSpec> = specs
+                .iter()
+                .filter(|spec| spec.kind() == kind && source.missing(spec).is_none())
+                .cloned()
+                .collect();
+            if !own.is_empty() {
+                source.prefetch(&own, target);
+            }
+        }
+    }
+
+    fn holds(&self, spec: &SourceSpec, target: &Target) -> bool {
+        self.slot(spec)
+            .is_some_and(|source| source.holds(spec, target))
+    }
+
     fn missing(&self, spec: &SourceSpec) -> Option<String> {
         match self.slot(spec) {
             Some(source) => source.missing(spec),

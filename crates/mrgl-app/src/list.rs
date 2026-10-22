@@ -523,6 +523,11 @@ pub fn badge_of_source(source: &str) -> Badge {
                 id: format!("{owner}/{repo}"),
             },
             SourceSpec::Wago { id } => Badge { kind: "wago", id },
+            // Task 105: a page address is recorded as `wago:<id>`; one written by hand shows its slug.
+            SourceSpec::WagoPage { slug } => Badge {
+                kind: "wago",
+                id: slug,
+            },
             SourceSpec::WowInterface { id } => Badge { kind: "wowi", id },
             SourceSpec::CurseForge { id } => Badge {
                 kind: "curseforge",

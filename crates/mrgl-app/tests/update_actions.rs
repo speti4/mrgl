@@ -11,7 +11,7 @@ use mrgl_core::error::Result;
 use mrgl_core::flavor;
 use mrgl_core::forever::ForeverBuild;
 use mrgl_core::install::{Engine, Mark, Metadata};
-use mrgl_core::sources::{Pick, RequestBudget, Source, SourceSpec, Target};
+use mrgl_core::sources::{Pick, RequestBudget, Source, SourceKind, SourceSpec, Target};
 use mrgl_core::update::UpdateState;
 use mrgl_core::voice::Voice;
 
@@ -148,6 +148,7 @@ impl Stub {
             "github:Example/Needy" => Some(("1.0.0", "needs-library-1.0.0.zip")),
             "github:Example/Stale" => Some(("1.0.0", "stale-interface-1.0.0.zip")),
             "github:Example/Twice" => Some(("1.1.0", "one-folder-1.1.0.zip")),
+            "wago:MrglStale" => Some(("1.0.0", "stale-interface-1.0.0.zip")),
             _ => None,
         }
     }
@@ -193,6 +194,14 @@ impl Source for Stub {
         std::fs::create_dir_all(to.parent().expect("a parent")).expect("the download folder");
         std::fs::copy(zips().join(&pick.asset), to).expect("the fixture zip");
         Ok(())
+    }
+
+    /// The budget is GitHub's: a spec of another source has none (task 101).
+    fn request_budget_for(&self, spec: &SourceSpec) -> Option<RequestBudget> {
+        if spec.kind() != SourceKind::GitHub {
+            return None;
+        }
+        self.request_budget()
     }
 
     fn request_budget(&self) -> Option<RequestBudget> {
@@ -510,7 +519,7 @@ fn the_budget_stop_is_one_event_and_the_summary_counts_the_rest() {
     assert_eq!(stops[0].message.kind, "warning");
     assert!(
         stops[0].message.plain.starts_with(
-            "stopped the check before GitHub's rate limit of 60 requests an hour without a token: 2 addons not checked"
+            "stopped asking GitHub before its rate limit of 60 requests an hour without a token: 2 addons not checked"
         ),
         "{}",
         stops[0].message.plain
@@ -519,7 +528,7 @@ fn the_budget_stop_is_one_event_and_the_summary_counts_the_rest() {
         answer
             .messages
             .iter()
-            .all(|message| !message.plain.starts_with("stopped the check")),
+            .all(|message| !message.plain.starts_with("stopped asking")),
         "the answer does not repeat the stop"
     );
     let summary = answer.messages.last().expect("a summary");
@@ -527,9 +536,10 @@ fn the_budget_stop_is_one_event_and_the_summary_counts_the_rest() {
         (summary.kind, summary.plain.as_str()),
         (
             "warning",
-            "checked _forever_: 2 updates available, 2 not checked (rate limit)"
+            "checked _forever_: 2 updates available, 2 not checked (GitHub's rate limit)"
         )
     );
+
     // The addons the stop left keep their answer for the next list (task 078).
     let flavor = flavor::read_flavor(&game.flavor_folder()).expect("the flavor");
     let view = list::flavor_view(flavor, Some(&game.home()), &[]);
@@ -540,6 +550,63 @@ fn the_budget_stop_is_one_event_and_the_summary_counts_the_rest() {
         .filter(|check| check.state == UpdateState::RateLimited)
         .count();
     assert_eq!(left, 2);
+}
+
+#[test]
+fn the_budget_stop_of_one_source_leaves_the_other_source_asked() {
+    let game = Game::new("budget-per-source");
+    game.engine()
+        .install(
+            &zips().join("stale-interface-1.0.0.zip"),
+            &Metadata {
+                source: "wago:MrglStale".to_string(),
+                version: Some("1.0.0".to_string()),
+                name: None,
+                nolib: None,
+            },
+        )
+        .expect("the Wago addon");
+    let source = Stub {
+        budget: Some(1),
+        ..Stub::new()
+    };
+    let (answer, events) = run_with(&game, &source, Plan::Check, None);
+    let stops: Vec<&str> = events
+        .iter()
+        .filter(|event| event.phase == Phase::Stopped)
+        .map(|event| event.message.plain.as_str())
+        .collect();
+    assert_eq!(stops.len(), 1, "{stops:?}");
+    assert!(
+        stops[0].starts_with(
+            "stopped asking GitHub before its rate limit of 60 requests an hour without a token: 3 addons not checked"
+        ),
+        "{}",
+        stops[0]
+    );
+    let checked: Vec<(&str, UpdateState)> = events
+        .iter()
+        .filter_map(|event| Some((event.folder.as_deref()?, event.check.as_ref()?.state)))
+        .collect();
+    assert_eq!(
+        checked,
+        [
+            ("OneFolder", UpdateState::UpdateAvailable),
+            ("RootToc", UpdateState::RateLimited),
+            ("SeveralFolders", UpdateState::RateLimited),
+            ("StaleInterface", UpdateState::UpToDate),
+            ("Wrapped", UpdateState::RateLimited),
+        ],
+        "the Wago addon after the stop is asked"
+    );
+    let summary = answer.messages.last().expect("a summary");
+    assert_eq!(
+        (summary.kind, summary.plain.as_str()),
+        (
+            "warning",
+            "checked _forever_: 1 update available, 1 up to date, 3 not checked (GitHub's rate limit)"
+        )
+    );
 }
 
 #[test]

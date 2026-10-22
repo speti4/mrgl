@@ -14,10 +14,18 @@
 //! each addon ([`Source::request_budget`]). The answers are cached per addon under `cache/wago/<id>.json`, one
 //! entry per game version with when it was read, and the offline rule of the GitHub source holds (task 041).
 //!
+//! The update check asks in bulk (task 106): `POST https://addons.wago.io/api/external/addons/_recents?game_version=<v>`
+//! with `{"addons": [<id>, …]}` answers every addon of a game version in one request ([`Wago::recents`],
+//! [`parse_recents`]), each answer held for the run and written into the same cache file as a single answer;
+//! an addon the bulk answer lacks, or a bulk request that fails, is asked alone. `add` and `update <name>`
+//! keep the single request.
+//!
 //! The Forever signal: `yes` when the addon has a release for `forever`, `no` when Wago answers without one.
 //! The keyless public data endpoint `GET https://addons.wago.io/api/data/slugs?game_version=<v>` (the slug and
 //! id of every addon with a release for that game version) answers it without a key, and the id of a slug
-//! ([`Wago::id_of_slug`]); its lists are read once a day and cached under `cache/wago/slugs-<v>.json`.
+//! ([`Wago::id_of_slug`]); its lists are read once a day and cached under `cache/wago/slugs-<v>.json`. A Wago
+//! page address (`addons.wago.io/addons/<slug>`, task 105) becomes `wago:<id>` through that list of the
+//! target's game version ([`Source::canonical_spec`]), so the sidecar records the id.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -243,6 +251,37 @@ struct CachedAnswer {
     addon: serde_json::Value,
 }
 
+/// Reads the answer of the bulk endpoint (task 106) for the ids asked: an object or a list of addons under
+/// `addons` (or under `data`, or the answer itself), each the shape of one addon's answer; an addon of an
+/// object is named by its `id`, else by its key. Ids not asked, and entries that are no object, are left
+/// out. The answers by id.
+pub fn parse_recents(raw: &serde_json::Value, ids: &[&str]) -> BTreeMap<String, serde_json::Value> {
+    let root = match raw.get("data") {
+        Some(data) if data.is_object() || data.is_array() => data,
+        _ => raw,
+    };
+    let addons = root.get("addons").unwrap_or(root);
+    let named: Vec<(Option<&str>, &serde_json::Value)> = match addons {
+        serde_json::Value::Object(map) => map
+            .iter()
+            .map(|(key, addon)| (Some(key.as_str()), addon))
+            .collect(),
+        serde_json::Value::Array(items) => items.iter().map(|addon| (None, addon)).collect(),
+        _ => Vec::new(),
+    };
+    named
+        .into_iter()
+        .filter(|(_, addon)| addon.is_object())
+        .filter_map(|(key, addon)| {
+            let id = addon
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .or(key)?;
+            ids.contains(&id).then(|| (id.to_string(), addon.clone()))
+        })
+        .collect()
+}
+
 /// The cached slug list of one game version: every addon with a release for it, slug to id.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Slugs {
@@ -278,6 +317,8 @@ pub struct Wago<H: Http> {
     cache_dir: Option<PathBuf>,
     budget: Mutex<BudgetCount>,
     slugs: Mutex<BTreeMap<String, Arc<Slugs>>>,
+    /// The answers of this run's bulk lookups (task 106), by game version and id.
+    held: Mutex<BTreeMap<(String, String), serde_json::Value>>,
 }
 
 impl<H: Http> Wago<H> {
@@ -290,6 +331,7 @@ impl<H: Http> Wago<H> {
             cache_dir,
             budget: Mutex::new(BudgetCount::default()),
             slugs: Mutex::new(BTreeMap::new()),
+            held: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -329,17 +371,29 @@ impl<H: Http> Wago<H> {
         cached.answers.get(game_version).cloned()
     }
 
-    /// A request to Wago's host through the client, with the key on the external API's host only
-    /// ([`keys::may_send`]), counted against the rate limit with what the answer says of it.
+    /// A GET to Wago's host through the client ([`Wago::send_request`]).
     fn send(&self, url: &str, with_key: bool) -> Result<Response> {
-        let mut request = Request::get(url).header("Accept", "application/json");
+        self.send_request(
+            Request::get(url).header("Accept", "application/json"),
+            with_key,
+        )
+    }
+
+    /// A request to Wago's host through the client, a POST when it has a body, with the key on the external
+    /// API's host only ([`keys::may_send`]), counted against the rate limit with what the answer says of it.
+    fn send_request(&self, mut request: Request, with_key: bool) -> Result<Response> {
+        let url = request.url.clone();
+        let url = url.as_str();
         if with_key
             && let Some(key) = &self.key
             && keys::may_send(SourceKind::Wago, url)
         {
             request = request.header("Authorization", format!("Bearer {key}"));
         }
-        let response = self.http.get(&request)?;
+        let response = match request.body {
+            Some(_) => self.http.post(&request)?,
+            None => self.http.get(&request)?,
+        };
         if keys::hosts(SourceKind::Wago)
             .iter()
             .any(|host| url_host(url).eq_ignore_ascii_case(host))
@@ -371,6 +425,16 @@ impl<H: Http> Wago<H> {
     /// window's offline view without a key reads the cache alone.
     pub fn addon(&self, id: &str, game_version: &str) -> Result<(WagoAddon, Option<Stale>)> {
         let spec = format!("wago:{id}");
+        // Task 106: an answer of this run's bulk lookup needs no request of its own.
+        if let Some(raw) = self.held_answer(id, game_version) {
+            let addon =
+                parse_addon(&raw, game_version).map_err(|reason| Error::SourceDocument {
+                    what: "addon",
+                    spec: spec.clone(),
+                    reason,
+                })?;
+            return Ok((addon, None));
+        }
         let url = format!("{API_URL}/addons/{id}?game_version={game_version}");
         let from_cache = |reason: String, error: Error| -> Result<(WagoAddon, Option<Stale>)> {
             let Some(cached) = self.cached_answer(id, game_version) else {
@@ -417,22 +481,83 @@ impl<H: Http> Wago<H> {
             spec: spec.clone(),
             reason,
         })?;
-        if let Some(path) = self.addon_cache(id) {
-            let mut cached: CachedAddon = std::fs::read(&path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-                .unwrap_or_default();
-            cached.answers.insert(
-                game_version.to_string(),
-                CachedAnswer {
-                    checked_at: Some(state::now_rfc3339()),
-                    addon: raw,
-                },
-            );
-            // The cache is a convenience: a folder that cannot be written costs the offline answer.
-            let _ = write_cache(&path, &cached);
-        }
+        self.store(id, game_version, raw);
         Ok((addon, None))
+    }
+
+    /// Writes an addon's answer for a game version into its cache file, next to the answers of the other
+    /// game versions, with when it was read.
+    fn store(&self, id: &str, game_version: &str, raw: serde_json::Value) {
+        let Some(path) = self.addon_cache(id) else {
+            return;
+        };
+        let mut cached: CachedAddon = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        cached.answers.insert(
+            game_version.to_string(),
+            CachedAnswer {
+                checked_at: Some(state::now_rfc3339()),
+                addon: raw,
+            },
+        );
+        // The cache is a convenience: a folder that cannot be written costs the offline answer.
+        let _ = write_cache(&path, &cached);
+    }
+
+    /// The answer a bulk lookup of this run holds for an addon and a game version.
+    fn held_answer(&self, id: &str, game_version: &str) -> Option<serde_json::Value> {
+        self.held
+            .lock()
+            .ok()?
+            .get(&(game_version.to_string(), id.to_string()))
+            .cloned()
+    }
+
+    /// The addons of one game version in one request (task 106): `POST /addons/_recents?game_version=<v>`
+    /// with `{"addons": [<id>, …]}` and the key, each answer that reads as an addon held for the run (the
+    /// next [`Wago::addon`] of it sends nothing) and written into its cache file as a single answer is. The
+    /// ids the answer had; an id it lacks is asked alone later. Without the key nothing is sent.
+    pub fn recents(&self, ids: &[&str], game_version: &str) -> Result<Vec<String>> {
+        let url = format!("{API_URL}/addons/_recents?game_version={game_version}");
+        if self.key.is_none() {
+            return Err(Error::SourceNotConfigured {
+                spec: format!("wago:{}", ids.join(", wago:")),
+                missing: no_key(),
+            });
+        }
+        let body = serde_json::json!({ "addons": ids }).to_string();
+        let request = Request::post(url.as_str(), body)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json");
+        let response = self.send_request(request, true)?;
+        if response.status != 200 {
+            return Err(status_error(
+                response.status,
+                &url,
+                &response,
+                "no bulk answer there",
+            ));
+        }
+        let raw: serde_json::Value =
+            serde_json::from_slice(&response.body).map_err(|reason| Error::SourceDocument {
+                what: "bulk answer",
+                spec: format!("wago: {game_version}"),
+                reason: reason.to_string(),
+            })?;
+        let mut answered = Vec::new();
+        for (id, addon) in parse_recents(&raw, ids) {
+            if parse_addon(&addon, game_version).is_err() {
+                continue;
+            }
+            self.store(&id, game_version, addon.clone());
+            if let Ok(mut held) = self.held.lock() {
+                held.insert((game_version.to_string(), id.clone()), addon);
+            }
+            answered.push(id);
+        }
+        Ok(answered)
     }
 
     /// The slug list of a game version (every addon with a release for it), from the keyless data endpoint
@@ -521,9 +646,17 @@ impl<H: Http> Wago<H> {
     }
 
     /// The id of an addon by its slug (the name of its page, `addons.wago.io/addons/<slug>`), from the slug
-    /// list of a game version, without a key; `Ok(None)` when the list does not have it.
+    /// list of a game version, without a key; the slug as written, else ASCII case-insensitive; `Ok(None)`
+    /// when the list does not have it.
     pub fn id_of_slug(&self, slug: &str, game_version: &str) -> Result<Option<String>> {
-        Ok(self.slugs(game_version)?.addons.get(slug).cloned())
+        let slugs = self.slugs(game_version)?;
+        Ok(slugs.addons.get(slug).cloned().or_else(|| {
+            slugs
+                .addons
+                .iter()
+                .find(|(listed, _)| listed.eq_ignore_ascii_case(slug))
+                .map(|(_, id)| id.clone())
+        }))
     }
 
     /// The Forever signal from what is cached, never a request: the cached `forever` answer (a release on
@@ -688,8 +821,10 @@ fn status_error(status: u16, url: &str, response: &Response, not_found: &'static
 }
 
 impl<H: Http> Source for Wago<H> {
-    /// The release the target's channel takes for its game version ([`game_version`], [`release_on`]).
+    /// The release the target's channel takes for its game version ([`game_version`], [`release_on`]); a
+    /// page address is looked up first ([`Source::canonical_spec`]), so the pick names `wago:<id>`.
     fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
+        let spec = &self.canonical_spec(spec, target)?;
         let id = addon_id(spec)?;
         let game = Self::game_of(spec, target)?;
         let (addon, stale) = self.addon(id, game.0)?;
@@ -709,6 +844,7 @@ impl<H: Http> Source for Wago<H> {
     /// The recent release whose label is the version (with or without a leading `v`), any stability: Wago
     /// keeps the three recent ones, an older version is not offered.
     fn resolve_version(&self, spec: &SourceSpec, target: &Target, version: &str) -> Result<Pick> {
+        let spec = &self.canonical_spec(spec, target)?;
         let id = addon_id(spec)?;
         let game = Self::game_of(spec, target)?;
         let (addon, stale) = self.addon(id, game.0)?;
@@ -777,10 +913,56 @@ impl<H: Http> Source for Wago<H> {
         })
     }
 
+    /// A page address's slug looked up in the keyless slug list of the target's game version (task 105):
+    /// `wago:<id>`, or [`Error::UnknownWagoSlug`] naming the game version; any other spec is its own.
+    fn canonical_spec(&self, spec: &SourceSpec, target: &Target) -> Result<SourceSpec> {
+        let SourceSpec::WagoPage { slug } = spec else {
+            return Ok(spec.clone());
+        };
+        let (game_version, _) = Self::game_of(spec, target)?;
+        match self.id_of_slug(slug, game_version)? {
+            Some(id) => Ok(SourceSpec::Wago { id }),
+            None => Err(Error::UnknownWagoSlug {
+                slug: slug.clone(),
+                game_version: game_version.to_string(),
+            }),
+        }
+    }
+
+    /// The update check's bulk lookup (task 106): the Wago specs of the target's game version, once, with
+    /// the key and while the budget has a request left; a failed lookup leaves each addon to be asked
+    /// alone. The window's offline view, without a key, sends nothing.
+    fn prefetch(&self, specs: &[SourceSpec], target: &Target) {
+        let Some((game_version, _)) = game_version(target) else {
+            return;
+        };
+        let mut ids: Vec<&str> = specs
+            .iter()
+            .filter_map(|spec| addon_id(spec).ok())
+            .filter(|id| self.held_answer(id, game_version).is_none())
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let budget_left = self
+            .request_budget()
+            .is_none_or(|budget| budget.remaining > 0);
+        if ids.is_empty() || self.key.is_none() || !budget_left {
+            return;
+        }
+        let _ = self.recents(&ids, game_version);
+    }
+
+    fn holds(&self, spec: &SourceSpec, target: &Target) -> bool {
+        match (addon_id(spec), game_version(target)) {
+            (Ok(id), Some((game_version, _))) => self.held_answer(id, game_version).is_some(),
+            _ => false,
+        }
+    }
+
     /// A spec of another source is not this source's to answer; without the key the Wago API cannot be
     /// asked (the window's offline view excepted, which reads the cache alone).
     fn missing(&self, spec: &SourceSpec) -> Option<String> {
-        if addon_id(spec).is_err() {
+        if spec.kind() != SourceKind::Wago {
             return Some(NOT_WAGO.to_string());
         }
         (self.needs_key && self.key.is_none()).then(no_key)
@@ -951,6 +1133,30 @@ mod tests {
             Vec::<WagoRelease>::new()
         );
         assert!(parse_addon(&serde_json::json!([]), "retail").is_err());
+    }
+
+    #[test]
+    fn a_bulk_answer_reads_by_id_in_either_shape_and_keeps_the_ids_asked() {
+        let one = serde_json::json!({ "id": "abc", "recent_release": {} });
+        let keyed = serde_json::json!({
+            "addons": { "abc": one, "def": { "recent_release": {} }, "other": { "id": "zzz" }, "bad": 7 }
+        });
+        let read = parse_recents(&keyed, &["abc", "def", "missing"]);
+        assert_eq!(
+            read.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["abc", "def"],
+            "the key names an addon without an id; an id not asked is left out"
+        );
+        assert_eq!(read["abc"], one);
+        let listed = serde_json::json!({ "data": [one, { "id": "def" }, "text"] });
+        assert_eq!(
+            parse_recents(&listed, &["abc"])
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["abc"]
+        );
+        assert!(parse_recents(&serde_json::json!("nothing"), &["abc"]).is_empty());
         assert_eq!(interface_of_patch("12.1.5"), Some(120105));
         assert_eq!(interface_of_patch("3.80.2"), Some(38002));
         assert_eq!(interface_of_patch("x"), None);

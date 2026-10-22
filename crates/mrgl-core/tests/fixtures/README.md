@@ -55,7 +55,11 @@ BOM in a fixture survives every checkout.
   retail, a beta and an alpha for Forever and a stable release for `mop`, `MrglWg04` answers 401 and
   `MrglWg05` 200 with no request left (each through a `.headers` file);
   `api/data/slugs@game_version=forever.json` is the keyless slug list, naming `MrglWg01`, `MrglWg03` and
-  `MrglWg05`. Every id, slug and name is made up.
+  `MrglWg05`. The bulk answers of the update check (task 106), `addons/_recents@game_version=<v>.json`
+  (the stub answers the POST from the file of its URL), hold the same answers under `addons` by id:
+  `MrglWg01` and `MrglWg03` for Forever (`MrglWg02` has no Forever release, and `MrglWg05` is left out so
+  its single answer still uses the limit up), `MrglWg01` to `MrglWg03` for retail. Every id, slug and name
+  is made up.
 - `adopt/` — a fifth made-up game folder, for `mrgl adopt` (task 097): a `.build.info` with a Forever and a
   retail row, `_forever_` with an addon folder per source header shape (each id header, a GitHub and a
   non-GitHub `X-Website`, the mapping alone, no hint, two folders grouped by the same Wago id, two named by

@@ -6080,9 +6080,10 @@ fn update_json_is_one_document_with_every_state_and_count() {
         serde_json::json!({
             "update-available": 1, "up-to-date": 2, "installed-newer": 2, "pinned": 1, "ignored": 1,
             "guess-only": 1, "source-gone": 2, "not-checked": 2, "rate-limited": 0, "failed": 0,
+            "pending": 0,
         })
     );
-    assert_eq!(value["stopped"], serde_json::Value::Null);
+    assert_eq!(value["stopped"], serde_json::json!([]));
     let states: Vec<(&str, &str)> = value["addons"]
         .as_array()
         .expect("the addons")
@@ -6286,7 +6287,7 @@ fn update_stops_before_the_rate_limit_with_the_reset_time_and_counts_the_rest() 
     .expect("the headers");
     let before = game_snapshot(&game);
     let stop = format!(
-        "stopped the check before GitHub's rate limit of 60 requests an hour without a token: 2 addons not checked, the limit resets at {} (local time); set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour",
+        "stopped asking GitHub before its rate limit of 60 requests an hour without a token: 2 addons not checked, the limit resets at {} (local time); set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour",
         mrgl_core::sources::local_time_text(reset)
     );
     let output = game
@@ -6311,11 +6312,11 @@ fn update_stops_before_the_rate_limit_with_the_reset_time_and_counts_the_rest() 
             "checking Alpha against github:Example/Notes (1 of 5)",
             "Alpha  2.0.0 -> 2.1.0  update available",
             stop.as_str(),
-            "Bravo  1.2.2  not checked (rate limit): the check stopped before GitHub's rate limit",
+            "Bravo  1.2.2  not checked (rate limit): not asked before GitHub's rate limit",
             "Charlie  1.0.0  not checked: a zip in hand; a newer zip goes in with mrgl add <zip>",
-            "Delta  1.0.0  not checked (rate limit): the check stopped before GitHub's rate limit",
+            "Delta  1.0.0  not checked (rate limit): not asked before GitHub's rate limit",
             "Echo  1.0.0  ignored, not checked",
-            "dry run: 1 update available, 1 ignored, 1 not checked, 2 not checked (rate limit); nothing written",
+            "dry run: 1 update available, 1 ignored, 1 not checked, 2 not checked (GitHub's rate limit); nothing written",
         ],
         "{text}"
     );
@@ -6367,12 +6368,14 @@ fn update_stops_before_the_rate_limit_with_the_reset_time_and_counts_the_rest() 
         serde_json::from_slice(&output.stdout).expect("one JSON document");
     assert_eq!(value["counts"]["rate-limited"], 2);
     assert_eq!(value["counts"]["update-available"], 1);
-    assert_eq!(value["stopped"]["host"], "GitHub");
-    assert_eq!(value["stopped"]["limit"], 60);
-    assert_eq!(value["stopped"]["sent"], 1);
-    assert_eq!(value["stopped"]["reset"], reset);
-    assert_eq!(value["stopped"]["not_checked"], 2);
-    assert_eq!(value["stopped"]["message"], stop.as_str());
+    assert_eq!(value["stopped"].as_array().map(Vec::len), Some(1));
+    assert_eq!(value["stopped"][0]["source"], "github");
+    assert_eq!(value["stopped"][0]["host"], "GitHub");
+    assert_eq!(value["stopped"][0]["limit"], 60);
+    assert_eq!(value["stopped"][0]["sent"], 1);
+    assert_eq!(value["stopped"][0]["reset"], reset);
+    assert_eq!(value["stopped"][0]["not_checked"], 2);
+    assert_eq!(value["stopped"][0]["message"], stop.as_str());
     assert_eq!(value["addons"][1]["state"], "rate-limited");
     assert_eq!(value["addons"][1]["latest"], serde_json::Value::Null);
 }
@@ -8044,7 +8047,7 @@ fn import_and_update_take_a_wowi_entry() {
     assert!(game.addon("MrglForever").join("MrglForever.toc").is_file());
 
     // The update check asks WoWInterface: a metadata pick is an update, a guess is reported, a pending
-    // file is a failed check that says why.
+    // file is a state of its own (task 104), not a failure: exit code 0.
     let game = managed_game(
         "wowi-update",
         &[
@@ -8065,12 +8068,7 @@ fn import_and_update_take_a_wowi_entry() {
         ])
         .output()
         .expect("run mrgl");
-    // A failed check is exit code 1, as for any source that cannot give its current release.
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        stderr_last_line(&output),
-        "1 addon of _forever_ failed: MrglPending; the other addons are done"
-    );
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
     let text = stdout(&output);
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
@@ -8081,10 +8079,82 @@ fn import_and_update_take_a_wowi_entry() {
             "checking MrglForever against wowi:1005 (2 of 3)",
             "MrglForever  3.0.0 -> 3.1.0  update available",
             "checking MrglPending against wowi:1003 (3 of 3)",
-            "MrglPending  1.0.0  check failed: the newest file of wowi:1003 waits for approval on WoWInterface: nothing is installed until it is approved",
-            "dry run: 1 update available, 1 guess only, 1 check failed; nothing written",
+            "MrglPending  1.0.0  pending approval: the newest file waits for approval on WoWInterface; nothing to install until it is approved",
+            "dry run: 1 update available, 1 pending approval, 1 guess only; nothing written",
         ],
         "{text}"
+    );
+    let output = game
+        .mrgl_sources()
+        .args([
+            "--json",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["addons"][2]["name"], "MrglPending");
+    assert_eq!(value["addons"][2]["state"], "pending");
+    assert_eq!(
+        value["addons"][2]["detail"],
+        "the newest file waits for approval on WoWInterface; nothing to install until it is approved"
+    );
+    assert_eq!(value["counts"]["pending"], 1);
+    assert_eq!(value["counts"]["failed"], 0);
+    // Pending entries alone end with exit code 0; a failed check next to them still ends with 1.
+    let pending = managed_game(
+        "wowi-pending",
+        &[
+            ("MrglPending", "wowi:1003", "1.0.0", ""),
+            ("Refused", "wago:MrglWg04", "1.0.0", ""),
+        ],
+    );
+    let output = pending
+        .mrgl_sources()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "nothing updated: 1 pending approval, 1 not checked"
+    );
+    let output = pending
+        .mrgl_wago()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "1 addon of _forever_ failed: Refused; the other addons are done"
+    );
+    assert!(
+        stdout(&output)
+            .lines()
+            .any(|line| line.starts_with("MrglPending  1.0.0  pending approval: ")),
+        "{}",
+        stdout(&output)
     );
     let output = game
         .mrgl_sources()
@@ -8243,13 +8313,15 @@ fn import_takes_a_wago_entry_and_update_stops_before_wagos_rate_limit() {
     assert_eq!(sidecar(&game)["addons"]["MrglWagoOne"]["version"], "2.0.0");
     assert!(game.addon("MrglWagoOne").join("MrglWagoOne.toc").is_file());
 
-    // The first answer says no request is left: the check stops before Wago's limit.
+    // The bulk answer (task 106) holds One and Three; Five is asked alone and its answer says no request
+    // is left, so Two, which the bulk answer lacks, is not asked: the check stops before Wago's limit.
     let game = managed_game(
         "wago-budget",
         &[
             ("Five", "wago:MrglWg05", "0.9.0", ""),
             ("One", "wago:MrglWg01", "1.0.0", ""),
             ("Three", "wago:MrglWg03", "3.0.0", ""),
+            ("Two", "wago:MrglWg02", "1.0.0", ""),
         ],
     );
     let output = game
@@ -8270,12 +8342,15 @@ fn import_takes_a_wago_entry_and_update_stops_before_wagos_rate_limit() {
         text.lines().collect::<Vec<_>>(),
         [
             "checking the managed addons of _forever_ against their sources",
-            "checking Five against wago:MrglWg05 (1 of 3)",
+            "checking Five against wago:MrglWg05 (1 of 4)",
             "Five  0.9.0 -> 1.0.0  update available",
-            "stopped the check before Wago's rate limit of 60 requests: 2 addons not checked, the limit resets after a short wait (Wago does not say when); run the check again then",
-            "One  1.0.0  not checked (rate limit): the check stopped before Wago's rate limit",
-            "Three  3.0.0  not checked (rate limit): the check stopped before Wago's rate limit",
-            "dry run: 1 update available, 2 not checked (rate limit); nothing written",
+            "checking One against wago:MrglWg01 (2 of 4)",
+            "One  1.0.0 -> 2.0.0  update available",
+            "checking Three against wago:MrglWg03 (3 of 4)",
+            "Three  3.0.0 -> 3.2.0-alpha  update available",
+            "stopped asking Wago before its rate limit of 60 requests: 1 addon not checked, the limit resets after a short wait (Wago does not say when); run the check again then",
+            "Two  1.0.0  not checked (rate limit): not asked before Wago's rate limit",
+            "dry run: 3 updates available, 1 not checked (Wago's rate limit); nothing written",
         ],
         "{text}"
     );
@@ -8299,4 +8374,334 @@ fn import_takes_a_wago_entry_and_update_stops_before_wagos_rate_limit() {
             == "One  1.0.0  not checked: source not configured: wago:MrglWg01 (MRGL_WAGO_KEY is not set: the Wago API needs your own key, `mrgl key set wago` stores it)"),
         "{text}"
     );
+}
+
+// --- task 101: the update check stops per source at a rate limit ---
+
+impl Game {
+    /// `mrgl` against one stub of the GitHub answers and the sources of tasks 094 and 095 together, with the
+    /// made-up Wago key.
+    fn mrgl_every_source(&self) -> Command {
+        let stub = self.home.join("stub-every-source");
+        if !stub.is_dir() {
+            copy_tree(&releases(), &stub);
+            copy_tree(&sources_stub(), &stub);
+        }
+        let mut command = self.mrgl();
+        command
+            .env("MRGL_HTTP_STUB", &stub)
+            .env("MRGL_WAGO_KEY", WAGO_TEST_KEY);
+        command
+    }
+}
+
+#[test]
+fn update_stops_asking_wago_at_its_rate_limit_and_goes_on_asking_github() {
+    // The first Wago answer says no request is left: the Wago entry after it is not asked, the GitHub entry
+    // after that is.
+    let game = managed_game(
+        "budget-per-source",
+        &[
+            ("Five", "wago:MrglWg05", "1.0.0", ""),
+            ("Late", "wago:MrglWg02", "1.0.0", ""),
+            ("Questie", "github:Questie/Questie", "1.2.2", ""),
+        ],
+    );
+    let stop = "stopped asking Wago before its rate limit of 60 requests: 1 addon not checked, the limit resets after a short wait (Wago does not say when); run the check again then";
+    let output = game
+        .mrgl_every_source()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "checking the managed addons of _forever_ against their sources",
+            "checking Five against wago:MrglWg05 (1 of 3)",
+            "Five  1.0.0  up to date",
+            stop,
+            "Late  1.0.0  not checked (rate limit): not asked before Wago's rate limit",
+            "checking Questie against github:Questie/Questie (3 of 3)",
+            "Questie  1.2.2 -> 1.2.3  update available",
+            "dry run: 1 update available, 1 up to date, 1 not checked (Wago's rate limit); nothing written",
+        ],
+        "{text}"
+    );
+
+    // The JSON names the source of the stop, and the GitHub entry as checked.
+    let output = game
+        .mrgl_every_source()
+        .args([
+            "--json",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let states: Vec<(&str, &str)> = value["addons"]
+        .as_array()
+        .expect("the addons")
+        .iter()
+        .map(|addon| {
+            (
+                addon["name"].as_str().unwrap_or_default(),
+                addon["state"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("Five", "up-to-date"),
+            ("Late", "rate-limited"),
+            ("Questie", "update-available"),
+        ]
+    );
+    assert_eq!(value["counts"]["rate-limited"], 1);
+    assert_eq!(value["stopped"].as_array().map(Vec::len), Some(1));
+    assert_eq!(value["stopped"][0]["source"], "wago");
+    assert_eq!(value["stopped"][0]["host"], "Wago");
+    assert_eq!(value["stopped"][0]["not_checked"], 1);
+    assert_eq!(value["stopped"][0]["message"], stop);
+    assert_eq!(
+        value["addons"][1]["detail"],
+        "not asked before Wago's rate limit"
+    );
+
+    // `update --all` agrees: the GitHub update goes in, the Wago entry stays not checked, exit code 0.
+    let output = game
+        .mrgl_every_source()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(text.lines().any(|line| line == stop), "{text}");
+    assert_eq!(
+        stdout_last_line(&output),
+        "1 addon updated, 1 up to date, 1 not checked (Wago's rate limit)"
+    );
+    assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.2.3");
+    assert_eq!(sidecar(&game)["addons"]["Late"]["version"], "1.0.0");
+}
+
+// --- task 106: the Wago update check asks in bulk ---
+
+#[test]
+fn update_all_takes_the_wago_answers_from_one_bulk_request() {
+    // A stub without the single answers of MrglWg01 and MrglWg03 for Forever: the check still answers
+    // both, from the bulk answer, and writes them into the same cache files.
+    let game = managed_game(
+        "wago-bulk",
+        &[
+            ("One", "wago:MrglWg01", "1.0.0", ""),
+            ("Three", "wago:MrglWg03", "3.0.0", ""),
+        ],
+    );
+    let stub = game.home.join("stub-bulk");
+    copy_tree(&sources_stub(), &stub);
+    for id in ["MrglWg01", "MrglWg03"] {
+        std::fs::remove_file(stub.join(format!(
+            "addons.wago.io/api/external/addons/{id}@game_version=forever.json"
+        )))
+        .expect("the single answer goes");
+    }
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .env("MRGL_WAGO_KEY", WAGO_TEST_KEY)
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "checking the managed addons of _forever_ against their sources",
+            "checking One against wago:MrglWg01 (1 of 2)",
+            "One  1.0.0 -> 2.0.0  update available",
+            "checking Three against wago:MrglWg03 (2 of 2)",
+            "Three  3.0.0 -> 3.2.0-alpha  update available",
+            "dry run: 2 updates available; nothing written",
+        ],
+        "{text}"
+    );
+    for id in ["MrglWg01", "MrglWg03"] {
+        let cached: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(game.home.join(format!("cache/wago/{id}.json"))).expect("the cache"),
+        )
+        .expect("JSON");
+        assert_eq!(cached["answers"]["forever"]["addon"]["id"], id);
+    }
+    // `update <name>` keeps the single request, which this stub no longer answers.
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .env("MRGL_WAGO_KEY", WAGO_TEST_KEY)
+        .args([
+            "--serious",
+            "update",
+            "One",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(
+        stdout(&output).lines().any(|line| line
+            == "One  1.0.0  source gone: Wago answered 404 for https://addons.wago.io/api/external/addons/MrglWg01?game_version=forever: no such addon, or it was removed"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+// --- task 105: a Wago page address resolves to its `wago:<id>` ---
+
+#[test]
+fn add_and_import_take_a_wago_page_address_and_record_its_id() {
+    let game = Game::new("wago-page");
+    let page = "https://addons.wago.io/addons/mrgl-wago-one";
+    let output = game
+        .mrgl_wago()
+        .args(["--serious", "add", page, "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[..2],
+        [
+            "https://addons.wago.io/addons/mrgl-wago-one is wago:MrglWg01",
+            "resolving wago:MrglWg01 for forever",
+        ],
+        "{text}"
+    );
+    assert_eq!(
+        lines.last().copied(),
+        Some("installed MrglWagoOne 2.0.0 (1 folder: MrglWagoOne) into _forever_")
+    );
+    assert_eq!(
+        sidecar(&game)["addons"]["MrglWagoOne"]["source"],
+        "wago:MrglWg01"
+    );
+    assert!(game.home.join("cache/wago/slugs-forever.json").is_file());
+
+    // A slug the list of the flavor's game version does not name says which list it was looked up in.
+    let output = game
+        .mrgl_wago()
+        .args([
+            "--serious",
+            "add",
+            "https://addons.wago.io/addons/no-such-addon",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "no Wago addon no-such-addon in the slug list of game version forever: it has no release for forever, or the address names no addon"
+    );
+    // The JSON of a dry run names the id as the source.
+    let output = game
+        .mrgl_wago()
+        .args(["--json", "add", page, "--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["source"], "wago:MrglWg01");
+    assert_eq!(value["pick"]["source"], "wago:MrglWg01");
+
+    // A list entry with the address imports, and the sidecar records the id.
+    let game = Game::new("wago-page-import");
+    let list = game.root.parent().expect("the base").join("wago-page.json");
+    std::fs::write(
+        &list,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [
+                { "name": "MrglWagoOne", "source": page, "version": "2.0.0",
+                  "folders": ["MrglWagoOne"] },
+                { "name": "Unknown", "source": "https://addons.wago.io/addons/no-such-addon",
+                  "version": "1.0.0", "folders": ["Unknown"] },
+            ],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    let output = game
+        .mrgl_wago()
+        .args(["--json", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let outcomes: Vec<(&str, &str)> = value["addons"]
+        .as_array()
+        .expect("the entries")
+        .iter()
+        .map(|item| {
+            (
+                item["name"].as_str().unwrap_or_default(),
+                item["outcome"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [("MrglWagoOne", "installed"), ("Unknown", "failed")],
+        "{value}"
+    );
+    assert!(
+        value["addons"][1]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("slug list of game version forever"),
+        "{value}"
+    );
+    assert_eq!(
+        sidecar(&game)["addons"]["MrglWagoOne"]["source"],
+        "wago:MrglWg01"
+    );
+    assert!(game.addon("MrglWagoOne").join("MrglWagoOne.toc").is_file());
 }

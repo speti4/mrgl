@@ -42,7 +42,7 @@ use crate::error::{Error, Result};
 use crate::install::{Engine, PickInstalled, SourceInstalled, SourceRequest, Wanted};
 use crate::interface::{InterfaceMismatch, InterfaceOutOfDate};
 use crate::scan;
-use crate::sources::{Source, SourceSpec};
+use crate::sources::{Source, SourceSpec, Target};
 use crate::state::{self, State};
 
 /// The `format` of a list file.
@@ -474,6 +474,22 @@ pub fn import(
             items.push(item(Outcome::SourceNotConfigured, None, missing));
             continue;
         }
+        // Task 105: a Wago page address is looked up in the slug list of the flavor's game version and
+        // installed and recorded as `wago:<id>`; an unknown slug fails the entry and names the game version.
+        let canonical = match source.canonical_spec(spec, &Target::from_flavor(&engine.flavor)) {
+            Ok(canonical) => canonical,
+            Err(error) => {
+                items.push(item(Outcome::Failed, None, error.to_string()));
+                continue;
+            }
+        };
+        if canonical != *spec
+            && let Some((version, detail)) = present.find(entry, Some(&canonical))
+        {
+            items.push(item(Outcome::AlreadyInstalled, version, detail));
+            continue;
+        }
+        let spec = &canonical;
         // The one install path of task 055, under the list's name for the addon; an exact import asks
         // for the listed version (task 057).
         let request = SourceRequest {

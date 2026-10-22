@@ -19,8 +19,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   ones, and the no-asset error names the newest release and how many releases were looked at, task 066;
   the spec forms, `SourceSpec`: `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>` and `curse:<id>`, and the
   page addresses an id is read from without a request, `github.com/<owner>/<repo>`,
-  `www.wowinterface.com/downloads/info<id>…` and `www.curseforge.com/projects/<id>`, while a Wago or
-  CurseForge addon page names a slug and is refused with where the id is, task 092; the router,
+  `www.wowinterface.com/downloads/info<id>…` and `www.curseforge.com/projects/<id>`, while a CurseForge
+  addon page names a slug and is refused with where the id is, task 092; a Wago page,
+  `addons.wago.io/addons/<slug>`, is `SourceSpec::WagoPage`, which the router turns into `wago:<id>` through
+  the source's `canonical_spec` before `add` and `import` resolve, install or record anything, task 105;
+  the router,
   `sources::Sources` in `sources/router.rs`, one slot per `SourceKind`, the one value the command line and
   the window build per run, `Sources::from_env`, and the window's offline view over a client that fails
   every request, `Sources::cached`: it hands each spec to its source and answers
@@ -36,7 +39,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `unknown` otherwise; `sources::wago`, the Wago source of task 095, see [Fixtures](#fixtures): the
   external API with the user's key, the game version per flavor, the three recent releases onto the
   channels, the rate limit its answers name, the Forever signal from a release for `forever` or the keyless
-  slug list; the CurseForge source joins the router as it comes, M4; adopt's question to a source, whether it
+  slug list, and the update check's bulk lookup of task 106 behind the trait's `prefetch` and `holds`; the
+  CurseForge source joins the router as it comes, M4; adopt's question to a source, whether it
   publishes a build for a flavor, is the trait's `offers`, and the folders a source names without a download
   are its `folders`, task 097), the adopt report (`adopt`, task 097, see [Adopt](#adopt)), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
@@ -280,7 +284,12 @@ and reported with the current release, left alone; its line reads the installed 
 by the version order below (task 077): `pinned at 2.0.0, 2.1.0 is out, left alone` when the installed version
 is older (or the order cannot tell), `pinned at 1.1.0-beta, newer than the current release 1.0.0, left
 alone` when it is newer (with the `is no longer listed` reason as `installed-newer` has it), `pinned at
-1.0.0, up to date` when it is the same. `ignored`: skipped without a request. `source-gone`: no
+1.0.0, up to date` when it is the same. `ignored`: skipped without a request. `pending` (task 104): the
+source's newest file waits for the site's approval (WoWInterface's `UIPending`), so there is nothing to
+install yet and nothing for the user to do: its line is `MrglPending  1.0.0  pending approval: the newest
+file waits for approval on WoWInterface; nothing to install until it is approved`, it is counted apart
+(`1 pending approval`), it is no failure (a run with pending addons alone ends with exit code 0) and the
+summary needs no look for it. `source-gone`: no
 release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
 hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
 limit, a server error). `installed-newer` (task 068): the installed version is newer than the current
@@ -291,24 +300,30 @@ version. The order is the GitHub source's cached release list (`Source::listed_v
 no request) where it lists both versions, else `update::lenient_order`: a leading `v` dropped, the numbers
 before the first `-` or `+` compared as numbers (`1.2` is `1.2.0`), and on equal numbers a version with a
 suffix before one without (`2.0.0-beta` before `2.0.0`); when neither can tell, another version counts as
-an update. `rate-limited`: not asked, the check stopped before the request limit (below). An addon whose
+an update. `rate-limited`: not asked, the check stopped asking the addon's source before its request limit
+(below). An addon whose
 folders were deleted by hand is left out with a warning.
 
 `update::check` takes a progress callback, `&mut dyn FnMut(CheckProgress)`, the one the command line and
 the window (task 010) share: `Checking { index, total, name, source }` before an addon the source is asked
 about, `Checked { index, total, addon }` after every addon with its `AddonUpdate`, and `Stopped { stop }`
-when the check stops before the request limit. The request budget: without a token the GitHub source counts
-the API requests of its run against the 60 an hour (`Source::request_budget`), and once an answer names
+once per source when the check stops asking that source before its request limit. The request budget:
+without a token the GitHub source counts the API requests of its run against the 60 an hour
+(`Source::request_budget`), and once an answer names
 `x-ratelimit-remaining` that count, less the requests since, takes over with the answer's reset time (a
-429 leaves nothing); an asset download is not counted, a token turns the budget off. Before each addon
-that needs a request the check reads the budget, and with nothing left it stops asking: the addons left
-are `rate-limited`, and `UpdateCheck::stopped` (`BudgetStop`) carries the limit, the requests sent, the
-reset time and how many addons it left, with its line `stopped the check before GitHub's rate limit of 60
-requests an hour without a token: 2 addons not checked, the limit resets at <local time> (local time); set
-MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour` (`within the hour` when no answer named
-the reset). `mrgl update --all` and `mrgl update <name>` print a progress line through the voice before
-each addon the source is asked about (`checking Questie against github:Questie/Questie (10 of 12)`), the
-stop as a warning when it happens, and a plain data line per addon as soon as it is checked
+429 leaves nothing); an asset download is not counted, a token turns the budget off; the Wago source keeps
+a budget of its own (below). Before each addon that needs a request the check reads the budget of the
+addon's source (`Source::request_budget_for`), and with nothing left it stops asking that source alone
+(task 101): the addons of that source left are `rate-limited` (`not asked before GitHub's rate limit`), and
+the addons of the other sources go on being asked. `UpdateCheck::stopped` holds one `BudgetStop` per source
+that stopped, in the order they stopped, each with its source (`github`, `wago`), the limit, the requests
+sent, the reset time and how many addons of that source it left, with its line `stopped asking GitHub
+before its rate limit of 60 requests an hour without a token: 2 addons not checked, the limit resets at
+<local time> (local time); set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour` (`within
+the hour` when no answer named the reset), and the summary counts the addons left per source (`2 not
+checked (GitHub's rate limit)`). `mrgl update --all` and `mrgl update <name>` print a progress line through the voice before
+each addon the source is asked about (`checking Questie against github:Questie/Questie (10 of 12)`), each
+source's stop as a warning when it happens, and a plain data line per addon as soon as it is checked
 (`Questie  1.2.2 -> 1.2.3  update available`), ask once for the updates (`--yes` answers; without a
 terminal or with `--json` the command stops and says what `--yes` does, exit 1), install each through the
 one install path with the pick the check made (`AddonUpdate::request`, no second resolve), say each
@@ -331,10 +346,11 @@ no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installe
 interface check of the installed addon, `interface_mismatch` and `interface_out_of_date` (task 082, below),
 `installed_already` (task 089: the entry the install path found at the pick's version, as an `addon` block
 with `same_entry` and the line as `message`; `null` otherwise), the document's `updated` and
-`installed_already` counts, the `counts` per state, `stopped` (the
-`BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
+`installed_already` counts, the `counts` per state (`rate-limited` the sum over the sources), `stopped` (a
+list of the `BudgetStop`s, one per source that stopped, each with its `source` and its `message`; empty
+when the check asked about every addon, task 101) and the warnings. An
 update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
-the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.
+a rate limit is a warning in the summary (`2 not checked (Wago's rate limit)`), not a failure: exit code 0.
 
 The interface check (task 015) compares the `## Interface` numbers of the TOC the flavor loads with the
 installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,
@@ -778,7 +794,9 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   (task 010: a row menu's items and why one is disabled, the progress slot each event of a run moves, a
   check's answer laid over its row, the note under a row's version, whose pin reads the check's `order` as
   the command line's pinned line does: `pinned at 1.1.0-beta, newer than the release`, or `pinned at 2.0.0,
-  2.1.0 is out`; task 077), `toolbox.js` (tasks 074 and 085: the target
+  2.1.0 is out`; task 077; the check states the note names, `NOTED`: `installed-newer`, `guess-only`,
+  `pending` of task 104, `source-gone`, `failed` and `rate-limited`, each by the core's label), `toolbox.js`
+  (tasks 074 and 085: the target
   picker's options and the `{ character, realm, account }` an option names, the account in an option's
   value and label only when the answer carries one, the set the picker shows, the set's addons in their
   order and each chip's toggle and drop, the state, label and title of the apply, undo and cleanup buttons,
@@ -843,8 +861,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   `update-available` addon through the one install path (`Engine::install_from_source` with the check's own
   pick, task 055). Each takes a Tauri channel (`tauri::ipc::Channel`) and sends one event per step as it
   happens: `{ phase, folder, index, total, check, message }`, the phase `checking`, `checked` (with the
-  addon's `check`), `stopped` (the request budget's stop line of task 068, a warning, sent once and not
-  repeated in the answer), `updating`, `downloading`, `installing`, `updated`, `installed-already` or
+  addon's `check`), `stopped` (the request budget's stop line of task 068, a warning, sent once per source
+  that stopped, task 101, and not repeated in the answer), `updating`, `downloading`, `installing`, `updated`, `installed-already` or
   `failed` (an error), the folder the addon's first one, the message in the voice. `installed-already`
   (task 099) is the install path's "installed already" answer in the command line's words of task 089
   (`AlreadyInstalled::update_line` of the core, which both say): the nothing-to-do line under the addon's
@@ -1229,7 +1247,8 @@ The WoWInterface source (task 094, `sources::wowinterface`) asks the MMOUI API, 
 (`UIFileName`, `UIDownload`, `UIMD5`), its date in milliseconds (`UIDate`) and `UIPending`. A project has
 one file and both channels take it. `UIPending: "1"` (the newest file waits for the site's approval) is the
 error `the newest file of wowi:<id> waits for approval on WoWInterface: nothing is installed until it is
-approved`: `add` fails with it, `import` reports it as failed and the update check as a failed check. The
+approved`: `add` fails with it and `import` reports it as failed, while the update check reports it as the
+state `pending` (task 104), not as a failed check. The
 download (`cdn.wowinterface.com/downloads/getfile.php?id=<id>&d=<date>&minion`) is compared with `UIMD5`
 before it is written, so the engine never opens it: a mismatch is `refused <file> of wowi:<id> <version>: its
 MD5 is <md5>, the source names <md5>; the download was damaged or the file changed, try again`. The flavor
@@ -1270,23 +1289,42 @@ fetched with the same key when it is on `addons.wago.io`. A 401 is `Wago answere
 MRGL_WAGO_KEY is missing or not accepted: …`; an answer without a release for the game version is `no asset
 for flavor <flavor> in wago:<id> game version <v> (Wago lists no stable, beta or alpha release for it)`. Every
 request to Wago's host counts against the limit its answers name (`x-ratelimit-limit`, 60 until one says,
-and `x-ratelimit-remaining`): the update check reads it before each addon and stops at none left,
-`stopped the check before Wago's rate limit of 60 requests: <n> addons not checked, the limit resets after a
-short wait (Wago does not say when); run the check again then` (the words for the limit's window come with
-the budget, `RequestBudget::window` and `resets`). The answers are cached per addon, one per game version,
-under `<home>/cache/wago/<id>.json` with `checked_at`, and the offline rule of the GitHub source holds; the
+and `x-ratelimit-remaining`): the update check reads it before each Wago addon and, at none left, stops
+asking Wago while the other sources are still asked (task 101), `stopped asking Wago before its rate limit
+of 60 requests: <n> addons not checked, the limit resets after a short wait (Wago does not say when); run
+the check again then` (the words for the limit's window come with the budget, `RequestBudget::window` and
+`resets`). The whole update check asks in bulk (task 106): before its first addon it hands every spec it
+will ask to its source (`Source::prefetch`, through the router per source), and the Wago source sends one
+`POST addons.wago.io/api/external/addons/_recents?game_version=<v>` with `{"addons": [<id>, …]}` and the
+key for the game version of the flavor (`Wago::recents`), unless the budget has no request left. The answer,
+the addons under `addons` by id (or a list, `sources::wago::parse_recents`), is held for the run and written
+into the same cache files a single answer goes to; the check reads no budget for an addon the source holds
+(`Source::holds`) and resolves it without a request, while an addon the bulk answer lacks (one without a
+release for the game version), or every addon after a bulk request that failed, is asked alone as before.
+`add`, `import` and `update <name>` keep the single request. The answers are cached per addon, one per game
+version, under `<home>/cache/wago/<id>.json` with `checked_at`, and the offline rule of the GitHub source holds; the
 window's offline view (`Sources::cached`) has no key and reads that cache alone. The Forever signal is `yes`
 when the addon has a release for `forever` and `no` when Wago answers without one; the keyless data endpoint
 `addons.wago.io/api/data/slugs?game_version=forever` (every addon with a release for that game version, slug
 and id) answers it without a key, and the id of a slug (`Wago::id_of_slug`), read at most once a day and
 cached under `<home>/cache/wago/slugs-<v>.json`. `list` reads the signal from the cached `forever` answer,
-else the cached slug list. The fixture answers are under `tests/fixtures/sources/addons.wago.io/`
+else the cached slug list. A Wago page address (task 105), `https://addons.wago.io/addons/<slug>` (a
+trailing path or query is dropped), parses into `SourceSpec::WagoPage`; `Source::canonical_spec` looks the
+slug up in the slug list of the target's game version (as written, else ASCII case-insensitive, without a
+key) and answers `wago:<id>`, or `no Wago addon <slug> in the slug list of game version <v>: it has no
+release for <v>, or the address names no addon` (`Error::UnknownWagoSlug`). `add` says `<address> is
+wago:<id>` and records the id, as `import` does for a list entry with the address (an unknown slug is the
+entry's failure); the resolve of a page spec looks it up first too, so a pick always names `wago:<id>`.
+Without the key the address is `source not configured` like `wago:<id>`, since the install needs the key. The fixture answers are under `tests/fixtures/sources/addons.wago.io/`
 (`api/external/addons/<id>@game_version=<v>.json`, the stub's query mapping): `MrglWg01` has a Forever and a
 retail release with a stored zip behind each (`downloads/MrglWg01/2.0.0-<v>.zip`, written by
 `zips/make-zips.py`), `MrglWg02` answers for Forever without a release, `MrglWg03` has the three
 stabilities for retail, none stable for Forever and one for `mop`, `MrglWg04` answers 401 and `MrglWg05`
 answers with `X-RateLimit-Remaining: 0` (both through a `.headers` file), and
-`api/data/slugs@game_version=forever.json` names `MrglWg01`, `MrglWg03` and `MrglWg05`. The tests pass a
+`api/data/slugs@game_version=forever.json` names `MrglWg01`, `MrglWg03` and `MrglWg05`. The bulk answers
+are `api/external/addons/_recents@game_version=<v>.json`, which the stub answers the POST from: `MrglWg01`
+and `MrglWg03` for Forever (`MrglWg05` is left out, so its single answer still uses the limit up in the
+budget tests), `MrglWg01` to `MrglWg03` for retail. The tests pass a
 made-up key and assert that it goes to `addons.wago.io` only and reaches no output and no cache file.
 
 The adopt fixture (task 097) is a game folder of its own, `adopt/`: a `.build.info` with a Forever and a
