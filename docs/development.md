@@ -285,9 +285,11 @@ two-line summary through the voice (a success when nothing needs a look, a warni
 (`mrgl_core::doctor`: `report_of_process` builds it, `Report::lines` and `Report::text` are the block), so the
 window's "copy diagnostics" action (task 009) copies the same text. It reads and never repairs: the AddOns
 probe is its one write. A fact it cannot read is a value (`unknown`, `missing`), never an error, and only an
-unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, in its long
-and its 8.3 short form) is shown with that folder as `~`, and an API key is named, never read out, so a pasted
-report carries no home folder path and no secret.
+unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, else `HOME`,
+in its long and its 8.3 short form) is shown with that folder as `~`: matched in any case and with `\` or `/`
+(or a mix) as the separator, and only when a separator or the end of the path follows, so a folder that only
+starts with the profile's name (`someone2` next to the profile `someone`) stays as it is (task 069). An API
+key is named, never read out, so a pasted report carries no home folder path and no secret.
 
 The lines, with the JSON field in brackets:
 

@@ -46,6 +46,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - A second registry source for the game root: the Uninstall entry, and expanded values ([043](https://github.com/speti4/mrgl/blob/main/tasks/done/043-second-registry-source-for-the-game-root.md))
 - A Windows version line in the doctor report ([051](https://github.com/speti4/mrgl/blob/main/tasks/done/051-windows-version-line-in-the-doctor-report.md))
 - Forever notes for the addons the community lists as partly restricted ([058](https://github.com/speti4/mrgl/blob/main/tasks/done/058-forever-notes-for-the-partly-restricted-addons.md))
+- The doctor report redacts a profile path written with forward slashes ([069](https://github.com/speti4/mrgl/blob/main/tasks/done/069-doctor-redacts-forward-slash-profile-paths.md))
 
 ### M3 Toolbox
 

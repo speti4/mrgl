@@ -2901,11 +2901,12 @@ fn doctor_game_root(name: &str) -> PathBuf {
 }
 
 /// Asserts that an output carries no home folder path: neither the profile folder of this run nor any
-/// `\Users\` folder (the 8.3 short form a runner's temporary folder carries included).
+/// `\Users\` folder (the 8.3 short form a runner's temporary folder carries included), with `\` or `/` as
+/// the separator.
 fn assert_no_home_path(output: &str) {
-    let lower = output.to_lowercase();
+    let lower = output.to_lowercase().replace('/', "\\");
     if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
-        let profile = profile.to_string_lossy().to_lowercase();
+        let profile = profile.to_string_lossy().to_lowercase().replace('/', "\\");
         assert!(!lower.contains(&profile), "the profile folder in: {output}");
     }
     assert!(
@@ -3016,6 +3017,32 @@ fn doctor_json_is_one_document_without_a_key_value_or_a_home_path() {
     assert_eq!(flavor["cache"]["bytes"], 0);
     assert_eq!(flavor["client"]["status"], "not_running");
     assert_eq!(value["warnings"], serde_json::json!([]));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn doctor_hides_a_home_path_written_with_forward_slashes() {
+    let root = doctor_game_root("forward-slashes");
+    let home = temp_home("doctor-forward-slashes");
+    let forward = |path: &Path| path.display().to_string().replace('\\', "/");
+    let output = mrgl()
+        .env("MRGL_HOME", forward(&home))
+        .args(["--serious", "doctor", "--root", &forward(&root)])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    assert_no_home_path(&stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(lines[2].starts_with("root: "), "{stdout}");
+    assert!(lines[3].starts_with("home: "), "{stdout}");
+    // The temporary folder lies under the profile folder (in its long or short form) on a usual machine
+    // and on the runner; elsewhere there is nothing to hide.
+    let temp = std::env::temp_dir().display().to_string().to_lowercase();
+    if temp.contains(":\\users\\") {
+        assert!(lines[2].starts_with("root: ~/"), "{stdout}");
+        assert!(lines[3].starts_with("home: ~/"), "{stdout}");
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
 
