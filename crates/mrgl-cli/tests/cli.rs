@@ -6012,3 +6012,67 @@ fn set_apply_to_one_character_is_refused_while_the_client_runs() {
     child.stop();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// --- task 058: the curated Forever note of a partly restricted addon in `list` ---
+
+#[test]
+fn list_shows_the_curated_note_of_a_partly_restricted_addon() {
+    let game = Game::new("forever-note");
+    addon_by_hand(&game, "Grid2", "4.1.9");
+    // A sidecar as `add github:michaelnpsp/Grid2` would leave it, with the canonical spec as its source.
+    std::fs::create_dir_all(game.home.join("wowf")).expect("the flavor home");
+    std::fs::write(
+        game.state_path(),
+        r#"{ "schema": 1, "flavor": "wowf", "addons": { "Grid2": { "source": "github:michaelnpsp/Grid2", "version": "4.1.9", "folders": ["Grid2"], "files": {}, "installed_at": "2026-10-22T09:00:00Z" } } }"#,
+    )
+    .expect("the sidecar");
+    // The expectation comes from the compiled-in file, so a later check of the note (a new date) or its
+    // age (stale after 90 days) does not break the test; the note itself has to be there.
+    let status = mrgl_core::forever::ForeverStatus::for_source(
+        "github:michaelnpsp/Grid2",
+        mrgl_core::forever::ForeverBuild::Unknown,
+    );
+    let reason = status
+        .note
+        .as_deref()
+        .expect("data/forever-notes.json has a note on Grid2");
+    assert_eq!(status.kind.as_deref(), Some("secret-combat-values"));
+    assert_eq!(
+        status.source.as_deref(),
+        Some("https://github.com/michaelnpsp/Grid2/issues/471")
+    );
+    let (mark, stale) = if status.stale {
+        (",note,stale", ", stale: older than 90 days")
+    } else {
+        (",note", "")
+    };
+
+    let output = run_in(&game, &["list"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            format!(
+                "Grid2  4.1.9  16001  managed  github:michaelnpsp/Grid2  forever:unknown{mark}"
+            ),
+            format!(
+                "forever note on Grid2: {reason} (verified {}{stale}, https://github.com/michaelnpsp/Grid2/issues/471)",
+                status.verified.as_deref().unwrap_or_default()
+            ),
+            "1 addon in _forever_ (wowf 1.60.1.70245): 1 managed by mrgl, 0 unmanaged".to_string(),
+        ]
+    );
+
+    let value = game.list_json();
+    let forever = &listed(&value, "Grid2")["forever"];
+    assert_eq!(forever["build"], "unknown");
+    assert_eq!(forever["note"], reason);
+    assert_eq!(forever["kind"], "secret-combat-values");
+    assert_eq!(
+        forever["source"],
+        "https://github.com/michaelnpsp/Grid2/issues/471"
+    );
+    assert_eq!(forever["stale"], status.stale);
+}
