@@ -183,9 +183,48 @@ pub struct Installed {
     /// Plain lines about what went on around the install: a rebuilt sidecar, a cache that could not be
     /// written, a folder taken over from another managed addon.
     pub warnings: Vec<String>,
+    /// The other entries this install took every folder of, dropped from the sidecar (task 108): the
+    /// installed addon carries their folders now.
+    pub folded: Vec<Folded>,
     /// The plain warning line when the client ran from the flavor folder during the install (it loads the
     /// new folders at `/reload`), or when the process list could not be taken; `None` otherwise.
     pub client_warning: Option<String>,
+}
+
+/// A sidecar entry an install took every folder of (task 108): the commit dropped it, and the installed
+/// addon ships its folders now, as when a release zip of one source carries the folder of a second entry
+/// of that source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Folded {
+    /// The dropped entry's name.
+    pub name: String,
+    /// The version the dropped entry recorded.
+    pub version: String,
+    /// Its folders, which the installed addon ships now.
+    pub folders: Vec<String>,
+    /// The installed addon it joined.
+    pub into: String,
+    /// The version of the installed addon.
+    pub into_version: String,
+}
+
+impl Folded {
+    /// What an update of the dropped entry, later in the same run, says instead of installing (the
+    /// entry is gone): `SeveralFolders_Options folded into SeveralFolders: SeveralFolders 2.1.0 ships its
+    /// folder SeveralFolders_Options in _forever_, SeveralFolders_Options has no entry of its own now`.
+    pub fn update_line(&self, folder_name: &str) -> (Kind, String) {
+        let its = match self.folders.as_slice() {
+            [folder] => format!("its folder {folder}"),
+            folders => format!("its folders {}", folders.join(", ")),
+        };
+        let line = format!(
+            "{name} folded into {into}: {into} {version} ships {its} in {folder_name}, {name} has no entry of its own now",
+            name = self.name,
+            into = self.into,
+            version = self.into_version,
+        );
+        (Kind::Success, line)
+    }
 }
 
 /// What a pin, an unpin, an ignore, an unignore or a channel change did (task 021): the entry as it is
@@ -739,7 +778,13 @@ impl Engine {
                 staged.name
             ));
         }
-        take_over_folders(state, &staged.name, &new_folders, &mut warnings);
+        let folded = take_over_folders(
+            state,
+            &staged.name,
+            &staged.version,
+            &new_folders,
+            &mut warnings,
+        );
         state.addons.insert(staged.name.clone(), entry);
         self.home.write_state(state)?;
         if let Some(old_name) = &renamed {
@@ -754,6 +799,7 @@ impl Engine {
             folders: new_folders,
             removed_folders: stale,
             warnings,
+            folded,
             client_warning,
         })
     }
@@ -1293,39 +1339,49 @@ fn with_run_warnings(
     installed
 }
 
-/// Folders of other managed addons that the new install now owns leave those entries; an entry left with
-/// no folder is dropped. Both are warnings.
+/// Folders of other managed addons that the new install (`name` at `version`) now owns leave those
+/// entries; an entry left with no folder is dropped. Both are warnings, and the dropped entries are the
+/// answer (task 108: folded into the installed addon).
 fn take_over_folders(
     state: &mut State,
     name: &str,
+    version: &str,
     folders: &[String],
     warnings: &mut Vec<String>,
-) {
+) -> Vec<Folded> {
     let mut emptied = Vec::new();
     for (other, entry) in state.addons.iter_mut() {
         if other.eq_ignore_ascii_case(name) {
             continue;
         }
-        let before = entry.folders.len();
+        let before = entry.folders.clone();
         entry
             .folders
             .retain(|folder| !contains_folder(folders, folder));
-        if entry.folders.len() != before {
+        if entry.folders.len() != before.len() {
             warnings.push(format!(
                 "{other} lost {} to {name}",
-                plural(before - entry.folders.len(), "folder")
+                plural(before.len() - entry.folders.len(), "folder")
             ));
         }
         if entry.folders.is_empty() {
-            emptied.push(other.clone());
+            emptied.push(Folded {
+                name: other.clone(),
+                version: entry.version.clone(),
+                folders: before,
+                into: name.to_string(),
+                into_version: version.to_string(),
+            });
         }
     }
-    for other in emptied {
-        state.addons.remove(&other);
+    for folded in &emptied {
+        state.addons.remove(&folded.name);
         warnings.push(format!(
-            "{other} is no longer managed: {name} replaced every folder of it"
+            "{} is no longer managed: {name} replaced every folder of it",
+            folded.name
         ));
     }
+    emptied
 }
 
 fn contains_folder(folders: &[String], folder: &str) -> bool {

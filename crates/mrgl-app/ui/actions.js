@@ -8,16 +8,17 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  // Why a managed addon's "Update" does nothing, by what the row says; null when it can be updated. The
-  // update check asks GitHub only for now (task 056 brings the other sources).
+  // Why a managed addon's "Update" does nothing, by what the row says; null when it can be updated. Task
+  // 107: every source of the build is asked, and a row the check did not ask (a source this build lacks, a
+  // key that is not set) says the core's words from its check answer: `source not configured: <spec>
+  // (<what is missing>)`.
   function whyNoUpdate(addon) {
     if (!addon || !addon.managed) return "not managed by mrgl";
     if (addon.linked) return "a linked development folder is never updated";
-    if (!addon.source || addon.source.kind !== "github") {
-      return addon.source && addon.source.kind === "zip"
-        ? "a zip in hand: a newer zip goes in with mrgl add <zip>"
-        : "the update check does not ask this source yet";
-    }
+    if (addon.source && addon.source.kind === "zip") return "a zip in hand: a newer zip goes in with mrgl add <zip>";
+    const check = addon.check;
+    if (check && check.state === "not-checked" && check.detail) return check.detail;
+    if (!addon.source) return "not a source spec mrgl reads";
     if (addon.pinned) return `pinned at ${addon.pinned}: unpin it to update`;
     if (addon.ignored) return "ignored: unignore it to update";
     return null;

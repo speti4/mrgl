@@ -348,11 +348,14 @@ pub enum SummaryOf {
     Check,
     /// An update run that installed `updated` addons, left `left` of them for a cancel (the window) and
     /// found `installed_already` of them at the pick's version already (task 089: the one install path's
-    /// answer, under the addon's own entry or another entry of the same source), so it installed nothing.
+    /// answer, under the addon's own entry or another entry of the same source), so it installed nothing,
+    /// and found `folded` of them dropped by an install earlier in the run that took every folder of them
+    /// over (task 108: folded into that addon, nothing to install).
     Update {
         updated: usize,
         left: usize,
         installed_already: usize,
+        folded: usize,
     },
 }
 
@@ -384,11 +387,13 @@ impl UpdateCheck {
                 updated,
                 left,
                 installed_already,
+                folded,
             } => {
                 let failed = available
                     .saturating_sub(updated)
                     .saturating_sub(left)
-                    .saturating_sub(installed_already);
+                    .saturating_sub(installed_already)
+                    .saturating_sub(folded);
                 if updated > 0 {
                     parts.push(format!("{} updated", count_addons(updated)));
                 }
@@ -397,6 +402,9 @@ impl UpdateCheck {
                 }
                 if installed_already > 0 {
                     parts.push(format!("{installed_already} installed already"));
+                }
+                if folded > 0 {
+                    parts.push(format!("{folded} folded into another entry"));
                 }
                 if left > 0 {
                     parts.push(format!("{left} not updated (cancelled)"));
@@ -1017,6 +1025,7 @@ mod tests {
                 updated: 3,
                 left: 0,
                 installed_already: 0,
+                folded: 0,
             }),
             (
                 Kind::Success,
@@ -1028,6 +1037,7 @@ mod tests {
                 updated: 1,
                 left: 1,
                 installed_already: 0,
+                folded: 0,
             }),
             (
                 Kind::Warning,
@@ -1040,6 +1050,7 @@ mod tests {
                 updated: 0,
                 left: 3,
                 installed_already: 0,
+                folded: 0,
             }),
             (
                 Kind::Warning,
@@ -1052,6 +1063,7 @@ mod tests {
                 updated: 2,
                 left: 0,
                 installed_already: 1,
+                folded: 0,
             }),
             (
                 Kind::Success,
@@ -1063,10 +1075,25 @@ mod tests {
                 updated: 0,
                 left: 0,
                 installed_already: 3,
+                folded: 0,
             }),
             (
                 Kind::Nothing,
                 "nothing updated: 3 installed already, 1 up to date, 1 pinned".to_string()
+            )
+        );
+        // Task 108: an entry an earlier install of the run folded into its addon is neither updated nor
+        // failed.
+        assert_eq!(
+            summary(SummaryOf::Update {
+                updated: 2,
+                left: 0,
+                installed_already: 0,
+                folded: 1,
+            }),
+            (
+                Kind::Success,
+                "2 addons updated, 1 folded into another entry, 1 up to date, 1 pinned".to_string()
             )
         );
     }

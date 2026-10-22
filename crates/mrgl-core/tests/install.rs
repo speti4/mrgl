@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use mrgl_core::Error;
 use mrgl_core::client::{FixedProcesses, ProcessList, RunningProcess};
 use mrgl_core::flavor::{self, FlavorId};
-use mrgl_core::install::{Engine, InstallOutcome, Metadata, PickInstalled, PickStep};
+use mrgl_core::install::{Engine, Folded, InstallOutcome, Metadata, PickInstalled, PickStep};
 use mrgl_core::sources::Channel;
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{FolderHttp, Source, SourceSpec, Target};
@@ -835,6 +835,7 @@ fn a_folder_taken_over_from_another_managed_addon_is_a_warning() {
         installed.warnings,
         ["SeveralFolders lost 1 folder to Options"]
     );
+    assert_eq!(installed.folded, [], "SeveralFolders keeps an entry");
     let state = sandbox.state();
     assert_eq!(
         state
@@ -851,6 +852,73 @@ fn a_folder_taken_over_from_another_managed_addon_is_a_warning() {
     assert_eq!(
         read(&sandbox.addon("SeveralFolders_Options/core.lua")),
         "-- 9\n"
+    );
+}
+
+#[test]
+fn an_entry_whose_every_folder_an_install_takes_over_is_folded_into_it() {
+    // Task 108: `Options` records the one folder `SeveralFolders_Options`, which the zip of
+    // `SeveralFolders` carries too; the install drops the entry and names it as folded into its addon.
+    let sandbox = Sandbox::new("folded");
+    let only_options = sandbox.root.join("only-options.zip");
+    let mut entries = BTreeMap::new();
+    entries.insert(
+        "SeveralFolders_Options/SeveralFolders_Options.toc",
+        "## Version: 9\n",
+    );
+    entries.insert("SeveralFolders_Options/core.lua", "-- 9\n");
+    write_zip(&only_options, &entries);
+    let given = Metadata {
+        source: "zip in hand".to_string(),
+        version: Some("9".to_string()),
+        name: Some("Options".to_string()),
+        nolib: None,
+    };
+    sandbox
+        .engine
+        .install(&only_options, &given)
+        .expect("installs");
+
+    let installed = sandbox.install("several-folders-2.1.0.zip");
+    assert_eq!(installed.name, "SeveralFolders");
+    let folded = Folded {
+        name: "Options".to_string(),
+        version: "9".to_string(),
+        folders: vec!["SeveralFolders_Options".to_string()],
+        into: "SeveralFolders".to_string(),
+        into_version: "2.1.0".to_string(),
+    };
+    assert_eq!(installed.folded, std::slice::from_ref(&folded));
+    assert_eq!(
+        installed.warnings,
+        [
+            "Options lost 1 folder to SeveralFolders",
+            "Options is no longer managed: SeveralFolders replaced every folder of it",
+        ]
+    );
+    assert_eq!(
+        folded.update_line("_forever_"),
+        (
+            mrgl_core::voice::Kind::Success,
+            "Options folded into SeveralFolders: SeveralFolders 2.1.0 ships its folder SeveralFolders_Options in _forever_, Options has no entry of its own now".to_string()
+        )
+    );
+    let two = Folded {
+        folders: vec!["A".to_string(), "B".to_string()],
+        ..folded
+    };
+    assert!(
+        two.update_line("_forever_")
+            .1
+            .contains("ships its folders A, B in _forever_"),
+        "{:?}",
+        two.update_line("_forever_")
+    );
+    let state = sandbox.state();
+    assert_eq!(state.addons.keys().collect::<Vec<_>>(), ["SeveralFolders"]);
+    assert_eq!(
+        state.addons["SeveralFolders"].folders,
+        ["SeveralFolders", "SeveralFolders_Options"]
     );
 }
 

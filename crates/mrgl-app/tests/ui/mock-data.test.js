@@ -6,6 +6,7 @@ const assert = require("node:assert/strict");
 const Data = require("../../ui/mock-data.js");
 const State = require("../../ui/state.js");
 const Voice = require("../../ui/voice.js");
+const Actions = require("../../ui/actions.js");
 
 Data.settings.delay = 0;
 
@@ -86,7 +87,7 @@ test("update all on Forever reports each addon, then the summary, and flips the 
   assert.equal(events.filter((event) => event.phase === "updated").length, before);
   const summary = answer.messages[answer.messages.length - 1];
   assert.equal(summary.kind, "success");
-  assert.equal(summary.plain, `${before} addons updated, 2 not checked`, "Plater (Wago) and the zip are not asked");
+  assert.equal(summary.plain, `${before} addons updated, 1 up to date, 1 not checked`, "Plater (Wago) is asked, the zip is not");
   assert.equal(answer.flavor.id, "wowf");
   assert.equal(State.countUpdates(answer.flavor.addons), 0);
   for (const message of answer.messages) assert.ok(Voice.lines(message).length === 2, "both lines");
@@ -110,7 +111,7 @@ test("the other flavors answer with the other kinds", async () => {
   assert.ok(classic.events.every((event) => event.phase === "checking" || event.phase === "checked"));
   const checked = classic.answer.messages[classic.answer.messages.length - 1];
   assert.equal(checked.kind, "success");
-  assert.match(checked.plain, /^checked _classic_: 1 update available, .*1 pinned, 1 ignored/);
+  assert.match(checked.plain, /^checked _classic_: 2 updates available, .*1 pinned, 1 ignored/);
   const pinned = classic.answer.flavor.addons.find((row) => row.pinned);
   assert.equal(pinned.update, null, "a pinned row has no update");
   assert.equal(pinned.check.latest, "2.75");
@@ -141,19 +142,37 @@ test("a run in a flavor the CurseForge app manages warns once, first, in the cor
   assert.ok(forever.answer.messages.every((message) => !message.plain.includes(".curseclient")), "Forever has no marker");
 });
 
-test("a row of a source the sketch's build lacks says source not configured, as the core does (task 102)", async () => {
+test("the sketch's WoWInterface and Wago rows are asked, a source the build lacks says source not configured (tasks 102, 107)", async () => {
   const classic = await runOf((progress) => Data.checkUpdates("wow_classic", progress));
   const checked = (folder) => classic.events.find((event) => event.phase === "checked" && event.folder === folder).check;
-  const wowi = checked("AtlasLootClassic");
-  assert.equal(wowi.state, "not-checked");
-  assert.equal(wowi.detail, "source not configured: wowi:24976 (this build has no WoWInterface source)");
-  assert.equal(
-    wowi.line,
-    "AtlasLoot Classic  v4.2.0  not checked: source not configured: wowi:24976 (this build has no WoWInterface source)"
-  );
-  assert.equal(checked("TomTom").detail, "source not configured: wago:4N2mZ3KL (this build has no Wago source)");
+  const asked = (folder) => classic.events.some((event) => event.phase === "checking" && event.folder === folder);
   const rows = classic.answer.flavor.addons;
-  assert.ok(rows.every((row) => !row.check || !/does not handle/.test(row.check.line)), "no line of the old wording");
+  const row = (folder) => rows.find((item) => item.folder === folder);
+
+  // WoWInterface (task 094): asked, its current release an update, the row's menu offers it.
+  const wowi = checked("AtlasLootClassic");
+  assert.ok(asked("AtlasLootClassic"));
+  assert.deepEqual([wowi.state, wowi.latest, wowi.detail], ["update-available", "v4.2.1", null]);
+  assert.equal(wowi.line, "AtlasLoot Classic  v4.2.0 -> v4.2.1  update available");
+  assert.equal(Actions.whyNoUpdate(row("AtlasLootClassic")), null);
+
+  // Wago (task 095, the key set): asked, up to date, nothing in the way of an update.
+  const wago = checked("TomTom");
+  assert.ok(asked("TomTom"));
+  assert.deepEqual([wago.state, wago.latest, wago.detail], ["up-to-date", "v5.5.4-mists", null]);
+  assert.equal(wago.line, "TomTom  v5.5.4-mists  up to date");
+  assert.equal(Actions.whyNoUpdate(row("TomTom")), null);
+
+  // CurseForge, which this build has no source for: not asked, the core's line word for word, and the
+  // row's menu says it.
+  const curse = checked("Leatrix_Plus");
+  assert.ok(!asked("Leatrix_Plus"));
+  const line = "source not configured: curse:289009 (this build has no CurseForge source)";
+  assert.deepEqual([curse.state, curse.detail], ["not-checked", line]);
+  assert.equal(curse.line, `Leatrix Plus  5.5.26  not checked: ${line}`);
+  assert.equal(Actions.whyNoUpdate(row("Leatrix_Plus")), line);
+
+  assert.ok(rows.every((row) => !row.check || !/does not handle|this build has no (WoWInterface|Wago)/.test(row.check.line)), "no line of the old sketch");
 });
 
 test("a cancel lets the addon in flight finish and starts no other", async () => {

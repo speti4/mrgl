@@ -1,6 +1,7 @@
 //! End-to-end tests of what the `mrgl` exe reports: the staging folder the doctor names (task 088), an
-//! update over two entries of one source, which works on the entry it names (tasks 089 and 100), and the
-//! dependency check of `import` (task 090). Every run points `MRGL_HOME` and `MRGL_ROOT` at a temporary
+//! update over two entries of one source, which works on the entry it names (tasks 089 and 100) and
+//! reports an entry the first install folded into its addon (task 108), and the dependency check of
+//! `import` (task 090). Every run points `MRGL_HOME` and `MRGL_ROOT` at a temporary
 //! folder, answers the sources from the fixture folder stub and reads no registry, as `tests/cli.rs` does.
 
 use std::path::{Path, PathBuf};
@@ -322,6 +323,105 @@ fn update_works_on_the_named_entry_of_two_from_one_source() {
             );
             assert!(game.addon("OldOneFolder").is_dir(), "its folder too");
         }
+    }
+}
+
+/// A game whose sidecar has two entries of `github:Questie/Questie` at 1.2.2, `SeveralFolders` and
+/// `SeveralFolders_Options`, each with its own folder; the asset of the current release 1.2.3 is the
+/// fixture zip `several-folders-2.1.0.zip`, which carries both folders.
+fn two_entries_in_one_zip(name: &str) -> (Game, PathBuf) {
+    let game = Game::new(name);
+    game.managed(&[
+        ("SeveralFolders", "github:Questie/Questie", "1.2.2"),
+        ("SeveralFolders_Options", "github:Questie/Questie", "1.2.2"),
+    ]);
+    let stub = stub_with_forever_zip(&game, "several-folders-2.1.0.zip");
+    (game, stub)
+}
+
+#[test]
+fn update_all_reports_an_entry_folded_into_the_first_install() {
+    // Task 108: the install of `SeveralFolders` takes the folder of `SeveralFolders_Options` over and drops
+    // its entry; the update of `SeveralFolders_Options` after it says the entry is folded into
+    // `SeveralFolders`, not that it stays at 1.2.2 beside a second entry of the source.
+    let folded_line = "SeveralFolders_Options folded into SeveralFolders: SeveralFolders 1.2.3 ships its folder SeveralFolders_Options in _forever_, SeveralFolders_Options has no entry of its own now";
+    for json in [false, true] {
+        let (game, stub) = two_entries_in_one_zip(&format!("update-folded-{json}"));
+        let output = game
+            .mrgl()
+            .env("MRGL_HTTP_STUB", &stub)
+            .arg(if json { "--json" } else { "--serious" })
+            .args(["update", "--all", "--yes", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        if json {
+            let value: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("one document");
+            assert_eq!(value["updated"], 1, "{value}");
+            assert_eq!(value["folded"], 1, "{value}");
+            assert_eq!(value["installed_already"], 0, "{value}");
+            let addon = |name: &str| {
+                value["addons"]
+                    .as_array()
+                    .expect("the addons")
+                    .iter()
+                    .find(|addon| addon["name"] == name)
+                    .unwrap_or_else(|| panic!("{name} in {value}"))
+                    .clone()
+            };
+            let first = addon("SeveralFolders");
+            assert_eq!(first["updated"], true, "{first}");
+            assert_eq!(first["folded_into"], serde_json::Value::Null, "{first}");
+            let second = addon("SeveralFolders_Options");
+            assert_eq!(second["updated"], false, "{second}");
+            assert_eq!(second["addon"], serde_json::Value::Null, "{second}");
+            assert_eq!(
+                second["installed_already"],
+                serde_json::Value::Null,
+                "{second}"
+            );
+            assert_eq!(second["error"], serde_json::Value::Null, "{second}");
+            assert_eq!(
+                second["folded_into"],
+                serde_json::json!({
+                    "name": "SeveralFolders",
+                    "version": "1.2.3",
+                    "folders": ["SeveralFolders_Options"],
+                    "message": folded_line,
+                }),
+                "{second}"
+            );
+        } else {
+            let text = stdout(&output);
+            let lines: Vec<&str> = text.lines().collect();
+            assert!(
+                lines.contains(&"updating SeveralFolders from 1.2.2 to 1.2.3"),
+                "{text}"
+            );
+            assert!(lines.contains(&folded_line), "{text}");
+            assert!(!text.contains("updating SeveralFolders_Options"), "{text}");
+            assert!(!text.contains("not updated"), "{text}");
+            assert!(!text.contains("stays at"), "{text}");
+            assert_eq!(
+                lines.last(),
+                Some(&"1 addon updated, 1 folded into another entry"),
+                "{text}"
+            );
+        }
+        let sidecar = game.sidecar();
+        let addons = sidecar["addons"].as_object().expect("the entries");
+        assert_eq!(
+            addons.keys().collect::<Vec<_>>(),
+            ["SeveralFolders"],
+            "one entry after: {sidecar}"
+        );
+        assert_eq!(addons["SeveralFolders"]["version"], "1.2.3");
+        assert_eq!(
+            addons["SeveralFolders"]["folders"],
+            serde_json::json!(["SeveralFolders", "SeveralFolders_Options"])
+        );
+        assert!(game.addon("SeveralFolders_Options").is_dir(), "the folder");
     }
 }
 

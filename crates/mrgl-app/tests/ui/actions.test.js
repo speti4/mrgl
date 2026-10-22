@@ -57,9 +57,30 @@ test("an unmanaged, a linked and a zip row say why they cannot be updated", () =
   assert.equal(byAction(Actions.menuItems(linked, false)).pin.enabled, true, "a linked addon can still be marked");
   const zip = Object.assign({}, managed, { source: { kind: "zip", id: "x.zip" } });
   assert.match(Actions.whyNoUpdate(zip), /^a zip in hand/);
-  const wago = Object.assign({}, managed, { source: { kind: "wago", id: "x" } });
-  assert.equal(Actions.whyNoUpdate(wago), "the update check does not ask this source yet");
   assert.equal(Actions.whyNoUpdate(managed), null);
+});
+
+test("a source the check did not ask says the core's words, an asked one updates (task 107)", () => {
+  const notChecked = (source, detail) =>
+    Object.assign({}, managed, {
+      source,
+      update: null,
+      check: { state: "not-checked", label: "not checked", latest: null, order: null, detail, line: "x" },
+    });
+  const noKey =
+    "source not configured: wago:x (MRGL_WAGO_KEY is not set: the Wago API needs your own key, `mrgl key set wago` stores it)";
+  const wago = notChecked({ kind: "wago", id: "x" }, noKey);
+  assert.equal(Actions.whyNoUpdate(wago), noKey);
+  const update = byAction(Actions.menuItems(wago, false)).update;
+  assert.deepEqual([update.enabled, update.title], [false, noKey]);
+  const curse = notChecked({ kind: "curseforge", id: "42" }, "source not configured: curse:42 (this build has no CurseForge source)");
+  assert.equal(Actions.whyNoUpdate(curse), "source not configured: curse:42 (this build has no CurseForge source)");
+  for (const source of [{ kind: "wowi", id: "24976" }, { kind: "wago", id: "4N2mZ3KL" }]) {
+    const asked = Object.assign({}, managed, { source });
+    assert.equal(Actions.whyNoUpdate(asked), null, source.kind);
+    assert.equal(byAction(Actions.menuItems(asked, false)).update.enabled, true, source.kind);
+  }
+  for (const row of [wago, curse]) assert.ok(!/does not ask this source/.test(Actions.whyNoUpdate(row)), "no line of the old wording");
 });
 
 test("while an update runs every item waits", () => {

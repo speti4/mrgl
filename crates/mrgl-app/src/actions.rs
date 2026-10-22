@@ -421,6 +421,7 @@ pub fn run<S: Source + ?Sized>(
             updated: updated.len(),
             left,
             installed_already: installed_already.len(),
+            folded: 0,
         },
     };
     let (kind, plain) = check.summary(of, &folder_name);
