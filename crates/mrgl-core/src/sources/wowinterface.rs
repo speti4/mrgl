@@ -32,7 +32,8 @@ use crate::flavor::FlavorId;
 use crate::forever::ForeverBuild;
 use crate::sources::github::{self, write_cache};
 use crate::sources::{
-    self, Channel, Http, Pick, Request, Source, SourceSpec, Stale, Target, notes_line,
+    self, BuildOffer, Channel, Http, Offered, Pick, Request, Source, SourceSpec, Stale, Target,
+    notes_line,
 };
 use crate::{home, state};
 
@@ -612,6 +613,70 @@ impl<H: Http> Source for WowInterface<H> {
             Ok(id) => forever_build_of(self.cached_listing(id).as_ref()),
             Err(_) => ForeverBuild::Unknown,
         }
+    }
+
+    /// Whether the project has a build for the target, from its compatibility list in the file list alone
+    /// (task 097): no request per project. `yes` for an entry of the flavor's game, Forever included once
+    /// the list names a Forever version; `unknown` otherwise, never `no`: the list is the author's "works
+    /// with" and may be incomplete, and the project's one file may still run.
+    fn offers(&self, spec: &SourceSpec, target: &Target) -> BuildOffer {
+        let id = match project(spec) {
+            Ok(id) => id,
+            Err(_) => return BuildOffer::new(Offered::Unknown, NOT_WOWI),
+        };
+        let listing = match self.listing(id) {
+            Ok(Some(listing)) => listing,
+            Ok(None) => {
+                return BuildOffer::new(
+                    Offered::Unknown,
+                    "the file list of WoWInterface does not have the project",
+                );
+            }
+            Err(error) => return BuildOffer::new(Offered::Unknown, error.to_string()),
+        };
+        match compatibility_for(&listing.compatibility, target) {
+            Some((entry, false)) => BuildOffer::new(
+                Offered::Yes,
+                format!(
+                    "WoWInterface lists compatibility {} ({})",
+                    entry.version.trim(),
+                    entry.name.trim()
+                ),
+            ),
+            Some((entry, true)) => BuildOffer::new(
+                Offered::Unknown,
+                format!(
+                    "WoWInterface lists compatibility {}; the installed build is unknown, so the game type is a guess",
+                    entry.version.trim()
+                ),
+            ),
+            None if listing.compatibility.is_empty() => BuildOffer::new(
+                Offered::Unknown,
+                "WoWInterface lists no compatibility for the project",
+            ),
+            None => {
+                let mut versions: Vec<&str> = listing
+                    .compatibility
+                    .iter()
+                    .map(|entry| entry.version.trim())
+                    .collect();
+                versions.dedup();
+                BuildOffer::new(
+                    Offered::Unknown,
+                    format!(
+                        "WoWInterface lists no {} compatibility (it lists {})",
+                        target.flavor_name(),
+                        versions.join(", ")
+                    ),
+                )
+            }
+        }
+    }
+
+    /// The project's folders as its author declared them (`UIDir`), from the file list (task 097).
+    fn folders(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+        let dirs = self.listing(project(spec).ok()?).ok()??.dirs;
+        (!dirs.is_empty()).then_some(dirs)
     }
 
     /// Downloads the project's file (no key, the CDN serves it), checks it against the MD5 the API named

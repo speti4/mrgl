@@ -30,8 +30,8 @@ use crate::flavor::FlavorId;
 use crate::forever::ForeverBuild;
 use crate::sources::github::{rate_limit_reset, write_cache};
 use crate::sources::{
-    self, Channel, Http, Pick, Request, RequestBudget, Response, Source, SourceKind, SourceSpec,
-    Stale, Target, notes_line,
+    self, BuildOffer, Channel, Http, Offered, Pick, Request, RequestBudget, Response, Source,
+    SourceKind, SourceSpec, Stale, Target, notes_line,
 };
 use crate::{home, keys, state};
 
@@ -792,6 +792,38 @@ impl<H: Http> Source for Wago<H> {
         match addon_id(spec) {
             Ok(id) => self.forever_from_cache(id, channel),
             Err(_) => ForeverBuild::Unknown,
+        }
+    }
+
+    /// Whether the addon has a release for the target's game version, from the keyless slug list of that
+    /// game version (task 097): `yes` when the list names the id, `no` when it does not, `unknown` when the
+    /// list cannot be read; with or without the key, one request a day per game version.
+    fn offers(&self, spec: &SourceSpec, target: &Target) -> BuildOffer {
+        let Ok(id) = addon_id(spec) else {
+            return BuildOffer::new(Offered::Unknown, NOT_WAGO);
+        };
+        let Some((game_version, guess)) = game_version(target) else {
+            return BuildOffer::new(
+                Offered::Unknown,
+                "Wago names no game version for this flavor",
+            );
+        };
+        match self.slugs(game_version) {
+            Ok(slugs) if slugs.has_id(id) && guess => BuildOffer::new(
+                Offered::Unknown,
+                format!(
+                    "Wago lists a release for {game_version}; the installed build is unknown, so the game type is a guess"
+                ),
+            ),
+            Ok(slugs) if slugs.has_id(id) => BuildOffer::new(
+                Offered::Yes,
+                format!("Wago lists a release for {game_version}"),
+            ),
+            Ok(_) => BuildOffer::new(
+                Offered::No,
+                format!("Wago lists no release for {game_version}"),
+            ),
+            Err(error) => BuildOffer::new(Offered::Unknown, error.to_string()),
         }
     }
 }

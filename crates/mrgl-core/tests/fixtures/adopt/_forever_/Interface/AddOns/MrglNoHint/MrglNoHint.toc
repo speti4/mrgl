@@ -1,0 +1,5 @@
+## Interface: 16001
+## Title: Mrgl No Hint
+## Version: 2.2
+
+core.lua

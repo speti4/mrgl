@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Mrgl Page
+## Version: 1.0
+## X-Website: https://www.example.invalid/mrgl-page
+
+core.lua

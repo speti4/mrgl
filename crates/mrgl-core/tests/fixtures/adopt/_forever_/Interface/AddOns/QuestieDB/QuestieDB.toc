@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: QuestieDB (made-up fixture)
+## Version: 1.0.0
+## Dependencies: Questie
+
+db.lua

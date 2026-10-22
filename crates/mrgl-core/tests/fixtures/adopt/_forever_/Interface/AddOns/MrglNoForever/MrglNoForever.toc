@@ -1,0 +1,6 @@
+## Interface: 120105
+## Title: Mrgl No Forever
+## Version: 4.0.0
+## X-Website: https://github.com/Example/MainlineOnly
+
+core.lua

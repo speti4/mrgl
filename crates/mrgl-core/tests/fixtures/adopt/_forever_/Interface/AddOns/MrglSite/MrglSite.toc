@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Mrgl Site
+## Version: @project-version@
+## X-Website: https://github.com/Example/Nightly
+
+core.lua

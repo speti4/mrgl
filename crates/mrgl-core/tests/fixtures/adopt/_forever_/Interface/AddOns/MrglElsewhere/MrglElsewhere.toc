@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Mrgl Elsewhere
+## Version: 0.1
+## X-WoWI-ID: 1006
+
+core.lua

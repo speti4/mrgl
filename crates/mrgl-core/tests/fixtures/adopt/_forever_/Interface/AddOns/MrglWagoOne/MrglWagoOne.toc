@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Mrgl Wago One
+## Version: 1.0.0
+## X-Wago-ID: MrglWg01
+
+core.lua

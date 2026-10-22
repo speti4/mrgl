@@ -198,6 +198,9 @@ pub struct Toc {
     pub wago_id: Option<String>,
     /// `## X-WoWI-ID`.
     pub wowi_id: Option<String>,
+    /// `## X-Website`, the addon's page (task 097): a GitHub repository's address names a source
+    /// ([`github_repo_of_website`]), any other page is only a page.
+    pub website: Option<String>,
     /// Every `## Key: value` header: the key as first spelled, the value of its last line.
     pub headers: BTreeMap<String, String>,
 }
@@ -226,7 +229,9 @@ impl Toc {
             self.notes = owned();
             self.notes_plain = Some(strip_color_escapes(value));
         } else if key.eq_ignore_ascii_case("Version") {
-            self.version = owned();
+            // An unsubstituted packager token (`@project-version@`, a TOC from the repository rather than a
+            // packaged release) is no version (task 097); the raw headers keep it.
+            self.version = (!is_packager_token(value)).then(|| value.to_string());
         } else if key.eq_ignore_ascii_case("Author") {
             self.author = owned();
         } else if key.eq_ignore_ascii_case("Interface") {
@@ -245,8 +250,87 @@ impl Toc {
             self.wago_id = owned();
         } else if key.eq_ignore_ascii_case("X-WoWI-ID") {
             self.wowi_id = owned();
+        } else if key.eq_ignore_ascii_case("X-Website") {
+            self.website = owned();
         }
     }
+
+    /// The `## X-Wago-ID` when it has the shape of a Wago id ([`is_wago_id`]).
+    pub fn wago_id_checked(&self) -> Option<&str> {
+        self.wago_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| is_wago_id(id))
+    }
+
+    /// The `## X-WoWI-ID` when it is a project number ([`is_number_id`]).
+    pub fn wowi_id_checked(&self) -> Option<&str> {
+        self.wowi_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| is_number_id(id))
+    }
+
+    /// The `## X-Curse-Project-ID` when it is a project number ([`is_number_id`]).
+    pub fn curse_project_id_checked(&self) -> Option<&str> {
+        self.curse_project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| is_number_id(id))
+    }
+}
+
+/// Whether a header value is a packager token left as written (`@project-version@`, `@file-revision@`): an
+/// `@`, a name of letters, digits and `-` or `_`, and an `@`.
+pub fn is_packager_token(value: &str) -> bool {
+    let value = value.trim();
+    value.len() > 2
+        && value.starts_with('@')
+        && value.ends_with('@')
+        && value[1..value.len() - 1]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Whether an `## X-Wago-ID` has the shape of a Wago id: eight ASCII letters and digits (`L6Jb2R6v`).
+pub fn is_wago_id(id: &str) -> bool {
+    id.len() == 8 && id.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Whether an `## X-WoWI-ID` or `## X-Curse-Project-ID` is a project number: ASCII digits, not all zero, at
+/// most twelve.
+pub fn is_number_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 12
+        && id.chars().all(|c| c.is_ascii_digit())
+        && id.chars().any(|c| c != '0')
+}
+
+/// The `<owner>/<repo>` of an `## X-Website` on github.com (`https://github.com/<owner>/<repo>`, with or
+/// without `www.`, `.git`, a trailing slash or a deeper path such as `/wiki`); `None` for any other page.
+pub fn github_repo_of_website(website: &str) -> Option<String> {
+    let website = website.trim();
+    let address = website
+        .strip_prefix("https://")
+        .or_else(|| website.strip_prefix("http://"))
+        .unwrap_or(website);
+    let address = address.split(['?', '#']).next().unwrap_or_default();
+    let (host, path) = address.split_once('/')?;
+    let host = host.to_ascii_lowercase();
+    if host != "github.com" && host != "www.github.com" {
+        return None;
+    }
+    let mut parts = path.split('/').filter(|part| !part.is_empty());
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    let is_name = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    };
+    (is_name(owner) && is_name(repo)).then(|| format!("{owner}/{repo}"))
 }
 
 fn starts_with_ignore_ascii_case(text: &str, prefix: &str) -> bool {
@@ -451,6 +535,68 @@ mod tests {
         assert!(toc.load_on_demand);
         assert_eq!(toc.author.as_deref(), Some("Someone"));
         assert!(!parse_toc("## LoadOnDemand: 0\n").load_on_demand);
+    }
+
+    #[test]
+    fn the_id_headers_are_checked_for_their_shape() {
+        let toc =
+            parse_toc("## X-Curse-Project-ID: 12345\n## X-Wago-ID: L6Jb2R6v\n## X-WoWI-ID: 0678\n");
+        assert_eq!(toc.curse_project_id_checked(), Some("12345"));
+        assert_eq!(toc.wago_id_checked(), Some("L6Jb2R6v"));
+        assert_eq!(toc.wowi_id_checked(), Some("0678"));
+        let odd =
+            parse_toc("## X-Curse-Project-ID: @curse-id@\n## X-Wago-ID: short\n## X-WoWI-ID: 0\n");
+        assert_eq!(odd.curse_project_id_checked(), None);
+        assert_eq!(odd.wago_id_checked(), None);
+        assert_eq!(odd.wowi_id_checked(), None);
+        // The raw values stay typed and in the headers, as `list` shows them.
+        assert_eq!(odd.wago_id.as_deref(), Some("short"));
+        assert!(!is_wago_id("L6Jb2R6v9") && !is_wago_id("L6Jb-R6v"));
+        assert!(is_number_id("1") && !is_number_id("12a") && !is_number_id("1234567890123"));
+    }
+
+    #[test]
+    fn an_unsubstituted_packager_token_is_no_version() {
+        let toc = parse_toc("## Version: @project-version@\n");
+        assert_eq!(toc.version, None);
+        assert_eq!(
+            toc.headers.get("Version").map(String::as_str),
+            Some("@project-version@")
+        );
+        assert_eq!(
+            parse_toc("## Version: v1.2.3\n").version.as_deref(),
+            Some("v1.2.3")
+        );
+        assert!(is_packager_token(" @file-revision@ "));
+        assert!(!is_packager_token("@@") && !is_packager_token("1.0 @beta@ x"));
+    }
+
+    #[test]
+    fn a_github_website_names_its_repository_and_another_page_none() {
+        let toc = parse_toc("## X-Website: https://github.com/Owner/Repo\n");
+        assert_eq!(
+            toc.website.as_deref(),
+            Some("https://github.com/Owner/Repo")
+        );
+        for (website, repo) in [
+            ("https://github.com/Owner/Repo", Some("Owner/Repo")),
+            ("http://www.GitHub.com/Owner/Repo.git/", Some("Owner/Repo")),
+            (
+                "https://github.com/Owner/Repo/wiki/Setup",
+                Some("Owner/Repo"),
+            ),
+            ("github.com/Owner/Repo?tab=readme", Some("Owner/Repo")),
+            ("https://github.com/Owner", None),
+            ("https://github.com", None),
+            ("https://owner.github.io/Repo", None),
+            ("https://www.example.test/addon", None),
+        ] {
+            assert_eq!(
+                github_repo_of_website(website).as_deref(),
+                repo,
+                "{website}"
+            );
+        }
     }
 
     #[test]

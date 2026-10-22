@@ -15,7 +15,8 @@
 //! zip, then pinned) is task 022; `savedvars` (the SavedVariables sizes and the orphan cleanup) is task
 //! 025; every source-backed install takes the one install path of the engine (task 055); `update` (the
 //! update check and `update --all`) is task 006; `set` (the addon sets) is task 014, its
-//! `--character` and `--realm` task 027, `set undo`, `set enable|disable|drop` and `--account` task 073.
+//! `--character` and `--realm` task 027, `set undo`, `set enable|disable|drop` and `--account` task 073;
+//! `adopt` (where the unmanaged addons of a flavor come from) is task 097.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, IsTerminal};
@@ -23,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use mrgl_core::adopt;
 use mrgl_core::backup;
 use mrgl_core::client;
 use mrgl_core::dependencies::{self, AddonDependencies};
@@ -312,6 +314,16 @@ enum Command {
     Set {
         #[command(subcommand)]
         action: SetAction,
+    },
+    /// Report where the unmanaged addons of a flavor come from: per addon (its folders together) the sources
+    /// its TOCs name (X-Wago-ID, X-WoWI-ID, X-Curse-Project-ID, X-Website on github.com), then the curated
+    /// GitHub mapping, each asked whether it publishes a build for the flavor, and how many addons can be
+    /// adopted without CurseForge, only with it, or have no known source. Writes nothing; a source without
+    /// its key reads "needs <KEY NAME>".
+    Adopt {
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
     },
     /// The API keys of the sources (github, wago, curse): store one in the Windows Credential Manager from
     /// the standard input, remove it, or list where each comes from. A key is never an argument and never
@@ -626,6 +638,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
         } => update_command(reporter, name.as_deref(), flavor.as_deref(), dry_run, yes)?,
         Command::Set { action } => set_command(reporter, action)?,
         Command::Key { action } => key_command(reporter, action)?,
+        Command::Adopt { flavor } => adopt_command(reporter, flavor.as_deref())?,
     }
     Ok(())
 }
@@ -756,6 +769,56 @@ fn key_command(reporter: &Reporter, action: KeyAction) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// `mrgl adopt --flavor <flavor>` (task 097): the source of every unmanaged addon of the flavor, through
+/// the router and the compiled-in GitHub mapping ([`adopt::report`]): a line per addon and one per source
+/// under it, the `.curseclient` marker and the warnings, and the summary of the counts; `--json` is the
+/// `adopt` document. Reads the sidecar, writes nothing (the sources keep their own caches).
+fn adopt_command(reporter: &Reporter, spec: Option<&str>) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let folder = flavor_folder(spec, None, &mut warnings)?;
+    let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
+    warnings.extend(scan.flavor.warnings.iter().cloned());
+    warnings.extend(scan.warnings.iter().cloned());
+    let engine = Engine::new(scan.flavor.clone()).map_err(|error| error.to_string())?;
+    let loaded = engine.load_state().map_err(|error| error.to_string())?;
+    warnings.extend(loaded.warning);
+    let mut state = loaded.state;
+    state.reconcile(&scan);
+    let sources = Sources::from_env();
+    let report = adopt::report(&scan, &state, &sources, &|kind| {
+        keys::of_process(kind).is_some()
+    });
+    warnings.extend(report.left_out_lines());
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "adopt",
+            "flavor": &report.flavor,
+            "curse_client": report.curse_client,
+            "addons": &report.addons,
+            "left_out": &report.left_out,
+            "counts": &report.counts,
+            "warnings": warnings,
+        }));
+        return Ok(());
+    }
+    let flavor_name = report.flavor_name();
+    for addon in &report.addons {
+        reporter.line(addon.line(flavor_name));
+        for line in addon.detail_lines(flavor_name) {
+            reporter.line(line);
+        }
+    }
+    if let Some(line) = report.marker_line() {
+        reporter.say(Kind::Warning, line);
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let (kind, summary) = report.summary();
+    reporter.say(kind, summary);
+    Ok(())
 }
 
 /// The flavor folder a `--flavor` spec names: a friendly name or an id under the game root, or a folder.

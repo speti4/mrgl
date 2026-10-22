@@ -22,7 +22,7 @@ use crate::error::{Error, Result};
 use crate::install::{Engine, SourceRequest, Wanted};
 use crate::list_file::EntrySource;
 use crate::scan;
-use crate::sources::{Channel, Pick, RequestBudget, Source, SourceSpec, Target};
+use crate::sources::{Channel, Pick, RequestBudget, Source, SourceSpec, Target, source_gone};
 use crate::state::Entry;
 use crate::voice::Kind;
 
@@ -744,20 +744,6 @@ fn suffix_tokens(suffix: &str) -> Vec<SuffixToken> {
         rest = after;
     }
     tokens
-}
-
-/// Whether an error says the source has nothing for the addon any more, rather than that it could not be
-/// asked: no release, no asset for the flavor, or no such repository.
-fn source_gone(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::NoRelease { .. }
-            | Error::NoAssetForFlavor { .. }
-            | Error::SourceStatus {
-                status: 404 | 410,
-                ..
-            }
-    )
 }
 
 #[cfg(test)]

@@ -16,8 +16,8 @@ use crate::sources::github::{self, GitHub};
 use crate::sources::wago::{self, Wago};
 use crate::sources::wowinterface::{self, WowInterface};
 use crate::sources::{
-    Channel, Http, Pick, RequestBudget, Source, SourceKind, SourceSpec, Target, http_from_env,
-    not_configured,
+    BuildOffer, Channel, Http, Offered, Pick, RequestBudget, Source, SourceKind, SourceSpec,
+    Target, http_from_env, not_configured,
 };
 
 /// The sources of one run, one slot per [`SourceKind`]; an empty slot is a source this build does not
@@ -156,6 +156,19 @@ impl Source for Sources {
             Some(source) => source.cached_forever_build(spec, channel),
             None => ForeverBuild::Unknown,
         }
+    }
+
+    /// The source's own answer (task 097); `unknown` for a source this build does not have, with what is
+    /// missing.
+    fn offers(&self, spec: &SourceSpec, target: &Target) -> BuildOffer {
+        match self.slot(spec) {
+            Some(source) => source.offers(spec, target),
+            None => BuildOffer::new(Offered::Unknown, no_source(spec.kind())),
+        }
+    }
+
+    fn folders(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+        self.slot(spec)?.folders(spec)
     }
 }
 
