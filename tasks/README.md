@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 13 backlog (0 ready · 0 blocked · 2 waiting · 11 ideas) · 2 in progress · 56 done · 3 dropped · 5 decisions
+**State:** 14 backlog (0 ready · 0 blocked · 2 waiting · 12 ideas) · 1 in progress · 56 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -60,7 +60,8 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 074 | [The window's toolbox: a set switch and a SavedVariables view](backlog/074-window-toolbox-sets-and-savedvariables.md) | M | 2026-10-22 |
+| 062 | [link takes a single addon folder as well as a development folder](backlog/062-link-takes-a-single-addon-folder.md) | S | 2026-10-21 |
+| 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](backlog/073-addon-sets-undo-edit-and-account.md) | M | 2026-10-22 |
 
 #### M4 Sources
 
@@ -87,8 +88,7 @@ _none_
 
 | # | Task | Started | Plan |
 |---|---|---|---|
-| 062 | [link takes a single addon folder as well as a development folder](wip/062-link-takes-a-single-addon-folder.md) | 2026-10-22 | `none` |
-| 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](wip/073-addon-sets-undo-edit-and-account.md) | 2026-10-22 | `none` |
+| 074 | [The window's toolbox: a set switch and a SavedVariables view](wip/074-window-toolbox-sets-and-savedvariables.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
