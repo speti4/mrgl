@@ -44,6 +44,10 @@ fn mrgl() -> Command {
     command.env_remove("MRGL_SERIOUS");
     command.env_remove("MRGL_ROOT");
     command.env_remove("MRGL_GITHUB_TOKEN");
+    command.env_remove("MRGL_WAGO_KEY");
+    command.env_remove("MRGL_CURSEFORGE_KEY");
+    // No test reads or writes the real Windows Credential Manager (task 093).
+    command.env("MRGL_KEY_STORE", "off");
     command.env("MRGL_HOME", temp_home("nohome"));
     // Every source answers from the fixture folder, never from the network.
     command.env("MRGL_HTTP_STUB", releases());
@@ -1550,13 +1554,110 @@ fn add_takes_a_flavor_folder_path_and_needs_a_flavor() {
 #[test]
 fn an_unknown_source_spec_is_a_plain_error() {
     let output = mrgl()
-        .args(["add", "wago:something", "--flavor", "forever"])
+        .args(["add", "bitbucket:something", "--flavor", "forever"])
         .output()
         .expect("run mrgl");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),
-        "unknown source: wago:something (expected github:<owner>/<repo>)"
+        "unknown source: bitbucket:something (expected github:<owner>/<repo>, wago:<id>, wowi:<id> or curse:<id>)"
+    );
+}
+
+// --- task 092: a source this build does not have names what is missing ---
+
+#[test]
+fn add_of_a_source_this_build_lacks_names_what_is_missing() {
+    for (spec, line) in [
+        (
+            "wago:something",
+            "source not configured: wago:something (this build has no Wago source)",
+        ),
+        (
+            "https://www.wowinterface.com/downloads/info123-Name.html",
+            "source not configured: wowi:123 (this build has no WoWInterface source)",
+        ),
+        (
+            "curse:42",
+            "source not configured: curse:42 (this build has no CurseForge source)",
+        ),
+    ] {
+        for dry_run in [false, true] {
+            let mut command = mrgl();
+            command.args(["--serious", "add", spec, "--flavor", "forever"]);
+            if dry_run {
+                command.arg("--dry-run");
+            }
+            let output = command.output().expect("run mrgl");
+            assert_eq!(output.status.code(), Some(1), "{spec}");
+            assert_eq!(stderr_last_line(&output), line, "{spec}");
+        }
+    }
+    // Through the voice: the murloc line comes before the plain one.
+    let output = mrgl()
+        .args(["add", "wago:something", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.lines().count() >= 2, "{stderr}");
+    assert_eq!(
+        stderr_last_line(&output),
+        "source not configured: wago:something (this build has no Wago source)"
+    );
+}
+
+#[test]
+fn import_reads_a_list_entry_of_a_source_this_build_lacks_as_not_configured() {
+    let game = Game::new("import-not-configured");
+    let base = game.root.parent().expect("the base").to_path_buf();
+    let list = base.join("not-configured.json");
+    std::fs::write(
+        &list,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [
+                { "name": "Questie", "source": "github:Questie/Questie", "version": "1.2.3",
+                  "folders": ["Questie"] },
+                { "name": "Clique", "source": "wowi:123", "version": "1.0.0", "folders": ["Clique"] },
+            ],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    let output = game
+        .mrgl()
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line
+            == "Clique  source not configured (wowi:123): this build has no WoWInterface source"),
+        "{text}"
+    );
+    assert!(
+        stdout_last_line(&output)
+            .ends_with("1 to install, 1 source not configured; nothing written"),
+        "{text}"
+    );
+    let output = game
+        .mrgl()
+        .args(["--json", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["addons"][1]["outcome"], "source-not-configured");
+    assert_eq!(
+        value["addons"][1]["detail"],
+        "this build has no WoWInterface source"
     );
 }
 
@@ -1955,7 +2056,7 @@ fn add_failures_are_plain_lines_with_exit_code_one() {
     let cases = [
         (
             vec!["add", "wago:abc", "--flavor", "forever", "--dry-run"],
-            "unknown source: wago:abc (expected github:<owner>/<repo>)",
+            "source not configured: wago:abc (this build has no Wago source)",
         ),
         (
             vec!["add", "github:Questie/Questie", "--dry-run"],
@@ -2958,7 +3059,7 @@ fn doctor_prints_every_line_offline_without_a_key_value_or_a_home_path() {
     let rest = [
         "webview2: 131.0.2903.70 (per-machine)",
         "github rate limit: 58 of 60 left, resets 2026-10-21T16:00:00Z",
-        "api keys: MRGL_GITHUB_TOKEN set",
+        "api keys: MRGL_GITHUB_TOKEN set (environment), MRGL_WAGO_KEY not set, MRGL_CURSEFORGE_KEY not set",
         "flavor: _forever_ (wowf)",
     ];
     assert_eq!(lines[4..8], rest, "{stdout}");
@@ -3013,7 +3114,11 @@ fn doctor_json_is_one_document_without_a_key_value_or_a_home_path() {
     assert_eq!(value["github_rate_limit"]["limit"], 60);
     assert_eq!(
         value["api_keys"],
-        serde_json::json!([{ "name": "MRGL_GITHUB_TOKEN", "present": true }])
+        serde_json::json!([
+            { "name": "MRGL_GITHUB_TOKEN", "present": true, "origin": "environment" },
+            { "name": "MRGL_WAGO_KEY", "present": false, "origin": "not_set" },
+            { "name": "MRGL_CURSEFORGE_KEY", "present": false, "origin": "not_set" },
+        ])
     );
     let flavor = &value["flavors"][0];
     assert_eq!(flavor["id"], "wowf");
@@ -3069,7 +3174,10 @@ fn doctor_offline_without_a_root_says_unknown_and_succeeds() {
     assert_eq!(lines[2], "root: none found");
     assert_eq!(lines[4], "webview2: unknown");
     assert_eq!(lines[5], "github rate limit: unknown (HTTP 404)");
-    assert_eq!(lines[6], "api keys: MRGL_GITHUB_TOKEN not set");
+    assert_eq!(
+        lines[6],
+        "api keys: MRGL_GITHUB_TOKEN not set, MRGL_WAGO_KEY not set, MRGL_CURSEFORGE_KEY not set"
+    );
     // The summary speaks through the voice: a murloc line, then the plain one.
     assert_eq!(lines.len(), 9, "{stdout}");
     assert!(lines[7].starts_with("Mrgl"), "{stdout}");
@@ -3113,6 +3221,178 @@ fn doctor_names_a_missing_flavor_and_refuses_an_unknown_one() {
         "unknown flavor: bogus (forever, retail, classic, era or a .flavor.info id)"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+// --- task 093: `mrgl key` and the doctor name the keys and their origin, never a value ---
+
+const KEY_SECRET: &str = "wago_madeUpKeyValueForTheKeyCommandTest";
+
+/// `mrgl` with a standard input to read.
+fn mrgl_with_input(args: &[&str], input: &str, env: &[(&str, &str)]) -> Output {
+    use std::io::Write as _;
+    let mut command = mrgl();
+    command
+        .args(args)
+        .envs(env.iter().copied())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn().expect("run mrgl");
+    child
+        .stdin
+        .take()
+        .expect("a stdin")
+        .write_all(input.as_bytes())
+        .expect("the input");
+    child.wait_with_output().expect("mrgl ends")
+}
+
+/// Every byte a run wrote, the standard output and the error output.
+fn all_output(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+#[test]
+fn key_list_names_every_key_and_its_origin_never_a_value() {
+    let env = [("MRGL_WAGO_KEY", KEY_SECRET), ("MRGL_CURSEFORGE_KEY", "  ")];
+    let output = mrgl_with_input(&["--serious", "key", "list"], "", &env);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "MRGL_GITHUB_TOKEN not set",
+            "MRGL_WAGO_KEY set (environment)",
+            "MRGL_CURSEFORGE_KEY not set",
+            "the key store is not available: MRGL_KEY_STORE=off",
+            "1 of 3 keys set, none shown",
+        ],
+        "{text}"
+    );
+    let json = mrgl_with_input(&["--json", "key", "list"], "", &env);
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "keys");
+    assert_eq!(
+        value["api_keys"],
+        serde_json::json!([
+            { "source": "github", "name": "MRGL_GITHUB_TOKEN", "origin": "not_set" },
+            { "source": "wago", "name": "MRGL_WAGO_KEY", "origin": "environment" },
+            { "source": "curse", "name": "MRGL_CURSEFORGE_KEY", "origin": "not_set" },
+        ])
+    );
+    assert_eq!(value["store"], "the key store");
+    assert_eq!(
+        value["store_unavailable"],
+        "the key store is not available: MRGL_KEY_STORE=off"
+    );
+    for output in [&output, &json] {
+        assert!(
+            !all_output(output).contains(KEY_SECRET),
+            "{}",
+            all_output(output)
+        );
+    }
+}
+
+#[test]
+fn key_set_and_clear_read_stdin_and_never_print_the_key() {
+    // The store is off in every test: the round trip itself is the core's, against a store in memory.
+    for args in [
+        vec!["--serious", "key", "set", "wago"],
+        vec!["--json", "key", "set", "curse"],
+        vec!["--serious", "key", "clear", "github"],
+    ] {
+        let output = mrgl_with_input(&args, &format!("{KEY_SECRET}\n"), &[]);
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        // The JSON error document carries the same plain line.
+        assert!(
+            stderr_last_line(&output)
+                .contains("the key store is not available: MRGL_KEY_STORE=off"),
+            "{args:?}: {}",
+            stderr_last_line(&output)
+        );
+        assert!(
+            !all_output(&output).contains(KEY_SECRET),
+            "{}",
+            all_output(&output)
+        );
+    }
+    for (source, line) in [
+        ("wowi", "no key for WoWInterface: its API needs none"),
+        (
+            "bitbucket",
+            "no key source: bitbucket (github, wago or curse)",
+        ),
+    ] {
+        let output = mrgl_with_input(&["--serious", "key", "set", source], KEY_SECRET, &[]);
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(stderr_last_line(&output), line);
+        assert!(!all_output(&output).contains(KEY_SECRET));
+    }
+    // The key is never an argument: one after the source is refused, and the refusal does not echo it.
+    let output = mrgl()
+        .args(["--serious", "key", "set", "wago", KEY_SECRET])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "a key is never an argument, the shell's history would keep it: pipe it in (Get-Clipboard | mrgl key set wago); nothing stored"
+    );
+    assert!(
+        !all_output(&output).contains(KEY_SECRET),
+        "{}",
+        all_output(&output)
+    );
+}
+
+#[test]
+fn no_key_value_reaches_any_output_of_the_doctor_or_a_source() {
+    let env = [
+        ("MRGL_GITHUB_TOKEN", DOCTOR_SECRET),
+        ("MRGL_WAGO_KEY", KEY_SECRET),
+        ("MRGL_CURSEFORGE_KEY", KEY_SECRET),
+    ];
+    let runs = [
+        vec!["doctor"],
+        vec!["--json", "doctor"],
+        vec!["--serious", "add", "wago:abc", "--flavor", "forever"],
+        vec![
+            "--json",
+            "add",
+            "curse:42",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ],
+        vec![
+            "--serious",
+            "add",
+            "github:Example/Missing",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ],
+    ];
+    for args in runs {
+        let output = mrgl_with_input(&args, "", &env);
+        let all = all_output(&output);
+        assert!(
+            !all.contains(DOCTOR_SECRET) && !all.contains(KEY_SECRET),
+            "{args:?}: {all}"
+        );
+    }
+    let output = mrgl_with_input(&["--serious", "doctor"], "", &env);
+    assert!(
+        stdout(&output).lines().any(|line| line
+            == "api keys: MRGL_GITHUB_TOKEN set (environment), MRGL_WAGO_KEY set (environment), MRGL_CURSEFORGE_KEY set (environment)"),
+        "{}",
+        stdout(&output)
+    );
 }
 
 // --- task 005: `link` and `unlink` over the synthetic development folder, in a temporary game folder ---
@@ -5684,6 +5964,29 @@ fn update_dry_run_reports_every_state_of_a_fixture_sidecar_and_writes_nothing() 
     );
     assert_eq!(game_snapshot(&game), before, "a dry run writes nothing");
     assert!(!game.home.join("wowf").join("staging").exists());
+}
+
+#[test]
+fn update_does_not_ask_a_source_this_build_lacks_and_says_what_is_missing() {
+    let game = managed_game(
+        "update-not-configured",
+        &[
+            ("Clique", "wowi:123", "1.0.0", ""),
+            ("Questie", "github:Questie/Questie", "1.2.3", ""),
+        ],
+    );
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[1..3],
+        [
+            "Clique  1.0.0  not checked: source not configured: wowi:123 (this build has no WoWInterface source)",
+            "checking Questie against github:Questie/Questie (2 of 2)",
+        ],
+        "{text}"
+    );
 }
 
 #[test]

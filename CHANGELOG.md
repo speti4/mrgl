@@ -35,6 +35,11 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The window's toolbox: a set switch and a SavedVariables view ([074](https://github.com/speti4/mrgl/blob/main/tasks/done/074-window-toolbox-sets-and-savedvariables.md))
 - The window's toolbox undoes an apply, edits a set and names the account ([085](https://github.com/speti4/mrgl/blob/main/tasks/done/085-window-toolbox-undo-edit-and-account.md))
 
+### M4 Sources
+
+- One source per spec: the router, the spec forms and the generic paths ([092](https://github.com/speti4/mrgl/blob/main/tasks/done/092-one-source-per-spec-the-router-and-the-generic-paths.md))
+- API keys: one place to set, read and name them ([093](https://github.com/speti4/mrgl/blob/main/tasks/done/093-api-keys-one-place-to-set-read-and-name-them.md))
+
 ### Project housekeeping
 
 - Housekeeping after the M1 fixes: one `Blizzard_` prefix, the doctor's formatter alias, the voice sample in the docs ([080](https://github.com/speti4/mrgl/blob/main/tasks/done/080-housekeeping-after-wave-5.md))

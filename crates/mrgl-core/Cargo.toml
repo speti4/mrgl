@@ -25,7 +25,7 @@ ureq.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # The process list behind the running-client check (task 023), the launcher's registry value behind the
-# game root discovery (task 020), the time-zone conversion of the backup names and timestamps (task 013)
-# and the dev addon junctions (task 005), Windows only; the other targets list nothing and find nothing
+# game root discovery (task 020), the time-zone conversion of the backup names and timestamps (task 013),
+# the dev addon junctions (task 005) and the API keys in the Credential Manager (task 093), Windows only; the other targets list nothing and find nothing
 # until the macOS preview (M6).
 windows-sys.workspace = true

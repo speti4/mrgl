@@ -11,8 +11,7 @@ use mrgl_core::doctor;
 use mrgl_core::flavor;
 use mrgl_core::home;
 use mrgl_core::install::Engine;
-use mrgl_core::sources::github::GitHub;
-use mrgl_core::sources::http_from_env;
+use mrgl_core::sources::Sources;
 use mrgl_core::voice::{self as core_voice, Kind, Voice};
 use serde::Serialize;
 use tauri::Manager;
@@ -327,9 +326,9 @@ pub async fn resolve(flavor: String, folder: String) -> ResolveAnswer {
                     ),
                 };
             };
-            let github = GitHub::from_env(http_from_env());
+            let sources = Sources::from_env();
             list::resolve(
-                &github,
+                &sources,
                 &flavor_folder,
                 &folder,
                 home_dir().as_deref(),
@@ -474,10 +473,10 @@ async fn update_run(
                 Ok(engine) => engine,
                 Err(message) => return ActionAnswer::refused(message),
             };
-            let github = GitHub::from_env(http_from_env());
+            let sources = Sources::from_env();
             actions::run(
                 &engine,
-                &github,
+                &sources,
                 &plan,
                 &|| run.cancelled(),
                 home_dir().as_deref(),

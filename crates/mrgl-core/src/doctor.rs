@@ -33,6 +33,7 @@ use crate::discover::{
 };
 use crate::flavor::{self, Flavor, FlavorId};
 use crate::home;
+use crate::keys;
 use crate::scan;
 use crate::sources::github::{API_URL, TOKEN_ENV};
 use crate::sources::{self, Http, Request};
@@ -71,9 +72,9 @@ pub const WINDOWS_KEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
 pub const WINDOWS_11_BUILD: u32 = 22000;
 /// The first build of Windows 10.
 pub const WINDOWS_10_BUILD: u32 = 10240;
-/// The API keys the report names when they are set, by their environment variable; the CurseForge key
-/// joins with its source (M4).
-pub const API_KEYS: [&str; 1] = [TOKEN_ENV];
+/// The API keys the report names, by their environment variable, with where each comes from (task 093:
+/// the keys of [`keys::KEYED`]).
+pub const API_KEYS: [&str; 3] = [TOKEN_ENV, keys::WAGO_KEY, keys::CURSEFORGE_KEY];
 /// The name of the AddOns probe file, followed by the process id and a counter.
 pub const PROBE_PREFIX: &str = ".mrgl-doctor-probe-";
 
@@ -356,20 +357,36 @@ pub fn rate_limit(http: &dyn Http, token: Option<&str>) -> RateLimit {
     }
 }
 
-/// An API key by name, and whether it is set; the value is never read into the report.
+/// An API key by name, whether it is set and where it comes from (task 093); the value is never read into
+/// the report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ApiKey {
     pub name: &'static str,
     pub present: bool,
+    pub origin: keys::Origin,
 }
 
-/// The keys of [`API_KEYS`] as an environment reader sees them: present when set and not empty.
+/// The keys of [`API_KEYS`] as an environment reader sees them, without a key store: present when set and
+/// not empty.
 pub fn api_keys_from(env: impl Fn(&str) -> Option<OsString>) -> Vec<ApiKey> {
-    API_KEYS
-        .iter()
-        .map(|name| ApiKey {
-            name,
-            present: env(name).is_some_and(|value| !value.is_empty()),
+    let none = keys::NoStore {
+        reason: "not asked",
+    };
+    api_keys_with(env, &none)
+}
+
+/// The keys of [`API_KEYS`] as the environment and a key store see them ([`keys::list`]: the environment
+/// first, then the store).
+pub fn api_keys_with(
+    env: impl Fn(&str) -> Option<OsString>,
+    store: &dyn keys::KeyStore,
+) -> Vec<ApiKey> {
+    keys::list(&env, store)
+        .into_iter()
+        .map(|key| ApiKey {
+            name: key.name,
+            present: key.origin.is_set(),
+            origin: key.origin,
         })
         .collect()
 }
@@ -656,15 +673,13 @@ pub fn report_of_process(root_flag: Option<PathBuf>, only: Option<FlavorId>) -> 
             None
         }
     };
-    let token = std::env::var(TOKEN_ENV)
-        .ok()
-        .filter(|token| !token.is_empty());
+    let token = keys::of_process(crate::sources::SourceKind::GitHub).map(keys::Key::into_value);
     let inputs = Inputs {
         root,
         only,
         home: home::home_dir().ok(),
         token,
-        api_keys: api_keys_from(|name| std::env::var_os(name)),
+        api_keys: api_keys_with(|name| std::env::var_os(name), &*keys::store_of_process()),
         warnings,
         redactor: Redactor::of_process(),
     };
@@ -1178,13 +1193,7 @@ impl Report {
         let keys: Vec<String> = self
             .api_keys
             .iter()
-            .map(|key| {
-                format!(
-                    "{} {}",
-                    key.name,
-                    if key.present { "set" } else { "not set" }
-                )
-            })
+            .map(|key| format!("{} {}", key.name, key.origin.text()))
             .collect();
         lines.push(format!("api keys: {}", keys.join(", ")));
         for flavor in &self.flavors {
@@ -1408,7 +1417,9 @@ mod tests {
             "home: ~\\AppData\\Local\\mrgl".to_string(),
             "webview2: 131.0.2903.70 (per-machine)".to_string(),
             "github rate limit: 4997 of 5000 left, resets 2026-10-21T16:00:00Z".to_string(),
-            format!("api keys: {TOKEN_ENV} set"),
+            format!(
+                "api keys: {TOKEN_ENV} set (environment), MRGL_WAGO_KEY not set, MRGL_CURSEFORGE_KEY not set"
+            ),
             "flavor: _forever_ (wowf)".to_string(),
             "  folder: ~\\Games\\World of Warcraft\\_forever_".to_string(),
             "  build: 1.60.1.70245, interface 16001, from .build.info".to_string(),
@@ -1520,7 +1531,9 @@ mod tests {
                 "home: none (neither MRGL_HOME nor LOCALAPPDATA is set)".to_string(),
                 "webview2: unknown".to_string(),
                 "github rate limit: unknown (offline: cannot reach https://api.github.com/rate_limit: no route to host)".to_string(),
-                format!("api keys: {TOKEN_ENV} not set"),
+                format!(
+                    "api keys: {TOKEN_ENV} not set, MRGL_WAGO_KEY not set, MRGL_CURSEFORGE_KEY not set"
+                ),
             ],
             "{lines:#?}"
         );
@@ -1949,18 +1962,42 @@ mod tests {
     #[test]
     fn the_keys_are_named_never_read_out() {
         let keys = api_keys_from(|_| Some(OsString::from("")));
+        let unset = |name| ApiKey {
+            name,
+            present: false,
+            origin: keys::Origin::NotSet,
+        };
         assert_eq!(
             keys,
-            [ApiKey {
-                name: TOKEN_ENV,
-                present: false
-            }],
+            [
+                unset(TOKEN_ENV),
+                unset(keys::WAGO_KEY),
+                unset(keys::CURSEFORGE_KEY)
+            ],
             "an empty value is no key"
         );
         let keys = api_keys_from(|_| Some(OsString::from(SECRET)));
-        assert!(keys[0].present);
+        assert!(keys.iter().all(|key| key.present));
         let json = serde_json::to_string(&keys).expect("serializes");
         assert!(!json.contains(SECRET), "{json}");
+        // Task 093: the store answers for a key the environment does not set, and says so.
+        let store = keys::MemoryStore::new();
+        keys::set(&store, crate::sources::SourceKind::CurseForge, SECRET).expect("stored");
+        let keys = api_keys_with(
+            |name| (name == keys::WAGO_KEY).then(|| OsString::from(SECRET)),
+            &store,
+        );
+        assert_eq!(
+            keys.iter().map(|key| key.origin).collect::<Vec<_>>(),
+            [
+                keys::Origin::NotSet,
+                keys::Origin::Environment,
+                keys::Origin::CredentialStore
+            ]
+        );
+        let json = serde_json::to_string(&keys).expect("serializes");
+        assert!(!json.contains(SECRET), "{json}");
+        assert!(json.contains(r#""origin":"credential_store""#), "{json}");
     }
 
     #[test]

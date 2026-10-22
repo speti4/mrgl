@@ -134,6 +134,8 @@ target\release\mrgl.exe set undo --flavor forever                          # the
 target\release\mrgl.exe set disable raid BagSorter --flavor forever        # edit a stored set (enable, disable, drop one addon)
 target\release\mrgl.exe set list --flavor forever                          # the sets so far (show and remove take a name)
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
+Get-Clipboard | target\release\mrgl.exe key set github                     # your own API key into the Windows Credential Manager
+target\release\mrgl.exe key list                                           # which keys are set and where from, never their values
 target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
 target\release\mrgl.exe import forever-addons.json --flavor forever --dry-run   # what installing that list would do
 target\release\mrgl.exe import forever-addons.json --flavor forever --exact     # the versions the list names, not the current ones
@@ -147,6 +149,14 @@ line and the release page, so you know what an update brings before you take it 
 pick for forever: github:<owner>/<repo> v2.1.0 (Addon-v2.1.0-forever.zip, flavor forever, interface 16001): release.json names forever (interface 16001)
 release notes: Quest arrows point the right way again (https://github.com/<owner>/<repo>/releases/tag/v2.1.0)
 ```
+
+A source spec names where an addon comes from: `github:<owner>/<repo>` (or the repository's address),
+`wago:<id>`, `wowi:<id>` (or the WoWInterface page, `www.wowinterface.com/downloads/info<id>…`) and
+`curse:<id>` (or `www.curseforge.com/projects/<id>`). A Wago or CurseForge addon page names the addon by a
+slug, not its id, so mrgl refuses it and says where the id is (the `X-Wago-ID` or `X-Curse-Project-ID` line
+of the addon's TOC). This build has the GitHub source only: `add` with a spec of another source says
+`source not configured` and what is missing, an imported list reports such an entry the same way, and the
+update check leaves it not checked.
 
 On a standard install no flag is needed: mrgl finds the game folder through the registry (the launcher's
 key, or the game's Uninstall entry) or under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
@@ -210,6 +220,14 @@ own `Blizzard_` addons. A library the addon carries only inside its own folder d
 says `Dependency missing` and does not load the addon, so mrgl names it missing too and says why. `--json`
 has the details per addon under `dependencies`.
 
+The sources' API keys are your own: `MRGL_GITHUB_TOKEN` (a GitHub personal access token lifts the limit of
+60 requests an hour), `MRGL_WAGO_KEY` and `MRGL_CURSEFORGE_KEY` for the sources that need one. mrgl reads a key
+from the environment variable of that name first, then from the Windows Credential Manager, where
+`mrgl key set <github|wago|curse>` stores it as `mrgl:<source>` from the standard input (pipe it in, never as
+an argument, so the shell's history does not keep it) and `mrgl key clear <source>` removes it. `mrgl key
+list` and `mrgl doctor` name each key and where it comes from, never its value, and a key is sent to its
+own source's servers only.
+
 Something not working? `mrgl doctor` prints what a bug report needs: the game folder and how it was found,
 each flavor's build, AddOns folder, sidecar, cache, running client and any staging folder kept with the addon
 folders a failed update moved aside (with what to do with it), the WebView2 version, the GitHub rate
@@ -224,7 +242,8 @@ folder of the same name already there is skipped, never replaced; an install nev
 addon, and `unlink` removes exactly the junctions `link` made, never a folder and never a file of yours.
 
 An exported list carries each managed addon's source and version; `import` installs the current release of
-every `github:` entry the flavor does not have yet, and leaves the others alone (a zip in hand stays on the
+every entry the flavor does not have yet whose source this build has (`github:`), reports an entry of a
+source not configured with what is missing, and leaves the others alone (a zip in hand stays on the
 machine it came from, a linked folder is linked again). `list` and an install warn when an addon's
 `## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor;
 `scan` and `list` mark an addon `out of date` when its interface is from the flavor's expansion but older

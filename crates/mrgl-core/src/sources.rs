@@ -4,8 +4,17 @@
 //! flavor", and never guesses "latest" without saying so: a [`Pick`] carries `guess` and the reason. The
 //! network sits behind the [`Http`] trait: [`UreqHttp`] is the real client, [`FolderHttp`] answers from a
 //! folder of fixture files, so every test runs offline (`MRGL_HTTP_STUB` points the command line at one).
+//!
+//! A spec names one of four sources ([`SourceSpec`], task 092): `github:<owner>/<repo>`, `wago:<id>`,
+//! `wowi:<id>` and `curse:<id>`, or a page address an id can be read from without a request. The callers
+//! never build a source themselves: [`Sources`] (the router of [`router`]) holds the sources this build has
+//! and this run can use, and answers for every spec by handing it to its source, or with
+//! [`Error::SourceNotConfigured`] naming what is missing.
 
 pub mod github;
+pub mod router;
+
+pub use router::Sources;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -21,59 +30,244 @@ use crate::forever::ForeverBuild;
 /// the network (the end-to-end tests set it); see [`FolderHttp`].
 pub const HTTP_STUB_ENV: &str = "MRGL_HTTP_STUB";
 
+/// The hint of a spec that names no source mrgl reads: the four spec forms.
+pub const SPEC_FORMS: &str = "expected github:<owner>/<repo>, wago:<id>, wowi:<id> or curse:<id>";
+
+/// The sources a spec can name, in the order of D-002 after GitHub (task 092).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SourceKind {
+    /// GitHub releases, `github:<owner>/<repo>`.
+    GitHub,
+    /// Wago Addons, `wago:<id>`.
+    Wago,
+    /// WoWInterface, `wowi:<id>`.
+    WowInterface,
+    /// CurseForge, `curse:<id>`.
+    CurseForge,
+}
+
+impl SourceKind {
+    /// Every source, in the order above.
+    pub const ALL: [SourceKind; 4] = [
+        SourceKind::GitHub,
+        SourceKind::Wago,
+        SourceKind::WowInterface,
+        SourceKind::CurseForge,
+    ];
+
+    /// The spec prefix without its colon, which is also the source's short name on the command line
+    /// (`mrgl key set wago`): `github`, `wago`, `wowi`, `curse`.
+    pub fn prefix(self) -> &'static str {
+        match self {
+            SourceKind::GitHub => "github",
+            SourceKind::Wago => "wago",
+            SourceKind::WowInterface => "wowi",
+            SourceKind::CurseForge => "curse",
+        }
+    }
+
+    /// The name a message line uses: `GitHub`, `Wago`, `WoWInterface`, `CurseForge`.
+    pub fn name(self) -> &'static str {
+        match self {
+            SourceKind::GitHub => "GitHub",
+            SourceKind::Wago => "Wago",
+            SourceKind::WowInterface => "WoWInterface",
+            SourceKind::CurseForge => "CurseForge",
+        }
+    }
+
+    /// A source by its prefix or its name, ASCII case-insensitive (`wago`, `wowi`, `WoWInterface`,
+    /// `curseforge`).
+    pub fn parse(text: &str) -> Option<SourceKind> {
+        let text = text.trim();
+        SourceKind::ALL.into_iter().find(|kind| {
+            text.eq_ignore_ascii_case(kind.prefix()) || text.eq_ignore_ascii_case(kind.name())
+        })
+    }
+
+    /// Its place in [`SourceKind::ALL`].
+    pub(crate) fn index(self) -> usize {
+        self as usize
+    }
+}
+
+impl fmt::Display for SourceKind {
+    /// The prefix, as a spec and the command line spell it.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.prefix())
+    }
+}
+
+impl Serialize for SourceKind {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.prefix())
+    }
+}
+
 /// Where an addon comes from, parsed from a spec on the command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceSpec {
     /// `github:<owner>/<repo>`: the repository's releases.
     GitHub { owner: String, repo: String },
+    /// `wago:<id>`: a Wago Addons project, by its id of letters and digits (`X-Wago-ID` in a TOC).
+    Wago { id: String },
+    /// `wowi:<id>`: a WoWInterface project, by its number (`X-WoWI-ID` in a TOC).
+    WowInterface { id: String },
+    /// `curse:<id>`: a CurseForge project, by its number (`X-Curse-Project-ID` in a TOC).
+    CurseForge { id: String },
 }
 
+/// The hint of a `github:` spec that is not `<owner>/<repo>`.
+const GITHUB_FORM: &str = "expected github:<owner>/<repo>";
+/// The hint of a `wago:` spec without an id.
+const WAGO_FORM: &str =
+    "expected wago:<id>, the addon's id of letters and digits (the X-Wago-ID line of its TOC)";
+/// The hint of a `wowi:` spec or a WoWInterface address without an id.
+const WOWI_FORM: &str = "expected wowi:<id>, the number of the addon's page address (www.wowinterface.com/downloads/info<id>)";
+/// The hint of a `curse:` spec without an id.
+const CURSE_FORM: &str = "expected curse:<id>, the addon's project id, a number (the X-Curse-Project-ID line of its TOC)";
+/// The hint of a Wago page address: it names the addon by its slug, which is not the id.
+const WAGO_PAGE: &str = "a Wago page names the addon by its slug, not its id: use wago:<id>, the X-Wago-ID line of the addon's TOC";
+/// The hint of a CurseForge page address with a slug.
+const CURSE_PAGE: &str = "a CurseForge page names the addon by its slug, not its id: use curse:<id>, the project id on the page or the X-Curse-Project-ID line of the addon's TOC";
+
 impl SourceSpec {
-    /// Parses a spec: `github:<owner>/<repo>` (also a `https://github.com/<owner>/<repo>` URL, with or
-    /// without `.git` and a trailing slash). Anything else is an error that names the accepted shape.
+    /// Parses a spec (task 092): `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>` or `curse:<id>`, or a
+    /// page address that carries the id: `https://github.com/<owner>/<repo>` (with or without `.git` and a
+    /// trailing slash), `https://www.wowinterface.com/downloads/info<id>[-<name>.html]` and
+    /// `https://www.curseforge.com/projects/<id>`. A Wago page (`addons.wago.io/addons/<slug>`) and a
+    /// CurseForge addon page (`curseforge.com/wow/addons/<slug>`) name a slug, which is not the id, and are
+    /// refused with a hint that says where the id is. Anything else is an error that names the accepted
+    /// shape.
     pub fn parse(text: &str) -> Result<SourceSpec> {
         let text = text.trim();
-        let unknown = || Error::UnknownSource {
+        let error = |hint: &'static str| Error::UnknownSource {
             spec: text.to_string(),
-            hint: "expected github:<owner>/<repo>",
+            hint,
         };
-        let path = if let Some(path) = text.strip_prefix("github:") {
-            path
-        } else if let Some(path) = text
-            .strip_prefix("https://github.com/")
-            .or_else(|| text.strip_prefix("http://github.com/"))
-        {
-            path
-        } else {
-            return Err(unknown());
-        };
-        let path = path.trim_matches('/');
-        let path = path.strip_suffix(".git").unwrap_or(path);
-        let mut parts = path.split('/');
-        let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) else {
-            return Err(unknown());
-        };
-        let is_name = |part: &str| {
-            !part.is_empty()
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-        };
-        if !is_name(owner) || !is_name(repo) {
-            return Err(unknown());
+        if let Some(path) = text.strip_prefix("github:") {
+            return github_path(path).ok_or_else(|| error(GITHUB_FORM));
         }
-        Ok(SourceSpec::GitHub {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-        })
+        if let Some(id) = text.strip_prefix("wago:") {
+            return wago_id(id)
+                .map(|id| SourceSpec::Wago { id })
+                .ok_or_else(|| error(WAGO_FORM));
+        }
+        if let Some(id) = text.strip_prefix("wowi:") {
+            return number_id(id)
+                .map(|id| SourceSpec::WowInterface { id })
+                .ok_or_else(|| error(WOWI_FORM));
+        }
+        if let Some(id) = text.strip_prefix("curse:") {
+            return number_id(id)
+                .map(|id| SourceSpec::CurseForge { id })
+                .ok_or_else(|| error(CURSE_FORM));
+        }
+        let Some(address) = text
+            .strip_prefix("https://")
+            .or_else(|| text.strip_prefix("http://"))
+        else {
+            return Err(error(SPEC_FORMS));
+        };
+        // The query and the fragment never carry the id of a form read here.
+        let address = address
+            .split(['?', '#'])
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('/');
+        let (host, path) = address.split_once('/').unwrap_or((address, ""));
+        let host = host.to_ascii_lowercase();
+        let host = host.strip_prefix("www.").unwrap_or(&host);
+        match host {
+            "github.com" => github_path(path).ok_or_else(|| error(GITHUB_FORM)),
+            "wowinterface.com" => path
+                .strip_prefix("downloads/info")
+                .map(|rest| {
+                    let rest = rest.strip_suffix(".html").unwrap_or(rest);
+                    rest.split_once('-').map_or(rest, |(id, _)| id)
+                })
+                .and_then(number_id)
+                .map(|id| SourceSpec::WowInterface { id })
+                .ok_or_else(|| error(WOWI_FORM)),
+            "curseforge.com" => match path.strip_prefix("projects/") {
+                Some(id) => number_id(id)
+                    .map(|id| SourceSpec::CurseForge { id })
+                    .ok_or_else(|| error(CURSE_FORM)),
+                None => Err(error(CURSE_PAGE)),
+            },
+            "addons.wago.io" => Err(error(WAGO_PAGE)),
+            _ => Err(error(SPEC_FORMS)),
+        }
+    }
+
+    /// The source the spec names.
+    pub fn kind(&self) -> SourceKind {
+        match self {
+            SourceSpec::GitHub { .. } => SourceKind::GitHub,
+            SourceSpec::Wago { .. } => SourceKind::Wago,
+            SourceSpec::WowInterface { .. } => SourceKind::WowInterface,
+            SourceSpec::CurseForge { .. } => SourceKind::CurseForge,
+        }
+    }
+
+    /// The name the spec suggests for the addon's folder (task 065, `install::name_hints`): the repository
+    /// of a GitHub spec; an id of the other sources is no name.
+    pub fn name_hint(&self) -> Option<&str> {
+        match self {
+            SourceSpec::GitHub { repo, .. } => Some(repo),
+            SourceSpec::Wago { .. }
+            | SourceSpec::WowInterface { .. }
+            | SourceSpec::CurseForge { .. } => None,
+        }
     }
 }
 
+/// `<owner>/<repo>` of a GitHub spec or address, without `.git` and the slashes around it.
+fn github_path(path: &str) -> Option<SourceSpec> {
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let mut parts = path.split('/');
+    let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) else {
+        return None;
+    };
+    let is_name = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    };
+    (is_name(owner) && is_name(repo)).then(|| SourceSpec::GitHub {
+        owner: owner.to_string(),
+        repo: repo.to_string(),
+    })
+}
+
+/// A Wago id: ASCII letters and digits as written (the ids are case-sensitive, `L6Jb2R6v`), at most 32.
+fn wago_id(id: &str) -> Option<String> {
+    (!id.is_empty() && id.len() <= 32 && id.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| id.to_string())
+}
+
+/// A WoWInterface or CurseForge id: a number above zero, written without leading zeros.
+fn number_id(id: &str) -> Option<String> {
+    if id.is_empty() || id.len() > 12 || !id.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let number: u64 = id.parse().ok()?;
+    (number > 0).then(|| number.to_string())
+}
+
 impl fmt::Display for SourceSpec {
-    /// The canonical spelling, `github:<owner>/<repo>`.
+    /// The canonical spelling: `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`, `curse:<id>`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SourceSpec::GitHub { owner, repo } => write!(f, "github:{owner}/{repo}"),
+            SourceSpec::Wago { id } => write!(f, "wago:{id}"),
+            SourceSpec::WowInterface { id } => write!(f, "wowi:{id}"),
+            SourceSpec::CurseForge { id } => write!(f, "curse:{id}"),
         }
     }
 }
@@ -307,6 +501,40 @@ pub trait Source {
     fn request_budget(&self) -> Option<RequestBudget> {
         None
     }
+
+    /// The request limit asking about a spec counts against (task 092: the router answers with the budget
+    /// of the spec's source); this default is [`Source::request_budget`].
+    fn request_budget_for(&self, spec: &SourceSpec) -> Option<RequestBudget> {
+        let _ = spec;
+        self.request_budget()
+    }
+
+    /// What this run lacks to ask about a spec, as the clause of the "source not configured" line
+    /// ([`Error::SourceNotConfigured`]): a source this build does not have, a key that is not set; `None`
+    /// when the source can be asked (task 092). The default asks anything.
+    fn missing(&self, spec: &SourceSpec) -> Option<String> {
+        let _ = spec;
+        None
+    }
+
+    /// Whether the addon publishes a Forever build, from what the source keeps without a request (tasks
+    /// 011, 078: `list` and the window stay offline); `unknown` wherever the source does not name Forever,
+    /// never inferred (task 092), which is this default.
+    fn cached_forever_build(&self, spec: &SourceSpec, channel: Channel) -> ForeverBuild {
+        let _ = (spec, channel);
+        ForeverBuild::Unknown
+    }
+}
+
+/// The error of a spec a source cannot ask about: [`Error::SourceNotConfigured`] with the source's
+/// [`Source::missing`] clause, `None` when it can.
+pub fn not_configured<S: Source + ?Sized>(source: &S, spec: &SourceSpec) -> Option<Error> {
+    source
+        .missing(spec)
+        .map(|missing| Error::SourceNotConfigured {
+            spec: spec.to_string(),
+            missing,
+        })
 }
 
 /// A source's request limit as this run sees it (task 068): the requests left before the source refuses,
@@ -328,12 +556,14 @@ pub struct RequestBudget {
     pub hint: String,
 }
 
-/// One HTTP GET, as a source issues it.
+/// One HTTP request, as a source issues it: a GET, or a POST with its body ([`Http::post`], task 092).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     pub url: String,
     /// Header name and value; the names are sent as given.
     pub headers: Vec<(String, String)>,
+    /// The body of a POST; `None` for a GET.
+    pub body: Option<Vec<u8>>,
 }
 
 impl Request {
@@ -341,6 +571,16 @@ impl Request {
         Request {
             url: url.into(),
             headers: Vec::new(),
+            body: None,
+        }
+    }
+
+    /// A POST with its body (a JSON document for the APIs that take one; the caller sets `Content-Type`).
+    pub fn post(url: impl Into<String>, body: impl Into<Vec<u8>>) -> Request {
+        Request {
+            url: url.into(),
+            headers: Vec::new(),
+            body: Some(body.into()),
         }
     }
 
@@ -378,11 +618,21 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a s
         .map(|(_, value)| value.as_str())
 }
 
-/// The network behind a source. One method, so a stub is a few lines and a test never opens a socket.
+/// The network behind a source. A GET and a POST, so a stub is a few lines and a test never opens a socket.
 pub trait Http {
     /// Sends a GET and returns whatever came back; only a transport failure is an error, a status is the
     /// caller's to read.
     fn get(&self, request: &Request) -> Result<Response>;
+
+    /// Sends a POST with the request's body (task 092: the bulk and match lookups of the M4 sources), and
+    /// returns whatever came back like [`Http::get`]. This default sends nothing and fails as the network
+    /// does, for a stand-in that only ever answers GETs.
+    fn post(&self, request: &Request) -> Result<Response> {
+        Err(Error::Network {
+            url: request.url.clone(),
+            reason: "this client sends no POST".to_string(),
+        })
+    }
 }
 
 /// The real client: `ureq` over rustls, with mrgl's user agent, a connect and a response timeout, and the
@@ -412,52 +662,77 @@ impl Default for UreqHttp {
     }
 }
 
+/// The error of a request that got no answer, or whose body could not be read.
+fn network_error(request: &Request, reason: String) -> Error {
+    Error::Network {
+        url: request.url.clone(),
+        reason,
+    }
+}
+
+/// The answer `ureq` read, as a [`Response`]: the status, the headers and the whole body.
+fn ureq_response(
+    request: &Request,
+    answer: std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<Response> {
+    let mut response = answer.map_err(|error| network_error(request, error.to_string()))?;
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            )
+        })
+        .collect();
+    let body = response
+        .body_mut()
+        .with_config()
+        // An addon zip is megabytes; a limit keeps a runaway answer from eating the memory.
+        .limit(512 * 1024 * 1024)
+        .read_to_vec()
+        .map_err(|error| network_error(request, format!("reading the body: {error}")))?;
+    Ok(Response {
+        status,
+        headers,
+        body,
+    })
+}
+
 impl Http for UreqHttp {
     fn get(&self, request: &Request) -> Result<Response> {
-        let network = |reason: String| Error::Network {
-            url: request.url.clone(),
-            reason,
-        };
         let mut call = self.agent.get(&request.url);
         for (name, value) in &request.headers {
             call = call.header(name, value);
         }
-        let mut response = call.call().map_err(|error| network(error.to_string()))?;
-        let status = response.status().as_u16();
-        let headers = response
-            .headers()
-            .iter()
-            .map(|(name, value)| {
-                (
-                    name.as_str().to_string(),
-                    String::from_utf8_lossy(value.as_bytes()).into_owned(),
-                )
-            })
-            .collect();
-        let body = response
-            .body_mut()
-            .with_config()
-            // An addon zip is megabytes; a limit keeps a runaway answer from eating the memory.
-            .limit(512 * 1024 * 1024)
-            .read_to_vec()
-            .map_err(|error| network(format!("reading the body: {error}")))?;
-        Ok(Response {
-            status,
-            headers,
-            body,
-        })
+        ureq_response(request, call.call())
+    }
+
+    fn post(&self, request: &Request) -> Result<Response> {
+        let mut call = self.agent.post(&request.url);
+        for (name, value) in &request.headers {
+            call = call.header(name, value);
+        }
+        let body: &[u8] = request.body.as_deref().unwrap_or_default();
+        ureq_response(request, call.send(body))
     }
 }
 
 /// The offline stand-in: a folder of files, one per URL. `https://api.github.com/repos/o/r/releases?per_page=30`
 /// is answered from `<root>/api.github.com/repos/o/r/releases` or, when that is missing, the same path
-/// with `.json`; the query string is ignored but for a `page` above 1, which answers from the same path with
-/// `.page-<n>` appended (`releases.page-2.json`, task 042); a path with no file is a 404 with an empty body.
-/// Every answer carries an `ETag` derived from the file's content, and a request whose `If-None-Match` names
-/// that tag gets a 304 without a body, so the cache is testable too. A file `<answer>.headers` next to an
-/// answer adds its `Name: value` lines to the answer's headers, and its `Status: <code>` line sets the status
-/// (a `Link` to the next page, a 403 with the rate-limit headers; task 042). The requests are kept for the
-/// tests to read.
+/// with `.json`; a path with no file is a 404 with an empty body. The query string picks a file of its own
+/// first (task 092): `?game_version=retail&id=7` is answered from `<path>@game_version=retail&id=7` (or with
+/// `.json`), the pairs in the order of their names, a `page` left out and a character Windows refuses in a
+/// file name (`<>:"/\|?*`) written as `_`, so two answers of one path that differ only in the query come
+/// from two files; without such a file the query is ignored, as it always was. A `page` above 1 answers
+/// from the same name with `.page-<n>` appended (`releases.page-2.json`, task 042). Every answer carries an
+/// `ETag` derived from the file's content, and a request whose `If-None-Match` names that tag gets a 304
+/// without a body, so the cache is testable too. A file `<answer>.headers` next to an answer adds its
+/// `Name: value` lines to the answer's headers, and its `Status: <code>` line sets the status (a `Link` to
+/// the next page, a 403 with the rate-limit headers; task 042). A POST is answered like a GET of its URL,
+/// from the same files (task 092). The requests are kept for the tests to read, a POST with its body.
 pub struct FolderHttp {
     root: PathBuf,
     requests: Mutex<Vec<Request>>,
@@ -501,6 +776,63 @@ impl FolderHttp {
         path
     }
 
+    /// The name part a URL's query adds to its file (task 092): `@` and the pairs sorted by name, `page`
+    /// left out (the pages have their own suffix) and every character Windows refuses in a file name made
+    /// `_`; `None` for a URL without a query, or with `page` alone.
+    pub fn query_suffix(url: &str) -> Option<String> {
+        let (_, query) = url.split_once('?')?;
+        let query = query.split('#').next().unwrap_or_default();
+        let mut pairs: Vec<&str> = query
+            .split('&')
+            .filter(|pair| {
+                !pair.is_empty() && pair.split_once('=').map_or(*pair, |(key, _)| key) != "page"
+            })
+            .collect();
+        if pairs.is_empty() {
+            return None;
+        }
+        pairs.sort_by_key(|pair| pair.split_once('=').map_or(*pair, |(key, _)| key));
+        let joined: String = pairs
+            .join("&")
+            .chars()
+            .map(|c| {
+                if c.is_control() || "<>:\"/\\|?*".contains(c) {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        Some(format!("@{joined}"))
+    }
+
+    /// The answer file of a URL: the one of its query when it exists ([`FolderHttp::query_suffix`]), else
+    /// the one of its path alone; each with the page suffix, the bare name first and then with `.json`.
+    /// Nothing found is the path's `.json` name, which reads as a 404.
+    fn answer_file(&self, url: &str) -> PathBuf {
+        let path = self.path_for(url);
+        let page = page_of(url)
+            .filter(|page| *page > 1)
+            .map(|page| format!(".page-{page}"))
+            .unwrap_or_default();
+        let named = |query: &str, json: &str| {
+            let mut name = path.clone().into_os_string();
+            name.push(format!("{query}{page}{json}"));
+            PathBuf::from(name)
+        };
+        let mut candidates = Vec::new();
+        if let Some(query) = Self::query_suffix(url) {
+            candidates.push(named(&query, ""));
+            candidates.push(named(&query, ".json"));
+        }
+        candidates.push(named("", ""));
+        let missing = named("", ".json");
+        candidates
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+            .unwrap_or(missing)
+    }
+
     /// The tag of a body: its length and an FNV-1a hash, quoted as an entity tag.
     pub fn etag_of(body: &[u8]) -> String {
         let hash = body.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
@@ -508,10 +840,9 @@ impl FolderHttp {
         });
         format!("\"{}-{hash:016x}\"", body.len())
     }
-}
 
-impl Http for FolderHttp {
-    fn get(&self, request: &Request) -> Result<Response> {
+    /// The answer to a GET or a POST, from the files; the request is kept first.
+    fn answer(&self, request: &Request) -> Result<Response> {
         if let Ok(mut requests) = self.requests.lock() {
             requests.push(request.clone());
         }
@@ -522,19 +853,7 @@ impl Http for FolderHttp {
                 reason: "offline, the stub folder is missing".to_string(),
             });
         }
-        let mut path = self.path_for(&request.url);
-        if let Some(page) = page_of(&request.url).filter(|page| *page > 1) {
-            let mut paged = path.into_os_string();
-            paged.push(format!(".page-{page}"));
-            path = PathBuf::from(paged);
-        }
-        let file = if path.is_file() {
-            path
-        } else {
-            let mut with_json = path.clone().into_os_string();
-            with_json.push(".json");
-            PathBuf::from(with_json)
-        };
+        let file = self.answer_file(&request.url);
         let body = match std::fs::read(&file) {
             Ok(body) => body,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
@@ -579,6 +898,16 @@ impl Http for FolderHttp {
             headers,
             body,
         })
+    }
+}
+
+impl Http for FolderHttp {
+    fn get(&self, request: &Request) -> Result<Response> {
+        self.answer(request)
+    }
+
+    fn post(&self, request: &Request) -> Result<Response> {
+        self.answer(request)
     }
 }
 
@@ -630,7 +959,7 @@ pub fn local_time_text(seconds: i64) -> String {
 }
 
 /// A client picked by the environment: the folder stub when `MRGL_HTTP_STUB` names a folder, else the real
-/// one. The command line and the window build their sources through this.
+/// one. The command line and the window build their sources through this ([`Sources::from_env`]).
 pub fn http_from_env() -> Box<dyn Http> {
     match std::env::var_os(HTTP_STUB_ENV).filter(|value| !value.is_empty()) {
         Some(folder) => Box::new(FolderHttp::new(folder)),
@@ -642,11 +971,30 @@ impl<H: Http + ?Sized> Http for Box<H> {
     fn get(&self, request: &Request) -> Result<Response> {
         (**self).get(request)
     }
+
+    fn post(&self, request: &Request) -> Result<Response> {
+        (**self).post(request)
+    }
 }
 
 impl<H: Http + ?Sized> Http for &H {
     fn get(&self, request: &Request) -> Result<Response> {
         (**self).get(request)
+    }
+
+    fn post(&self, request: &Request) -> Result<Response> {
+        (**self).post(request)
+    }
+}
+
+/// One client shared by the router's sources (task 092).
+impl<H: Http + ?Sized> Http for std::sync::Arc<H> {
+    fn get(&self, request: &Request) -> Result<Response> {
+        (**self).get(request)
+    }
+
+    fn post(&self, request: &Request) -> Result<Response> {
+        (**self).post(request)
     }
 }
 
@@ -724,6 +1072,10 @@ impl Http for MapHttp {
             body: Vec::new(),
         }))
     }
+
+    fn post(&self, request: &Request) -> Result<Response> {
+        self.get(request)
+    }
 }
 
 #[cfg(test)]
@@ -753,22 +1105,222 @@ mod tests {
 
     #[test]
     fn a_bad_spec_names_the_accepted_shape() {
-        for spec in [
-            "Questie/Questie",
-            "github:Questie",
-            "github:Questie/Questie/releases",
-            "github:/Questie",
-            "github:Que stie/Questie",
-            "wago:abc",
-            "",
+        for (spec, hint) in [
+            ("Questie/Questie", SPEC_FORMS),
+            ("github:Questie", GITHUB_FORM),
+            ("github:Questie/Questie/releases", GITHUB_FORM),
+            ("github:/Questie", GITHUB_FORM),
+            ("github:Que stie/Questie", GITHUB_FORM),
+            ("bitbucket:abc", SPEC_FORMS),
+            ("", SPEC_FORMS),
+            ("wago:", WAGO_FORM),
+            ("wago:ab-c", WAGO_FORM),
+            ("wowi:abc", WOWI_FORM),
+            ("wowi:0", WOWI_FORM),
+            ("curse:-1", CURSE_FORM),
+            ("curse:1234567890123", CURSE_FORM),
+            ("https://addons.wago.io/addons/details", WAGO_PAGE),
+            ("https://www.curseforge.com/wow/addons/details", CURSE_PAGE),
+            (
+                "https://www.wowinterface.com/downloads/fileinfo.php",
+                WOWI_FORM,
+            ),
+            ("https://example.com/addon", SPEC_FORMS),
         ] {
             let error = SourceSpec::parse(spec).unwrap_err().to_string();
-            assert!(
-                error.starts_with("unknown source: ")
-                    && error.ends_with("(expected github:<owner>/<repo>)"),
-                "{spec}: {error}"
+            assert_eq!(error, format!("unknown source: {spec} ({hint})"), "{spec}");
+        }
+        assert_eq!(
+            SourceSpec::parse("github:Questie").unwrap_err().to_string(),
+            "unknown source: github:Questie (expected github:<owner>/<repo>)"
+        );
+    }
+
+    #[test]
+    fn the_other_sources_read_their_ids_and_print_them_canonically() {
+        let wowi = || SourceSpec::WowInterface { id: "5108".into() };
+        let curse = || SourceSpec::CurseForge { id: "3358".into() };
+        let cases = [
+            (
+                "wago:L6Jb2R6v",
+                SourceSpec::Wago {
+                    id: "L6Jb2R6v".into(),
+                },
+                "wago:L6Jb2R6v",
+            ),
+            (" wowi:5108 ", wowi(), "wowi:5108"),
+            ("wowi:005108", wowi(), "wowi:5108"),
+            ("curse:3358", curse(), "curse:3358"),
+            (
+                "https://www.wowinterface.com/downloads/info5108-Clique.html",
+                wowi(),
+                "wowi:5108",
+            ),
+            (
+                "http://wowinterface.com/downloads/info5108",
+                wowi(),
+                "wowi:5108",
+            ),
+            (
+                "https://www.wowinterface.com/downloads/info5108.html#info",
+                wowi(),
+                "wowi:5108",
+            ),
+            (
+                "https://www.curseforge.com/projects/3358/",
+                curse(),
+                "curse:3358",
+            ),
+            (
+                "https://WWW.GitHub.com/Questie/Questie?tab=readme",
+                SourceSpec::GitHub {
+                    owner: "Questie".into(),
+                    repo: "Questie".into(),
+                },
+                "github:Questie/Questie",
+            ),
+        ];
+        for (text, spec, canonical) in cases {
+            let parsed = SourceSpec::parse(text).unwrap_or_else(|error| panic!("{text}: {error}"));
+            assert_eq!(parsed, spec, "{text}");
+            assert_eq!(parsed.to_string(), canonical, "{text}");
+            assert_eq!(SourceSpec::parse(canonical).unwrap(), parsed, "{canonical}");
+            assert_eq!(
+                serde_json::to_value(&parsed).unwrap(),
+                serde_json::json!(canonical)
             );
         }
+    }
+
+    #[test]
+    fn a_spec_knows_its_source_and_its_name_hint() {
+        let kinds: Vec<(SourceKind, Option<String>)> =
+            ["github:o/Repo", "wago:abc", "wowi:1", "curse:2"]
+                .into_iter()
+                .map(|text| {
+                    let spec = SourceSpec::parse(text).unwrap();
+                    (spec.kind(), spec.name_hint().map(str::to_string))
+                })
+                .collect();
+        assert_eq!(
+            kinds,
+            [
+                (SourceKind::GitHub, Some("Repo".to_string())),
+                (SourceKind::Wago, None),
+                (SourceKind::WowInterface, None),
+                (SourceKind::CurseForge, None),
+            ]
+        );
+        for kind in SourceKind::ALL {
+            assert_eq!(SourceKind::parse(kind.prefix()), Some(kind));
+            assert_eq!(SourceKind::parse(&kind.name().to_uppercase()), Some(kind));
+            assert_eq!(kind.to_string(), kind.prefix());
+            assert_eq!(SourceKind::ALL[kind.index()], kind);
+        }
+        assert_eq!(
+            SourceKind::parse("curseforge"),
+            Some(SourceKind::CurseForge)
+        );
+        assert_eq!(SourceKind::parse("bitbucket"), None);
+    }
+
+    #[test]
+    fn the_folder_stub_serves_two_queries_of_one_path_from_two_files() {
+        let root = std::env::temp_dir().join(format!("mrgl-stub-query-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("api.example.test").join("addons");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("abc@game_version=forever.json"), b"forever").unwrap();
+        std::fs::write(dir.join("abc@game_version=retail.json"), b"retail").unwrap();
+        std::fs::write(dir.join("abc.json"), b"any").unwrap();
+        std::fs::write(dir.join("get.php@d=7&id=5"), b"zip").unwrap();
+        std::fs::write(dir.join("list@kind=a_b.json"), b"[1]").unwrap();
+        std::fs::write(dir.join("list@kind=a_b.page-2.json"), b"[2]").unwrap();
+        let stub = FolderHttp::new(&root);
+        let body = |url: &str| {
+            let answer = stub.get(&Request::get(url)).unwrap();
+            (answer.status, String::from_utf8(answer.body).unwrap())
+        };
+        let url = "https://api.example.test/addons/abc?game_version=";
+        assert_eq!(body(&format!("{url}forever")), (200, "forever".into()));
+        assert_eq!(body(&format!("{url}retail")), (200, "retail".into()));
+        // A query without a file of its own falls back to the path alone, as before task 092.
+        assert_eq!(body(&format!("{url}mop")), (200, "any".into()));
+        assert_eq!(
+            body("https://api.example.test/addons/abc"),
+            (200, "any".into())
+        );
+        // The pairs are matched in the order of their names.
+        assert_eq!(
+            body("https://api.example.test/addons/get.php?id=5&d=7"),
+            (200, "zip".into())
+        );
+        // A character a file name cannot carry is `_`, and a page keeps its own suffix.
+        assert_eq!(
+            body("https://api.example.test/addons/list?kind=a:b&page=1"),
+            (200, "[1]".into())
+        );
+        assert_eq!(
+            body("https://api.example.test/addons/list?page=2&kind=a:b"),
+            (200, "[2]".into())
+        );
+        assert_eq!(
+            body("https://api.example.test/addons/nothing?game_version=retail").0,
+            404
+        );
+        assert_eq!(FolderHttp::query_suffix("https://h/x"), None);
+        assert_eq!(FolderHttp::query_suffix("https://h/x?page=2"), None);
+        assert_eq!(
+            FolderHttp::query_suffix("https://h/x?b=2&a=1&page=3"),
+            Some("@a=1&b=2".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_folder_stub_answers_a_post_from_the_same_files_and_keeps_its_body() {
+        let root = std::env::temp_dir().join(format!("mrgl-stub-post-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("api.example.test").join("addons");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("_recents@game_version=retail.json"), b"[]").unwrap();
+        let stub = FolderHttp::new(&root);
+        let request = Request::post(
+            "https://api.example.test/addons/_recents?game_version=retail",
+            b"{\"addons\":[\"abc\"]}".to_vec(),
+        )
+        .header("Content-Type", "application/json");
+        let answer = stub.post(&request).unwrap();
+        assert_eq!((answer.status, answer.body.as_slice()), (200, &b"[]"[..]));
+        let missing = stub
+            .post(&Request::post(
+                "https://api.example.test/addons/_match",
+                Vec::new(),
+            ))
+            .unwrap();
+        assert_eq!(missing.status, 404);
+        let requests = stub.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0], request);
+        assert_eq!(
+            requests[0].body.as_deref(),
+            Some(&b"{\"addons\":[\"abc\"]}"[..])
+        );
+        assert_eq!(Request::get("https://h/x").body, None);
+        // A client that answers GETs only refuses a POST as the network does; a shared one forwards it.
+        struct GetOnly;
+        impl Http for GetOnly {
+            fn get(&self, _request: &Request) -> Result<Response> {
+                unreachable!("no GET in this test")
+            }
+        }
+        assert_eq!(
+            GetOnly.post(&request).unwrap_err().to_string(),
+            "cannot reach https://api.example.test/addons/_recents?game_version=retail: this client sends no POST"
+        );
+        let shared: std::sync::Arc<dyn Http> = std::sync::Arc::new(FolderHttp::new(&root));
+        assert_eq!(shared.post(&request).unwrap().status, 200);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -466,7 +466,9 @@ fn every_fixture_release_is_classified_for_forever() {
     let github = github();
     for (name, build) in expected {
         let spec = spec(&format!("github:{name}"));
-        let SourceSpec::GitHub { owner, repo } = &spec;
+        let SourceSpec::GitHub { owner, repo } = &spec else {
+            unreachable!("a github: spec")
+        };
         let releases = github.releases(owner, repo).expect("the release list");
         let classified = match current_release(&releases) {
             None => ForeverBuild::Unknown,

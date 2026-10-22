@@ -92,9 +92,39 @@ pub enum Error {
         staging: PathBuf,
     },
 
-    /// A source spec the manager cannot read: not `github:<owner>/<repo>` (task 003).
+    /// A source spec the manager cannot read: none of `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`,
+    /// `curse:<id>` or a page address they are read from (tasks 003, 092).
     #[error("unknown source: {spec} ({hint})")]
     UnknownSource { spec: String, hint: &'static str },
+
+    /// A spec of a source this run cannot ask (task 092): this build does not have it, or its key is not
+    /// set; `missing` says which ([`crate::sources::Source::missing`]).
+    #[error("source not configured: {spec} ({missing})")]
+    SourceNotConfigured { spec: String, missing: String },
+
+    /// A name on `mrgl key` that is no source with a key (task 093).
+    #[error("no key source: {name} (github, wago or curse)")]
+    NoKeySource { name: String },
+
+    /// `mrgl key` for a source whose API takes no key (WoWInterface, task 093).
+    #[error("no key for {source_name}: its API needs none")]
+    KeyNotNeeded { source_name: &'static str },
+
+    /// `mrgl key set` read no key it can store (task 093); the reason never carries the value.
+    #[error("no key read from the standard input: {reason}")]
+    KeyInput { reason: String },
+
+    /// The key store cannot be used in this run: turned off, or a system without one (task 093).
+    #[error("the key store is not available: {reason}")]
+    KeyStoreUnavailable { reason: String },
+
+    /// The key store refused a read, a write or a removal (task 093); the reason never carries the value.
+    #[error("cannot {action} the key in {store}: {reason}")]
+    KeyStore {
+        action: &'static str,
+        store: &'static str,
+        reason: String,
+    },
 
     /// The network: no connection, a timeout, a TLS failure, a body cut short.
     #[error("cannot reach {url}: {reason}")]

@@ -35,14 +35,14 @@ use mrgl_core::install::{
     PickInstalled, PickStep, SourceInstalled, SourceRequest,
 };
 use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
+use mrgl_core::keys;
 use mrgl_core::last_check;
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sets::{self, AddonSet};
-use mrgl_core::sources::github::GitHub;
-use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
+use mrgl_core::sources::{self, Channel, Source, SourceSpec, Sources, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
 use mrgl_core::update::{self, CheckProgress, SummaryOf, UpdateState};
 use mrgl_core::voice::{Kind, Voice};
@@ -100,11 +100,13 @@ enum Command {
         /// remembered).
         folder: Option<PathBuf>,
     },
-    /// Install an addon from a source: the path of a zip in hand, or `github:<owner>/<repo>` (the current
-    /// release's asset for the flavor; an addon installed already at that version is left as it is), later
-    /// `wago:`, `wowi:`, `curse:`.
+    /// Install an addon from a source: the path of a zip in hand, or a source spec (the current release's
+    /// asset for the flavor; an addon installed already at that version is left as it is):
+    /// `github:<owner>/<repo>`, or `wago:<id>`, `wowi:<id>`, `curse:<id>` once this build has that source.
     Add {
-        /// The source spec (`github:<owner>/<repo>`), or a zip path (a `.zip` name or an existing file).
+        /// The source spec (`github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`, `curse:<id>`, or a page
+        /// address with the id: github.com/<owner>/<repo>, www.wowinterface.com/downloads/info<id>,
+        /// www.curseforge.com/projects/<id>), or a zip path (a `.zip` name or an existing file).
         source: String,
         /// The flavor to install into: `forever`, `retail`, `classic`, `era`, a `.flavor.info` id or a
         /// flavor folder. The installed build is read from the game folder (`MRGL_ROOT` or `mrgl root`)
@@ -311,6 +313,34 @@ enum Command {
         #[command(subcommand)]
         action: SetAction,
     },
+    /// The API keys of the sources (github, wago, curse): store one in the Windows Credential Manager from
+    /// the standard input, remove it, or list where each comes from. A key is never an argument and never
+    /// printed; MRGL_GITHUB_TOKEN, MRGL_WAGO_KEY and MRGL_CURSEFORGE_KEY in the environment come first.
+    Key {
+        #[command(subcommand)]
+        action: KeyAction,
+    },
+}
+
+/// What `mrgl key` does (task 093).
+#[derive(Subcommand, Debug)]
+enum KeyAction {
+    /// Store a source's key as mrgl:<source> in the Windows Credential Manager, read from the standard
+    /// input (pipe it in: `Get-Clipboard | mrgl key set wago`; in a terminal, paste it and press Enter).
+    Set {
+        /// The source: github, wago or curse.
+        source: String,
+        /// Anything after the source: refused without being echoed, a key is never an argument.
+        #[arg(hide = true, num_args = 0.., allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+    /// Remove a source's key from the Windows Credential Manager.
+    Clear {
+        /// The source: github, wago or curse.
+        source: String,
+    },
+    /// Every key by name and where it comes from: the environment, the credential store, or not set.
+    List,
 }
 
 /// A `--max-unpacked` size (task 039): `3G`, `500M`, a number of bytes ([`zip_entry::parse_size`]).
@@ -595,8 +625,137 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             yes,
         } => update_command(reporter, name.as_deref(), flavor.as_deref(), dry_run, yes)?,
         Command::Set { action } => set_command(reporter, action)?,
+        Command::Key { action } => key_command(reporter, action)?,
     }
     Ok(())
+}
+
+/// `mrgl key set|clear <source>` and `mrgl key list` (task 093): a key from the standard input into the
+/// key store (the Windows Credential Manager, `mrgl:<source>`), out of it, or every key by name with where
+/// it comes from. The value is never an argument and never printed, in the text, the JSON or an error.
+fn key_command(reporter: &Reporter, action: KeyAction) -> Result<(), String> {
+    let store = keys::store_of_process();
+    let env = |name: &str| std::env::var_os(name);
+    let in_env =
+        |name: &str| env(name).is_some_and(|value| !value.to_string_lossy().trim().is_empty());
+    match action {
+        KeyAction::List => {
+            let states = keys::list(&env, &*store);
+            let available = store.available().err().map(|error| error.to_string());
+            let set = states.iter().filter(|state| state.origin.is_set()).count();
+            if reporter.json {
+                reporter.document(serde_json::json!({
+                    "kind": "keys",
+                    "api_keys": &states,
+                    "store": store.name(),
+                    "store_unavailable": available,
+                }));
+                return Ok(());
+            }
+            for state in &states {
+                reporter.line(state.text());
+            }
+            if let Some(reason) = &available {
+                reporter.say(Kind::Warning, reason);
+            }
+            let kind = if set == 0 {
+                Kind::Nothing
+            } else {
+                Kind::Success
+            };
+            reporter.say(
+                kind,
+                format!("{set} of {} keys set, none shown", states.len()),
+            );
+            Ok(())
+        }
+        KeyAction::Set { source, rest } => {
+            if !rest.is_empty() {
+                return Err(format!(
+                    "a key is never an argument, the shell's history would keep it: pipe it in (Get-Clipboard | mrgl key set {source}); nothing stored"
+                ));
+            }
+            let kind = keys::keyed_source(&source).map_err(|error| error.to_string())?;
+            let name = keys::name_of(kind).unwrap_or_default();
+            let target = keys::target_name(kind);
+            store.available().map_err(|error| error.to_string())?;
+            let stdin = std::io::stdin();
+            let terminal = stdin.is_terminal();
+            if terminal && !reporter.json {
+                reporter.say(
+                    Kind::Progress,
+                    format!(
+                        "paste the {name} and press Enter; it goes to {}",
+                        store.name()
+                    ),
+                );
+            }
+            let value =
+                keys::read_key(&mut stdin.lock(), terminal).map_err(|error| error.to_string())?;
+            keys::set(&*store, kind, &value).map_err(|error| error.to_string())?;
+            let warnings: Vec<String> = in_env(name)
+                .then(|| format!("{name} is set in the environment too, which comes first"))
+                .into_iter()
+                .collect();
+            if reporter.json {
+                reporter.document(serde_json::json!({
+                    "kind": "key",
+                    "action": "set",
+                    "source": kind,
+                    "name": name,
+                    "target": target,
+                    "changed": true,
+                    "warnings": warnings,
+                }));
+                return Ok(());
+            }
+            for warning in &warnings {
+                reporter.say(Kind::Warning, warning);
+            }
+            reporter.say(
+                Kind::Success,
+                format!("{name} stored in {} as {target}", store.name()),
+            );
+            Ok(())
+        }
+        KeyAction::Clear { source } => {
+            let kind = keys::keyed_source(&source).map_err(|error| error.to_string())?;
+            let name = keys::name_of(kind).unwrap_or_default();
+            let target = keys::target_name(kind);
+            let removed = keys::clear(&*store, kind).map_err(|error| error.to_string())?;
+            let warnings: Vec<String> = in_env(name)
+                .then(|| format!("{name} is still set in the environment"))
+                .into_iter()
+                .collect();
+            if reporter.json {
+                reporter.document(serde_json::json!({
+                    "kind": "key",
+                    "action": "clear",
+                    "source": kind,
+                    "name": name,
+                    "target": target,
+                    "changed": removed,
+                    "warnings": warnings,
+                }));
+                return Ok(());
+            }
+            for warning in &warnings {
+                reporter.say(Kind::Warning, warning);
+            }
+            if removed {
+                reporter.say(
+                    Kind::Success,
+                    format!("{name} removed from {} ({target})", store.name()),
+                );
+            } else {
+                reporter.say(
+                    Kind::Nothing,
+                    format!("no {name} in {} ({target}), nothing removed", store.name()),
+                );
+            }
+            Ok(())
+        }
+    }
 }
 
 /// The flavor folder a `--flavor` spec names: a friendly name or an id under the game root, or a folder.
@@ -998,8 +1157,9 @@ fn check_dependencies(scan: &Scan, warnings: &mut Vec<String>) -> Vec<AddonDepen
 }
 
 /// Task 011: the Forever status of every managed addon of a Forever listing, by its primary folder in lower
-/// case; `None` for another flavor. Offline: the build signal comes from the GitHub source's cache alone (the
-/// release list and the `release.json` the last `add` fetched), so without a cached list it is `unknown`.
+/// case; `None` for another flavor. Offline: the build signal comes from each source's cache alone (task
+/// 092: [`Source::cached_forever_build`]; GitHub's release list and the `release.json` the last `add`
+/// fetched), so without a cached list, or from a source that does not name Forever, it is `unknown`.
 fn forever_statuses(
     scan: &Scan,
     warnings: &mut Vec<String>,
@@ -1017,13 +1177,13 @@ fn forever_statuses(
             }
         };
     // A corrupt sidecar is `list_state`'s to report (task 037: rebuilt without a word).
-    let github = GitHub::from_env(sources::http_from_env());
+    let sources = Sources::from_env();
     for entry in loaded.state.addons.values() {
         let Some(folder) = entry.folders.first() else {
             continue;
         };
         let build = match SourceSpec::parse(&entry.source) {
-            Ok(spec) => github.cached_forever_build(&spec, entry.channel()),
+            Ok(spec) => sources.cached_forever_build(&spec, entry.channel()),
             Err(_) => ForeverBuild::Unknown,
         };
         statuses.insert(
@@ -1229,14 +1389,18 @@ fn add_command(
     max_unpacked: Option<u64>,
 ) -> Result<(), String> {
     let spec = SourceSpec::parse(source).map_err(|error| error.to_string())?;
+    // Task 092: a source this run cannot ask names what is missing before anything else is read.
+    let sources = Sources::from_env();
+    if let Some(error) = sources::not_configured(&sources, &spec) {
+        return Err(error.to_string());
+    }
     let mut warnings = Vec::new();
     if !dry_run {
         let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
         let folder_name = engine.flavor.folder_name();
-        let github = GitHub::from_env(sources::http_from_env());
         let SourceInstalled { pick, outcome } = engine
             .install_from_source(
-                &github,
+                &sources,
                 &SourceRequest::current(spec.clone()),
                 &mut install_progress(reporter, &engine, &mut warnings),
             )
@@ -1299,8 +1463,7 @@ fn add_command(
     if !reporter.json {
         reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
     }
-    let github = GitHub::from_env(sources::http_from_env());
-    let pick = github
+    let pick = sources
         .resolve(&spec, &target)
         .map_err(|error| error.to_string())?;
     // Task 041: a pick from the cached release list, offline, is a warning on the screen and in the JSON.
@@ -2392,8 +2555,8 @@ fn import_command(
             format!("{verb} {count} from {file_name} into {folder_name}{versions}"),
         );
     }
-    let github = GitHub::from_env(sources::http_from_env());
-    let report = list_file::import(&engine, &github, &list, exact, dry_run)
+    let sources = Sources::from_env();
+    let report = list_file::import(&engine, &sources, &list, exact, dry_run)
         .map_err(|error| error.to_string())?;
     warnings.extend(report.warnings.iter().cloned());
     for item in &report.items {
@@ -2437,6 +2600,7 @@ fn import_command(
             (Outcome::WouldInstall, "to install"),
             (Outcome::AlreadyInstalled, "already installed"),
             (Outcome::NotImportable, "not importable"),
+            (Outcome::SourceNotConfigured, "source not configured"),
             (Outcome::Skipped, "skipped"),
             (Outcome::Failed, "failed"),
             (Outcome::VersionNotOffered, "version not offered"),
@@ -2447,7 +2611,10 @@ fn import_command(
             count => Some(format!("{count} {label}")),
         })
         .collect();
-        let kind = if !failed.is_empty() || report.count(Outcome::VersionNotOffered) > 0 {
+        let kind = if !failed.is_empty()
+            || report.count(Outcome::VersionNotOffered) > 0
+            || report.count(Outcome::SourceNotConfigured) > 0
+        {
             Kind::Warning
         } else if report.count(Outcome::Installed) + report.count(Outcome::WouldInstall) > 0 {
             Kind::Success
@@ -2496,6 +2663,9 @@ fn import_line(item: &list_file::Imported) -> String {
         Outcome::WouldInstall => format!("would install {version} from {}{listed}", item.source),
         Outcome::AlreadyInstalled => format!("already installed, left alone: {}", item.detail),
         Outcome::NotImportable => format!("not importable ({}): {}", item.source, item.detail),
+        Outcome::SourceNotConfigured => {
+            format!("source not configured ({}): {}", item.source, item.detail)
+        }
         Outcome::Skipped => format!("skipped ({}): {}", item.source, item.detail),
         Outcome::Failed => format!("failed: {}", item.detail),
         Outcome::VersionNotOffered => format!(
@@ -2589,10 +2759,10 @@ fn update_command(
             format!("checking {what} of {folder_name} against their sources"),
         );
     }
-    let github = GitHub::from_env(sources::http_from_env());
+    let sources = Sources::from_env();
     // Task 068: a progress line before each addon the source is asked about, its data line once it is
     // checked, and the one line of a stop before the rate limit, as they happen.
-    let check = update::check(&engine, &github, name, &mut |step| {
+    let check = update::check(&engine, &sources, name, &mut |step| {
         if reporter.json {
             return;
         }
@@ -2674,7 +2844,7 @@ fn update_command(
                 );
             }
             let outcome = engine.install_from_source(
-                &github,
+                &sources,
                 &request,
                 &mut install_progress(reporter, &engine, &mut warnings),
             );

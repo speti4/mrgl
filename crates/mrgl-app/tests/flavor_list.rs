@@ -1005,3 +1005,50 @@ fn the_rows_read_the_last_check_file_the_command_line_writes() {
         Some("up to date")
     );
 }
+
+// --- task 092: the rows of a source this build does not have ---
+
+#[test]
+fn a_row_of_a_source_this_build_lacks_has_its_badge_and_says_what_is_missing() {
+    let fixture = Fixture::game_named("not-configured");
+    let home = fixture.home();
+    let flavor_home = FlavorHome::at(&home, &FlavorId::Forever);
+    let mut forever = flavor_home
+        .read_state(&FlavorId::Forever)
+        .expect("sidecar")
+        .state;
+    forever
+        .addons
+        .insert("Loose".into(), entry("curse:42", "1.0", &["Loose"]));
+    flavor_home.write_state(&forever).expect("forever sidecar");
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&home),
+        Voice::new(false),
+    );
+    let loose = row(flavor(&answer.flavors, "wowf"), "Loose");
+    assert!(loose.managed && !loose.guessed);
+    let source = loose.source.as_ref().expect("the entry's source");
+    assert_eq!((source.kind, source.id.as_str()), ("curseforge", "42"));
+    let check = loose.check.as_ref().expect("the offline check's answer");
+    assert_eq!(check.state, mrgl_core::update::UpdateState::NotChecked);
+    assert_eq!(
+        check.detail.as_deref(),
+        Some("source not configured: curse:42 (this build has no CurseForge source)")
+    );
+    assert_eq!(
+        loose.forever.as_ref().expect("a status").build.as_str(),
+        "unknown",
+        "never inferred"
+    );
+    for (spec, kind, id) in [
+        ("wago:aB1cD2eF", "wago", "aB1cD2eF"),
+        ("wowi:123", "wowi", "123"),
+        ("curse:42", "curseforge", "42"),
+        ("github:o/r", "github", "o/r"),
+    ] {
+        let badge = list::badge_of_source(spec);
+        assert_eq!((badge.kind, badge.id.as_str()), (kind, id), "{spec}");
+    }
+}
