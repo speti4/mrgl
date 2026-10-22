@@ -31,6 +31,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The window's update reports a second entry of the same source that has the pick's version ([099](https://github.com/speti4/mrgl/blob/main/tasks/done/099-the-windows-update-reports-a-second-entry-of-the-same-source.md))
 - The window's adopt view: the report and `--apply` in the toolbox ([109](https://github.com/speti4/mrgl/blob/main/tasks/done/109-the-windows-adopt-view.md))
 - The window's install paths warn in a folder the CurseForge app manages ([110](https://github.com/speti4/mrgl/blob/main/tasks/done/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md))
+- The window's adopt apply reuses the shown report's answers ([113](https://github.com/speti4/mrgl/blob/main/tasks/done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md))
 
 ### M3 Toolbox
 
