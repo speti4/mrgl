@@ -7013,6 +7013,43 @@ fn list_json_into_a_reader_that_closes_early_ends_quietly_with_exit_0() {
     assert_eq!(stderr, "", "nothing is said about the closed pipe");
 }
 
+// --- task 084: the addon in flight finishes before a closed pipe ends the run ---
+
+#[test]
+fn add_into_a_closed_pipe_installs_the_addon_in_flight_and_leaves_no_staging_folder() {
+    let game = Game::new("closed-pipe-install");
+    // The reader is gone before `mrgl` writes its first line, the `resolving` line inside the install: the
+    // run goes on quietly until the addon is installed, then ends with 0.
+    let (reader, writer) = std::io::pipe().expect("a pipe");
+    drop(reader);
+    let output = game
+        .mrgl()
+        .args(["add", "github:Questie/Questie", "--flavor", "forever"])
+        .stdout(writer)
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run mrgl");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert_eq!(stderr, "", "nothing is said about the closed pipe");
+    assert!(
+        game.addon("Questie").join("Questie.toc").is_file(),
+        "the addon in flight is installed"
+    );
+    let state = std::fs::read_to_string(game.state_path()).expect("the sidecar is written");
+    assert!(state.contains("github:Questie/Questie"), "{state}");
+    let staging = game.home.join("wowf").join("staging");
+    let left: Vec<String> = std::fs::read_dir(&staging)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(left, Vec::<String>::new(), "no staging folder is left");
+}
+
 /// Task 079: `mrgl.exe` carries the workspace version in its file properties, the `VS_VERSION_INFO`
 /// resource `build.rs` writes next to the icon, read back from the built exe by the core's own PE reader.
 #[cfg(all(windows, target_env = "msvc"))]

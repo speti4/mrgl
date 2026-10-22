@@ -344,9 +344,37 @@ fn is_closed_pipe(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::BrokenPipe
 }
 
+/// Whether an addon's install is in flight (task 084): a closed pipe then waits for it ([`InFlight`]).
+static IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether a write found the pipe closed while an install was in flight.
+static PIPE_CLOSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// An addon's install in flight (task 084): while the guard lives, a closed pipe does not end the run at
+/// the next write ([`emit`] drops the line and goes on), so the swap, the sidecar write and the removal of
+/// the run's staging folders finish; when the guard goes, a pipe that closed meanwhile ends the run
+/// quietly with code 0, before the next addon starts.
+struct InFlight;
+
+impl InFlight {
+    fn begin() -> InFlight {
+        IN_FLIGHT.store(true, std::sync::atomic::Ordering::SeqCst);
+        InFlight
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+        if PIPE_CLOSED.load(std::sync::atomic::Ordering::SeqCst) {
+            std::process::exit(0);
+        }
+    }
+}
+
 /// The one writer of the command line (task 075): every line and document goes to stdout or stderr
 /// through here. A closed pipe ends the run: nobody is left to read the rest, so the process exits quietly
-/// with code 0 instead of panicking as `println!` does. Any other write error panics as `println!` would.
+/// with code 0 instead of panicking as `println!` does; while an install is in flight the exit waits for
+/// it to finish ([`InFlight`], task 084). Any other write error panics as `println!` would.
 fn emit(stream: Stream, text: std::fmt::Arguments<'_>) {
     use std::io::Write;
     let written = match stream {
@@ -361,6 +389,10 @@ fn emit(stream: Stream, text: std::fmt::Arguments<'_>) {
     };
     if let Err(error) = written {
         if is_closed_pipe(&error) {
+            if IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst) {
+                PIPE_CLOSED.store(true, std::sync::atomic::Ordering::SeqCst);
+                return;
+            }
             std::process::exit(0);
         }
         let name = match stream {
@@ -1315,7 +1347,9 @@ fn add_command(
 /// The progress of the one install path (task 055, [`Engine::install_from_source`]), the same lines for
 /// every caller: resolving, the pick, downloading, installing. A pick that is a guess is pushed to the
 /// warnings instead, so it is in the JSON document too and on the screen with the other warnings; in
-/// `--json` mode nothing else is said.
+/// `--json` mode nothing else is said. The callback holds the install's [`InFlight`] guard (task 084): it
+/// is a temporary of the engine call's statement, so a pipe that closes during the install ends the run
+/// once the engine call returns, with the addon in flight installed and its staging folders gone.
 fn install_progress<'a>(
     reporter: &'a Reporter,
     engine: &Engine,
@@ -1325,7 +1359,9 @@ fn install_progress<'a>(
         .flavor_name()
         .to_string();
     let folder_name = engine.flavor.folder_name();
+    let flight = InFlight::begin();
     move |step| {
+        let _in_flight = &flight;
         // Task 041: a pick from the cached release list, offline, is a warning on the screen and in the JSON.
         if let PickStep::Picked { pick } = step {
             warnings.extend(pick.stale_warning());
@@ -1602,6 +1638,7 @@ fn add_zip(
         let staged = engine
             .stage(&zip, &metadata)
             .map_err(|error| error.to_string())?;
+        warnings.extend(staged.sweep_warnings.iter().cloned());
         engine
             .refuse_links(&loaded.state, &staged.folders())
             .map_err(|error| error.to_string())?;

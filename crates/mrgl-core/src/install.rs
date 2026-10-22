@@ -17,6 +17,11 @@
 //! the write goes on; only a `WTF` write is refused while it runs. The engine asks the system's process list
 //! unless [`Engine::with_processes`] hands it another (the tests' stand-in client).
 //!
+//! Every download and every unpacked zip gets a run folder of its own under `staging\` ([`RunDir`], task
+//! 084), locked while the run holds it and removed on every path out; [`Engine::stage`] first sweeps the
+//! leftovers of runs that ended before their guard went ([`staging::sweep`]), never a folder another
+//! running mrgl holds.
+//!
 //! [`Engine::install_from_source`] is the one path of every source-backed install (task 055: `add
 //! github:`, `import`, `update`): it resolves the request on the addon's own channel (task 021), finds an
 //! addon the sidecar has from that source at that version already (and stops there), downloads the asset
@@ -42,6 +47,7 @@ use crate::flavor::{Flavor, FlavorId};
 use crate::interface::{self, InterfaceMismatch};
 use crate::scan;
 use crate::sources::{Channel, Pick, Source, SourceSpec, Target};
+use crate::staging::{self, RunDir};
 use crate::state::{self, Entry, FlavorHome, LoadedState, State};
 use crate::toc::{self, TocName};
 use crate::voice::Kind;
@@ -78,7 +84,8 @@ pub struct StagedAddon {
 }
 
 /// A zip unpacked and checked, waiting for the swap. Dropping it removes the staging folder, except after a
-/// failed revert, when the folder holds the previous version and stays.
+/// failed revert, when the folder holds the previous version and stays (its lock released, the sweep of
+/// task 084 never removes a folder with `previous\` in it).
 #[derive(Debug)]
 pub struct Staged {
     /// The zip it came from.
@@ -95,7 +102,11 @@ pub struct Staged {
     pub source: String,
     /// The `nolib` flag to record ([`Metadata::nolib`]).
     pub nolib: Option<bool>,
+    /// The warnings of the sweep before this stage (task 084): a leftover folder under `staging\` that
+    /// could not be removed. The commit carries them into [`Installed::warnings`].
+    pub sweep_warnings: Vec<String>,
     keep: bool,
+    run: RunDir,
 }
 
 impl Staged {
@@ -113,8 +124,9 @@ impl Staged {
 
 impl Drop for Staged {
     fn drop(&mut self) {
-        if !self.keep {
-            let _ = std::fs::remove_dir_all(&self.dir);
+        // The run folder goes with its guard, right after this; a failed revert's folder stays.
+        if self.keep {
+            self.run.keep();
         }
     }
 }
@@ -475,21 +487,25 @@ impl Engine {
 
     /// Unpacks a zip into a fresh folder under `staging\`, refusing any entry that would land outside it,
     /// finds the addon folders and settles the name and the version. Nothing in the game folder changes.
+    /// The leftovers of earlier runs under `staging\` are swept first (task 084, [`staging::sweep`]).
     pub fn stage(&self, zip: &Path, metadata: &Metadata) -> Result<Staged> {
         let stem = zip
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_else(|| "zip".to_string());
-        let dir = fresh_staging_dir(&self.home.staging_dir(), &stem)?;
+        let sweep_warnings = staging::sweep(&self.home.staging_dir());
+        let run = RunDir::create(&self.home.staging_dir(), &stem)?;
         let mut staged = Staged {
             zip: zip.to_path_buf(),
-            dir,
+            dir: run.path().to_path_buf(),
             addons: Vec::new(),
             name: String::new(),
             version: String::new(),
             source: metadata.source.clone(),
             nolib: metadata.nolib,
+            sweep_warnings,
             keep: false,
+            run,
         };
         let unpacked = staged.dir.join("unpacked");
         let files = unpack(zip, &unpacked, self.max_unpacked)?;
@@ -558,7 +574,7 @@ impl Engine {
         // client loads the new folders at `/reload`, so it is a warning, never a refusal (task 038).
         let client_warning = self.client_warning(RunningClient::install_warning);
 
-        let previous_dir = staged.dir.join("previous");
+        let previous_dir = staged.dir.join(staging::PREVIOUS_DIR);
         let mut journal: Vec<(PathBuf, PathBuf)> = Vec::new();
         let outcome = swap_all(&addons_dir, &staged, &stale, &previous_dir, &mut journal);
         if let Err((folder, reason)) = outcome {
@@ -578,7 +594,7 @@ impl Engine {
             });
         }
 
-        let mut warnings = Vec::new();
+        let mut warnings = std::mem::take(&mut staged.sweep_warnings);
         let mut files = BTreeMap::new();
         for addon in &staged.addons {
             for (path, hash) in &addon.files {
@@ -719,12 +735,11 @@ impl Engine {
             });
             return Ok(SourceInstalled { pick, outcome });
         }
-        let dir = fresh_staging_dir(
+        let download = RunDir::create(
             &self.home.staging_dir(),
             &format!("download-{}", pick.asset),
         )?;
-        let _download = RemoveOnDrop(dir.clone());
-        let zip = dir.join(state::file_safe(&pick.asset));
+        let zip = download.path().join(state::file_safe(&pick.asset));
         progress(PickStep::Downloading {
             pick: &pick,
             to: &zip,
@@ -1220,39 +1235,6 @@ fn plural(count: usize, noun: &str) -> String {
 /// The flavor as a message names it: the friendly name, else the id.
 fn flavor_label(id: &FlavorId) -> String {
     id.friendly_name().unwrap_or(id.as_str()).to_string()
-}
-
-/// A folder removed when the guard goes, on every path out of a function (a download in the staging folder).
-struct RemoveOnDrop(PathBuf);
-
-impl Drop for RemoveOnDrop {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-/// A fresh folder under `staging\`, named after the zip and the clock, never one that exists.
-fn fresh_staging_dir(staging: &Path, stem: &str) -> Result<PathBuf> {
-    let io = |path: &Path, source| Error::Io {
-        context: "creating the staging folder",
-        path: path.to_path_buf(),
-        source,
-    };
-    std::fs::create_dir_all(staging).map_err(|source| io(staging, source))?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or_default();
-    let stem = state::file_safe(stem);
-    for attempt in 0u32.. {
-        let dir = staging.join(format!("{stem}-{nanos}-{attempt}"));
-        match std::fs::create_dir(&dir) {
-            Ok(()) => return Ok(dir),
-            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(source) => return Err(io(&dir, source)),
-        }
-    }
-    unreachable!("the attempts never run out")
 }
 
 /// Unpacks a zip under a folder once [`zip_entry::checked_entries`] has passed every entry, every entry
