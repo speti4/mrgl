@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 12 backlog (0 ready · 0 blocked · 2 waiting · 10 ideas) · 1 in progress · 65 done · 3 dropped · 5 decisions
+**State:** 12 backlog (0 ready · 0 blocked · 2 waiting · 10 ideas) · 0 in progress · 66 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -77,11 +77,7 @@ _none_
 
 ### In progress
 
-#### M2 Window MVP
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 081 | [The window's rows show the interface states scan and list mark](wip/081-window-rows-show-the-interface-states.md) | 2026-10-22 | `none` |
+_none_
 
 ### Closed – do not reopen
 
@@ -95,6 +91,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 081 | [The window's rows show the interface states scan and list mark](done/081-window-rows-show-the-interface-states.md) | 2026-10-22 |
 | 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](done/080-housekeeping-after-wave-5.md) | 2026-10-22 |
 | 079 | [Window and exe polish after the first release: the checks after an update, the …](done/079-window-and-exe-polish-after-the-first-release.md) | 2026-10-22 |
 | 078 | [The window's cached view: the Forever build signal walks the releases like the …](done/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | 2026-10-22 |
@@ -104,9 +101,8 @@ _none_
 | 074 | [The window's toolbox: a set switch and a SavedVariables view](done/074-window-toolbox-sets-and-savedvariables.md) | 2026-10-22 |
 | 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](done/073-addon-sets-undo-edit-and-account.md) | 2026-10-22 |
 | 072 | [GitHub cache housekeeping: stale per-tag release.json files and the old single …](done/072-github-cache-housekeeping.md) | 2026-10-22 |
-| 071 | [Fold the duplicates: one WTF walker, one size formatter, no dead error variant](done/071-fold-the-duplicated-helpers.md) | 2026-10-22 |
 
-_55 more in `done/`._
+_56 more in `done/`._
 
 ### Decisions
 
