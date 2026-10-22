@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 8 backlog (0 ready · 0 blocked · 2 waiting · 6 ideas) · 0 in progress · 70 done · 3 dropped · 5 decisions
+**State:** 15 backlog (0 ready · 0 blocked · 3 waiting · 12 ideas) · 0 in progress · 72 done · 5 dropped · 5 decisions
 
 ### Ready
 
@@ -37,22 +37,34 @@ _none_
 | # | Task | Waits for | Size | Created |
 |---|---|---|---|---|
 | 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
+| 096 | [The CurseForge source with the user's key](backlog/096-the-curseforge-source-with-the-users-key.md) | the CurseForge API key of task 007, for the manual round and the game version type ids | M | 2026-10-22 |
 
 ### Ideas
+
+#### M1 Core + CLI
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 088 | [The doctor names a staging folder kept for its previous\ folders](backlog/088-doctor-names-a-staging-folder-kept-for-its-previous-folders.md) | S | 2026-10-22 |
+| 089 | [update <name> says what happened when another entry of the same source already …](backlog/089-update-one-reports-a-second-entry-of-the-same-source.md) | S | 2026-10-22 |
+| 090 | [import runs the dependency check after an install, as add and update do](backlog/090-import-runs-the-dependency-check-after-an-install.md) | S | 2026-10-22 |
 
 #### M3 Toolbox
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 085 | [The window's toolbox undoes an apply, edits a set and names the account](backlog/085-window-toolbox-undo-edit-and-account.md) | M | 2026-10-22 |
-| 086 | [One summary line of set apply and savedvars in the core, shared by the command …](backlog/086-one-set-and-savedvars-summary-in-the-core.md) | S | 2026-10-22 |
+| 091 | [The remaining toolbox lines move into the core: the set list note, the not-inst…](backlog/091-the-remaining-toolbox-lines-move-into-the-core.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 026 | [Adopt: take over an existing AddOns folder from its TOC source headers; CLI ado…](backlog/026-adopt-existing-addons-folder-from-toc-headers.md) | M | 2026-10-21 |
-| 056 | [What the Wago, WoWInterface and CurseForge sources owe the existing features](backlog/056-import-wago-wowi-and-curse-entries.md) | S | 2026-10-21 |
+| 092 | [One source per spec: the router, the spec forms and the generic paths](backlog/092-one-source-per-spec-the-router-and-the-generic-paths.md) | M | 2026-10-22 |
+| 093 | [API keys: one place to set, read and name them](backlog/093-api-keys-one-place-to-set-read-and-name-them.md) | S | 2026-10-22 |
+| 094 | [The WoWInterface source](backlog/094-the-wowinterface-source.md) | M | 2026-10-22 |
+| 095 | [The Wago source](backlog/095-the-wago-source.md) | M | 2026-10-22 |
+| 097 | [Adopt, the report: what source each unmanaged addon of a folder has](backlog/097-adopt-the-report-of-the-sources-of-an-addons-folder.md) | M | 2026-10-22 |
+| 098 | [Adopt --apply: sidecar entries without a reinstall, and the .curseclient guard](backlog/098-adopt-apply-writes-sidecar-entries-without-a-reinstall.md) | M | 2026-10-22 |
 
 #### M5 Trust
 
@@ -74,6 +86,8 @@ _none_
 
 | # | Task | Closed | Reason | Reopen when |
 |---|---|---|---|---|
+| 056 | [What the Wago, WoWInterface and CurseForge sources owe the existing features](dropped/056-import-wago-wowi-and-curse-entries.md) | 2026-10-22 | folded into the M4 source tasks after the planning round of 2026-10-22, 092 (the import and the update check of every source), 093 (the doctor names the keys) and 094 to 096 (the Forever signal per source) | never |
+| 026 | [Adopt: take over an existing AddOns folder from its TOC source headers; CLI ado…](dropped/026-adopt-existing-addons-folder-from-toc-headers.md) | 2026-10-22 | split into 097 (the adopt report) and 098 (adopt --apply) after the M4 planning round of 2026-10-22 | never |
 | 059 | [The Forever build signal for the Wago, WoWInterface and CurseForge sources](dropped/059-forever-build-signal-for-the-other-sources.md) | 2026-10-21 | folded into 056, what the Wago, WoWInterface and CurseForge sources owe the existing features | never |
 | 053 | [Missing dependencies on the addon's row in the window](dropped/053-missing-dependencies-on-the-window-row.md) | 2026-10-21 | folded into 009, the Tauri shell, whose rows carry the addon states from the core | never |
 | 052 | [Does an embedded library satisfy a required dependency in the client?](dropped/052-embedded-library-versus-a-required-dependency-in-the-client.md) | 2026-10-21 | folded into 045, the pre-launch manual round, as one check on the real client | the client's behavior disagrees with the 029 rule; then the rule change is a task of its own |
@@ -83,6 +97,8 @@ _none_
 | # | Task | Closed |
 |---|---|---|
 | 087 | [The command line's update check writes the last-check file the window reads](done/087-cli-update-check-writes-the-last-check-file.md) | 2026-10-22 |
+| 086 | [One summary line of set apply and savedvars in the core, shared by the command …](done/086-one-set-and-savedvars-summary-in-the-core.md) | 2026-10-22 |
+| 085 | [The window's toolbox undoes an apply, edits a set and names the account](done/085-window-toolbox-undo-edit-and-account.md) | 2026-10-22 |
 | 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](done/084-stale-staging-folders-are-swept.md) | 2026-10-22 |
 | 083 | [A reinstall of the installed version says it was reinstalled, not updated from …](done/083-a-reinstall-of-the-installed-version-says-so.md) | 2026-10-22 |
 | 082 | [An install and an update report the whole interface check: out of date next to …](done/082-install-and-update-report-the-interface-check.md) | 2026-10-22 |
@@ -90,10 +106,8 @@ _none_
 | 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](done/080-housekeeping-after-wave-5.md) | 2026-10-22 |
 | 079 | [Window and exe polish after the first release: the checks after an update, the …](done/079-window-and-exe-polish-after-the-first-release.md) | 2026-10-22 |
 | 078 | [The window's cached view: the Forever build signal walks the releases like the …](done/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | 2026-10-22 |
-| 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](done/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | 2026-10-22 |
-| 076 | [The dependency and interface checks say what the client says: an embedded-only …](done/076-the-checks-say-what-the-client-says.md) | 2026-10-22 |
 
-_60 more in `done/`._
+_62 more in `done/`._
 
 ### Decisions
 

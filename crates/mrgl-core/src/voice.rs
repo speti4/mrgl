@@ -91,6 +91,16 @@ impl Voice {
     }
 }
 
+/// `1 orphan`, `2 orphans`, `0 orphans`: a count and its noun for a plain line, the noun taking a plain `s`
+/// for any count but one (task 086: the summaries the command line and the window share).
+pub fn count_noun(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
 /// `MRGL_SERIOUS` set to anything but empty or `0` means serious.
 fn serious_env_set(value: Option<&std::ffi::OsStr>) -> bool {
     value.is_some_and(|value| !value.is_empty() && value != "0")
@@ -160,6 +170,13 @@ mod tests {
             Kind::Success.murloc()
         );
         assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn a_count_takes_its_plural_but_for_one() {
+        assert_eq!(count_noun(0, "orphan"), "0 orphans");
+        assert_eq!(count_noun(1, "orphan"), "1 orphan");
+        assert_eq!(count_noun(2, "addon line"), "2 addon lines");
     }
 
     #[test]

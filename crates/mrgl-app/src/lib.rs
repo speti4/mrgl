@@ -3,8 +3,9 @@
 //! The webview loads the static files under `ui/` (embedded at compile time) and talks to Rust through the
 //! commands in [`commands`]; `ui/data.js` calls them behind `window.Data`. Everything that does not need a
 //! webview lives in plain modules with tests ([`list`]: the flavors and their addon rows; [`actions`]: the
-//! update check, the updates and the marks; [`toolbox`]: a flavor's addon sets and SavedVariables, task
-//! 074); the window only shows what the core says, in the voice's two lines (D-005).
+//! update check, the updates and the marks; [`toolbox`]: a flavor's addon sets with their undo and edit and
+//! its SavedVariables, tasks 074 and 085); the window only shows what the core says, in the voice's two
+//! lines (D-005).
 
 pub mod actions;
 pub mod commands;
@@ -42,6 +43,8 @@ pub fn run() {
             commands::set_preferences,
             commands::toolbox,
             commands::apply_set,
+            commands::undo_set,
+            commands::edit_set,
             commands::clean_saved_variables
         ])
         .run(tauri::generate_context!())

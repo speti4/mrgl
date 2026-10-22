@@ -66,9 +66,9 @@ test("the target picker offers every character, then each by name and realm", ()
 });
 
 test("an option names its target, and a gone character falls back to every character", () => {
-  assert.deepEqual(Toolbox.targetOf("Second Realm/Grrlwave", characters), { character: "Grrlwave", realm: "Second Realm" });
-  assert.deepEqual(Toolbox.targetOf(Toolbox.EVERY, characters), { character: null, realm: null });
-  assert.deepEqual(Toolbox.targetOf("Gone Realm/Nobody", characters), { character: null, realm: null });
+  assert.deepEqual(Toolbox.targetOf("Second Realm/Grrlwave", characters), { character: "Grrlwave", realm: "Second Realm", account: null });
+  assert.deepEqual(Toolbox.targetOf(Toolbox.EVERY, characters), { character: null, realm: null, account: null });
+  assert.deepEqual(Toolbox.targetOf("Gone Realm/Nobody", characters), { character: null, realm: null, account: null });
 });
 
 test("the picker shows the set named, else the first, else none", () => {
@@ -108,7 +108,7 @@ test("the apply waits for a set, a character and the write going, never for the 
     ].map((button) => [button.enabled, button.title]),
     [
       [false, "the toolbox is not loaded"],
-      [false, "a set apply or a cleanup is running"],
+      [false, Toolbox.BUSY],
       [false, "no set saved yet: mrgl set save <name> saves one"],
       [false, "no character under WTF yet: log in with a character once"],
     ]
@@ -133,7 +133,7 @@ test("the cleanup names the orphans and waits for an update and the write going"
     ].map((button) => [button.enabled, button.label, button.title]),
     [
       [false, "No orphans to move", "the toolbox is not loaded"],
-      [false, "Move 1 orphan into a backup zip", "a set apply or a cleanup is running"],
+      [false, "Move 1 orphan into a backup zip", Toolbox.BUSY],
       [false, "Move 1 orphan into a backup zip", "an update is running; the cleanup waits until it ends"],
       [false, "No orphans to move", "every SavedVariables file has its addon folder"],
     ]
@@ -178,4 +178,101 @@ test("what an apply changed reads as the command line's data lines", () => {
     "R/New: A enabled (a new AddOns.txt)",
   ]);
   assert.deepEqual(Toolbox.changeLines(undefined), []);
+});
+
+// Task 085: the account of a realm and name under two accounts, the undo and the chips' edit controls.
+
+const twins = [
+  { name: "Mrgltest", realm: "Fixture Realm", label: "Fixture Realm/Mrgltest", account: "MRGLSETS" },
+  { name: "Grrlwave", realm: "Second Realm", label: "Second Realm/Grrlwave", account: null },
+  { name: "Mrgltest", realm: "Fixture Realm", label: "Fixture Realm/Mrgltest", account: "MRGLTWIN" },
+];
+
+test("two characters of one realm and name are told apart by their account", () => {
+  const options = Toolbox.targetOptions(twins);
+  assert.deepEqual(
+    options.map((option) => [option.value, option.label, option.account]),
+    [
+      [Toolbox.EVERY, "Every character (3)", null],
+      ["MRGLSETS/Fixture Realm/Mrgltest", "Mrgltest (Fixture Realm, account MRGLSETS)", "MRGLSETS"],
+      ["Second Realm/Grrlwave", "Grrlwave (Second Realm)", null],
+      ["MRGLTWIN/Fixture Realm/Mrgltest", "Mrgltest (Fixture Realm, account MRGLTWIN)", "MRGLTWIN"],
+    ]
+  );
+  assert.equal(new Set(options.map((option) => option.value)).size, options.length, "every value is its own");
+  assert.deepEqual(Toolbox.targetOf("MRGLTWIN/Fixture Realm/Mrgltest", twins), {
+    character: "Mrgltest",
+    realm: "Fixture Realm",
+    account: "MRGLTWIN",
+  });
+  assert.equal(Toolbox.characterName(twins[2]), "Fixture Realm/Mrgltest (account MRGLTWIN)");
+  assert.equal(Toolbox.characterName(twins[1]), "Second Realm/Grrlwave");
+});
+
+const undo = {
+  set: "solo",
+  applied_at: "2026-10-22T10:00:00Z",
+  restore: [characters[0], twins[2]],
+  remove: [characters[1]],
+};
+
+test("the undo names what it puts back and waits for a record and the write going", () => {
+  assert.equal(
+    Toolbox.undoNote(undo),
+    "the undo of set solo (applied 2026-10-22T10:00:00Z) puts back the AddOns.txt of Fixture Realm/Mrgltest, Fixture Realm/Mrgltest (account MRGLTWIN) as it was and removes the AddOns.txt it created for Second Realm/Grrlwave"
+  );
+  assert.equal(
+    Toolbox.undoNote(Object.assign({}, undo, { remove: [] })),
+    "the undo of set solo (applied 2026-10-22T10:00:00Z) puts back the AddOns.txt of Fixture Realm/Mrgltest, Fixture Realm/Mrgltest (account MRGLTWIN) as it was"
+  );
+  assert.equal(Toolbox.undoNote(null), "");
+  const ready = Toolbox.undoButton(toolbox({ undo }), false);
+  assert.deepEqual([ready.enabled, ready.label, ready.title], [true, "Undo solo", Toolbox.undoNote(undo)]);
+  const running = Toolbox.undoButton(toolbox({ undo, client: say("warning", "the client is running") }), false);
+  assert.equal(running.enabled, true, "the core's guard answers a running client");
+  assert.deepEqual(
+    [Toolbox.undoButton(null, false), Toolbox.undoButton(toolbox({ undo }), true), Toolbox.undoButton(toolbox({ undo: null }), false)].map(
+      (button) => [button.enabled, button.label, button.title]
+    ),
+    [
+      [false, "Undo", "the toolbox is not loaded"],
+      [false, "Undo solo", Toolbox.BUSY],
+      [false, "Undo", "nothing to undo: an apply that changes a file keeps what it replaced, and an undo puts it back once"],
+    ]
+  );
+});
+
+test("what an undo put back reads as the command line's data lines", () => {
+  assert.deepEqual(Toolbox.undoneLines(undo), [
+    "Fixture Realm/Mrgltest: AddOns.txt put back as it was",
+    "Fixture Realm/Mrgltest (account MRGLTWIN): AddOns.txt put back as it was",
+    "Second Realm/Grrlwave: AddOns.txt removed, the apply had created it",
+  ]);
+  assert.deepEqual(Toolbox.undoneLines(null), []);
+  const changes = [{ character: twins[2], changed: [{ name: "A", state: "enabled" }], created: false }];
+  assert.deepEqual(Toolbox.changeLines(changes), ["Fixture Realm/Mrgltest (account MRGLTWIN): A enabled"]);
+});
+
+test("a chip toggles its addon and drops it, and waits only for the write going", () => {
+  const [questArrows, raidFrames, bossTimers] = raid.addons;
+  const disabled = Toolbox.chipActions(raid, questArrows, false);
+  assert.deepEqual(
+    [disabled.toggle.action, disabled.toggle.label, disabled.toggle.enabled],
+    ["enable", "QuestArrows", true]
+  );
+  assert.equal(disabled.toggle.title, "disabled; click to enable it in set raid, no AddOns.txt is touched");
+  assert.deepEqual(
+    [disabled.drop.action, disabled.drop.label, disabled.drop.title],
+    ["drop", "Drop QuestArrows from set raid", "drop QuestArrows from set raid: an apply then leaves its lines alone"]
+  );
+  assert.equal(Toolbox.chipActions(raid, raidFrames, false).toggle.action, "disable");
+  assert.equal(
+    Toolbox.chipActions(raid, bossTimers, false).toggle.title,
+    "enabled (not installed; an apply writes its line all the same); click to disable it in set raid, no AddOns.txt is touched"
+  );
+  const busy = Toolbox.chipActions(raid, raidFrames, true);
+  assert.deepEqual(
+    [busy.toggle.enabled, busy.toggle.title, busy.drop.enabled, busy.drop.title],
+    [false, Toolbox.BUSY, false, Toolbox.BUSY]
+  );
 });

@@ -36,7 +36,9 @@ use crate::error::{Error, Result};
 use crate::flavor::Flavor;
 use crate::scan;
 use crate::toc::TocSuffix;
+use crate::voice::{Kind, count_noun};
 use crate::wtf::{self, SAVED_VARIABLES_DIR, WtfFolder, link_warning};
+use crate::zip_entry::size_text;
 
 /// A cleanup zip's name: `SavedVariables-<date>.zip`, next to the `WTF` backups.
 pub const CLEANUP_PREFIX: &str = "SavedVariables-";
@@ -117,6 +119,62 @@ pub struct Listing {
     /// Plain lines about what was not read or not compared: a link, an unreadable addon folder, a missing
     /// AddOns folder.
     pub warnings: Vec<String>,
+}
+
+/// What the listing's summary names as the way to move the orphans: the command line's
+/// `mrgl savedvars --clean`, or the window's cleanup button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanupBy {
+    /// `mrgl savedvars`: "`mrgl savedvars --clean` moves them into a backup zip".
+    Command,
+    /// The window's toolbox: "the cleanup moves them into a backup zip".
+    Window,
+}
+
+impl CleanupBy {
+    const fn name(self) -> &'static str {
+        match self {
+            CleanupBy::Command => "`mrgl savedvars --clean`",
+            CleanupBy::Window => "the cleanup",
+        }
+    }
+}
+
+impl Listing {
+    /// The summary of a listing in the voice's terms (task 086: `mrgl savedvars` and the window's toolbox
+    /// share it): the count, the size and the orphans, the verb agreeing with their count
+    /// (`1 orphan (12 B) has no addon folder`, `2 orphans (50 B) have …`). A warning when there are
+    /// orphans, a success without, nothing to say about an empty `WTF` folder.
+    pub fn summary(&self, folder_name: &str, cleanup: CleanupBy) -> (Kind, String) {
+        if self.files.is_empty() {
+            return (
+                Kind::Nothing,
+                format!("no SavedVariables files in the WTF folder of {folder_name}"),
+            );
+        }
+        let count = count_noun(self.files.len(), "SavedVariables file");
+        let size = size_text(self.bytes);
+        if self.orphans == 0 {
+            return (
+                Kind::Success,
+                format!("{count} of {folder_name}, {size} in all, no orphans"),
+            );
+        }
+        let (has, them) = if self.orphans == 1 {
+            ("has", "it")
+        } else {
+            ("have", "them")
+        };
+        (
+            Kind::Warning,
+            format!(
+                "{count} of {folder_name}, {size} in all; {} ({}) {has} no addon folder: {} moves {them} into a backup zip",
+                count_noun(self.orphans, "orphan"),
+                size_text(self.orphan_bytes),
+                cleanup.name()
+            ),
+        )
+    }
 }
 
 /// Lists a flavor's SavedVariables and marks each against its `Interface\AddOns` folder. A missing `WTF`
@@ -364,6 +422,29 @@ pub struct Cleaned {
     pub warnings: Vec<String>,
 }
 
+impl Cleaned {
+    /// The summary of a cleanup in the voice's terms (task 086: `mrgl savedvars --clean` and the window's
+    /// toolbox share it): what moved into which zip and how to put it back, or that there was no orphan.
+    pub fn summary(&self, folder_name: &str) -> (Kind, String) {
+        match &self.zip {
+            None => (
+                Kind::Nothing,
+                format!("no orphans in the SavedVariables of {folder_name}, nothing moved"),
+            ),
+            Some(zip) => (
+                Kind::Success,
+                format!(
+                    "moved {} of {folder_name} ({}, {}) into {}; unzip it into the WTF folder to put them back",
+                    count_noun(self.moved.len(), "orphan"),
+                    count_noun(self.files, "file"),
+                    size_text(self.bytes),
+                    zip.display()
+                ),
+            ),
+        }
+    }
+}
+
 /// Moves a flavor's orphan SavedVariables, with their `.bak` files, into `SavedVariables-<date>.zip` under
 /// `into` (the backups folder, created when needed). In this order: the guard of task 023 (a running
 /// client refuses the cleanup before anything is read), the listing, the zip written by the backup's zip
@@ -537,6 +618,126 @@ mod tests {
         let mut other = long.clone();
         other[150_000] ^= 1;
         assert!(!same_bytes(&long[..], &other[..]).expect("read"));
+    }
+
+    fn entry(addon: &str, bytes: u64, status: Status) -> SavedVariablesFile {
+        SavedVariablesFile {
+            addon: addon.into(),
+            account: "ACC".into(),
+            realm: None,
+            character: None,
+            lua: Some(PathBuf::from(format!("{addon}.lua"))),
+            lua_bytes: bytes,
+            bak: None,
+            bak_bytes: 0,
+            bytes,
+            status,
+        }
+    }
+
+    fn listing(files: Vec<SavedVariablesFile>) -> Listing {
+        let orphans: Vec<&SavedVariablesFile> =
+            files.iter().filter(|file| file.is_orphan()).collect();
+        Listing {
+            wtf: PathBuf::from("WTF"),
+            bytes: files.iter().map(|file| file.bytes).sum(),
+            orphans: orphans.len(),
+            orphan_bytes: orphans.iter().map(|file| file.bytes).sum(),
+            files,
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_listing_summary_agrees_with_the_orphan_count() {
+        let one = listing(vec![
+            entry("Kept", 100, Status::Installed),
+            entry("Gone", 12, Status::Orphan),
+        ]);
+        assert_eq!(
+            one.summary("_forever_", CleanupBy::Command),
+            (
+                Kind::Warning,
+                "2 SavedVariables files of _forever_, 112 B in all; 1 orphan (12 B) has no addon folder: `mrgl savedvars --clean` moves it into a backup zip".to_string()
+            )
+        );
+        assert_eq!(
+            one.summary("_forever_", CleanupBy::Window).1,
+            "2 SavedVariables files of _forever_, 112 B in all; 1 orphan (12 B) has no addon folder: the cleanup moves it into a backup zip"
+        );
+        let two = listing(vec![
+            entry("Kept", 100, Status::Installed),
+            entry("Gone", 12, Status::Orphan),
+            entry("GoneToo", 38, Status::Orphan),
+        ]);
+        assert_eq!(
+            two.summary("_forever_", CleanupBy::Window),
+            (
+                Kind::Warning,
+                "3 SavedVariables files of _forever_, 150 B in all; 2 orphans (50 B) have no addon folder: the cleanup moves them into a backup zip".to_string()
+            )
+        );
+        let none = listing(vec![entry("Kept", 2048, Status::Installed)]);
+        assert_eq!(
+            none.summary("_forever_", CleanupBy::Command),
+            (
+                Kind::Success,
+                "1 SavedVariables file of _forever_, 2.0 KB in all, no orphans".to_string()
+            )
+        );
+        assert_eq!(
+            listing(Vec::new()).summary("_forever_", CleanupBy::Window),
+            (
+                Kind::Nothing,
+                "no SavedVariables files in the WTF folder of _forever_".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn the_cleanup_summary_names_the_zip_or_says_nothing_moved() {
+        let zip = PathBuf::from("backups").join("SavedVariables-2026-10-22.zip");
+        let cleaned =
+            |moved: Vec<SavedVariablesFile>, files: usize, zip: Option<PathBuf>| Cleaned {
+                bytes: moved.iter().map(|file| file.bytes).sum(),
+                moved,
+                files,
+                zip,
+                warnings: Vec::new(),
+            };
+        assert_eq!(
+            cleaned(
+                vec![entry("Gone", 12, Status::Orphan)],
+                1,
+                Some(zip.clone())
+            )
+            .summary("_forever_"),
+            (
+                Kind::Success,
+                format!(
+                    "moved 1 orphan of _forever_ (1 file, 12 B) into {}; unzip it into the WTF folder to put them back",
+                    zip.display()
+                )
+            )
+        );
+        let two = vec![
+            entry("Gone", 12, Status::Orphan),
+            entry("GoneToo", 38, Status::Orphan),
+        ];
+        assert_eq!(
+            cleaned(two, 3, Some(zip.clone())).summary("_forever_").1,
+            format!(
+                "moved 2 orphans of _forever_ (3 files, 50 B) into {}; unzip it into the WTF folder to put them back",
+                zip.display()
+            )
+        );
+        assert_eq!(
+            cleaned(Vec::new(), 0, None).summary("_forever_"),
+            (
+                Kind::Nothing,
+                "no orphans in the SavedVariables of _forever_, nothing moved".to_string()
+            )
+        );
     }
 
     #[test]

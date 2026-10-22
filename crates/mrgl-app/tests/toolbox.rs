@@ -1,22 +1,26 @@
-//! The window's toolbox (task 074) on a made-up Forever flavor: the `WTF` tree of the addon-sets fixture
-//! (two characters on two realms) copied into a temporary game root, three addon folders, a few made-up
-//! SavedVariables files (two of them orphans) and a sets file under a temporary mrgl home. The toolbox's
-//! listing, a set applied to every character and to one, the orphans moved into the dated zip, and both
-//! writes refused while the stand-in client runs (task 063: a copy of the system's `ping.exe` in the flavor
-//! folder, never a game file). Nothing touches a real game folder.
+//! The window's toolbox (tasks 074 and 085) on a made-up Forever flavor: the `WTF` tree of the addon-sets
+//! fixture (two characters on two realms) copied into a temporary game root, three addon folders, a few
+//! made-up SavedVariables files (two of them orphans) and a sets file under a temporary mrgl home. The
+//! toolbox's listing, a set applied to every character and to one, the undo of an apply byte for byte, an
+//! edit of one addon in `sets.json`, the apply to one of two characters of the same realm and name under two
+//! accounts, the orphans moved into the dated zip, and the `WTF` writes refused while the stand-in client
+//! runs (task 063: a copy of the system's `ping.exe` in the flavor folder, never a game file). Nothing
+//! touches a real game folder.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use std::process::{Child, Command, Stdio};
 
-use mrgl_app_lib::toolbox::{self, ToolboxAnswer, ToolboxView};
+use mrgl_app_lib::toolbox::{self, Pick, ToolboxAnswer, ToolboxView};
 use mrgl_core::flavor::FlavorId;
 use mrgl_core::sets::{self, AddonSet, AddonState, AddonsTxt, SetsFile};
 use mrgl_core::voice::Voice;
 
 const BUILD_INFO: &str = "Product!STRING:0|Version!STRING:0\nwowf|1.60.1.70245\n";
 const ACCOUNT: &str = "MRGLSETS";
+/// The second account folder of the two-account case (task 085).
+const TWIN: &str = "MRGLTWIN";
 
 fn fixture_wtf() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/addon-sets/WTF")
@@ -188,15 +192,63 @@ impl Game {
     }
 
     fn apply(&self, set: &str, character: Option<&str>, realm: Option<&str>) -> ToolboxAnswer {
+        self.apply_in(set, character, realm, None)
+    }
+
+    fn apply_in(
+        &self,
+        set: &str,
+        character: Option<&str>,
+        realm: Option<&str>,
+        account: Option<&str>,
+    ) -> ToolboxAnswer {
+        let pick = Pick {
+            character,
+            realm,
+            account,
+        };
         toolbox::apply(
             &self.root(),
             "wowf",
             set,
-            character,
-            realm,
+            pick,
             Some(&self.home()),
             Voice::new(true),
         )
+    }
+
+    fn undo(&self) -> ToolboxAnswer {
+        toolbox::undo(&self.root(), "wowf", Some(&self.home()), Voice::new(true))
+    }
+
+    fn edit(&self, set: &str, addon: &str, action: &str) -> ToolboxAnswer {
+        toolbox::edit(
+            &self.root(),
+            "wowf",
+            set,
+            addon,
+            action,
+            Some(&self.home()),
+            Voice::new(true),
+        )
+    }
+
+    /// A second account folder, `MRGLTWIN`, with a character of the same realm and name as the first
+    /// account's `Fixture Realm/Mrgltest` (task 085), its `AddOns.txt` the twin's own; returned as a path.
+    fn add_twin_account(&self) -> PathBuf {
+        let twin = self
+            .wtf()
+            .join("Account")
+            .join(TWIN)
+            .join("Fixture Realm")
+            .join("Mrgltest");
+        std::fs::create_dir_all(&twin).expect("the twin's folder");
+        std::fs::write(
+            twin.join("AddOns.txt"),
+            "RaidFrames: disabled\r\nTwinOnly: enabled\r\n",
+        )
+        .expect("the twin's AddOns.txt");
+        twin.join("AddOns.txt")
     }
 
     fn clean(&self) -> ToolboxAnswer {
@@ -534,6 +586,45 @@ fn the_cleanup_moves_the_orphans_into_the_dated_zip() {
     );
 }
 
+/// One orphan reads `1 orphan … has no addon folder`, and its cleanup `moved 1 orphan … (1 file, …)`: the
+/// core's summaries (task 086), the lines `mrgl savedvars` prints, the window naming its cleanup.
+#[test]
+fn one_orphan_reads_has_as_on_the_command_line() {
+    let game = Game::new("one-orphan");
+    let account = game.wtf().join("Account").join(ACCOUNT);
+    for gone in ["OldMeter.lua", "OldMeter.lua.bak"] {
+        std::fs::remove_file(account.join("SavedVariables").join(gone)).expect("removed");
+    }
+    let orphan = account.join("Second Realm/Grrlwave/SavedVariables/GoneAddon.lua");
+    let bytes = file_size(&orphan);
+    let answer = game.load();
+    let saved = &view(&answer).saved_variables;
+    assert_eq!(
+        (saved.summary.kind, saved.summary.plain.as_str()),
+        (
+            "warning",
+            format!(
+                "4 SavedVariables files of _forever_, {} B in all; 1 orphan ({bytes} B) has no addon folder: the cleanup moves it into a backup zip",
+                saved.bytes
+            )
+            .as_str()
+        )
+    );
+    let answer = game.clean();
+    let zip = answer.zip.as_deref().expect("a zip");
+    assert_eq!(
+        plains(&answer),
+        [(
+            "success",
+            format!(
+                "moved 1 orphan of _forever_ (1 file, {bytes} B) into {zip}; unzip it into the WTF folder to put them back"
+            )
+            .as_str()
+        )]
+    );
+    assert!(!orphan.exists());
+}
+
 #[test]
 fn without_a_home_folder_nothing_is_written() {
     let game = Game::new("no-home");
@@ -561,12 +652,23 @@ fn without_a_home_folder_nothing_is_written() {
         &game.root(),
         "wowf",
         "raid",
-        None,
-        None,
+        Pick::default(),
         None,
         Voice::new(true),
     );
     assert!(answer.messages[0].plain.starts_with("no set applied: "));
+    let answer = toolbox::undo(&game.root(), "wowf", None, Voice::new(true));
+    assert!(answer.messages[0].plain.starts_with("nothing undone: "));
+    let answer = toolbox::edit(
+        &game.root(),
+        "wowf",
+        "raid",
+        "RaidFrames",
+        "disable",
+        None,
+        Voice::new(true),
+    );
+    assert!(answer.messages[0].plain.starts_with("no set edited: "));
     assert_eq!(snapshot(&game.wtf()), before);
 }
 
@@ -586,7 +688,10 @@ fn the_answer_serializes_with_the_keys_of_the_contract() {
         keys
     };
     // The keys of the contract in the header of ui/mock-data.js.
-    assert_eq!(keys(&value), ["changes", "messages", "toolbox", "zip"]);
+    assert_eq!(
+        keys(&value),
+        ["changes", "messages", "toolbox", "undone", "zip"]
+    );
     let toolbox = &value["toolbox"];
     assert_eq!(
         keys(toolbox),
@@ -597,7 +702,8 @@ fn the_answer_serializes_with_the_keys_of_the_contract() {
             "folder",
             "saved_variables",
             "sets",
-            "sets_note"
+            "sets_note",
+            "undo"
         ]
     );
     assert_eq!(
@@ -608,7 +714,15 @@ fn the_answer_serializes_with_the_keys_of_the_contract() {
         keys(&toolbox["sets"][0]["addons"][0]),
         ["installed", "name", "state"]
     );
-    assert_eq!(keys(&toolbox["characters"][0]), ["label", "name", "realm"]);
+    assert_eq!(
+        keys(&toolbox["characters"][0]),
+        ["account", "label", "name", "realm"]
+    );
+    assert_eq!(toolbox["characters"][0]["account"], serde_json::Value::Null);
+    assert_eq!(
+        keys(&toolbox["undo"]),
+        ["applied_at", "remove", "restore", "set"]
+    );
     assert_eq!(
         keys(&toolbox["saved_variables"]),
         [
@@ -652,6 +766,207 @@ fn the_answer_serializes_with_the_keys_of_the_contract() {
         serde_json::to_string(&value).is_ok_and(|text| !text.contains(ACCOUNT)),
         "the account folder's name stays out of the window's answer"
     );
+}
+
+fn labels(characters: &[toolbox::CharacterView]) -> Vec<&str> {
+    characters
+        .iter()
+        .map(|character| character.label.as_str())
+        .collect()
+}
+
+#[test]
+fn an_undo_puts_the_apply_back_byte_for_byte() {
+    let game = Game::new("undo");
+    // Grrlwave without an AddOns.txt: the apply creates it, the undo removes it again.
+    std::fs::remove_file(
+        game.character("Second Realm", "Grrlwave")
+            .join("AddOns.txt"),
+    )
+    .expect("removed");
+    let before = snapshot(&game.wtf());
+    assert_eq!(view(&game.load()).undo, None, "nothing to undo yet");
+
+    let applied = game.apply("solo", None, None);
+    assert_eq!(applied.messages.last().expect("a summary").kind, "success");
+    assert_ne!(snapshot(&game.wtf()), before);
+    let undo = view(&applied).undo.clone().expect("the apply's undo");
+    assert_eq!(undo.set, "solo");
+    assert_eq!(labels(&undo.restore), ["Fixture Realm/Mrgltest"]);
+    assert_eq!(labels(&undo.remove), ["Second Realm/Grrlwave"]);
+    assert_eq!(
+        view(&game.load()).undo,
+        Some(undo.clone()),
+        "a load names it too"
+    );
+
+    let answer = game.undo();
+    assert_eq!(snapshot(&game.wtf()), before, "the WTF tree as it was");
+    assert_eq!(
+        plains(&answer),
+        [(
+            "success",
+            format!(
+                "undid the apply of set solo to _forever_ ({}): 1 AddOns.txt put back, 1 AddOns.txt the apply created removed",
+                undo.applied_at
+            )
+            .as_str()
+        )]
+    );
+    assert_eq!(answer.undone, Some(undo));
+    assert_eq!(view(&answer).undo, None, "an undo goes once");
+
+    let again = game.undo();
+    assert_eq!(again.messages.len(), 1);
+    assert_eq!(again.messages[0].kind, "error");
+    assert!(
+        again.messages[0]
+            .plain
+            .starts_with("nothing to undo in _forever_: "),
+        "{}",
+        again.messages[0].plain
+    );
+    assert_eq!(again.undone, None);
+}
+
+#[test]
+fn an_edit_changes_only_the_named_addon_in_the_sets_file() {
+    let game = Game::new("edit");
+    let wowf = FlavorId::parse("wowf");
+    let wtf = snapshot(&game.wtf());
+    let before = sets::read_sets_at(&game.sets_path(), &wowf).expect("the sets");
+
+    let answer = game.edit("RAID", "raidframes", "disable");
+    assert_eq!(
+        plains(&answer),
+        [(
+            "success",
+            "RaidFrames is disabled in set raid of _forever_ now, was enabled: 3 addons (1 enabled, 2 disabled); no AddOns.txt was touched"
+        )]
+    );
+    let after = sets::read_sets_at(&game.sets_path(), &wowf).expect("the sets");
+    assert_eq!(after.sets["solo"], before.sets["solo"], "the other set");
+    let mut expected = before.sets["raid"].addons.clone();
+    expected.insert("RaidFrames".to_string(), AddonState::Disabled);
+    assert_eq!(after.sets["raid"].addons, expected, "only RaidFrames");
+    assert_ne!(after.sets["raid"].saved_at, before.sets["raid"].saved_at);
+    let raid = &view(&answer).sets[0];
+    assert_eq!(
+        (raid.name.as_str(), raid.enabled, raid.disabled),
+        ("raid", 1, 2)
+    );
+
+    let bytes = std::fs::read(game.sets_path()).expect("sets.json");
+    let again = game.edit("raid", "RaidFrames", "disable");
+    assert_eq!(
+        plains(&again),
+        [(
+            "nothing",
+            "set raid of _forever_ has RaidFrames disabled already, nothing changed"
+        )]
+    );
+    assert_eq!(std::fs::read(game.sets_path()).expect("sets.json"), bytes);
+
+    assert_eq!(
+        plains(&game.edit("raid", "QuestArrows", "drop")),
+        [(
+            "success",
+            "dropped QuestArrows from set raid of _forever_: 2 addons (1 enabled, 1 disabled); no AddOns.txt was touched"
+        )]
+    );
+    assert_eq!(
+        plains(&game.edit("raid", "NewAddon", "enable")),
+        [
+            (
+                "warning",
+                "NewAddon is not installed in _forever_; the set keeps it all the same"
+            ),
+            (
+                "success",
+                "added NewAddon to set raid of _forever_, enabled: 3 addons (2 enabled, 1 disabled); no AddOns.txt was touched"
+            )
+        ]
+    );
+    let unknown = game.edit("raid", "Nothing", "drop");
+    assert_eq!(unknown.messages[0].kind, "error");
+    assert!(
+        unknown.messages[0].plain.starts_with("set raid (flavor "),
+        "{}",
+        unknown.messages[0].plain
+    );
+    assert_eq!(
+        plains(&game.edit("raid", "RaidFrames", "toggle")),
+        [("error", "no set edit toggle: enable, disable or drop")]
+    );
+    assert_eq!(snapshot(&game.wtf()), wtf, "no AddOns.txt touched");
+}
+
+#[test]
+fn one_realm_and_name_under_two_accounts_apply_to_the_chosen_account() {
+    let game = Game::new("accounts");
+    let twin = game.add_twin_account();
+    let loaded = game.load();
+    let characters: Vec<(&str, Option<&str>)> = view(&loaded)
+        .characters
+        .iter()
+        .map(|character| (character.label.as_str(), character.account.as_deref()))
+        .collect();
+    assert_eq!(
+        characters,
+        [
+            ("Fixture Realm/Mrgltest", Some(ACCOUNT)),
+            ("Second Realm/Grrlwave", None),
+            ("Fixture Realm/Mrgltest", Some(TWIN)),
+        ],
+        "the account only where the pick needs it"
+    );
+
+    let before = snapshot(&game.wtf());
+    let ambiguous = game.apply("raid", Some("Mrgltest"), Some("Fixture Realm"));
+    assert_eq!(ambiguous.messages[0].kind, "error");
+    assert!(
+        ambiguous.messages[0]
+            .plain
+            .contains("the same realm is under more than one account"),
+        "{}",
+        ambiguous.messages[0].plain
+    );
+    assert_eq!(snapshot(&game.wtf()), before, "nothing written");
+
+    let answer = game.apply_in(
+        "raid",
+        Some("mrgltest"),
+        Some("fixture realm"),
+        Some("mrgltwin"),
+    );
+    assert_eq!(
+        plains(&answer),
+        [(
+            "success",
+            "applied set raid to Fixture Realm/Mrgltest of _forever_: 3 addon lines changed"
+        )]
+    );
+    assert_eq!(answer.changes.len(), 1);
+    assert_eq!(answer.changes[0].character.account.as_deref(), Some(TWIN));
+    let file = AddonsTxt::parse(&std::fs::read(&twin).expect("the twin's AddOns.txt"));
+    for (addon, state) in [
+        ("RaidFrames", AddonState::Enabled),
+        ("BossTimers", AddonState::Enabled),
+        ("QuestArrows", AddonState::Disabled),
+        ("TwinOnly", AddonState::Enabled),
+    ] {
+        assert_eq!(file.state_of(addon), Some(state), "{addon}");
+    }
+    let mut expected = before.clone();
+    let twin_key = format!("Account/{TWIN}/Fixture Realm/Mrgltest/AddOns.txt");
+    expected.insert(
+        twin_key,
+        std::fs::read(&twin).expect("the twin's AddOns.txt"),
+    );
+    assert_eq!(snapshot(&game.wtf()), expected, "the twin's file alone");
+    let undo = view(&answer).undo.as_ref().expect("the undo");
+    assert_eq!(undo.restore.len(), 1);
+    assert_eq!(undo.restore[0].account.as_deref(), Some(TWIN));
 }
 
 /// The stand-in client (task 063): a copy of the signed `ping.exe` of the system folder, named
@@ -714,8 +1029,12 @@ impl Drop for StandIn {
 
 #[cfg(windows)]
 #[test]
-fn both_writes_are_refused_while_the_stand_in_client_runs() {
+fn the_wtf_writes_are_refused_while_the_stand_in_client_runs() {
     let game = Game::new("client");
+    game.add_twin_account();
+    // An apply before the client starts, so there is an undo to refuse.
+    let applied = game.apply("solo", None, None);
+    assert_eq!(applied.messages.last().expect("a summary").kind, "success");
     let Some(mut client) = spawn_stand_in(&game.flavor_folder()) else {
         eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
         return;
@@ -732,22 +1051,35 @@ fn both_writes_are_refused_while_the_stand_in_client_runs() {
         (note.kind, note.plain.as_str()),
         ("warning", refusal.as_str())
     );
+    assert!(view(&loaded).undo.is_some());
 
     for answer in [
         game.apply("raid", None, None),
         game.apply("raid", Some("Grrlwave"), None),
+        game.apply_in("raid", Some("Mrgltest"), Some("Fixture Realm"), Some(TWIN)),
+        game.undo(),
         game.clean(),
     ] {
         assert_eq!(plains(&answer), [("error", refusal.as_str())]);
-        assert!(answer.changes.is_empty() && answer.zip.is_none());
+        assert!(answer.changes.is_empty() && answer.zip.is_none() && answer.undone.is_none());
         assert!(answer.toolbox.is_some(), "the panel stays drawn");
     }
     assert_eq!(snapshot(&game.wtf()), before, "nothing under WTF written");
     assert!(!game.backups().exists(), "no zip written");
+    assert!(view(&game.load()).undo.is_some(), "the undo is still there");
+
+    // An edit writes sets.json only and goes on, as `mrgl set disable` does.
+    let edited = game.edit("raid", "RaidFrames", "disable");
+    assert_eq!(edited.messages.last().expect("a summary").kind, "success");
+    assert_eq!(snapshot(&game.wtf()), before, "no AddOns.txt touched");
 
     client.stop();
     assert_eq!(view(&game.load()).client, None);
-    let answer = game.apply("raid", None, None);
+    assert_eq!(
+        game.undo().messages.last().expect("a summary").kind,
+        "success"
+    );
+    let answer = game.apply_in("raid", Some("Mrgltest"), Some("Fixture Realm"), Some(TWIN));
     assert_eq!(answer.messages.last().expect("a summary").kind, "success");
     assert!(game.clean().zip.is_some());
 }

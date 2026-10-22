@@ -26,12 +26,19 @@
 //                                       theme and the serious switch as they apply, which source decided the
 //                                       switch (flag | environment | file | default), what config.json stores
 //   Data.setPreferences(changes)     -> Promise<the same>          `{ theme?, serious? }` into config.json
-//   Data.toolbox(flavorId)           -> Promise<{ toolbox, changes, zip, messages }>  task 074: the flavor's
-//                                       sets, characters and SavedVariables, and whether its client runs
+//   Data.toolbox(flavorId)           -> Promise<{ toolbox, changes, undone, zip, messages }>  task 074: the
+//                                       flavor's sets, characters, last apply to undo and SavedVariables,
+//                                       and whether its client runs
 //   Data.applySet(flavorId, set, target)  -> the same            a stored set into the AddOns.txt of every
-//                                       character, or of the one `target` `{ character, realm }` names
+//                                       character, or of the one `target` `{ character, realm, account }`
+//                                       names (the account for a realm and name under two accounts, 085)
+//   Data.undoSet(flavorId)           -> the same                 085: the last apply that changed a file
+//                                       put back
+//   Data.editSet(flavorId, set, addon, action) -> the same       085: enable | disable | drop one addon of
+//                                       a stored set, in sets.json only
 //   Data.cleanSavedVariables(flavorId)    -> the same            the orphan SavedVariables into the dated
-//                                       zip; both writes are refused while the client runs (task 023)
+//                                       zip; the apply, the undo and the cleanup are refused while the client
+//                                       runs (task 023), an edit is not
 //
 // A message is `{ kind, murloc, plain }` as `mrgl_core::voice` says it: the kind picks the murloc line, the
 // plain line carries every fact, and a serious voice sends the murloc line empty (D-005). The murloc table
@@ -77,19 +84,26 @@
 // The view derives the row's one state from these flags (`state.js`); the data never names that state. The
 // interface state is the core's, drawn as a mark next to it.
 //
-// A toolbox answer (task 074, `src/toolbox.rs`): the toolbox as it is now (null when the flavor cannot be
-// read), what an apply changed per character, the zip a cleanup wrote, and the messages, the summary last:
+// A toolbox answer (tasks 074 and 085, `src/toolbox.rs`): the toolbox as it is now (null when the flavor
+// cannot be read), what an apply changed per character, what an undo put back, the zip a cleanup wrote, and
+// the messages, the summary last:
 //
 //   { toolbox: { flavor, folder,                the flavor's id and folder
 //                sets: [{ name, saved_at, enabled, disabled,
 //                         addons: [{ name, state, installed }] }],  state enabled | disabled
 //                sets_note,                     a message: how many sets, or none yet
-//                characters: [{ name, realm, label }],  label `<realm>/<name>`; no account
+//                characters: [character],       a character is `{ name, realm, label, account }`: label
+//                                               `<realm>/<name>`, account null unless two accounts have the
+//                                               realm and the name (085)
+//                undo: { set, applied_at,       085: the last apply that changed a file, or null
+//                        restore: [character],  the AddOns.txt the undo puts back
+//                        remove: [character] } | null,  the AddOns.txt the apply created, which it removes
 //                saved_variables: { files: [{ addon, place, realm, character, bytes, size, lua, bak,
 //                                             status }],          installed | orphan | client | unknown
 //                                   bytes, size, orphans, orphan_bytes, orphan_size, summary },
 //                client } | null,               a warning message while the client runs, else null
-//     changes: [{ character: { name, realm, label }, changed: [{ name, state }], created }],
+//     changes: [{ character, changed: [{ name, state }], created }],
+//     undone: { set, applied_at, restore, remove } | null,  085: what an undo put back
 //     zip: string | null,
 //     messages: [message] }
 (function (root, factory) {
@@ -552,12 +566,14 @@
 
   const count = (n, noun) => (n === 0 ? `no ${noun}s` : n === 1 ? `1 ${noun}` : `${n} ${noun}s`);
 
-  // One flavor's made-up toolbox: two characters with their AddOns.txt, two sets, the SavedVariables.
+  // One flavor's made-up toolbox: three characters with their AddOns.txt, two of them of one realm and name
+  // under two made-up accounts (task 085), two sets, the SavedVariables, no apply to undo yet.
   function toolboxState(flavor) {
     const folders = flavor.addons.map((addon) => addon.folder);
     const characters = [
-      { name: "Mrglina", realm: "Made-up Realm", addons: {} },
-      { name: "Grrlwave", realm: "Second Realm", addons: {} },
+      { account: "MOCKACCOUNT", name: "Mrglina", realm: "Made-up Realm", addons: {} },
+      { account: "MOCKACCOUNT", name: "Grrlwave", realm: "Second Realm", addons: {} },
+      { account: "MOCKTWIN", name: "Mrglina", realm: "Made-up Realm", addons: {} },
     ];
     for (const character of characters) for (const folder of folders) character.addons[folder] = "enabled";
     if (folders[1]) characters[1].addons[folders[1]] = "disabled";
@@ -594,7 +610,32 @@
         levelling: { saved_at: "2026-10-21T08:40:00Z", addons: levelling },
       },
       files,
+      undo: null,
       client: flavor.id === "wow" ? { exe: "Wow.exe", pid: 4242 } : null,
+    };
+  }
+
+  // A made-up character as `CharacterView` has it: the account only when another account has the realm
+  // and the name.
+  function characterView(state, character) {
+    const twin = state.characters.some(
+      (other) => other !== character && other.realm === character.realm && other.name === character.name
+    );
+    return {
+      name: character.name,
+      realm: character.realm,
+      label: `${character.realm}/${character.name}`,
+      account: twin ? character.account : null,
+    };
+  }
+
+  // The undo record as `UndoView` has it: every file the apply replaced goes back (none was created).
+  function undoView(state, undo) {
+    return {
+      set: undo.set,
+      applied_at: undo.applied_at,
+      restore: undo.files.map((file) => characterView(state, file.character)),
+      remove: [],
     };
   }
 
@@ -637,6 +678,8 @@
     const orphans = files.filter((item) => item.status === "orphan");
     const orphanBytes = orphans.reduce((sum, item) => sum + item.bytes, 0);
     const counted = files.length === 1 ? "1 SavedVariables file" : `${files.length} SavedVariables files`;
+    // The line of the core's `Listing::summary` (task 086): the verb agrees with the orphan count.
+    const [has, them] = orphans.length === 1 ? ["has", "it"] : ["have", "them"];
     const summary =
       files.length === 0
         ? say("nothing", `no SavedVariables files in the WTF folder of ${flavor.folder}`)
@@ -644,18 +687,15 @@
           ? say("success", `${counted} of ${flavor.folder}, ${sizeText(bytes)} in all, no orphans`)
           : say(
               "warning",
-              `${counted} of ${flavor.folder}, ${sizeText(bytes)} in all; ${count(orphans.length, "orphan")} (${sizeText(orphanBytes)}) have no addon folder: the cleanup moves them into a backup zip`
+              `${counted} of ${flavor.folder}, ${sizeText(bytes)} in all; ${count(orphans.length, "orphan")} (${sizeText(orphanBytes)}) ${has} no addon folder: the cleanup moves ${them} into a backup zip`
             );
     return {
       flavor: flavor.id,
       folder: flavor.folder,
       sets,
       sets_note: say("success", `${sets.length} sets of ${flavor.folder} in ${HOME}\\${flavor.id}\\sets.json`),
-      characters: state.characters.map((character) => ({
-        name: character.name,
-        realm: character.realm,
-        label: `${character.realm}/${character.name}`,
-      })),
+      characters: state.characters.map((character) => characterView(state, character)),
+      undo: state.undo ? undoView(state, state.undo) : null,
       saved_variables: {
         files: files.map((item) => Object.assign({}, item)),
         bytes,
@@ -670,13 +710,14 @@
   }
 
   function toolboxAnswer(flavor, messages, extra) {
-    return Object.assign({ toolbox: toolboxView(flavor), changes: [], zip: null, messages }, extra || {});
+    return Object.assign({ toolbox: toolboxView(flavor), changes: [], undone: null, zip: null, messages }, extra || {});
   }
 
   function noFlavor(flavorId) {
     return {
       toolbox: null,
       changes: [],
+      undone: null,
       zip: null,
       messages: [say("error", `no flavor ${flavorId}: no such flavor folder under ${ROOT}`)],
     };
@@ -701,13 +742,26 @@
       );
     }
     const one = Boolean(target && target.character);
+    const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
     const chosen = one
       ? state.characters.filter(
           (character) =>
-            character.name.toLowerCase() === target.character.toLowerCase() &&
-            (!target.realm || character.realm.toLowerCase() === target.realm.toLowerCase())
+            same(character.name, target.character) &&
+            (!target.realm || same(character.realm, target.realm)) &&
+            (!target.account || same(character.account, target.account))
         )
       : state.characters;
+    if (one && chosen.length > 1) {
+      const where = chosen.map((character) => `${character.realm} (${character.account})`).join(", ");
+      return Promise.resolve(
+        toolboxAnswer(flavor, [
+          say(
+            "error",
+            `character ${target.character} matches ${chosen.length} characters (flavor ${flavor.folder}): ${where}; the same realm is under more than one account: name one with --account`
+          ),
+        ])
+      );
+    }
     if (one && chosen.length !== 1) {
       const known = state.characters.map((character) => `${character.name} (${character.realm})`).join(", ");
       return Promise.resolve(
@@ -717,7 +771,9 @@
       );
     }
     const set = state.sets[name].addons;
+    const kept = [];
     const changes = chosen.map((character) => {
+      const before = Object.assign({}, character.addons);
       const changed = [];
       for (const addon of Object.keys(set).sort()) {
         if (character.addons[addon] !== set[addon]) {
@@ -725,10 +781,13 @@
           changed.push({ name: addon, state: set[addon] });
         }
       }
-      const label = `${character.realm}/${character.name}`;
-      return { character: { name: character.name, realm: character.realm, label }, changed, created: false };
+      if (changed.length) kept.push({ character, addons: before });
+      return { character: characterView(state, character), changed, created: false };
     });
     const lines = changes.reduce((sum, change) => sum + change.changed.length, 0);
+    // An apply that changes a file keeps what it replaced for the undo; one that changes nothing keeps the
+    // record before it.
+    if (kept.length) state.undo = { set: name, applied_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"), files: kept };
     const installed = installedOf(flavor);
     const missing = Object.keys(set)
       .sort()
@@ -750,6 +809,76 @@
         : say("success", `applied set ${name} to ${whom} of ${flavor.folder}: ${lines} addon line${lines === 1 ? "" : "s"} changed`)
     );
     return Promise.resolve(toolboxAnswer(flavor, messages, { changes }));
+  }
+
+  // The made-up undo, with the lines of `mrgl set undo`.
+  function undoSet(flavorId) {
+    const flavor = flavors.find((item) => item.id === flavorId);
+    if (!flavor) return Promise.resolve(noFlavor(flavorId));
+    const state = toolboxStateOf(flavor);
+    if (state.client) return Promise.resolve(toolboxAnswer(flavor, [say("error", refusal(flavor, state.client))]));
+    const undo = state.undo;
+    if (!undo) {
+      return Promise.resolve(
+        toolboxAnswer(flavor, [
+          say(
+            "error",
+            `nothing to undo in ${flavor.folder}: no set apply is recorded; an apply that changes a file keeps what it replaced, and an undo puts it back once`
+          ),
+        ])
+      );
+    }
+    for (const file of undo.files) file.character.addons = Object.assign({}, file.addons);
+    const undone = undoView(state, undo);
+    state.undo = null;
+    const files = undo.files.length === 1 ? "1 AddOns.txt" : `${undo.files.length} AddOns.txt files`;
+    const line = `undid the apply of set ${undo.set} to ${flavor.folder} (${undo.applied_at}): ${files} put back`;
+    return Promise.resolve(toolboxAnswer(flavor, [say("success", line)], { undone }));
+  }
+
+  // The made-up edit of one addon in a stored set, with the lines of `mrgl set enable|disable|drop`; it
+  // writes the set only, so a running client does not refuse it.
+  function editSet(flavorId, setName, addonName, action) {
+    const flavor = flavors.find((item) => item.id === flavorId);
+    if (!flavor) return Promise.resolve(noFlavor(flavorId));
+    const state = toolboxStateOf(flavor);
+    const name = Object.keys(state.sets).find((key) => key.toLowerCase() === String(setName).toLowerCase());
+    if (!name) return Promise.resolve(toolboxAnswer(flavor, [say("error", `set not found: ${setName} (flavor ${flavor.folder})`)]));
+    if (!["enable", "disable", "drop"].includes(action)) {
+      return Promise.resolve(toolboxAnswer(flavor, [say("error", `no set edit ${action}: enable, disable or drop`)]));
+    }
+    const set = state.sets[name];
+    const stored = Object.keys(set.addons).find((key) => key.toLowerCase() === String(addonName).toLowerCase());
+    const addon = stored || addonName;
+    const before = stored ? set.addons[stored] : null;
+    const after = action === "drop" ? null : `${action}d`;
+    if (action === "drop" && !before) {
+      return Promise.resolve(
+        toolboxAnswer(flavor, [say("error", `set ${name} (flavor ${flavor.folder}) has no addon ${addonName}`)])
+      );
+    }
+    if (before === after) {
+      return Promise.resolve(
+        toolboxAnswer(flavor, [say("nothing", `set ${name} of ${flavor.folder} has ${addon} ${after} already, nothing changed`)])
+      );
+    }
+    if (after) set.addons[addon] = after;
+    else delete set.addons[addon];
+    set.saved_at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+    const states = Object.values(set.addons);
+    const enabled = states.filter((state_) => state_ === "enabled").length;
+    const counted = `${count(states.length, "addon").replace(/^no /, "0 ")} (${enabled} enabled, ${states.length - enabled} disabled)`;
+    const what = !after
+      ? `dropped ${addon} from set ${name} of ${flavor.folder}: ${counted}`
+      : before
+        ? `${addon} is ${after} in set ${name} of ${flavor.folder} now, was ${before}: ${counted}`
+        : `added ${addon} to set ${name} of ${flavor.folder}, ${after}: ${counted}`;
+    const messages = [];
+    if (after && !installedOf(flavor).has(addon.toLowerCase())) {
+      messages.push(say("warning", `${addon} is not installed in ${flavor.folder}; the set keeps it all the same`));
+    }
+    messages.push(say("success", `${what}; no AddOns.txt was touched`));
+    return Promise.resolve(toolboxAnswer(flavor, messages));
   }
 
   // The made-up cleanup, with the lines of `mrgl savedvars --clean`.
@@ -787,6 +916,8 @@
     setPreferences,
     toolbox,
     applySet,
+    undoSet,
+    editSet,
     cleanSavedVariables,
     settings,
   };

@@ -191,7 +191,7 @@ test("a row names its missing dependencies and a stale note", async () => {
 });
 
 // The keys of a toolbox answer (task 074); `tests/toolbox.rs` holds `src/toolbox.rs` to the same ones.
-const TOOLBOX_KEYS = ["characters", "client", "flavor", "folder", "saved_variables", "sets", "sets_note"];
+const TOOLBOX_KEYS = ["characters", "client", "flavor", "folder", "saved_variables", "sets", "sets_note", "undo"];
 const SAVED_KEYS = ["bytes", "files", "orphan_bytes", "orphan_size", "orphans", "size", "summary"];
 const FILE_KEYS = ["addon", "bak", "bytes", "character", "lua", "place", "realm", "size", "status"];
 
@@ -199,7 +199,7 @@ test("the toolbox of every flavor has every key of the contract", async () => {
   const { flavors } = await Data.flavors();
   for (const flavor of flavors) {
     const answer = await Data.toolbox(flavor.id);
-    assert.deepEqual(Object.keys(answer).sort(), ["changes", "messages", "toolbox", "zip"]);
+    assert.deepEqual(Object.keys(answer).sort(), ["changes", "messages", "toolbox", "undone", "zip"]);
     const toolbox = answer.toolbox;
     assert.deepEqual(Object.keys(toolbox).sort(), TOOLBOX_KEYS, flavor.id);
     assert.deepEqual(Object.keys(toolbox.saved_variables).sort(), SAVED_KEYS);
@@ -208,7 +208,7 @@ test("the toolbox of every flavor has every key of the contract", async () => {
       assert.deepEqual(Object.keys(set).sort(), ["addons", "disabled", "enabled", "name", "saved_at"]);
       for (const addon of set.addons) assert.deepEqual(Object.keys(addon).sort(), ["installed", "name", "state"]);
     }
-    for (const character of toolbox.characters) assert.deepEqual(Object.keys(character).sort(), ["label", "name", "realm"]);
+    for (const character of toolbox.characters) assert.deepEqual(Object.keys(character).sort(), ["account", "label", "name", "realm"]);
     assert.equal(toolbox.saved_variables.orphans, toolbox.saved_variables.files.filter((file) => file.status === "orphan").length);
     assert.equal(Boolean(toolbox.client), flavor.id === "wow", "retail's client runs in the sketch");
   }
@@ -225,11 +225,11 @@ test("a set goes to one character and to every one, and the orphans into the zip
   );
   assert.deepEqual(one.changes.map((change) => [change.character.label, change.changed.length]), [["Second Realm/Grrlwave", 2]]);
   const every = await Data.applySet("wowf", "raid", { character: null, realm: null });
-  assert.equal(every.messages[0].plain, "applied set raid to 2 characters of _forever_: 1 addon line changed");
+  assert.equal(every.messages[0].plain, "applied set raid to 3 characters of _forever_: 2 addon lines changed");
   const again = await Data.applySet("wowf", "raid");
   assert.deepEqual(
     [again.messages[0].kind, again.messages[0].plain],
-    ["nothing", "set raid already matches every character of _forever_ (2 characters), nothing written"]
+    ["nothing", "set raid already matches every character of _forever_ (3 characters), nothing written"]
   );
   const levelling = await Data.applySet("wowf", "levelling");
   assert.deepEqual(levelling.messages.map((message) => message.kind), ["warning", "success"]);
@@ -237,6 +237,9 @@ test("a set goes to one character and to every one, and the orphans into the zip
   assert.equal((await Data.applySet("wowf", "gone")).messages[0].kind, "error");
   assert.equal((await Data.applySet("wowf", "raid", { character: "Nobody" })).messages[0].kind, "error");
 
+  const listed = (await Data.toolbox("wowf")).toolbox.saved_variables.summary;
+  assert.equal(listed.kind, "warning");
+  assert.match(listed.plain, /; 2 orphans \(2\.5 MB\) have no addon folder: the cleanup moves them into a backup zip$/);
   const clean = await Data.cleanSavedVariables("wowf");
   assert.equal(clean.messages[0].kind, "success");
   assert.match(clean.messages[0].plain, /^moved 2 orphans of _forever_ \(3 files, 2\.5 MB\) into .*SavedVariables-2026-10-22\.zip; /);
@@ -257,6 +260,67 @@ test("both toolbox writes are refused while the sketch's client runs", async () 
     assert.match(answer.messages[0].plain, /^the client is running in _retail_ \(Wow\.exe, pid \d+\): close the game first/);
     assert.equal(answer.toolbox.saved_variables.orphans, 2, "nothing moved");
   }
+});
+
+test("the sketch's two accounts, the undo of an apply and the edit of a set (task 085)", async () => {
+  const loaded = (await Data.toolbox("wow_classic")).toolbox;
+  assert.deepEqual(
+    loaded.characters.map((character) => [character.label, character.account]),
+    [
+      ["Made-up Realm/Mrglina", "MOCKACCOUNT"],
+      ["Second Realm/Grrlwave", null],
+      ["Made-up Realm/Mrglina", "MOCKTWIN"],
+    ]
+  );
+  assert.equal(loaded.undo, null);
+  const ambiguous = await Data.applySet("wow_classic", "levelling", { character: "Mrglina", realm: "Made-up Realm" });
+  assert.match(ambiguous.messages[0].plain, /the same realm is under more than one account/);
+
+  const twin = await Data.applySet("wow_classic", "levelling", {
+    character: "Mrglina",
+    realm: "Made-up Realm",
+    account: "MOCKTWIN",
+  });
+  assert.equal(twin.messages.at(-1).kind, "success");
+  assert.deepEqual(twin.changes.map((change) => [change.character.label, change.character.account]), [
+    ["Made-up Realm/Mrglina", "MOCKTWIN"],
+  ]);
+  const undo = twin.toolbox.undo;
+  assert.equal(undo.set, "levelling");
+  assert.deepEqual(undo.restore.map((character) => character.account), ["MOCKTWIN"]);
+
+  const undone = await Data.undoSet("wow_classic");
+  assert.match(undone.messages[0].plain, /^undid the apply of set levelling to _classic_ \(.+\): 1 AddOns\.txt put back$/);
+  assert.deepEqual(undone.undone, undo);
+  assert.equal(undone.toolbox.undo, null);
+  const again = await Data.undoSet("wow_classic");
+  assert.match(again.messages[0].plain, /^nothing to undo in _classic_: /);
+
+  const raid = loaded.sets.find((set) => set.name === "raid");
+  const first = raid.addons.find((addon) => addon.state === "enabled");
+  const disabled = await Data.editSet("wow_classic", "raid", first.name, "disable");
+  assert.match(disabled.messages[0].plain, new RegExp(`^${first.name} is disabled in set raid of _classic_ now, was enabled: `));
+  const after = disabled.toolbox.sets.find((set) => set.name === "raid");
+  assert.deepEqual(
+    after.addons.filter((addon) => addon.name !== first.name),
+    raid.addons.filter((addon) => addon.name !== first.name),
+    "only the named addon"
+  );
+  assert.equal(after.addons.find((addon) => addon.name === first.name).state, "disabled");
+  const dropped = await Data.editSet("wow_classic", "raid", first.name, "drop");
+  assert.match(dropped.messages[0].plain, /^dropped .+ from set raid of _classic_: .+; no AddOns\.txt was touched$/);
+  assert.equal((await Data.editSet("wow_classic", "raid", first.name, "drop")).messages[0].kind, "error");
+});
+
+test("the sketch's running client refuses the undo, not an edit", async () => {
+  const undo = await Data.undoSet("wow");
+  assert.match(undo.messages[0].plain, /^the client is running in _retail_/);
+  const edit = await Data.editSet("wow", "raid", "QuestHelperOld", "enable");
+  assert.deepEqual(
+    edit.messages.map((message) => message.kind),
+    ["warning", "success"]
+  );
+  assert.match(edit.messages[0].plain, /^QuestHelperOld is not installed in _retail_/);
 });
 
 test("the mock keeps the preferences for the page's life", async () => {

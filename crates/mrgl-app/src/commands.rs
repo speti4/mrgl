@@ -613,16 +613,12 @@ pub async fn toolbox(flavor: String) -> ToolboxAnswer {
     .await
 }
 
-/// Applies a stored set to every character of a flavor, or to the one `character` (and `realm`) names
-/// (task 074 over tasks 014 and 027); refused while the client runs (task 023) and while another toolbox
-/// write goes.
-#[tauri::command]
-pub async fn apply_set(
+/// One toolbox write on a blocking thread: refused with a warning while another one goes, else `write`
+/// with the game root of this process (task 074's one write at a time).
+async fn toolbox_write(
     app: tauri::AppHandle,
     flavor: String,
-    set: String,
-    character: Option<String>,
-    realm: Option<String>,
+    write: impl FnOnce(&Path, &str) -> ToolboxAnswer + Send + 'static,
 ) -> ToolboxAnswer {
     blocking(
         move || {
@@ -635,20 +631,69 @@ pub async fn apply_set(
                 ));
             };
             match root_of_process(&flavor) {
-                Ok(root) => toolbox::apply(
-                    &root,
-                    &flavor,
-                    &set,
-                    character.as_deref(),
-                    realm.as_deref(),
-                    home_dir().as_deref(),
-                    voice(),
-                ),
+                Ok(root) => write(&root, &flavor),
                 Err(message) => ToolboxAnswer::refused(message),
             }
         },
         ToolboxAnswer::refused,
     )
+    .await
+}
+
+/// Applies a stored set to every character of a flavor, or to the one `character` (and `realm`, and
+/// `account` when the realm and the name sit under two accounts) names (task 074 over tasks 014 and 027;
+/// the account is task 085); refused while the client runs (task 023) and while another toolbox write goes.
+#[tauri::command]
+pub async fn apply_set(
+    app: tauri::AppHandle,
+    flavor: String,
+    set: String,
+    character: Option<String>,
+    realm: Option<String>,
+    account: Option<String>,
+) -> ToolboxAnswer {
+    toolbox_write(app, flavor, move |root, flavor| {
+        let pick = toolbox::Pick {
+            character: character.as_deref(),
+            realm: realm.as_deref(),
+            account: account.as_deref(),
+        };
+        toolbox::apply(root, flavor, &set, pick, home_dir().as_deref(), voice())
+    })
+    .await
+}
+
+/// Undoes the last set apply of a flavor that changed a file (task 085 over task 073); refused while the
+/// client runs (task 023) and while another toolbox write goes.
+#[tauri::command]
+pub async fn undo_set(app: tauri::AppHandle, flavor: String) -> ToolboxAnswer {
+    toolbox_write(app, flavor, |root, flavor| {
+        toolbox::undo(root, flavor, home_dir().as_deref(), voice())
+    })
+    .await
+}
+
+/// Enables, disables or drops one addon of a stored set (`action`: `enable`, `disable` or `drop`; task 085
+/// over task 073), in `sets.json` only; refused while another toolbox write goes.
+#[tauri::command]
+pub async fn edit_set(
+    app: tauri::AppHandle,
+    flavor: String,
+    set: String,
+    addon: String,
+    action: String,
+) -> ToolboxAnswer {
+    toolbox_write(app, flavor, move |root, flavor| {
+        toolbox::edit(
+            root,
+            flavor,
+            &set,
+            &addon,
+            &action,
+            home_dir().as_deref(),
+            voice(),
+        )
+    })
     .await
 }
 

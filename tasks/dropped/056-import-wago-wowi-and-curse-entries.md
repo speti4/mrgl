@@ -1,8 +1,10 @@
 ---
-status: idea
 size: S
 origin: done/015-list-export-import-and-interface-warning.md
 created: 2026-10-21
+closed: 2026-10-22
+reason: folded into the M4 source tasks after the planning round of 2026-10-22, 092 (the import and the update check of every source), 093 (the doctor names the keys) and 094 to 096 (the Forever signal per source)
+reopen-when: never
 milestone: M4 Sources
 ---
 

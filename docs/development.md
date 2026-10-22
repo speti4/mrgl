@@ -408,6 +408,17 @@ then the `serious` preference in `config.json` that the window's switch writes (
 vocabulary breaks no test. The vocabulary and the rules are in [nerglish.md](nerglish.md); the decision is
 D-005.
 
+A summary line that the command line and the window both print lives in the core, once, as a `(Kind, plain
+line)` pair the caller says through its own voice: the update check's `UpdateCheck::summary` (task 010), and
+the toolbox's `sets::Applied::summary` (`mrgl set apply`, the window's set switch),
+`savedvars::Listing::summary` (`mrgl savedvars`, the window's SavedVariables card; `CleanupBy` names
+`` `mrgl savedvars --clean` `` or the window's cleanup) and `savedvars::Cleaned::summary` (`mrgl savedvars
+--clean`, the window's cleanup), task 086, then `sets::Undone::summary` (`mrgl set undo`, the window's
+undo) and `sets::Edited::summary` with its `Edited::not_installed` warning (`mrgl set
+enable|disable|drop`, the window's chips), task 085. A count and its verb agree (`voice::count_noun`: `1 orphan (12 B)
+has no addon folder`, `2 orphans (50 B) have …`). The CLI tests and the window's `tests/toolbox.rs` assert
+the same lines.
+
 The command line writes every line through one helper (`emit` in `mrgl-cli/src/main.rs`, task 075): the
 `Reporter`'s messages, data lines and JSON documents and `export`'s list on stdout, its warnings and errors on
 stderr. A closed pipe on either (`BrokenPipe`, os error 232 on Windows: the reader of
@@ -521,13 +532,17 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   menu with "Update", pin or unpin, ignore or unignore and the channel, with a progress slot per row; tasks
   010 and 021), a legend, a status bar and the toast stack. Under the header, two tabs: "Addons" (the list
   above) and "Toolbox" (task 074), the flavor's toolbox in two cards: "Addon sets" (the set picker with each
-  set's enabled and disabled count, "Apply to" with every character or one character by name and realm, the
-  set's addons as chips, enabled first, a dashed chip for an addon with no folder, the apply button, and what
-  the last apply changed, one line per character) and "SavedVariables" (the listing's summary, an "orphans
-  only" filter, the table of addon, place, files, size and status, the largest first, and the cleanup button
-  that names the orphans it moves). A warning line over the cards names the running client; the buttons stay
-  enabled, since the core's guard answers. The toolbox is read when the tab opens and again after every
-  write. The theme
+  set's enabled and disabled count, "Apply to" with every character or one character by name and realm, and
+  by account too when two accounts have the realm and the name (task 085), the apply button, the undo button
+  named after the set of the last apply with the line under it that says which `AddOns.txt` files it puts
+  back and which it removes (task 085), the set's addons as chips, enabled first, a dashed chip for an addon
+  with no folder, each chip a toggle between enabled and disabled in the set with a `×` that drops the addon
+  (task 085: `sets.json` only), and what the last apply changed or the last undo put back, one line per
+  character) and "SavedVariables" (the listing's summary, an "orphans only" filter, the table of addon,
+  place, files, size and status, the largest first, and the cleanup button that names the orphans it moves).
+  A warning line over the cards names the running client; the buttons stay enabled, since the core's guard
+  answers the apply, the undo and the cleanup (an edit is not refused). The toolbox is read when the tab
+  opens and again after every write. The theme
   toggle and the serious switch sit at the bottom of the sidebar, with "Game folder…" and "Copy
   diagnostics" (task 009). The theme and the switch are kept by the shell in `config.json`, not in the web
   view's storage (task 034, below).
@@ -545,15 +560,17 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   `Data.resolve(flavorId, folder)`, `Data.checkUpdates(flavorId, progress)`, `Data.updateAll(flavorId,
   progress)`, `Data.updateOne(flavorId, folder, progress)`, `Data.cancelUpdate()`, `Data.mark(flavorId,
   folder, action, value)`, the preferences, `Data.toolbox(flavorId)`, `Data.applySet(flavorId, set,
-  target)`, `Data.cleanSavedVariables(flavorId)`; a flavor as `flavor.rs` serializes it plus its friendly name, the
+  target)`, `Data.undoSet(flavorId)`, `Data.editSet(flavorId, set, addon, action)`,
+  `Data.cleanSavedVariables(flavorId)`; a flavor as `flavor.rs` serializes it plus its friendly name, the
   source of its build, whether its `Interface\AddOns` folder is there and its addons; an addon as `scan.rs`
   gives it plus the facts of the sidecar, the sources, the update check, the Forever notes, pin / ignore /
   channel, the missing dependencies and the interface check; a progress event of a run; a toolbox answer).
   For a look at the page without the core, open `crates/mrgl-app/ui/index.html` in a browser: without the
   Tauri global, `data.js` writes the mock's script tag instead, and the made-up rows show (retail with one row
-  of each interface mark), with a made-up check, update, cancel and
-  marks, and a made-up toolbox per flavor whose client "runs" in retail, so the refusal of both writes shows
-  there (the folder dialog and the clipboard need the window). A browser blocks some scripts of a page opened
+  of each interface mark), with a made-up check, update, cancel and marks, and a made-up toolbox per flavor
+  with one realm and name under two made-up accounts and a made-up undo and edit, whose client "runs" in
+  retail, so the refusal of the `WTF` writes shows there (the folder dialog and the clipboard need the
+  window). A browser blocks some scripts of a page opened
   from the disk; `python -I -m http.server --directory crates/mrgl-app/ui` serves the same files.
 - The pure modules, each with a test file of the same name under `tests/ui/`: `state.js` (an addon's one state
   from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels; the
@@ -565,10 +582,12 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   (task 010: a row menu's items and why one is disabled, the progress slot each event of a run moves, a
   check's answer laid over its row, the note under a row's version, whose pin reads the check's `order` as
   the command line's pinned line does: `pinned at 1.1.0-beta, newer than the release`, or `pinned at 2.0.0,
-  2.1.0 is out`; task 077), `toolbox.js` (task 074: the target
-  picker's options and the `{ character, realm }` an option names, the set the picker shows, the set's
-  addons in their order, the state, label and title of the apply and cleanup buttons, the SavedVariables rows
-  with the "orphans only" filter, the words of a status, and the lines of what an apply changed) and
+  2.1.0 is out`; task 077), `toolbox.js` (tasks 074 and 085: the target
+  picker's options and the `{ character, realm, account }` an option names, the account in an option's
+  value and label only when the answer carries one, the set the picker shows, the set's addons in their
+  order and each chip's toggle and drop, the state, label and title of the apply, undo and cleanup buttons,
+  the line that says what the undo puts back, the SavedVariables rows with the "orphans only" filter, the
+  words of a status, and the lines of what an apply changed and an undo put back) and
   `voice.js` (the two lines and where a message goes, see [nerglish.md](nerglish.md), "The window").
 
 The IPC commands (`src/commands.rs`, task 009) are thin wrappers over the core and over the plain functions
@@ -665,31 +684,48 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   counts and addons, each with its state and whether a folder of its name is under `Interface\AddOns`) with
   the note under the picker (`2 sets of _forever_ in …`, or that there is none yet, with the hint to
   `mrgl set save <name>`; saving a set stays on the command line), its characters (`sets::characters`: name,
-  realm and the `<realm>/<character>` label; the account folder's name stays out of the answer, as out of
-  the command line's plain lines), its SavedVariables (`savedvars::list_saved_variables`: per entry the
+  realm, the `<realm>/<character>` label and `account`; the account folder's name stays out of the answer,
+  as out of the command line's plain lines, unless another account has a character of the same realm and
+  name, task 085), `undo` (task 085, `sets::undo_record`: the last apply that changed a file, its set, when
+  it ran, the characters whose `AddOns.txt` an undo puts back and those whose file the apply created; null
+  when there is nothing to undo), its SavedVariables (`savedvars::list_saved_variables`: per entry the
   addon, the place, the `.lua` and `.bak` flags, the size in bytes and as `size_text` writes it, and the
   status `installed`, `orphan`, `client` or `unknown`; the totals and the summary `mrgl savedvars` prints,
-  with the cleanup named instead of `--clean`), and `client`, a warning with the guard's refusal line while
-  the client runs from the flavor folder (task 023). A part that cannot be read is empty, with its error
-  among the messages. The answer is `{ toolbox, changes, zip, messages }`, the same for the two writes.
+  the core's `Listing::summary` with the cleanup named instead of `--clean`), and `client`, a warning with
+  the guard's refusal line while the client runs from the flavor folder (task 023). A part that cannot be
+  read is empty, with its error among the messages. The answer is `{ toolbox, changes, undone, zip,
+  messages }`, the same for the writes.
 - `apply_set` (task 074 over tasks 014 and 027, `toolbox::apply`): a stored set into the `AddOns.txt` of
-  every character, or of the one `character` (and `realm`) names. The running-client guard
-  (`client::ensure_client_not_running`) comes first and its refusal is the answer (an error, nothing
-  written); then the pick is pinned to one character through `sets::find_character` (an unknown or
-  ambiguous name is the core's error), and `sets::apply_set` with its `Target` writes only the files that
-  change. The answer carries the toolbox as it is now, `changes` (per character the lines it changed or
-  added, and whether the file is new), the not-installed warning and the summary of `mrgl set apply`
-  (`applied set raid to Second Realm/Grrlwave of _forever_: 3 addon lines changed`, `set raid already
-  matches every character of _forever_ (2 characters), nothing written`).
+  every character, or of the one `character` (and `realm`, and `account` when the realm and the name sit
+  under two accounts, task 085) names. The running-client guard (`client::ensure_client_not_running`) comes
+  first and its refusal is the answer (an error, nothing written); then the pick is pinned to one character
+  through `sets::find_character_in_account` (an unknown or ambiguous name is the core's error), and
+  `sets::apply_set_in_account` with its `Target` writes only the files that change. The answer carries the
+  toolbox as it is now (its `undo` now this apply), `changes` (per character the lines it changed or added,
+  and whether the file is new), the not-installed warning and the summary of `mrgl set apply` (the core's
+  `Applied::summary`: `applied set raid to Second Realm/Grrlwave of _forever_: 3 addon lines changed`, `set
+  raid already matches every character of _forever_ (2 characters), nothing written`).
+- `undo_set` (task 085 over task 073, `toolbox::undo`): the guard first, then `sets::undo_apply`, which puts
+  every `AddOns.txt` the last apply replaced back byte for byte and removes the ones it created. The answer
+  carries the toolbox as it is now (`undo` null), `undone` (the set, when it was applied, the characters
+  whose file is back and those whose file is gone) and the warnings and the summary of `mrgl set undo` (the
+  core's `Undone::summary`: `undid the apply of set solo to _forever_ (…): 1 AddOns.txt put back, 1
+  AddOns.txt the apply created removed`); a second undo is the core's `nothing to undo in _forever_: …`.
+- `edit_set` (task 085 over task 073, `toolbox::edit`): `action` `enable`, `disable` or `drop` of one
+  `addon` in a stored `set`, through `sets::edit_set`, in `sets.json` only. No `AddOns.txt` is touched, so,
+  as `mrgl set enable|disable|drop`, it is not behind the running-client guard. The answer carries the
+  toolbox as it is now and the not-installed warning and the summary of the command line (the core's
+  `Edited::not_installed` and `Edited::summary`: `RaidFrames is disabled in set raid of _forever_ now, was
+  enabled: 3 addons (1 enabled, 2 disabled); no AddOns.txt was touched`).
 - `clean_saved_variables` (task 074 over task 025, `toolbox::clean`): the guard first, then
   `savedvars::clean_orphans` into the flavor's backups folder under the mrgl home, which moves the orphans
   and their `.bak` files into `SavedVariables-<date>.zip` and removes a file only once its copy in the zip
   reads back equal. The answer carries the toolbox as it is now, `zip`, and the summary of `mrgl savedvars
-  --clean` (`moved 2 orphans of _forever_ (3 files, 2.5 MB) into …; unzip it into the WTF folder to put
-  them back`, or `no orphans …, nothing moved`). Refused with a warning while an update runs: an install
-  swaps addon folders, and a folder away for a moment would read as an orphan; an update run waits for a
-  toolbox write the same way. One toolbox write at a time (`toolbox::ToolboxRun`); a second one is refused
-  with a warning.
+  --clean` (the core's `Cleaned::summary`: `moved 2 orphans of _forever_ (3 files, 2.5 MB) into …; unzip it
+  into the WTF folder to put them back`, or `no orphans …, nothing moved`). Refused with a warning while an
+  update runs: an install swaps addon folders, and a folder away for a moment would read as an orphan; an
+  update run waits for a toolbox write the same way. One toolbox write at a time (`toolbox::ToolboxRun`):
+  an apply, an undo, an edit or a cleanup; a second one is refused with a warning.
 
 The application icon is a murloc head of our own drawing (task 012; fan art within D-005, no Blizzard
 artwork, no game file): geometry in `scripts\make-icon.py`, rendered with Pillow and committed. `icon.ico`

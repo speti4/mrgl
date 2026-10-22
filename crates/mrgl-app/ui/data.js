@@ -23,8 +23,11 @@
 //                                       into `config.json` (task 034); rejects with a message
 //   Data.toolbox(flavorId)           -> Promise<{ toolbox, changes, zip, messages }>  `toolbox` (074): the
 //                                       sets, the characters, the SavedVariables and the running client
-//   Data.applySet(flavorId, set, target)  -> the same            `apply_set`: `target` `{ character, realm }`
-//                                       (both null or no target: every character)
+//   Data.applySet(flavorId, set, target)  -> the same            `apply_set`: `target` `{ character, realm,
+//                                       account }` (no character or no target: every character; the
+//                                       account only for a realm and name under two accounts, task 085)
+//   Data.undoSet(flavorId)           -> the same                 `undo_set` (085): the last apply put back
+//   Data.editSet(flavorId, set, addon, action)  -> the same      `edit_set` (085): enable | disable | drop
 //   Data.cleanSavedVariables(flavorId)    -> the same            `clean_saved_variables`: the orphans into
 //                                       the dated zip
 //
@@ -84,7 +87,10 @@
           set,
           character: target && target.character ? target.character : null,
           realm: target && target.character && target.realm ? target.realm : null,
+          account: target && target.character && target.account ? target.account : null,
         }),
+      undoSet: (flavorId) => invoke("undo_set", { flavor: flavorId }),
+      editSet: (flavorId, set, addon, action) => invoke("edit_set", { flavor: flavorId, set, addon, action }),
       cleanSavedVariables: (flavorId) => invoke("clean_saved_variables", { flavor: flavorId }),
     };
   }

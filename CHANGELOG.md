@@ -30,10 +30,12 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - `link` takes a single addon folder as well as a development folder ([062](https://github.com/speti4/mrgl/blob/main/tasks/done/062-link-takes-a-single-addon-folder.md))
 - Addon sets: undo an apply, edit a stored set, `--account`, and uninstalled addons on save ([073](https://github.com/speti4/mrgl/blob/main/tasks/done/073-addon-sets-undo-edit-and-account.md))
 - The window's toolbox: a set switch and a SavedVariables view ([074](https://github.com/speti4/mrgl/blob/main/tasks/done/074-window-toolbox-sets-and-savedvariables.md))
+- The window's toolbox undoes an apply, edits a set and names the account ([085](https://github.com/speti4/mrgl/blob/main/tasks/done/085-window-toolbox-undo-edit-and-account.md))
 
 ### Project housekeeping
 
 - Housekeeping after the M1 fixes: one `Blizzard_` prefix, the doctor's formatter alias, the voice sample in the docs ([080](https://github.com/speti4/mrgl/blob/main/tasks/done/080-housekeeping-after-wave-5.md))
+- One summary line of `set apply` and `savedvars` in the core, shared by the command line and the window ([086](https://github.com/speti4/mrgl/blob/main/tasks/done/086-one-set-and-savedvars-summary-in-the-core.md))
 
 ## 0.1.0 — 2026-10-22
 
