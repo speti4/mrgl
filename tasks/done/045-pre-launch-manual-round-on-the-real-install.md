@@ -4,6 +4,7 @@ origin: done/013-wtf-backup-and-restore.md
 created: 2026-10-21
 started: 2026-10-22
 plan: none
+closed: 2026-10-22
 milestone: M1 Core + CLI
 ---
 
@@ -36,22 +37,35 @@ group per step; a failure is written here as a line and becomes a task through t
 
 ## Steps
 
-1. [ ] `doctor`, `scan` on every flavor, `scan` on the era folder's build line (019), `list --json`
-2. [ ] `add github:… --dry-run` against a real repository with a Forever release (003)
-3. [ ] `add <zip>` and `remove` on the real `_forever_` folder, once with the mrgl home on another drive
-4. [ ] `backup`, `backup --list`, `backup --restore` on a flavor with a real `WTF` (013)
-5. [ ] `scan` and `list --json` with the client running (023)
-6. [ ] `link` and `unlink` with a real development folder (005)
-7. [ ] `savedvars` on a real `WTF`: the `Blizzard_` and the letter-case rules (025)
-8. [ ] the embedded-library dependency on the client (029's rule); every failure listed; close
+1. [x] `doctor`, `scan` on every flavor, `scan` on the era folder's build line (019), `list --json`
+2. [x] `add github:… --dry-run` against a real repository with a Forever release (003)
+3. [x] `add <zip>` and `remove` on the real `_forever_` folder, once with the mrgl home on another drive
+4. [x] `backup`, `backup --list`, `backup --restore` on a flavor with a real `WTF` (013)
+5. [x] `scan` and `list --json` with the client running (023)
+6. [x] `link` and `unlink` with a real development folder (005)
+7. [x] `savedvars` on a real `WTF`: the `Blizzard_` and the letter-case rules (025)
+8. [x] the embedded-library dependency on the client (029's rule); every failure listed; close
 
 ## Log
 
 - 2026-10-22 — promoted; the round runs in the main checkout on its own branch, guided step by step
+- 2026-10-22 — the round ran in ten steps with the release build after the merge of 064 to 072 (#113); the
+  Bartender4 release zip, a probe addon and the backup zips were the only things written, and the real
+  folders are as they were before the round (the probe removed, the test install removed, the restored
+  `WTF` identical to the one moved aside)
+- 2026-10-22 — the two failures are tasks: 075 (the closed pipe) and 076 (the embedded dependency and the
+  out-of-date interface number, together with the client's `Out of date` observation); the other
+  observations are deleted on purpose: the backup line's unpacked size against the list's zip size and the
+  local-time name against the UTC column (both are facts, differently phrased), and a linked addon's raw
+  `@project-version@` placeholder (the TOC says so, and a developer knows the packager fills it)
 
 ## Deviations from the plan
 
-- none yet
+- The era client was updated by the launcher during the round, so the exe-version fallback of 019 is covered
+  by the doctor and the scans before the update, and the running-client checks ran on the new build.
+- The embedded-library check used a made-up probe addon copied into the era folder, since none of the
+  installed addons has an embedded-only required dependency; the Forever client cannot start before the
+  launch.
 
 ## Verification
 
@@ -111,4 +125,4 @@ group per step; a failure is written here as a line and becomes a task through t
 - [ ] every doc under *Docs that move* changed in this change
 - [ ] Verification written, dated
 - [ ] `tasks_check` green, README index regenerated
-- [ ] moved to `done/` with `closed: YYYY-MM-DD`
+- [ ] moved to `done/` with `closed: 2026-10-22`
