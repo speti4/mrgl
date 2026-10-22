@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 11 backlog (0 ready · 0 blocked · 4 waiting · 7 ideas) · 0 in progress · 91 done · 5 dropped · 6 decisions
+**State:** 9 backlog (0 ready · 0 blocked · 4 waiting · 5 ideas) · 2 in progress · 91 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -58,8 +58,6 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 107 | [The window's row menu and the offline sketch follow the sources of this build](backlog/107-the-windows-row-menu-and-offline-sketch-follow-the-sources-of-this-build.md) | S | 2026-10-22 |
-| 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](backlog/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | S | 2026-10-22 |
-| 113 | [The window's adopt apply reuses the shown report's answers](backlog/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
@@ -81,7 +79,12 @@ _none_
 
 ### In progress
 
-_none_
+#### M2 Window MVP
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](wip/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 | `none` |
+| 113 | [The window's adopt apply reuses the shown report's answers](wip/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
