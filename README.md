@@ -173,10 +173,10 @@ Mrgl? Mrgl…
 Needy needs the missing dependency LibMissing: install it or the addon does not load
 ```
 
-A dependency counts as there when an addon folder of that name is installed, when it is one of the game's
-own `Blizzard_` addons, or when the addon carries the library inside its own folder (a release that is not
-a `nolib` build). `--json` has the details per addon
-under `dependencies`.
+A dependency counts as there when an addon folder of that name is installed or when it is one of the game's
+own `Blizzard_` addons. A library the addon carries only inside its own folder does not count: the game
+says `Dependency missing` and does not load the addon, so mrgl names it missing too and says why. `--json`
+has the details per addon under `dependencies`.
 
 Something not working? `mrgl doctor` prints what a bug report needs: the game folder and how it was found,
 each flavor's build, AddOns folder, sidecar, cache and running client, the WebView2 version, the GitHub rate
@@ -191,7 +191,9 @@ addon, and `unlink` removes exactly the junctions `link` made, never a folder an
 An exported list carries each managed addon's source and version; `import` installs the current release of
 every `github:` entry the flavor does not have yet, and leaves the others alone (a zip in hand stays on the
 machine it came from, a linked folder is linked again). `list` and an install warn when an addon's
-`## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor.
+`## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor;
+`scan` and `list` mark an addon `out of date` when its interface is from the flavor's expansion but older
+than the installed build, as the game's own addon list does after a patch.
 
 ## Documentation
 

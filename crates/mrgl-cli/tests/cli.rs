@@ -2568,8 +2568,9 @@ fn add_dry_run_of_a_release_with_an_empty_body_shows_no_notes() {
 
 // --- task 029: the dependency check in `list` and after `add` ---
 
-/// The synthetic game folder of the dependency check: `Needy` with a met, an embedded and a missing
-/// required dependency, `LibMet`, and `NolibBuild` with a library folder inside.
+/// The synthetic game folder of the dependency check: `Needy` with a met, an embedded-only and a missing
+/// required dependency, `LibMet`, and `NolibBuild` with a library folder inside. An embedded-only
+/// dependency is missing (task 076): the client does not count a library inside an addon's own folder.
 fn dependency_fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/dependencies/_forever_")
 }
@@ -2588,9 +2589,10 @@ fn list_warns_about_a_missing_dependency_and_marks_the_line() {
         lines,
         [
             "LibMet  1.0.0  16001  unmanaged",
-            "Needy  1.0.0  16001  unmanaged  missing: LibMissing",
-            "NolibBuild  1.0.0  16001  unmanaged",
-            "Needy needs the missing dependency LibMissing: install it or the addon does not load",
+            "Needy  1.0.0  16001  unmanaged  missing: LibEmbedded, LibMissing",
+            "NolibBuild  1.0.0  16001  unmanaged  missing: LibEmbedded",
+            "Needy needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside Needy, and the client does not count a library inside an addon's own folder)",
+            "NolibBuild needs the missing dependency LibEmbedded: install it or the addon does not load (LibEmbedded is only embedded inside NolibBuild, and the client does not count a library inside an addon's own folder)",
             "3 addons in _forever_ (wowf 1.60.1.70245): 0 managed by mrgl, 3 unmanaged",
         ],
         "{text}"
@@ -2623,7 +2625,7 @@ fn list_json_carries_the_dependencies_of_every_addon() {
             "required": ["LibMet", "LibEmbedded", "LibMissing", "Blizzard_Something"],
             "met": ["LibMet", "Blizzard_Something"],
             "embedded": ["LibEmbedded"],
-            "missing": ["LibMissing"],
+            "missing": ["LibEmbedded", "LibMissing"],
             "nolib": null,
         })
     );
@@ -2634,7 +2636,8 @@ fn list_json_carries_the_dependencies_of_every_addon() {
     assert_eq!(
         value["warnings"],
         serde_json::json!([
-            "Needy needs the missing dependency LibMissing: install it or the addon does not load"
+            "Needy needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside Needy, and the client does not count a library inside an addon's own folder)",
+            "NolibBuild needs the missing dependency LibEmbedded: install it or the addon does not load (LibEmbedded is only embedded inside NolibBuild, and the client does not count a library inside an addon's own folder)"
         ])
     );
 }
@@ -2706,7 +2709,7 @@ fn add_warns_after_the_install_when_a_dependency_is_missing() {
         lines,
         [
             "installing needs-library-1.0.0.zip into _forever_",
-            "NeedsLibrary needs the missing dependency LibMissing: install it or the addon does not load",
+            "NeedsLibrary needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside NeedsLibrary, and the client does not count a library inside an addon's own folder)",
             "installed NeedsLibrary 1.0.0 (1 folder: NeedsLibrary) into _forever_",
         ],
         "{text}"
@@ -2735,7 +2738,10 @@ fn add_warns_after_the_install_when_a_dependency_is_missing() {
         serde_json::json!(["Blizzard_Something"]),
         "the client's own addon (task 064)"
     );
-    assert_eq!(dependencies["missing"], serde_json::json!(["LibMissing"]));
+    assert_eq!(
+        dependencies["missing"],
+        serde_json::json!(["LibEmbedded", "LibMissing"])
+    );
     assert_eq!(
         dependencies["nolib"],
         serde_json::Value::Null,
@@ -3747,6 +3753,92 @@ fn the_interface_warning_fires_after_an_install_and_in_list() {
             "major": 1,
         }])
     );
+}
+
+/// The synthetic game folder of the interface states (task 076): `_retail_` at `12.1.5.70448` (interface
+/// 120105) with `Behind` (120100), `Current` (120105, 50504) and `Elsewhere` (110207).
+fn interface_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/interface/_retail_")
+}
+
+#[test]
+fn scan_and_list_mark_an_out_of_date_toc_apart_from_an_interface_mismatch() {
+    let summary = "1 addon is out of date for the build 12.1.5.70448 (interface 120105): Behind (120100); the client lists it as out of date";
+    let mismatch = "1 addon names no interface of the build 12.1.5.70448: Elsewhere (110207); made for another flavor or an older version of the game?";
+    let output = mrgl()
+        .args(["--serious", "scan"])
+        .arg(interface_fixture())
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "Behind  1.0.0  120100  out of date",
+            "Current  1.0.0  120105,50504",
+            "Elsewhere  1.0.0  110207  interface mismatch",
+            mismatch,
+            summary,
+            "3 addons in _retail_ (wow 12.1.5.70448)",
+        ],
+        "{text}"
+    );
+    let output = mrgl()
+        .args(["--serious", "list", "--flavor"])
+        .arg(interface_fixture())
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "Behind  1.0.0  120100  unmanaged  out of date",
+            "Current  1.0.0  120105,50504  unmanaged",
+            "Elsewhere  1.0.0  110207  unmanaged  interface mismatch",
+            mismatch,
+            summary,
+            "3 addons in _retail_ (wow 12.1.5.70448): 0 managed by mrgl, 3 unmanaged",
+        ],
+        "{text}"
+    );
+    for command in ["scan", "list"] {
+        let mut run = mrgl();
+        run.args(["--json", command]);
+        if command == "list" {
+            run.arg("--flavor");
+        }
+        let output = run.arg(interface_fixture()).output().expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("one JSON document");
+        assert_eq!(
+            value["interface_out_of_date"],
+            serde_json::json!([{
+                "folder": "Behind",
+                "toc": "Behind.toc",
+                "interfaces": [120100],
+                "build": "12.1.5.70448",
+                "interface": 120105,
+                "highest": 120100,
+            }]),
+            "{command}"
+        );
+        assert_eq!(
+            value["interface_mismatches"],
+            serde_json::json!([{
+                "folder": "Elsewhere",
+                "toc": "Elsewhere.toc",
+                "interfaces": [110207],
+                "build": "12.1.5.70448",
+                "major": 12,
+            }]),
+            "{command}"
+        );
+    }
 }
 
 // --- task 021: `pin`, `unpin`, `ignore`, `unignore`, `channel` and their marks in `list` ---

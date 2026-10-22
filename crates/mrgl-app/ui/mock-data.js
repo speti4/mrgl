@@ -62,7 +62,7 @@
 //     pinned: string | null, ignored,           021
 //     forever: { build, note, kind, verified, source, stale } | null,  011, on every row of Forever only:
 //                                               build yes | no | unknown, a curated note or null
-//     missing: [string] }                       029: the required dependencies no folder answers
+//     missing: [string] }                       029: the required dependencies no addon folder answers (076: an embedded one too)
 //
 // The view derives the row's one state from these flags (`state.js`); the data never names a state.
 (function (root, factory) {

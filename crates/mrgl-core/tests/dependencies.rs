@@ -1,7 +1,9 @@
 //! The dependency check (task 029) over the synthetic game folder `fixtures/dependencies/`: `Needy`
 //! requires `LibMet` (an addon of its own, met), `Blizzard_Something` (the client's own, met, task 064),
-//! `LibEmbedded` (a folder inside `Needy`, embedded) and `LibMissing` (nowhere, missing); `NolibBuild` carries a `LibEmbedded` folder too, which counts only
-//! while the sidecar does not mark it a `nolib` build. Offline, read-only.
+//! `LibEmbedded` (a folder inside `Needy` only: embedded, and missing, since the client does not count an
+//! embedded library, task 076) and `LibMissing` (nowhere, missing), and embeds its optional `LibOptional`,
+//! which is never reported; `NolibBuild` carries a `LibEmbedded` folder too, which the check names as
+//! embedded only while the sidecar does not mark it a `nolib` build. Offline, read-only.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -39,8 +41,26 @@ fn met_embedded_and_missing_over_the_fixture() {
         "the client's own addon is met (task 064)"
     );
     assert_eq!(needy.embedded, ["LibEmbedded"]);
-    assert_eq!(needy.missing, ["LibMissing"]);
+    assert_eq!(
+        needy.missing,
+        ["LibEmbedded", "LibMissing"],
+        "an embedded-only library is missing (task 076)"
+    );
     assert_eq!(needy.nolib, None);
+    assert_eq!(
+        needy.warning().as_deref(),
+        Some(
+            "Needy needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside Needy, and the client does not count a library inside an addon's own folder)"
+        )
+    );
+    assert!(
+        !needy
+            .embedded
+            .iter()
+            .chain(&needy.missing)
+            .any(|name| name == "LibOptional"),
+        "the embedded optional dependency is never reported"
+    );
 
     let lib = of(&checks, "LibMet");
     assert!(lib.required.is_empty() && !lib.has_missing());
@@ -50,13 +70,17 @@ fn met_embedded_and_missing_over_the_fixture() {
     assert_eq!(
         unknown.embedded,
         ["LibEmbedded"],
-        "without the flag an embedded library is possible"
+        "without the flag the folder inside is named"
     );
-    assert!(!unknown.has_missing());
+    assert_eq!(
+        unknown.missing,
+        ["LibEmbedded"],
+        "and still missing (task 076)"
+    );
 }
 
 #[test]
-fn the_sidecars_nolib_flag_turns_the_folder_inside_into_a_missing_dependency() {
+fn the_sidecars_nolib_flag_skips_the_folder_inside_and_names_the_nolib_build() {
     let scan = scan::scan(&fixture()).expect("the fixture scans");
     let mut state = State::new(&FlavorId::Forever);
     state.addons.insert(

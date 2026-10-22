@@ -6,4 +6,5 @@
 ## OptionalDeps: LibOptional
 
 Libs/LibEmbedded/LibEmbedded.lua
+Libs/LibOptional/LibOptional.lua
 core.lua

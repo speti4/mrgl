@@ -42,10 +42,13 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a lookup trait with a stub), the
   dependency check (`dependencies`, task 029: every required name of the TOC the flavor loads, `## Dependencies`,
   `## RequiredDeps` and the other `## Dep…` lines, ASCII case-insensitive, is *met* when an addon folder of
-  that name is in the scan, *embedded* when a folder of that name sits inside the addon's own folder, at
-  most three levels down, which a build without `nolib` carries, and *missing* otherwise; an optional
-  dependency is never reported; the sidecar entry's `nolib` flag, recorded from the pick at install, turns
-  the embedded lookup off for a `nolib` build, and an entry without it is unknown, embedded possible), the
+  that name is in the scan or the name is one of the client's own `Blizzard_` addons, and *missing*
+  otherwise; a missing name that a folder inside the addon's own folder answers, at most three levels down,
+  as a build without `nolib` carries it, is also listed as *embedded*, and stays missing (task 076: the
+  client does not count a library embedded in the addon's own folder, so the addon shows `Dependency
+  missing` and does not load), with the reason in its warning; an optional dependency is never reported; the
+  sidecar entry's `nolib` flag, recorded from the pick at install, turns the embedded lookup off for a
+  `nolib` build, whose warning says so instead, and an entry without it is unknown, embedded possible), the
   Forever notes (`forever`, task 011: the build signal `yes`, `no` or `unknown` that
   `sources::github::forever_build` derives from a release, and the curated `data/forever-notes.json`
   compiled in with `include_str!`, with the stale rule), the diagnostic report (`doctor`, task 024: the
@@ -81,7 +84,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
   addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
-  `folder`, `required`, `met`, `embedded`, `missing` and `nolib` (`true`, `false` or `null` for unknown).
+  `folder`, `required`, `met`, `embedded` (a subset of `missing`), `missing` and `nolib` (`true`, `false` or
+  `null` for unknown).
   `savedvars --flavor <flavor> [--clean]` (task 025) prints a data line per SavedVariables entry (size,
   addon, `account-wide` or `realm / character`, never the account folder's name, which `--json` carries,
   `orphan` or `client`) and a summary, `--clean` moves the orphans; `--json` is the `savedvars` or the
@@ -210,8 +214,13 @@ installed build: an interface number's major version is the number divided by 10
 `16001` is 1), and the addon passes when one number of the list has the build's major. A mismatch is a
 warning, never a refusal: `scan` and `list` mark the addon's line `interface mismatch` and add one warning
 line, their JSON carries `interface_mismatches`, and `add <file.zip>` and `import` add a warning after the
-install (`interface_mismatch` in their JSON). An unknown build, a TOC without an `## Interface` line and a
-folder the flavor loads no TOC from give no warning.
+install (`interface_mismatch` in their JSON). An addon that passes but whose highest number of the build's
+major is below the build's own interface number (`120100` under `12.1.5`, interface `120105`) is what the
+client lists as out of date (task 076): `scan` and `list` mark its line `out of date`, apart from the
+mismatch (an addon is one or the other), and add one warning line, and their JSON carries
+`interface_out_of_date`, each with `folder`, `toc`, `interfaces`, `build`, the build's `interface` and the
+TOC's `highest` number of the build's major; a number above the build's is current. An unknown build, a TOC
+without an `## Interface` line and a folder the flavor loads no TOC from give no warning.
 
 The addon sets (task 014, `mrgl_core::sets`) are named lists of addons per flavor, each addon `enabled` or
 `disabled`, in `sets.json` under the flavor's folder of the mrgl home (`<home>\<flavor-id>\sets.json`, next to
@@ -676,15 +685,18 @@ without `release.json`, one with no release, one with a draft and a prerelease a
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
 one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
 folder, a TOC with an interface for another build, a path that tries to escape the staging folder, an addon
-with an embedded and a missing required dependency, and a zip with no addon at all), a hand-written
+with an embedded-only and a missing required dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
 SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made
 up from the first line, task 013), a second `WTF` tree for the addon sets (`addon-sets/WTF/`, task 014:
 two characters on two realms of one account, one `AddOns.txt` with CRLF endings, the other with LF, a line
 the client never wrote and no last line break, and the account's `SavedVariables` that is no realm), a
 third game folder for the dependency check (`dependencies/`, task
-029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency, and a
-library folder inside an addon that a `nolib` entry in a test's sidecar turns into a missing one), and a
+029: a `_forever_` flavor whose addons have a met, an embedded-only and a missing required dependency and
+an embedded optional one, and a library folder inside an addon that a `nolib` entry in a test's sidecar
+keeps the check from looking into), a fourth game folder for the interface states (`interface/`, task 076:
+a `_retail_` flavor with a current TOC, one an interface number behind the build and one of another
+expansion), and a
 development folder for the junction links (`dev/`: two addons with a TOC and a folder without one, task
 005; the tests copy it into a temporary folder and make their junctions there). A real addon zip, a real
 AddOns folder or a `WTF` folder never enters the

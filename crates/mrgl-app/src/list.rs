@@ -111,7 +111,8 @@ pub struct Row {
     pub ignored: bool,
     /// The Forever notes (task 011), on every row of the Forever flavor and on no other.
     pub forever: Option<ForeverStatus>,
-    /// The required dependencies no folder answers (task 029).
+    /// The required dependencies no addon folder of their own answers (task 029), a library embedded in
+    /// the addon's folder included: the client does not count it (task 076).
     pub missing: Vec<String>,
 }
 

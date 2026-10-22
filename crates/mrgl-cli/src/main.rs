@@ -33,7 +33,7 @@ use mrgl_core::install::{
     AlreadyInstalled, Engine, Installed, Mark, Metadata, PickInstalled, PickStep, SourceInstalled,
     SourceRequest,
 };
-use mrgl_core::interface::{self, InterfaceMismatch};
+use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
@@ -608,6 +608,7 @@ fn report_scan(
         }
     };
     let mismatches = interface::check_scan(scan);
+    let out_of_date = interface::out_of_date_scan(scan);
     // `classify` keeps the scan's order: one status per addon, or none at all for `scan`.
     let statuses = list.as_ref().map(|view| view.state.classify(scan));
     let status_of = |index: usize| statuses.as_ref().map(|statuses| &statuses[index]);
@@ -633,7 +634,7 @@ fn report_scan(
         }
         mark_dependencies(dependencies, &addon.folder, &mut line, &mut object);
         mark_forever(forever, addon, Some(&mut line), Some(&mut object));
-        lines.push(with_interface_note(line, addon, &mismatches));
+        lines.push(with_interface_note(line, addon, &mismatches, &out_of_date));
         objects.push(object);
     }
     if reporter.json {
@@ -644,6 +645,7 @@ fn report_scan(
             "skipped": &scan.skipped,
             "client_running": client,
             "interface_mismatches": &mismatches,
+            "interface_out_of_date": &out_of_date,
             "warnings": warnings,
         });
         if let (Some(view), Some(managed)) = (&list, managed) {
@@ -677,6 +679,9 @@ fn report_scan(
         reporter.say(Kind::Warning, warning);
     }
     if let Some(warning) = interface_summary(&mismatches) {
+        reporter.say(Kind::Warning, warning);
+    }
+    if let Some(warning) = out_of_date_summary(&out_of_date) {
         reporter.say(Kind::Warning, warning);
     }
     let mut build = match scan.flavor.version {
@@ -1023,17 +1028,22 @@ fn forever_message(status: &ForeverStatus) -> (Kind, String) {
 }
 
 /// The interface check of task 015 on an addon line: `interface mismatch` appended when the addon's TOC
-/// names no interface of the flavor's build.
+/// names no interface of the flavor's build, `out of date` (task 076, the client's words) when it names
+/// only lower ones of the build's major version.
 fn with_interface_note(
     mut line: String,
     addon: &Addon,
     mismatches: &[InterfaceMismatch],
+    out_of_date: &[InterfaceOutOfDate],
 ) -> String {
     if mismatches
         .iter()
         .any(|mismatch| mismatch.folder == addon.folder)
     {
         line.push_str("  interface mismatch");
+    }
+    if out_of_date.iter().any(|stale| stale.folder == addon.folder) {
+        line.push_str("  out of date");
     }
     line
 }
@@ -1052,6 +1062,26 @@ fn interface_summary(mismatches: &[InterfaceMismatch]) -> Option<String> {
     Some(format!(
         "{count} no interface of the build {}: {}; made for another flavor or an older version of the game?",
         first.build,
+        each.join(", ")
+    ))
+}
+
+/// The warning under a listing with out-of-date addons (task 076): how many, the build and its interface,
+/// each folder's highest number of the build's major.
+fn out_of_date_summary(out_of_date: &[InterfaceOutOfDate]) -> Option<String> {
+    let first = out_of_date.first()?;
+    let (count, them) = match out_of_date.len() {
+        1 => ("1 addon is".to_string(), "it"),
+        count => (format!("{count} addons are"), "them"),
+    };
+    let each: Vec<String> = out_of_date
+        .iter()
+        .map(|stale| format!("{} ({})", stale.folder, stale.highest))
+        .collect();
+    Some(format!(
+        "{count} out of date for the build {} (interface {}): {}; the client lists {them} as out of date",
+        first.build,
+        first.interface,
         each.join(", ")
     ))
 }

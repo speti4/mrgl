@@ -86,7 +86,12 @@ impl Fixture {
         fixture.addon(
             "_retail_",
             "Needy",
-            "## Interface: 120105\n## Version: 0.1\n## Dependencies: LibGone, Plain, Blizzard_Something\n",
+            "## Interface: 120105\n## Version: 0.1\n## Dependencies: LibGone, Plain, Blizzard_Something, LibInside\n",
+        );
+        // A library only embedded inside Needy: the client does not count it (task 076).
+        fixture.write(
+            "World of Warcraft/_retail_/Interface/AddOns/Needy/Libs/LibInside/LibInside.lua",
+            "-- embedded\n",
         );
         fixture.addon("_retail_", "Plain", "## Interface: 120105\n## Version: 3\n");
         fixture.addon(
@@ -300,8 +305,8 @@ fn the_retail_rows_carry_their_states_facts() {
     let needy = row(retail, "Needy");
     assert_eq!(
         needy.missing,
-        ["LibGone"],
-        "Plain is an addon of its own, Blizzard_Something the client's (task 064)"
+        ["LibGone", "LibInside"],
+        "Plain is an addon of its own, Blizzard_Something the client's (task 064), LibInside only embedded (task 076)"
     );
     assert_eq!(needy.name, "Needy", "no title: the folder");
 
