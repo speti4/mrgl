@@ -218,10 +218,13 @@ The one install path (task 055) is `Engine::install_from_source` in `install`: `
 and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
 or a pick made already, and the name the list file gives the addon) and resolves it for the flavor's build
 on the addon's own channel, the channel of its sidecar entry from that source (else of the entry of that
-name, else `stable`, `Engine::target_for`, task 021). An addon the sidecar has from that source at the
+name, else `stable`, `Engine::target_for`, task 021). The sidecar entry is looked up by the source and the
+request's name together where the request names the addon (`update`, `import`; task 100: of two entries
+from one source, a renamed addon next to its old name, the one named answers, not the one whose name sorts
+first), else by the source alone, else by the name alone. An addon the sidecar has from that source at the
 pick's version, its folders there, is installed already: nothing is downloaded and nothing moves. Otherwise
 the asset is downloaded into a fresh folder under `staging\`, staged and committed with the pick's source
-and version under the name the sidecar knows the source by (else the request's name, else the folders'),
+and version under the name of that entry (else the request's name, else the folders'),
 and the download is removed whatever the install returned. `Engine::resolve` is the same resolve alone, for
 a dry run, and `Engine::install_pick` the same path for a pick in hand. The link refusal of task 005 sits in
 `Engine::commit`, so a zip in hand, a source, an import, an update and a rollback all refuse to install over
@@ -310,9 +313,9 @@ summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ign
 `1 update available` and writes nothing under `Interface\AddOns` or in the sidecar). An update the one
 install path answers with "installed already" is not counted as updated (task 089): under the addon's own
 entry (another run updated it since the check) `update` says the nothing-to-do line of `add`; under another
-entry of the same source, which the install path finds first by its source (a renamed addon next to its old
-name), it says a warning that names that entry, `QuestieClassic not updated: Questie, a second entry of
-github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2`, and leaves
+entry of the same source, which the install path falls back to only when no entry of the addon's name has
+that source any more (task 100; an install earlier in the run took its folders over, say), it says a
+warning that names that entry, `QuestieClassic not updated: Questie, a second entry of github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2`, and leaves
 both entries as they are; the summary counts either as `1 installed already`. The words are the core's
 (`AlreadyInstalled::update_line`), and the window's update says them too (task 099). Right after the check,
 before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
