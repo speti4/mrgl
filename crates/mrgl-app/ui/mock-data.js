@@ -1115,13 +1115,13 @@
       marker: flavor.curse_client
         ? say(
             "warning",
-            `the CurseForge app manages ${flavor.folder} (its .curseclient marker is there): a folder belongs to one manager, so adopt --apply writes nothing there without --alongside-curseforge`
+            `the CurseForge app manages ${flavor.folder} (its .curseclient marker is there): a folder belongs to one manager, so the Adopt button writes nothing there without the confirmation to adopt alongside the CurseForge app`
           )
         : null,
       rows,
       left_out: [],
       counts,
-      summary: say(kind, counts.adoptable_now > 0 ? `${line}; adopt --apply adopts ${counts.adoptable_now} of them` : line),
+      summary: say(kind, counts.adoptable_now > 0 ? `${line}; the Adopt button adopts ${counts.adoptable_now} of them` : line),
     };
   }
 
@@ -1147,7 +1147,7 @@
         adoptAnswer(null, [
           say(
             "error",
-            `the CurseForge app manages ${flavor.folder} (its .curseclient marker is there) and a folder belongs to one manager: adopt --apply wrote nothing; --alongside-curseforge adopts its addons anyway, and the CurseForge app may still update those folders`
+            `the CurseForge app manages ${flavor.folder} (its .curseclient marker is there) and a folder belongs to one manager: the Adopt button wrote nothing; the confirmation to adopt alongside the CurseForge app adopts its addons anyway, and the CurseForge app may still update those folders`
           ),
         ])
       );

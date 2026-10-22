@@ -210,7 +210,7 @@ fn the_report_shows_every_row_its_sources_and_the_counts() {
         ),
         (10, 6, 1, 2, 1, 5)
     );
-    const SUMMARY: &str = "10 unmanaged addons in _forever_: 6 can be adopted without CurseForge, 1 only with CurseForge, 2 with no known source, 1 with no forever build at their sources; adopt --apply adopts 5 of them";
+    const SUMMARY: &str = "10 unmanaged addons in _forever_: 6 can be adopted without CurseForge, 1 only with CurseForge, 2 with no known source, 1 with no forever build at their sources; the Adopt button adopts 5 of them";
     assert_eq!(
         (adopt.summary.kind, adopt.summary.plain.as_str()),
         ("success", SUMMARY)
@@ -259,9 +259,13 @@ fn a_folder_the_curseforge_app_manages_shows_its_marker() {
         (marker.kind, marker.plain.as_str()),
         (
             "warning",
-            "the CurseForge app manages _retail_ (its .curseclient marker is there): a folder belongs to one manager, so adopt --apply writes nothing there without --alongside-curseforge"
+            "the CurseForge app manages _retail_ (its .curseclient marker is there): a folder belongs to one manager, so the Adopt button writes nothing there without the confirmation to adopt alongside the CurseForge app"
         )
     );
+    // The window's words (task 112): no line of the card names a flag of the command line.
+    for line in [&marker.plain, &adopt.summary.plain] {
+        assert!(!line.contains("--"), "{line}");
+    }
     assert_eq!(lines(adopt)[0], "MrglCompat 1.0.0: adopt as wowi:1001");
 }
 
@@ -406,7 +410,7 @@ fn the_marker_guard_holds_without_the_confirmation_and_warns_with_it() {
         plains(&refused),
         [(
             "error",
-            "the CurseForge app manages _retail_ (its .curseclient marker is there) and a folder belongs to one manager: adopt --apply wrote nothing; --alongside-curseforge adopts its addons anyway, and the CurseForge app may still update those folders"
+            "the CurseForge app manages _retail_ (its .curseclient marker is there) and a folder belongs to one manager: the Adopt button wrote nothing; the confirmation to adopt alongside the CurseForge app adopts its addons anyway, and the CurseForge app may still update those folders"
         )]
     );
     assert!(refused.adopt.is_none() && refused.flavor.is_none() && refused.adopted.is_empty());

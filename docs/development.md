@@ -499,7 +499,10 @@ the toolbox's `sets::Applied::summary` (`mrgl set apply`, the window's set switc
 undo) and `sets::Edited::summary` with its `Edited::not_installed` warning (`mrgl set
 enable|disable|drop`, the window's chips), task 085, then the set list note `sets::SetsFile::summary`
 (`mrgl set list`, the note under the window's set picker) and the apply's `sets::Applied::not_installed_warning`
-(`mrgl set apply`, the window's set switch), task 091. A count and its verb agree (`voice::count_noun`: `1 orphan (12 B)
+(`mrgl set apply`, the window's set switch), task 091, and adopt's `adopt::Report::summary`, its
+`Report::marker_line` and `adopt::marker_refusal` (`mrgl adopt`, the window's Adopt card; `AdoptBy` names
+`adopt --apply` and `--alongside-curseforge`, or the window's Adopt button and the confirmation of its
+dialog, task 112). A count and its verb agree (`voice::count_noun`: `1 orphan (12 B)
 has no addon folder`, `2 orphans (50 B) have …`). The CLI tests and the window's `tests/toolbox.rs` assert
 the same lines.
 
@@ -728,7 +731,10 @@ update actions (task 110: "Check for updates", "Update all" and a row's "Update"
 
 The window's toolbox has the report and the apply in its Adopt card (task 109, the commands `adopt` and
 `adopt_apply` under [The UI](#the-ui)): the same `adopt::report` and `adopt::apply` over the same sidecar,
-the same lines, and the marker guard with a confirmation dialog in place of `--alongside-curseforge`.
+the same lines, and the marker guard with a confirmation dialog in place of `--alongside-curseforge`. The
+summary, the marker line and the refusal name the window's Adopt button and its confirmation instead of the
+flags (`adopt::AdoptBy::Window`, task 112): `; the Adopt button adopts <k> of them`, `so the Adopt button
+writes nothing there without the confirmation to adopt alongside the CurseForge app`.
 
 ### The GitHub mapping
 

@@ -315,7 +315,7 @@ function adoptReport(extra) {
       ],
       left_out: [],
       counts: { addons: 2, without_curseforge: 1, only_curseforge: 0, no_build: 0, no_source: 1, adoptable_now: 1 },
-      summary: say("success", "2 unmanaged addons in _retail_: …; adopt --apply adopts 1 of them"),
+      summary: say("success", "2 unmanaged addons in _retail_: …; the Adopt button adopts 1 of them"),
     },
     extra || {}
   );

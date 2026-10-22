@@ -438,14 +438,16 @@ test("the adopt report keeps the contract's keys, every class and the core's lin
   ]);
   assert.equal(
     forever.summary.plain,
-    "3 unmanaged addons in _forever_: 1 can be adopted without CurseForge, 1 only with CurseForge, 1 with no known source; adopt --apply adopts 1 of them"
+    "3 unmanaged addons in _forever_: 1 can be adopted without CurseForge, 1 only with CurseForge, 1 with no known source; the Adopt button adopts 1 of them"
   );
   const retail = (await Data.adopt("wow")).adopt;
   assert.equal(retail.marker.kind, "warning");
   assert.equal(
     retail.marker.plain,
-    "the CurseForge app manages _retail_ (its .curseclient marker is there): a folder belongs to one manager, so adopt --apply writes nothing there without --alongside-curseforge"
+    "the CurseForge app manages _retail_ (its .curseclient marker is there): a folder belongs to one manager, so the Adopt button writes nothing there without the confirmation to adopt alongside the CurseForge app"
   );
+  // The window's words (task 112): the card's lines name no flag of the command line.
+  for (const line of [forever.summary.plain, retail.summary.plain, retail.marker.plain]) assert.doesNotMatch(line, /--/);
   assert.equal(retail.rows[0].verdict, "needs MRGL_WAGO_KEY or MRGL_CURSEFORGE_KEY", "DBM-Core: either key would let it");
   assert.equal((await Data.adopt("wow_mrgl")).messages[0].kind, "error");
 });
@@ -456,7 +458,7 @@ test("the adopt apply refuses a marked folder without the confirmation and warns
   assert.deepEqual(refused.adopted, []);
   assert.equal(refused.messages.length, 1);
   assert.equal(refused.messages[0].kind, "error");
-  assert.match(refused.messages[0].plain, /^the CurseForge app manages _classic_era_ .*: adopt --apply wrote nothing; --alongside-curseforge /);
+  assert.match(refused.messages[0].plain, /^the CurseForge app manages _classic_era_ .*: the Adopt button wrote nothing; the confirmation to adopt alongside the CurseForge app adopts /);
   const { flavors } = await Data.flavors();
   const bartender = () => flavors.find((flavor) => flavor.id === "wow_classic_era").addons.find((row) => row.folder === "Bartender4");
   assert.equal(bartender().managed, false, "nothing written");
