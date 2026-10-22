@@ -693,7 +693,10 @@
       flavor: flavor.id,
       folder: flavor.folder,
       sets,
-      sets_note: say("success", `${sets.length} sets of ${flavor.folder} in ${HOME}\\${flavor.id}\\sets.json`),
+      sets_note:
+        sets.length === 0
+          ? say("nothing", `no sets of ${flavor.folder} yet: \`mrgl set save <name>\` saves one`)
+          : say("success", `${count(sets.length, "set")} of ${flavor.folder} in ${HOME}\\${flavor.id}\\sets.json`),
       characters: state.characters.map((character) => characterView(state, character)),
       undo: state.undo ? undoView(state, state.undo) : null,
       saved_variables: {
@@ -757,7 +760,7 @@
         toolboxAnswer(flavor, [
           say(
             "error",
-            `character ${target.character} matches ${chosen.length} characters (flavor ${flavor.folder}): ${where}; the same realm is under more than one account: name one with --account`
+            `character ${target.character} matches ${chosen.length} characters (flavor ${flavor.folder}): ${where}; the same realm is under more than one account: pick the account too`
           ),
         ])
       );

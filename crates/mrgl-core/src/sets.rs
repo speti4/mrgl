@@ -433,6 +433,27 @@ fn in_account(
     Ok(found)
 }
 
+/// What tells apart the characters an [`Error::AmbiguousCharacter`] lists, and its hint: the realm (`name
+/// one with --realm`), or the account, when one realm and name sit under two accounts (task 073). The
+/// account's hint names no flag (task 091): the window picks the account in its own way, and the command
+/// line adds its `--account` next to the core's words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CharacterPick {
+    Realm,
+    Account,
+}
+
+impl std::fmt::Display for CharacterPick {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            CharacterPick::Realm => "name one with --realm",
+            CharacterPick::Account => {
+                "the same realm is under more than one account: pick the account too"
+            }
+        })
+    }
+}
+
 /// One character by name (and realm, when given), both compared ignoring case. A name no character has
 /// is [`Error::CharacterNotFound`] with the characters listed; a name more than one character has is
 /// [`Error::AmbiguousCharacter`] with their realms listed (with the account too, when one realm is under
@@ -472,24 +493,21 @@ pub fn find_character(
                 .collect();
             realms.sort_unstable();
             realms.dedup();
-            let (candidates, hint) = if realms.len() == several.len() {
-                (realms.join(", "), "name one with --realm")
+            let (candidates, by) = if realms.len() == several.len() {
+                (realms.join(", "), CharacterPick::Realm)
             } else {
                 let labels: Vec<String> = several
                     .iter()
                     .map(|character| format!("{} ({})", character.realm, character.account))
                     .collect();
-                (
-                    labels.join(", "),
-                    "the same realm is under more than one account: name one with --account",
-                )
+                (labels.join(", "), CharacterPick::Account)
             };
             Err(Error::AmbiguousCharacter {
                 name: name.to_string(),
                 count: several.len(),
                 flavor: flavor_label(flavor),
                 candidates,
-                hint,
+                by,
             })
         }
     }
@@ -572,6 +590,26 @@ impl SetsFile {
             .next()
             .is_none()
             .then_some((found.0.as_str(), found.1))
+    }
+
+    /// The note under a flavor's set list in the voice's terms (task 091: `mrgl set list` and the window's
+    /// toolbox share it): how many sets there are and in which file, or that there is none yet with the
+    /// command that saves one.
+    pub fn summary(&self, path: &Path, folder_name: &str) -> (Kind, String) {
+        match self.sets.len() {
+            0 => (
+                Kind::Nothing,
+                format!("no sets of {folder_name} yet: `mrgl set save <name>` saves one"),
+            ),
+            count => (
+                Kind::Success,
+                format!(
+                    "{} of {folder_name} in {}",
+                    count_noun(count, "set"),
+                    path.display()
+                ),
+            ),
+        }
     }
 
     /// The error of a name no set has, listing the saved ones.
@@ -858,6 +896,19 @@ impl Applied {
             .iter()
             .map(|character| character.changed.len())
             .sum()
+    }
+
+    /// The warning about the addons of the set that have no folder under `Interface\AddOns`, whose lines
+    /// an apply writes all the same; `None` when every one is installed (task 091: `mrgl set apply` and the
+    /// window's toolbox share it).
+    pub fn not_installed_warning(&self, folder_name: &str) -> Option<String> {
+        (!self.not_installed.is_empty()).then(|| {
+            format!(
+                "set {} names addons that are not installed in {folder_name}, their lines are written all the same: {}",
+                self.name,
+                self.not_installed.join(", ")
+            )
+        })
     }
 
     /// The summary of an apply in the voice's terms (task 086: `mrgl set apply` and the window's toolbox
@@ -1664,6 +1715,101 @@ mod tests {
                 "set raid already matches every character of _forever_ (1 character), nothing written"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn the_set_list_note_counts_the_sets_or_says_how_to_save_one() {
+        let path = PathBuf::from("home").join("wowf").join(SETS_FILE);
+        let mut file = SetsFile::new(&FlavorId::parse("wowf"));
+        assert_eq!(
+            file.summary(&path, "_forever_"),
+            (
+                Kind::Nothing,
+                "no sets of _forever_ yet: `mrgl set save <name>` saves one".to_string()
+            )
+        );
+        let set = AddonSet {
+            saved_at: "2026-10-22T00:00:00Z".to_string(),
+            addons: BTreeMap::new(),
+        };
+        file.sets.insert("raid".to_string(), set.clone());
+        assert_eq!(
+            file.summary(&path, "_forever_"),
+            (
+                Kind::Success,
+                format!("1 set of _forever_ in {}", path.display())
+            )
+        );
+        file.sets.insert("solo".to_string(), set);
+        assert_eq!(
+            file.summary(&path, "_forever_").1,
+            format!("2 sets of _forever_ in {}", path.display())
+        );
+    }
+
+    #[test]
+    fn the_not_installed_warning_names_the_missing_addons_of_an_apply() {
+        let mut applied = Applied {
+            name: "raid".into(),
+            set: AddonSet {
+                saved_at: "2026-10-22T10:00:00Z".into(),
+                addons: BTreeMap::new(),
+            },
+            characters: Vec::new(),
+            not_installed: Vec::new(),
+        };
+        assert_eq!(applied.not_installed_warning("_forever_"), None);
+        applied.not_installed = vec!["BagSorter".into(), "RaidFrames".into()];
+        assert_eq!(
+            applied.not_installed_warning("_forever_").as_deref(),
+            Some(
+                "set raid names addons that are not installed in _forever_, their lines are written all the same: BagSorter, RaidFrames"
+            )
+        );
+    }
+
+    #[test]
+    fn the_two_account_hint_names_no_flag() {
+        let character = |account: &str, realm: &str| Character {
+            account: account.into(),
+            realm: realm.into(),
+            name: "Mrgltest".into(),
+            folder: PathBuf::from(account).join(realm).join("Mrgltest"),
+        };
+        let flavor = FlavorId::parse("wowf");
+        let twins = [
+            character("ONE", "Fixture Realm"),
+            character("TWO", "Fixture Realm"),
+        ];
+        let error = find_character(&twins, "mrgltest", None, &flavor).expect_err("two accounts");
+        assert!(
+            matches!(
+                &error,
+                Error::AmbiguousCharacter {
+                    by: CharacterPick::Account,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert!(
+            error.to_string().ends_with(
+                "Fixture Realm (ONE), Fixture Realm (TWO); the same realm is under more than one account: pick the account too"
+            ),
+            "{error}"
+        );
+        assert!(!error.to_string().contains("--"), "{error}");
+        let realms = [
+            character("ONE", "Fixture Realm"),
+            character("ONE", "Second Realm"),
+        ];
+        let error = find_character(&realms, "mrgltest", None, &flavor).expect_err("two realms");
+        assert!(
+            error
+                .to_string()
+                .ends_with("Fixture Realm, Second Realm; name one with --realm"),
+            "{error}"
         );
     }
 

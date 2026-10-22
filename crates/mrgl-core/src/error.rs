@@ -341,14 +341,15 @@ pub enum Error {
     },
 
     /// A character name more than one character folder has (task 027): the realms (or realms and
-    /// accounts) are listed, and the hint says how to pick one.
-    #[error("character {name} matches {count} characters (flavor {flavor}): {candidates}; {hint}")]
+    /// accounts) are listed, and the hint says how to pick one (`by`, task 091: the account's hint names
+    /// no flag).
+    #[error("character {name} matches {count} characters (flavor {flavor}): {candidates}; {by}")]
     AmbiguousCharacter {
         name: String,
         count: usize,
         flavor: String,
         candidates: String,
-        hint: &'static str,
+        by: crate::sets::CharacterPick,
     },
 
     /// An account name (`--account`, task 073) no account folder with a character under `WTF\Account`

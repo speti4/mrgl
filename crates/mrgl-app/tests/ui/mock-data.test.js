@@ -233,7 +233,11 @@ test("a set goes to one character and to every one, and the orphans into the zip
   );
   const levelling = await Data.applySet("wowf", "levelling");
   assert.deepEqual(levelling.messages.map((message) => message.kind), ["warning", "success"]);
-  assert.match(levelling.messages[0].plain, /not installed in _forever_, their lines are written all the same: QuestHelperOld$/);
+  assert.equal(
+    levelling.messages[0].plain,
+    "set levelling names addons that are not installed in _forever_, their lines are written all the same: QuestHelperOld"
+  );
+  assert.equal((await Data.toolbox("wowf")).toolbox.sets_note.plain, "2 sets of _forever_ in %LOCALAPPDATA%\\mrgl\\wowf\\sets.json");
   assert.equal((await Data.applySet("wowf", "gone")).messages[0].kind, "error");
   assert.equal((await Data.applySet("wowf", "raid", { character: "Nobody" })).messages[0].kind, "error");
 
@@ -274,7 +278,10 @@ test("the sketch's two accounts, the undo of an apply and the edit of a set (tas
   );
   assert.equal(loaded.undo, null);
   const ambiguous = await Data.applySet("wow_classic", "levelling", { character: "Mrglina", realm: "Made-up Realm" });
-  assert.match(ambiguous.messages[0].plain, /the same realm is under more than one account/);
+  assert.equal(
+    ambiguous.messages[0].plain,
+    "character Mrglina matches 2 characters (flavor _classic_): Made-up Realm (MOCKACCOUNT), Made-up Realm (MOCKTWIN); the same realm is under more than one account: pick the account too"
+  );
 
   const twin = await Data.applySet("wow_classic", "levelling", {
     character: "Mrglina",

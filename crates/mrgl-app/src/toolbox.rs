@@ -9,7 +9,9 @@
 //! (`client::ensure_client_not_running`) and answer its refusal through the voice before anything else
 //! happens; the core calls the same guard again before its first write. An edit writes `sets.json` only
 //! and runs while the client runs, as on the command line. Every summary is the core's (`Applied`,
-//! `Undone`, `Edited`, `Listing` and `Cleaned`, tasks 085 and 086), the line the command line prints too.
+//! `Undone`, `Edited`, `Listing` and `Cleaned`, tasks 085 and 086; the set list note `SetsFile::summary`
+//! and the apply's `Applied::not_installed_warning`, task 091), the line the command line prints too, and
+//! so is an error of the pick (the two-account error names no flag, task 091).
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -374,23 +376,7 @@ fn view_of(
                                 .collect(),
                         })
                         .collect();
-                    let note = match views.len() {
-                        0 => say(
-                            Kind::Nothing,
-                            format!(
-                                "no sets of {folder_name} yet: `mrgl set save <name>` saves one"
-                            ),
-                        ),
-                        1 => say(
-                            Kind::Success,
-                            format!("1 set of {folder_name} in {}", path.display()),
-                        ),
-                        count => say(
-                            Kind::Success,
-                            format!("{count} sets of {folder_name} in {}", path.display()),
-                        ),
-                    };
-                    (views, note)
+                    (views, said(voice, file.summary(&path, &folder_name)))
                 }
                 Err(error) => {
                     let message = say(Kind::Error, error.to_string());
@@ -570,17 +556,11 @@ pub fn apply(
     let all = sets::characters(&flavor).unwrap_or_default();
 
     let folder_name = flavor.folder_name();
-    let mut messages = Vec::new();
-    if !applied.not_installed.is_empty() {
-        messages.push(say(
-            Kind::Warning,
-            format!(
-                "set {} names addons that are not installed in {folder_name}, their lines are written all the same: {}",
-                applied.name,
-                applied.not_installed.join(", ")
-            ),
-        ));
-    }
+    let mut messages: Vec<Message> = applied
+        .not_installed_warning(&folder_name)
+        .into_iter()
+        .map(|warning| say(Kind::Warning, warning))
+        .collect();
     messages.push(said(voice, applied.summary(&target, &folder_name)));
     let changes = applied
         .characters
