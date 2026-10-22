@@ -35,12 +35,13 @@ creations. No review time is published. The history in
 application refused in 2022 after its partnership with Wago, then a separate CurseForge edition with
 Overwolf's permission) is the reason D-002 keeps CurseForge optional.
 
-What mrgl's application says, in short: a free, open-source (MIT) addon manager for Windows, one portable zip,
-no server of its own; the CurseForge source is one of several, used only with the user's own key, within
-these terms; an author's `allowModDistribution=false` is honored by sending the user to the project page or
-taking a zip the user downloaded by hand; the website is never scraped; nothing is cached beyond what the
-terms allow; no ads, no monetization, no bulk downloads; the expected use is one user's own AddOns folder
-(a few dozen addons, an update check a few times a day).
+What mrgl's application says, in short: a free, open-source (MIT) addon manager for Windows written in Rust,
+one portable zip with no runtime, no installer and no server; the CurseForge source is one of several and
+strictly optional, used only with the user's own key, within these terms; an author's
+`allowModDistribution=false` is honored by opening the project page or taking a zip the user downloaded by
+hand; the website is never scraped; no API data is cached; no ads, no monetization; the expected use is one
+user's own AddOns folder (a few dozen addons, an update check a few times a day, a download only when an
+update is installed). It names no other manager and makes no claim about one.
 
 ## The terms the source implementation follows
 

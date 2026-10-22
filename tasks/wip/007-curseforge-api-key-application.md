@@ -36,14 +36,22 @@ or an api-key query parameter), so without a key the source of M4 can neither re
 
 ## Steps
 
-1. [ ] The research page: the application route, the terms (distribution, no caching, no circumvention, the
+1. [x] The research page: the application route, the terms (distribution, no caching, no circumvention, the
        key's confidentiality, the quota, termination), what they mean for the source implementation
-2. [ ] The application submitted on the form, with the texts of the research page; the date in the Log
+2. [x] The application submitted on the form, with the texts of the research page; the date in the Log
 3. [ ] The outcome (a key issued, with its terms, or refused, with the reason) on the research page; close
 
 ## Log
 
 - 2026-10-22 — promoted; runs in the main checkout on its own branch, guided step by step
+- 2026-10-22 — the research page written from the API documentation, the support articles (the application
+  article and the 3rd Party API Terms) and the 2026-06-10 post on key authentication for CDN downloads
+- 2026-10-22 — the application submitted on the "CurseForge API Applications" form (project name `mrgl`,
+  game WoW, the repository as website and git URL, no monetization, the texts of the research page: Rust,
+  one portable zip, the user's own key, `allowModDistribution` honored, no scraping, no caching, no
+  distribution; the author-approval, volume and terms boxes ticked). The form answered "Thank you"; the
+  developer console already holds an organization key of the Studios kind, which is not the one applied for.
+  Waiting for Overwolf's review, which is sent by e-mail; no review time is published.
 
 ## Deviations from the plan
 
@@ -51,7 +59,7 @@ or an api-key query parameter), so without a key the source of M4 can neither re
 
 ## Verification
 
-- (dated: the application's date, the outcome's date, the research page's sources)
+- 2026-10-22 — the application submitted; the research page's sources are listed on the page.
 
 ## Closing checklist
 
