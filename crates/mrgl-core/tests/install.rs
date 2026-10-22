@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use mrgl_core::Error;
 use mrgl_core::client::{FixedProcesses, ProcessList, RunningProcess};
 use mrgl_core::flavor::{self, FlavorId};
-use mrgl_core::install::{Engine, Metadata, PickInstalled, PickStep};
+use mrgl_core::install::{Engine, InstallOutcome, Metadata, PickInstalled, PickStep};
 use mrgl_core::sources::Channel;
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{FolderHttp, Source, SourceSpec, Target};
@@ -231,6 +231,7 @@ fn reinstalling_the_same_version_keeps_the_previous_one() {
     sandbox.install("one-folder-1.0.0.zip");
     sandbox.install("one-folder-1.1.0.zip");
     let again = sandbox.install("one-folder-1.1.0.zip");
+    assert_eq!(again.outcome, InstallOutcome::Reinstalled);
     assert_eq!(again.previous_version.as_deref(), Some("1.0.0"));
     assert_eq!(
         sandbox.cache_entries("OneFolder"),
@@ -1846,4 +1847,77 @@ fn a_leftover_that_cannot_be_removed_is_a_warning_and_the_install_stands() {
     drop(open);
     sandbox.install("one-folder-1.1.0.zip");
     assert_eq!(sandbox.staging_entries(), Vec::<String>::new());
+}
+
+#[test]
+fn the_installed_checks_tell_out_of_date_from_a_mismatch() {
+    // Task 082: the interface check after an install names out of date next to the mismatch, one line each,
+    // and an addon of the build has neither.
+    let sandbox = Sandbox::new("installed-checks");
+    let folder_name = sandbox.engine.flavor.folder_name();
+    let behind = sandbox.install("behind-interface-1.0.0.zip");
+    let checks = sandbox.engine.check_installed(&behind.folders);
+    assert_eq!(checks.mismatch, None);
+    let out_of_date = checks.out_of_date.as_ref().expect("16000 is behind 16001");
+    assert_eq!((out_of_date.highest, out_of_date.interface), (16000, 16001));
+    assert_eq!(
+        checks.lines(&folder_name),
+        [
+            "BehindInterface: interface 16000 is out of date for the build 1.60.1.70245 (16001) of _forever_; the client lists it as out of date"
+        ]
+    );
+
+    let stale = sandbox.install("stale-interface-1.0.0.zip");
+    let checks = sandbox.engine.check_installed(&stale.folders);
+    assert_eq!(checks.out_of_date, None, "another major is a mismatch only");
+    assert!(checks.mismatch.is_some());
+    assert_eq!(
+        checks.interface_lines(&folder_name),
+        [
+            "StaleInterface: interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor"
+        ]
+    );
+
+    let current = sandbox.install("one-folder-1.0.0.zip");
+    let checks = sandbox.engine.check_installed(&current.folders);
+    assert_eq!((&checks.mismatch, &checks.out_of_date), (&None, &None));
+    assert!(checks.lines(&folder_name).is_empty());
+}
+
+#[test]
+fn a_reinstall_of_the_recorded_version_is_told_apart_from_an_update() {
+    // Task 083: the outcome follows the entry the commit replaces; a reinstall keeps the previous version,
+    // so the rollback still goes back to it.
+    let sandbox = Sandbox::new("reinstall-outcome");
+    let first = sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(
+        (first.outcome, first.previous_version.as_deref()),
+        (InstallOutcome::Installed, None)
+    );
+    let again = sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(
+        (again.outcome, again.previous_version.as_deref()),
+        (InstallOutcome::Reinstalled, None),
+        "a reinstall of the first install has no previous version"
+    );
+    let update = sandbox.install("one-folder-1.1.0.zip");
+    assert_eq!(
+        (update.outcome, update.previous_version.as_deref()),
+        (InstallOutcome::Updated, Some("1.0.0"))
+    );
+    let reinstall = sandbox.install("one-folder-1.1.0.zip");
+    assert_eq!(
+        (reinstall.outcome, reinstall.previous_version.as_deref()),
+        (InstallOutcome::Reinstalled, Some("1.0.0"))
+    );
+    let entry = sandbox.state().addons["OneFolder"].clone();
+    assert_eq!(
+        (entry.version.as_str(), entry.previous_version.as_deref()),
+        ("1.1.0", Some("1.0.0"))
+    );
+    let rolled = sandbox.engine.rollback("OneFolder").expect("the rollback");
+    assert_eq!(
+        (rolled.version.as_str(), rolled.previous_version.as_str()),
+        ("1.0.0", "1.1.0")
+    );
 }

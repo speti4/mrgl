@@ -44,7 +44,7 @@ use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
 use crate::dependencies::{self, AddonDependencies};
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
-use crate::interface::{self, InterfaceMismatch};
+use crate::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use crate::scan;
 use crate::sources::{Channel, Pick, Source, SourceSpec, Target};
 use crate::staging::{self, RunDir};
@@ -363,12 +363,15 @@ pub struct InstalledChecks {
     pub dependencies: Vec<AddonDependencies>,
     /// The primary folder names no interface of the flavor's build (task 015).
     pub mismatch: Option<InterfaceMismatch>,
+    /// The primary folder names only interface numbers of the build's major below the build's own: the
+    /// client's `Out of date` (tasks 076, 082). Never set together with `mismatch`.
+    pub out_of_date: Option<InterfaceOutOfDate>,
     /// Why there is no check: the flavor's folder could not be scanned.
     pub warnings: Vec<String>,
 }
 
 impl InstalledChecks {
-    /// The warning lines, in order: a scan that failed, each missing dependency, the interface mismatch.
+    /// The warning lines, in order: a scan that failed, each missing dependency, then the interface check.
     pub fn lines(&self, folder_name: &str) -> Vec<String> {
         let mut lines = self.warnings.clone();
         lines.extend(
@@ -376,12 +379,22 @@ impl InstalledChecks {
                 .iter()
                 .filter_map(AddonDependencies::warning),
         );
-        lines.extend(
-            self.mismatch
-                .iter()
-                .map(|mismatch| mismatch.after_install_line(folder_name)),
-        );
+        lines.extend(self.interface_lines(folder_name));
         lines
+    }
+
+    /// The interface check's warning after an install (tasks 015, 076, 082): the mismatch or the out-of-date
+    /// line, at most one, since an addon is never both.
+    pub fn interface_lines(&self, folder_name: &str) -> Vec<String> {
+        self.mismatch
+            .iter()
+            .map(|mismatch| mismatch.after_install_line(folder_name))
+            .chain(
+                self.out_of_date
+                    .iter()
+                    .map(|out_of_date| out_of_date.after_install_line(folder_name)),
+            )
+            .collect()
     }
 }
 
@@ -453,8 +466,9 @@ impl Engine {
     }
 
     /// The checks an install reports about the folders it just installed, the command line's summary and
-    /// the window's update alike (tasks 015, 029, 079): the dependency check of those folders against the
-    /// flavor as it is now, and the interface check of the first one, the primary folder. One scan; a scan
+    /// the window's update alike (tasks 015, 029, 079, 082): the dependency check of those folders against
+    /// the flavor as it is now, and the interface check of the first one, the primary folder (a mismatch
+    /// or out of date). One scan; a scan
     /// that fails is a warning and no check.
     pub fn check_installed(&self, folders: &[String]) -> InstalledChecks {
         let scan = match scan::scan_flavor(&self.flavor) {
@@ -472,15 +486,18 @@ impl Engine {
             .into_iter()
             .filter(|check| installed(&check.folder))
             .collect();
-        let mismatch = folders.first().and_then(|primary| {
+        let primary = folders.first().and_then(|primary| {
             scan.addons
                 .iter()
                 .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
-                .and_then(|addon| interface::check_addon(addon, self.flavor.version))
         });
+        let mismatch = primary.and_then(|addon| interface::check_addon(addon, self.flavor.version));
+        let out_of_date =
+            primary.and_then(|addon| interface::out_of_date_addon(addon, self.flavor.version));
         InstalledChecks {
             dependencies,
             mismatch,
+            out_of_date,
             warnings: Vec::new(),
         }
     }

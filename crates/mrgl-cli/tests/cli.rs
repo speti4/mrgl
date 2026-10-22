@@ -3951,6 +3951,232 @@ fn scan_and_list_mark_an_out_of_date_toc_apart_from_an_interface_mismatch() {
     }
 }
 
+// --- task 082: `add <file.zip>`, `import` and `update` report the whole interface check ---
+
+/// The after-install line of the out-of-date fixture zip (16000 under the Forever fixture build 1.60.1).
+const BEHIND_LINE: &str = "BehindInterface: interface 16000 is out of date for the build 1.60.1.70245 (16001) of _forever_; the client lists it as out of date";
+/// The after-install line of the mismatch fixture zip (110207, another major).
+const STALE_LINE: &str = "StaleInterface: interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor";
+
+/// The `interface_out_of_date` object of the out-of-date fixture zip.
+fn behind_json() -> serde_json::Value {
+    serde_json::json!({
+        "folder": "BehindInterface",
+        "toc": "BehindInterface.toc",
+        "interfaces": [16000],
+        "build": "1.60.1.70245",
+        "interface": 16001,
+        "highest": 16000,
+    })
+}
+
+/// The `interface_mismatch` object of the mismatch fixture zip.
+fn stale_json() -> serde_json::Value {
+    serde_json::json!({
+        "folder": "StaleInterface",
+        "toc": "StaleInterface.toc",
+        "interfaces": [110207],
+        "build": "1.60.1.70245",
+        "major": 1,
+    })
+}
+
+#[test]
+fn add_reports_an_out_of_date_install_next_to_the_mismatch() {
+    let game = Game::new("add-out-of-date");
+    for (zip, summary, warning) in [
+        (
+            "behind-interface-1.0.0.zip",
+            "installed BehindInterface 1.0.0 (1 folder: BehindInterface) into _forever_",
+            BEHIND_LINE,
+        ),
+        (
+            "stale-interface-1.0.0.zip",
+            "installed StaleInterface 1.0.0 (1 folder: StaleInterface) into _forever_",
+            STALE_LINE,
+        ),
+    ] {
+        let output = game
+            .mrgl()
+            .args(["--serious", "add"])
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let text = stdout(&output);
+        let lines: Vec<&str> = text.lines().skip(1).collect();
+        assert_eq!(lines, [summary, warning], "{zip}: {text}");
+    }
+
+    for (zip, mismatch, out_of_date) in [
+        (
+            "behind-interface-1.0.0.zip",
+            serde_json::Value::Null,
+            behind_json(),
+        ),
+        (
+            "stale-interface-1.0.0.zip",
+            stale_json(),
+            serde_json::Value::Null,
+        ),
+        (
+            "one-folder-1.0.0.zip",
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        ),
+    ] {
+        let output = game
+            .mrgl()
+            .args(["--json", "add"])
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("one JSON document");
+        assert_eq!(value["interface_mismatch"], mismatch, "{zip}");
+        assert_eq!(value["interface_out_of_date"], out_of_date, "{zip}");
+    }
+}
+
+#[test]
+fn import_reports_an_out_of_date_install_next_to_the_mismatch() {
+    for (zip, name, warning, mismatch, out_of_date) in [
+        (
+            "behind-interface-1.0.0.zip",
+            "BehindInterface",
+            BEHIND_LINE,
+            serde_json::Value::Null,
+            behind_json(),
+        ),
+        (
+            "stale-interface-1.0.0.zip",
+            "StaleInterface",
+            STALE_LINE,
+            stale_json(),
+            serde_json::Value::Null,
+        ),
+    ] {
+        for json in [false, true] {
+            let game = Game::new(&format!("import-interface-{name}-{json}"));
+            let base = game.root.parent().expect("the base").to_path_buf();
+            let stub = stub_with_forever_zip(&base, zip);
+            let list = write_list(
+                &game,
+                "list.json",
+                &[(name, "github:Questie/Questie", "1.2.3")],
+            );
+            let output = game
+                .mrgl()
+                .env("MRGL_HTTP_STUB", &stub)
+                .arg(if json { "--json" } else { "--serious" })
+                .arg("import")
+                .arg(&list)
+                .args(["--flavor", "forever"])
+                .output()
+                .expect("run mrgl");
+            assert!(output.status.success(), "{}", stderr_last_line(&output));
+            if json {
+                let value: serde_json::Value =
+                    serde_json::from_slice(&output.stdout).expect("one JSON document");
+                let item = &value["addons"][0];
+                assert_eq!(item["outcome"], "installed", "{value}");
+                assert_eq!(item["interface_mismatch"], mismatch, "{zip}");
+                assert_eq!(item["interface_out_of_date"], out_of_date, "{zip}");
+            } else {
+                let text = stdout(&output);
+                let lines: Vec<&str> = text.lines().collect();
+                let installed = format!("{name}  installed 1.2.3 from github:Questie/Questie");
+                assert_eq!(
+                    lines,
+                    [
+                        "importing 1 addon from list.json into _forever_",
+                        installed.as_str(),
+                        warning,
+                        "imported 1 addon of list.json into _forever_: 1 installed",
+                    ],
+                    "{text}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn update_reports_the_interface_check_of_an_updated_addon() {
+    // One game each: the stub serves one zip behind the one release of `Questie/Questie`.
+    for (name, zip, warning) in [
+        ("BehindInterface", "behind-interface-1.0.0.zip", BEHIND_LINE),
+        ("StaleInterface", "stale-interface-1.0.0.zip", STALE_LINE),
+    ] {
+        let game = managed_game(
+            &format!("update-interface-{name}"),
+            &[(name, "github:Questie/Questie", "1.2.2", "")],
+        );
+        let base = game.root.parent().expect("the base").to_path_buf();
+        let stub = stub_with_forever_zip(&base, zip);
+        let output = game
+            .mrgl()
+            .env("MRGL_HTTP_STUB", &stub)
+            .args(["--serious", "update", name, "--yes", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let text = stdout(&output);
+        let lines: Vec<&str> = text
+            .lines()
+            .skip_while(|line| !line.starts_with("updated "))
+            .collect();
+        let updated = format!("updated {name} from 1.2.2 to 1.2.3 (1 folder: {name}) in _forever_");
+        assert_eq!(
+            lines,
+            [updated.as_str(), warning, "1 addon updated"],
+            "{text}"
+        );
+    }
+
+    // The JSON document carries both keys per addon: the check of the updated one, `null` for the rest.
+    let game = managed_game(
+        "update-interface-json",
+        &[
+            ("BehindInterface", "github:Questie/Questie", "1.2.2", ""),
+            ("Plain", "github:Example/Prerelease", "1.0.0", ""),
+        ],
+    );
+    let stub = stub_with_forever_zip(
+        game.root.parent().expect("the base"),
+        "behind-interface-1.0.0.zip",
+    );
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["--json", "update", "--all", "--yes", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let addon = |name: &str| {
+        value["addons"]
+            .as_array()
+            .expect("the addons")
+            .iter()
+            .find(|addon| addon["name"] == name)
+            .unwrap_or_else(|| panic!("{name} in {value}"))
+            .clone()
+    };
+    let behind = addon("BehindInterface");
+    assert_eq!(behind["updated"], true, "{value}");
+    assert_eq!(behind["interface_out_of_date"], behind_json());
+    assert_eq!(behind["interface_mismatch"], serde_json::Value::Null);
+    let plain = addon("Plain");
+    assert_eq!(plain["updated"], false);
+    assert_eq!(plain["interface_out_of_date"], serde_json::Value::Null);
+    assert_eq!(plain["interface_mismatch"], serde_json::Value::Null);
+}
+
 // --- task 021: `pin`, `unpin`, `ignore`, `unignore`, `channel` and their marks in `list` ---
 
 /// Runs `mrgl --serious <args> --flavor forever` in a game and returns the output.

@@ -99,6 +99,15 @@ impl InterfaceOutOfDate {
             self.folder, self.highest, self.build, self.interface
         )
     }
+
+    /// The warning after an install whose addon the client lists as out of date (task 082): the line, the
+    /// flavor folder, and the client's word for it.
+    pub fn after_install_line(&self, folder_name: &str) -> String {
+        format!(
+            "{} of {folder_name}; the client lists it as out of date",
+            self.line()
+        )
+    }
 }
 
 /// The major version an interface number stands for: `120105` is 12, `16001` is 1.

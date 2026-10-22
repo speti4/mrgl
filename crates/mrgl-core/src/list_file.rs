@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::install::{Engine, PickInstalled, SourceInstalled, SourceRequest, Wanted};
-use crate::interface::{self, InterfaceMismatch};
+use crate::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use crate::scan;
 use crate::sources::{Source, SourceSpec};
 use crate::state::{self, State};
@@ -304,6 +304,8 @@ pub struct Imported {
     pub detail: String,
     /// The installed addon's TOC names no interface of the flavor's build.
     pub interface_mismatch: Option<InterfaceMismatch>,
+    /// The installed addon's TOC is behind the flavor's build: the client's `Out of date` (task 082).
+    pub interface_out_of_date: Option<InterfaceOutOfDate>,
     /// Plain lines the install engine reported for this entry.
     pub warnings: Vec<String>,
 }
@@ -426,6 +428,7 @@ pub fn import(
             folders: Vec::new(),
             detail,
             interface_mismatch: None,
+            interface_out_of_date: None,
             warnings: Vec::new(),
         };
         if kind == EntrySource::Linked {
@@ -528,13 +531,16 @@ pub fn import(
             .iter_mut()
             .filter(|item| item.outcome == Outcome::Installed)
         {
-            item.interface_mismatch = item.folders.first().and_then(|primary| {
+            let primary = item.folders.first().and_then(|primary| {
                 after
                     .addons
                     .iter()
                     .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
-                    .and_then(|addon| interface::check_addon(addon, engine.flavor.version))
             });
+            item.interface_mismatch =
+                primary.and_then(|addon| interface::check_addon(addon, engine.flavor.version));
+            item.interface_out_of_date = primary
+                .and_then(|addon| interface::out_of_date_addon(addon, engine.flavor.version));
         }
     }
     Ok(ImportReport { items, warnings })

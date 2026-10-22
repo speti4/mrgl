@@ -43,7 +43,9 @@ BOM in a fixture survives every checkout.
   (`several-folders-2.0.0`; `2.1.0` drops the `_Data` folder), a TOC at the zip's root with a `_Vanilla`
   twin (`root-toc-3.0.0`), a wrapper folder around the addon folder (`wrapped-4.0.0`), a TOC without a
   `## Version` (`no-version`), a TOC whose `## Interface` (110207) has another major version than every
-  fixture build, for the interface warning of task 015 (`stale-interface-1.0.0`), a path that tries to
+  fixture build, for the interface warning of task 015 (`stale-interface-1.0.0`), a TOC one interface
+  number behind the Forever fixture build (16000 under 1.60.1), out of date for task 082
+  (`behind-interface-1.0.0`), a path that tries to
   escape the staging folder (`escaping-path`), an addon that requires `LibEmbedded`, carried under its
   `Libs/`, and `LibMissing`, carried nowhere (`needs-library-1.0.0`, task 029), and a zip with no addon at
   all (`no-addon`). `.gitignore` allows zips here and nowhere else.

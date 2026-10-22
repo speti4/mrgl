@@ -268,11 +268,14 @@ each addon the source is asked about (`checking Questie against github:Questie/Q
 stop as a warning when it happens, and a plain data line per addon as soon as it is checked
 (`Questie  1.2.2 -> 1.2.3  update available`), ask once for the updates (`--yes` answers; without a
 terminal or with `--json` the command stops and says what `--yes` does, exit 1), install each through the
-one install path with the pick the check made (`AddonUpdate::request`, no second resolve) and end with the
+one install path with the pick the check made (`AddonUpdate::request`, no second resolve), say each
+install's summary line with the dependency and interface warnings of the installed addon, and end with the
 summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
 `1 update available` and writes nothing). `--json` is one `update` document: every addon with `state`,
 `latest`, `order` (the installed version against `latest`: `older`, `same`, `newer`, or `null` when there is
-no `latest` or the order cannot tell; task 077), `pick`, `updated` and the installed `addon` block, the `counts` per state, `stopped` (the
+no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installed `addon` block and the
+interface check of the installed addon, `interface_mismatch` and `interface_out_of_date` (task 082, below),
+the `counts` per state, `stopped` (the
 `BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
 update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
 the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.
@@ -281,13 +284,20 @@ The interface check (task 015) compares the `## Interface` numbers of the TOC th
 installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,
 `16001` is 1), and the addon passes when one number of the list has the build's major. A mismatch is a
 warning, never a refusal: `scan` and `list` mark the addon's line `interface mismatch` and add one warning
-line, their JSON carries `interface_mismatches`, and `add <file.zip>` and `import` add a warning after the
-install (`interface_mismatch` in their JSON). An addon that passes but whose highest number of the build's
-major is below the build's own interface number (`120100` under `12.1.5`, interface `120105`) is what the
-client lists as out of date (task 076): `scan` and `list` mark its line `out of date`, apart from the
-mismatch (an addon is one or the other), and add one warning line, and their JSON carries
+line, their JSON carries `interface_mismatches`. An addon that passes but whose highest number of the
+build's major is below the build's own interface number (`120100` under `12.1.5`, interface `120105`) is
+what the client lists as out of date (task 076): `scan` and `list` mark its line `out of date`, apart from
+the mismatch (an addon is one or the other), and add one warning line, and their JSON carries
 `interface_out_of_date`, each with `folder`, `toc`, `interfaces`, `build`, the build's `interface` and the
-TOC's `highest` number of the build's major; a number above the build's is current. An unknown build, a TOC
+TOC's `highest` number of the build's major; a number above the build's is current. After an install, `add`
+(a zip in hand or a source), `import` and `update` check the installed addon's primary folder for both
+states (`Engine::check_installed`, task 082) and say one warning line through the voice: `StaleInterface:
+interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor` for a
+mismatch, `BehindInterface: interface 16000 is out of date for the build 1.60.1.70245 (16001) of _forever_;
+the client lists it as out of date` for out of date. Their JSON carries both keys, `interface_mismatch`
+and `interface_out_of_date`, the object of the state or `null`: at the top of the `add` document, on every
+entry of the `import` document, and on every addon of the `update` document (`null` for an addon that was
+not updated). The window's update answer reads the same core check (task 079). An unknown build, a TOC
 without an `## Interface` line and a folder the flavor loads no TOC from give no warning.
 
 The addon sets (task 014, `mrgl_core::sets`) are named lists of addons per flavor, each addon `enabled` or

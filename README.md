@@ -223,8 +223,9 @@ every `github:` entry the flavor does not have yet, and leaves the others alone 
 machine it came from, a linked folder is linked again). `list` and an install warn when an addon's
 `## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor;
 `scan` and `list` mark an addon `out of date` when its interface is from the flavor's expansion but older
-than the installed build, as the game's own addon list does after a patch. The window marks its rows the
-same way, `interface mismatch` or `out of date` under the row's state.
+than the installed build, as the game's own addon list does after a patch, and an install or an update says
+so for the addon it just installed. The window marks its rows the same way, `interface mismatch` or
+`out of date` under the row's state.
 
 ## Documentation
 
