@@ -758,14 +758,17 @@
   });
 
   // The adopt card (task 109): the report on demand, the apply, and in a folder the CurseForge app manages
-  // the dialog first, whose confirmation is the window's `--alongside-curseforge`.
+  // the dialog first, whose confirmation is the window's `--alongside-curseforge`. The apply sends the shown
+  // report's answers, so no source is asked again (task 113).
   $("adopt-ask").addEventListener("click", () => {
     const flavor = selected();
     if (flavor) askSources(flavor);
   });
 
   function adoptWrite(flavor, alongside) {
-    toolboxWrite(flavor, "the adopt", () => Data.adoptApply(flavor.id, alongside), applyAdoptAnswer);
+    const entry = adopts[flavor.id];
+    const answers = entry ? entry.adopt.answers : null;
+    toolboxWrite(flavor, "the adopt", () => Data.adoptApply(flavor.id, alongside, answers), applyAdoptAnswer);
   }
 
   const adoptConfirm = $("adopt-confirm");

@@ -42,10 +42,15 @@
 //                                       runs (task 023), an edit is not
 //   Data.adopt(flavorId)             -> Promise<{ adopt, flavor, adopted, messages }>  task 109: the adopt
 //                                       report of the flavor's unmanaged addons (`mrgl adopt`), nothing written
-//   Data.adoptApply(flavorId, alongside) -> the same             the report's adoptable addons into the
+//                                       with `adopt.answers`, the sources' answers it was built from (task
+//                                       113: `{ flavor, asked_at, offers: { <spec>: { build, why, missing } },
+//                                       folders: { <spec>: [folder] | null } }`)
+//   Data.adoptApply(flavorId, alongside, answers) -> the same    the report's adoptable addons into the
 //                                       sidecar (`adopt --apply`); in a flavor with the CurseForge app's marker
 //                                       refused unless `alongside` (the dialog's confirmation, the window's
-//                                       `--alongside-curseforge`), then a warning
+//                                       `--alongside-curseforge`), then a warning; `answers` the shown
+//                                       report's, so no source is asked again while they are younger than an
+//                                       hour (task 113)
 //
 // A message is `{ kind, murloc, plain }` as `mrgl_core::voice` says it: the kind picks the murloc line, the
 // plain line carries every fact, and a serious voice sends the murloc line empty (D-005). The murloc table
@@ -1120,7 +1125,18 @@
       left_out: [],
       counts,
       summary: say(kind, counts.adoptable_now > 0 ? `${line}; the Adopt button adopts ${counts.adoptable_now} of them` : line),
+      answers: answersOf(flavor, rows),
     };
+  }
+
+  // The answers a made-up report was built from, in the shape of `adopt::Answers` (task 113): the sketch
+  // asks no source, so they are its made-up sources' answers.
+  function answersOf(flavor, rows) {
+    const offers = {};
+    for (const row of rows) {
+      for (const source of row.sources) offers[source.spec] = { build: source.build, why: source.why, missing: source.missing };
+    }
+    return { flavor: flavor.id, asked_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"), offers, folders: {} };
   }
 
   function adoptAnswer(adopt, messages, extra) {
@@ -1136,8 +1152,9 @@
   }
 
   // The made-up apply, with the guard and the lines of `adopt --apply`: each adoptable row becomes a
-  // managed row of its source, no folder changes.
-  function adoptApply(flavorId, alongside) {
+  // managed row of its source, no folder changes. The shown report's answers come back with the report after
+  // it, as the window's do (task 113); the sketch asks no source either way.
+  function adoptApply(flavorId, alongside, answers) {
     const flavor = flavors.find((item) => item.id === flavorId);
     if (!flavor) return Promise.resolve(adoptAnswer(null, [say("error", `no flavor ${flavorId}: no such flavor folder under ${ROOT}`)]));
     if (flavor.curse_client && !alongside) {
@@ -1186,7 +1203,9 @@
           )
         : say("nothing", `${line}; nothing adopted, the sidecar is unchanged`)
     );
-    return Promise.resolve(adoptAnswer(adoptView(flavor), messages, { flavor, adopted }));
+    const after = adoptView(flavor);
+    if (answers && answers.flavor === flavor.id) after.answers = answers;
+    return Promise.resolve(adoptAnswer(after, messages, { flavor, adopted }));
   }
 
   return {
