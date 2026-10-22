@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 14 backlog (0 ready · 0 blocked · 2 waiting · 12 ideas) · 1 in progress · 56 done · 3 dropped · 5 decisions
+**State:** 13 backlog (0 ready · 0 blocked · 2 waiting · 11 ideas) · 2 in progress · 56 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -49,19 +49,13 @@ _none_
 | 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](backlog/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | S | 2026-10-22 |
 | 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](backlog/080-housekeeping-after-wave-5.md) | S | 2026-10-22 |
 
-#### M2 Window MVP
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 078 | [The window's cached view: the Forever build signal walks the releases like the …](backlog/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | S | 2026-10-22 |
-| 079 | [Window and exe polish after the first release: the checks after an update, the …](backlog/079-window-and-exe-polish-after-the-first-release.md) | S | 2026-10-22 |
-
 #### M3 Toolbox
 
 | # | Task | Size | Created |
 |---|---|---|---|
 | 062 | [link takes a single addon folder as well as a development folder](backlog/062-link-takes-a-single-addon-folder.md) | S | 2026-10-21 |
 | 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](backlog/073-addon-sets-undo-edit-and-account.md) | M | 2026-10-22 |
+| 074 | [The window's toolbox: a set switch and a SavedVariables view](backlog/074-window-toolbox-sets-and-savedvariables.md) | M | 2026-10-22 |
 
 #### M4 Sources
 
@@ -84,11 +78,12 @@ _none_
 
 ### In progress
 
-#### M3 Toolbox
+#### M2 Window MVP
 
 | # | Task | Started | Plan |
 |---|---|---|---|
-| 074 | [The window's toolbox: a set switch and a SavedVariables view](wip/074-window-toolbox-sets-and-savedvariables.md) | 2026-10-22 | `none` |
+| 078 | [The window's cached view: the Forever build signal walks the releases like the …](wip/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | 2026-10-22 | `none` |
+| 079 | [Window and exe polish after the first release: the checks after an update, the …](wip/079-window-and-exe-polish-after-the-first-release.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
