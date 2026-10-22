@@ -399,6 +399,7 @@ pub fn run<S: Source + ?Sized>(
         Plan::All | Plan::One(_) => SummaryOf::Update {
             updated: updated.len(),
             left,
+            installed_already: 0,
         },
     };
     let (kind, plain) = check.summary(of, &folder_name);

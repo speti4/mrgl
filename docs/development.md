@@ -278,7 +278,13 @@ terminal or with `--json` the command stops and says what `--yes` does, exit 1),
 one install path with the pick the check made (`AddonUpdate::request`, no second resolve), say each
 install's summary line with the dependency and interface warnings of the installed addon, and end with the
 summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
-`1 update available` and writes nothing under `Interface\AddOns` or in the sidecar). Right after the check,
+`1 update available` and writes nothing under `Interface\AddOns` or in the sidecar). An update the one
+install path answers with "installed already" is not counted as updated (task 089): under the addon's own
+entry (another run updated it since the check) `update` says the nothing-to-do line of `add`; under another
+entry of the same source, which the install path finds first by its source (a renamed addon next to its old
+name), it says a warning that names that entry, `QuestieClassic not updated: Questie, a second entry of
+github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2`, and leaves
+both entries as they are; the summary counts either as `1 installed already`. Right after the check,
 before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
 as the window's check does (task 087, below): a source gone, a failed check and an addon left before the
 rate limit are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
@@ -286,7 +292,9 @@ that cannot be written is a warning (`the answers of this check are not kept for
 `latest`, `order` (the installed version against `latest`: `older`, `same`, `newer`, or `null` when there is
 no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installed `addon` block and the
 interface check of the installed addon, `interface_mismatch` and `interface_out_of_date` (task 082, below),
-the `counts` per state, `stopped` (the
+`installed_already` (task 089: the entry the install path found at the pick's version, as an `addon` block
+with `same_entry` and the line as `message`; `null` otherwise), the document's `updated` and
+`installed_already` counts, the `counts` per state, `stopped` (the
 `BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
 update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
 the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.

@@ -1,5 +1,5 @@
-//! End-to-end tests of what the `mrgl` exe reports about a run's surroundings: the staging folder the doctor
-//! names (task 088). Every run points `MRGL_HOME` and `MRGL_ROOT` at a temporary folder, answers the
+//! End-to-end tests of what the `mrgl` exe reports: the staging folder the doctor names (task 088) and an
+//! update a second entry of the same source has installed already (task 089). Every run points `MRGL_HOME` and `MRGL_ROOT` at a temporary folder, answers the
 //! sources from the fixture folder stub and reads no registry, as `tests/cli.rs` does.
 
 use std::path::{Path, PathBuf};
@@ -185,4 +185,152 @@ fn doctor_names_a_staging_folder_kept_for_its_previous_folders_in_text_and_json(
         "{}",
         stdout(&output)
     );
+}
+
+// --- task 089: `update` reports a second entry of the same source that has the pick's version ---
+
+impl Game {
+    fn addon(&self, folder: &str) -> PathBuf {
+        self.root
+            .join("_forever_")
+            .join("Interface")
+            .join("AddOns")
+            .join(folder)
+    }
+
+    fn state_path(&self) -> PathBuf {
+        self.home.join("wowf").join("state.json")
+    }
+
+    /// An addon folder with a TOC, made by hand.
+    fn by_hand(&self, folder: &str, version: &str) {
+        std::fs::create_dir_all(self.addon(folder)).expect("the folder");
+        std::fs::write(
+            self.addon(folder).join(format!("{folder}.toc")),
+            format!("## Interface: 16001\n## Title: {folder}\n## Version: {version}\n"),
+        )
+        .expect("the TOC");
+    }
+
+    /// A sidecar that manages the entries (folder, source, version), each with its folder made by hand.
+    fn managed(&self, entries: &[(&str, &str, &str)]) {
+        let mut json = Vec::new();
+        for (folder, source, version) in entries {
+            self.by_hand(folder, version);
+            json.push(format!(
+                r#""{folder}": {{ "source": "{source}", "version": "{version}", "folders": ["{folder}"], "files": {{}}, "installed_at": "2026-10-21T14:03:05Z" }}"#
+            ));
+        }
+        std::fs::create_dir_all(self.home.join("wowf")).expect("the flavor home");
+        std::fs::write(
+            self.state_path(),
+            format!(
+                r#"{{ "schema": 1, "flavor": "wowf", "addons": {{ {} }} }}"#,
+                json.join(", ")
+            ),
+        )
+        .expect("the sidecar");
+    }
+
+    fn sidecar(&self) -> serde_json::Value {
+        let text = std::fs::read_to_string(self.state_path()).expect("the sidecar");
+        serde_json::from_str(&text).expect("the sidecar is JSON")
+    }
+}
+
+/// A game whose sidecar has two entries of `github:Questie/Questie`: `Questie` at the current release
+/// 1.2.3 of the fixture answers, and `QuestieClassic`, an older name of it, at 1.2.2. The one install path
+/// looks an addon up by its source and finds `Questie` first.
+fn two_entries_of_one_source(name: &str) -> Game {
+    let game = Game::new(name);
+    game.managed(&[
+        ("Questie", "github:Questie/Questie", "1.2.3"),
+        ("QuestieClassic", "github:Questie/Questie", "1.2.2"),
+    ]);
+    game
+}
+
+const SECOND_ENTRY_LINE: &str = "QuestieClassic not updated: Questie, a second entry of github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2";
+
+#[test]
+fn update_reports_a_second_entry_of_the_same_source_and_counts_it_apart() {
+    for (args, checked, summary) in [
+        (
+            ["update", "QuestieClassic"],
+            vec!["checking QuestieClassic of _forever_ against their sources"],
+            "nothing updated: 1 installed already",
+        ),
+        (
+            ["update", "--all"],
+            vec![
+                "checking the managed addons of _forever_ against their sources",
+                "checking Questie against github:Questie/Questie (1 of 2)",
+                "Questie  1.2.3  up to date",
+            ],
+            "nothing updated: 1 installed already, 1 up to date",
+        ),
+    ] {
+        let game = two_entries_of_one_source(&format!("update-second-{}", args[1]));
+        let before = game.sidecar();
+        let output = game
+            .mrgl()
+            .arg("--serious")
+            .args(args)
+            .args(["--yes", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let text = stdout(&output);
+        let mut expected = checked;
+        let at = if args[1] == "--all" { 2 } else { 1 };
+        let checking =
+            format!("checking QuestieClassic against github:Questie/Questie ({at} of {at})");
+        expected.extend([
+            checking.as_str(),
+            "QuestieClassic  1.2.2 -> 1.2.3  update available",
+            "updating QuestieClassic from 1.2.2 to 1.2.3",
+            SECOND_ENTRY_LINE,
+            summary,
+        ]);
+        assert_eq!(text.lines().collect::<Vec<_>>(), expected, "{text}");
+        assert_eq!(game.sidecar(), before, "nothing written");
+
+        let output = game
+            .mrgl()
+            .arg("--json")
+            .args(args)
+            .args(["--yes", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("one document");
+        assert_eq!(value["updated"], 0, "{value}");
+        assert_eq!(value["installed_already"], 1, "{value}");
+        let addon = value["addons"]
+            .as_array()
+            .expect("the addons")
+            .iter()
+            .find(|addon| addon["name"] == "QuestieClassic")
+            .expect("QuestieClassic");
+        assert_eq!(addon["updated"], false, "{addon}");
+        assert_eq!(addon["addon"], serde_json::Value::Null, "{addon}");
+        assert_eq!(
+            addon["installed_already"],
+            serde_json::json!({
+                "name": "Questie",
+                "version": "1.2.3",
+                "outcome": null,
+                "previous_version": null,
+                "source": "github:Questie/Questie",
+                "folders": ["Questie"],
+                "removed_folders": [],
+                "same_entry": false,
+                "message": SECOND_ENTRY_LINE,
+            }),
+            "{addon}"
+        );
+        assert_eq!(addon["error"], serde_json::Value::Null, "{addon}");
+        assert_eq!(game.sidecar(), before, "nothing written");
+    }
 }

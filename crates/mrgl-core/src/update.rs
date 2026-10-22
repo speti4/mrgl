@@ -321,8 +321,14 @@ pub enum SummaryOf {
     DryRun,
     /// The window's check (task 010): what the sources answer, nothing written.
     Check,
-    /// An update run that installed `updated` addons and left `left` of them for a cancel (the window).
-    Update { updated: usize, left: usize },
+    /// An update run that installed `updated` addons, left `left` of them for a cancel (the window) and
+    /// found `installed_already` of them at the pick's version already (task 089: the one install path's
+    /// answer, under the addon's own entry or another entry of the same source), so it installed nothing.
+    Update {
+        updated: usize,
+        left: usize,
+        installed_already: usize,
+    },
 }
 
 impl UpdateCheck {
@@ -349,13 +355,23 @@ impl UpdateCheck {
                 }
                 0
             }
-            SummaryOf::Update { updated, left } => {
-                let failed = available.saturating_sub(updated).saturating_sub(left);
+            SummaryOf::Update {
+                updated,
+                left,
+                installed_already,
+            } => {
+                let failed = available
+                    .saturating_sub(updated)
+                    .saturating_sub(left)
+                    .saturating_sub(installed_already);
                 if updated > 0 {
                     parts.push(format!("{} updated", count_addons(updated)));
                 }
                 if failed > 0 {
                     parts.push(format!("{failed} failed"));
+                }
+                if installed_already > 0 {
+                    parts.push(format!("{installed_already} installed already"));
                 }
                 if left > 0 {
                     parts.push(format!("{left} not updated (cancelled)"));
@@ -907,7 +923,8 @@ mod tests {
         assert_eq!(
             summary(SummaryOf::Update {
                 updated: 3,
-                left: 0
+                left: 0,
+                installed_already: 0,
             }),
             (
                 Kind::Success,
@@ -917,7 +934,8 @@ mod tests {
         assert_eq!(
             summary(SummaryOf::Update {
                 updated: 1,
-                left: 1
+                left: 1,
+                installed_already: 0,
             }),
             (
                 Kind::Warning,
@@ -928,11 +946,35 @@ mod tests {
         assert_eq!(
             summary(SummaryOf::Update {
                 updated: 0,
-                left: 3
+                left: 3,
+                installed_already: 0,
             }),
             (
                 Kind::Warning,
                 "nothing updated: 3 not updated (cancelled), 1 up to date, 1 pinned".to_string()
+            )
+        );
+        // Task 089: an update the one install path found installed already is neither updated nor failed.
+        assert_eq!(
+            summary(SummaryOf::Update {
+                updated: 2,
+                left: 0,
+                installed_already: 1,
+            }),
+            (
+                Kind::Success,
+                "2 addons updated, 1 installed already, 1 up to date, 1 pinned".to_string()
+            )
+        );
+        assert_eq!(
+            summary(SummaryOf::Update {
+                updated: 0,
+                left: 0,
+                installed_already: 3,
+            }),
+            (
+                Kind::Nothing,
+                "nothing updated: 3 installed already, 1 up to date, 1 pinned".to_string()
             )
         );
     }
