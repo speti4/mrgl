@@ -12,6 +12,7 @@
     <script src="preferences.js"></script>
     <script src="flavors.js"></script>
     <script src="actions.js"></script>
+    <script src="toolbox.js"></script>
     <script src="data.js"></script>
     <script src="main.js" defer></script>
   </head>
@@ -49,12 +50,51 @@
           </div>
         </header>
         <p id="flavor-warnings" class="warnings" hidden></p>
-        <div class="list-head" aria-hidden="true">
-          <span>Addon</span><span>Version</span><span>Source</span><span>State</span><span class="forever-head">Forever</span><span></span>
+        <div class="view-tabs" role="tablist" aria-label="Flavor views">
+          <button id="tab-addons" type="button" role="tab" class="tab" aria-controls="addons-view">Addons</button>
+          <button id="tab-toolbox" type="button" role="tab" class="tab" aria-controls="toolbox-view">Toolbox</button>
         </div>
-        <ul id="addon-list" class="addon-list"></ul>
-        <p id="no-match" class="muted no-match" hidden></p>
-        <footer id="legend" class="legend" aria-label="Legend"></footer>
+        <div id="addons-view" class="addons-view" role="tabpanel" aria-labelledby="tab-addons">
+          <div class="list-head" aria-hidden="true">
+            <span>Addon</span><span>Version</span><span>Source</span><span>State</span><span class="forever-head">Forever</span><span></span>
+          </div>
+          <ul id="addon-list" class="addon-list"></ul>
+          <p id="no-match" class="muted no-match" hidden></p>
+          <footer id="legend" class="legend" aria-label="Legend"></footer>
+        </div>
+        <div id="toolbox-view" class="toolbox-view" role="tabpanel" aria-labelledby="tab-toolbox" hidden>
+          <p id="toolbox-client" class="warnings" hidden></p>
+          <section class="tool-card" aria-labelledby="sets-title">
+            <header class="tool-head">
+              <h3 id="sets-title">Addon sets</h3>
+              <p id="sets-note" class="note"></p>
+            </header>
+            <div class="tool-form">
+              <label class="field">Set <select id="set-picker"></select></label>
+              <label class="field">Apply to <select id="target-picker"></select></label>
+              <button id="apply-set" type="button" class="primary">Apply</button>
+            </div>
+            <ul id="set-addons" class="set-addons" aria-label="The addons of the set"></ul>
+            <ul id="set-changes" class="set-changes" aria-label="What the last apply changed" hidden></ul>
+          </section>
+          <section class="tool-card" aria-labelledby="savedvars-title">
+            <header class="tool-head">
+              <h3 id="savedvars-title">SavedVariables</h3>
+              <p id="savedvars-summary" class="note"></p>
+            </header>
+            <div class="tool-form">
+              <label class="check"><input id="orphans-only" type="checkbox" /> orphans only</label>
+              <button id="clean-savedvars" type="button" class="secondary">Move the orphans into a backup zip</button>
+            </div>
+            <table class="savedvars-table">
+              <thead>
+                <tr><th scope="col">Addon</th><th scope="col">Where</th><th scope="col">Files</th><th scope="col" class="size">Size</th><th scope="col">Status</th></tr>
+              </thead>
+              <tbody id="savedvars-rows"></tbody>
+            </table>
+            <p id="savedvars-empty" class="muted no-match" hidden></p>
+          </section>
+        </div>
       </section>
     </main>
 

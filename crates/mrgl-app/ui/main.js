@@ -1,8 +1,9 @@
 // The view (task 017): the flavor navigation, the addon list, the search, the voice's two places and the
 // theme; the game folder chooser and "copy diagnostics" (task 009); the update check, "update all", a row's
-// update with its progress slot, the cancel and the row menu's marks (task 010). It reads `window.Data`
-// and draws what it gets; it does not know whether the rows are made up (`mock-data.js`) or the core's
-// answers (`data.js`), and it never composes a murloc line.
+// update with its progress slot, the cancel and the row menu's marks (task 010); the toolbox tab of a
+// flavor with its set picker and its SavedVariables table (task 074). It reads `window.Data` and draws what
+// it gets; it does not know whether the rows are made up (`mock-data.js`) or the core's answers
+// (`data.js`), and it never composes a murloc line.
 (function () {
   "use strict";
 
@@ -12,6 +13,7 @@
   const Theme = window.Theme;
   const Flavors = window.Flavors;
   const Actions = window.Actions;
+  const Toolbox = window.Toolbox;
   const Data = window.Data;
 
   const $ = (id) => document.getElementById(id);
@@ -152,6 +154,16 @@
   // The update run going, one at a time (task 010): its id, its flavor, the progress slots of its rows.
   let run = null;
   let runs = 0;
+  // The tab of the chosen flavor: `addons` or `toolbox` (task 074).
+  let tab = "addons";
+  // The toolbox per flavor id, as the last answer drew it: `{ toolbox, changes }`; a toolbox write going
+  // (one at a time), and the panel's picks.
+  const toolboxes = {};
+  let toolboxBusy = false;
+  let toolboxLoads = 0;
+  let pickedSet = null;
+  let pickedTarget = Toolbox.EVERY;
+  let orphansOnly = false;
 
   function selected() {
     return flavors.find((flavor) => flavor.id === selectedId) || null;
@@ -197,9 +209,15 @@
         button.append(due);
       }
       button.addEventListener("click", () => {
+        const changed = selectedId !== flavor.id;
         selectedId = flavor.id;
+        if (changed) {
+          pickedSet = null;
+          pickedTarget = Toolbox.EVERY;
+        }
         renderNav();
         renderFlavor();
+        if (changed && tab === "toolbox") loadToolbox(flavor);
       });
       item.append(button);
       list.append(item);
@@ -246,8 +264,17 @@
     // The Forever column (header and cells) shows only when a row of this flavor carries a note.
     $("flavor").classList.toggle("without-forever", !State.hasForeverNotes(flavor.addons));
 
+    // The tabs (task 074): the addon list with its search, or the toolbox.
+    const onToolbox = tab === "toolbox";
+    $("tab-addons").setAttribute("aria-selected", String(!onToolbox));
+    $("tab-toolbox").setAttribute("aria-selected", String(onToolbox));
+    $("addons-view").hidden = onToolbox;
+    $("toolbox-view").hidden = !onToolbox;
+    $("search").hidden = onToolbox;
+
     renderRows(flavor);
     renderLegend();
+    if (onToolbox) renderToolbox(flavor);
   }
 
   function renderRows(flavor) {
@@ -359,6 +386,198 @@
     }
   }
 
+  // ---- the toolbox tab (task 074): the set picker with its target, the SavedVariables table and its
+  // cleanup, both writes answered by the core (refused while the client runs)
+
+  // A message laid out in the panel: the plain line, the kind's dot, both lines in the tooltip.
+  function drawNote(element, message) {
+    const shown = heard(message);
+    element.className = `note ${Voice.kindClass(shown.kind)}`;
+    element.textContent = shown.plain;
+    element.title = Voice.oneLine(shown);
+  }
+
+  function fillSelect(select, options, value) {
+    select.replaceChildren();
+    for (const option of options) {
+      const element = document.createElement("option");
+      element.value = option.value;
+      element.textContent = option.label;
+      select.append(element);
+    }
+    select.value = value;
+  }
+
+  function renderToolbox(flavor) {
+    const entry = toolboxes[flavor.id];
+    const toolbox = entry ? entry.toolbox : null;
+
+    const client = $("toolbox-client");
+    const running = toolbox && toolbox.client ? heard(toolbox.client) : null;
+    client.hidden = !running;
+    client.textContent = running ? running.plain : "";
+    client.title = running ? Voice.oneLine(running) : "";
+
+    // The sets: the picker, the target, the set's addons, the apply and what the last apply changed.
+    if (toolbox) drawNote($("sets-note"), toolbox.sets_note);
+    else {
+      $("sets-note").className = "note muted";
+      $("sets-note").textContent = `reading the toolbox of ${flavor.folder}…`;
+    }
+    const sets = toolbox ? toolbox.sets : [];
+    const set = Toolbox.pickSet(sets, pickedSet);
+    pickedSet = set ? set.name : null;
+    const setPicker = $("set-picker");
+    fillSelect(
+      setPicker,
+      sets.map((item) => ({ value: item.name, label: `${item.name} (${item.enabled} enabled, ${item.disabled} disabled)` })),
+      pickedSet || ""
+    );
+    setPicker.disabled = sets.length === 0 || toolboxBusy;
+    const characters = toolbox ? toolbox.characters : [];
+    const targets = Toolbox.targetOptions(characters);
+    if (!targets.some((option) => option.value === pickedTarget)) pickedTarget = Toolbox.EVERY;
+    const targetPicker = $("target-picker");
+    fillSelect(targetPicker, targets, pickedTarget);
+    targetPicker.disabled = characters.length === 0 || toolboxBusy;
+
+    const addons = $("set-addons");
+    addons.replaceChildren();
+    for (const addon of Toolbox.setAddons(set)) {
+      const item = document.createElement("li");
+      item.className = `set-addon set-${addon.state}`;
+      item.classList.toggle("not-installed", !addon.installed);
+      item.textContent = addon.name;
+      item.title = addon.note ? `${addon.state}, ${addon.note}` : addon.state;
+      addons.append(item);
+    }
+
+    const apply = Toolbox.applyButton(toolbox, set, toolboxBusy);
+    const applyButton = $("apply-set");
+    applyButton.textContent = apply.label;
+    applyButton.disabled = !apply.enabled;
+    applyButton.title = apply.title;
+
+    const changes = $("set-changes");
+    const lines = Toolbox.changeLines(entry ? entry.changes : []);
+    changes.hidden = lines.length === 0;
+    changes.replaceChildren();
+    for (const line of lines) {
+      const item = document.createElement("li");
+      item.textContent = line;
+      changes.append(item);
+    }
+
+    // The SavedVariables: the summary, the table, the cleanup.
+    if (toolbox) drawNote($("savedvars-summary"), toolbox.saved_variables.summary);
+    else $("savedvars-summary").textContent = "";
+    $("orphans-only").checked = orphansOnly;
+    const rows = Toolbox.savedVariablesRows(toolbox, orphansOnly);
+    const body = $("savedvars-rows");
+    body.replaceChildren();
+    for (const file of rows) {
+      const row = document.createElement("tr");
+      row.className = `savedvars-${file.status}`;
+      const cells = [file.addon, file.place, Toolbox.filesOf(file), file.size, Toolbox.statusLabel(file.status)];
+      cells.forEach((text, index) => {
+        const cell = document.createElement("td");
+        cell.textContent = text;
+        if (index === 3) cell.className = "size";
+        if (index === 4) cell.className = "savedvars-status";
+        row.append(cell);
+      });
+      body.append(row);
+    }
+    body.parentElement.hidden = rows.length === 0;
+    const empty = $("savedvars-empty");
+    const files = toolbox ? toolbox.saved_variables.files.length : 0;
+    empty.hidden = !(toolbox && rows.length === 0 && files > 0);
+    empty.textContent = "no orphans: every SavedVariables file has its addon folder";
+
+    const clean = Toolbox.cleanButton(toolbox, toolboxBusy, Boolean(run));
+    const cleanButton = $("clean-savedvars");
+    cleanButton.textContent = clean.label;
+    cleanButton.disabled = !clean.enabled;
+    cleanButton.title = clean.title;
+  }
+
+  // Keeps a toolbox answer's toolbox and changes (an answer without a toolbox leaves the drawn one) and
+  // says its messages in order, the summary last.
+  function applyToolboxAnswer(flavorId, answer) {
+    if (answer && answer.toolbox) toolboxes[flavorId] = { toolbox: answer.toolbox, changes: answer.changes || [] };
+    for (const message of (answer && answer.messages) || []) say(message);
+  }
+
+  async function loadToolbox(flavor) {
+    toolboxLoads += 1;
+    const id = toolboxLoads;
+    try {
+      const answer = await Data.toolbox(flavor.id);
+      // A later load (another flavor, a second click) answers for the panel.
+      if (id === toolboxLoads) applyToolboxAnswer(flavor.id, answer);
+    } catch (error) {
+      say({ kind: "error", murloc: "", plain: `the toolbox of ${flavor.name} failed: ${error}` });
+    } finally {
+      if (selectedId === flavor.id) renderFlavor();
+    }
+  }
+
+  // A toolbox write, one at a time: the panel waits, then draws the answer.
+  async function toolboxWrite(flavor, what, call) {
+    if (toolboxBusy) return;
+    toolboxBusy = true;
+    renderFlavor();
+    try {
+      applyToolboxAnswer(flavor.id, await call());
+    } catch (error) {
+      say({ kind: "error", murloc: "", plain: `${what} in ${flavor.name} failed: ${error}` });
+    } finally {
+      toolboxBusy = false;
+      if (selectedId === flavor.id) renderFlavor();
+    }
+  }
+
+  function showTab(name) {
+    const flavor = selected();
+    const opened = tab !== name;
+    tab = name;
+    renderFlavor();
+    if (opened && name === "toolbox" && flavor) loadToolbox(flavor);
+  }
+
+  $("tab-addons").addEventListener("click", () => showTab("addons"));
+  $("tab-toolbox").addEventListener("click", () => showTab("toolbox"));
+
+  $("set-picker").addEventListener("change", (event) => {
+    pickedSet = event.target.value;
+    const flavor = selected();
+    if (flavor) renderToolbox(flavor);
+  });
+
+  $("target-picker").addEventListener("change", (event) => {
+    pickedTarget = event.target.value;
+  });
+
+  $("orphans-only").addEventListener("change", (event) => {
+    orphansOnly = event.target.checked;
+    const flavor = selected();
+    if (flavor) renderToolbox(flavor);
+  });
+
+  $("apply-set").addEventListener("click", () => {
+    const flavor = selected();
+    const entry = flavor && toolboxes[flavor.id];
+    const set = entry && Toolbox.pickSet(entry.toolbox.sets, pickedSet);
+    if (!set) return;
+    const target = Toolbox.targetOf(pickedTarget, entry.toolbox.characters);
+    toolboxWrite(flavor, `applying set ${set.name}`, () => Data.applySet(flavor.id, set.name, target));
+  });
+
+  $("clean-savedvars").addEventListener("click", () => {
+    const flavor = selected();
+    if (flavor) toolboxWrite(flavor, "the SavedVariables cleanup", () => Data.cleanSavedVariables(flavor.id));
+  });
+
   // ---- the actions: search, the update check, "update all", a row's update, the cancel and the marks
 
   $("search").addEventListener("input", (event) => {
@@ -462,8 +681,12 @@
       $("empty-murloc").textContent = shown.murloc;
       $("empty-plain").textContent = shown.plain;
     }
+    // Another game folder has other toolboxes: the drawn ones go, the open tab reads its flavor again.
+    for (const id of Object.keys(toolboxes)) delete toolboxes[id];
     renderNav();
     renderFlavor();
+    const flavor = selected();
+    if (tab === "toolbox" && flavor) loadToolbox(flavor);
   }
 
   async function chooseRoot() {

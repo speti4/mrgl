@@ -1,5 +1,5 @@
 //! The IPC commands the UI calls (`ui/data.js` behind `window.Data`). Each one is a thin wrapper over
-//! `mrgl-core` and the plain functions of [`crate::list`]; the text they return is already in the voice's
+//! `mrgl-core` and the plain functions of [`crate::list`], [`crate::actions`] and [`crate::toolbox`]; the text they return is already in the voice's
 //! shape, so the UI prints and never composes a murloc line of its own. A command that reads the disk or the
 //! network runs on a blocking thread, so the window stays responsive while it works.
 
@@ -21,6 +21,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::actions::{self, ActionAnswer, Plan, UpdateEvent, UpdateRun};
 use crate::list::{self, FlavorsAnswer, ResolveAnswer};
+use crate::toolbox::{self, ToolboxAnswer, ToolboxRun};
 
 /// A message as the UI shows it: the kind (it picks the place, `ui/voice.js`), the murloc line (empty when
 /// serious) and the plain line.
@@ -436,6 +437,14 @@ async fn update_run(
 ) -> ActionAnswer {
     blocking(
         move || {
+            // A cleanup reads the AddOns folders an install swaps; it is quick, so the run waits for it.
+            if app.state::<ToolboxRun>().is_running() {
+                return ActionAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::toolbox_busy_line(),
+                ));
+            }
             let run = app.state::<UpdateRun>();
             let Some(_guard) = run.start() else {
                 return ActionAnswer::refused(Message::new(
@@ -555,6 +564,105 @@ pub async fn mark(
             }
         },
         ActionAnswer::refused,
+    )
+    .await
+}
+
+/// The game root of this process, or the message that says why there is none.
+fn root_of_process(flavor: &str) -> Result<PathBuf, Message> {
+    let refused = |plain: String| Message::new(voice(), Kind::Error, plain);
+    discover::resolve_root_of_process(None)
+        .map_err(|error| refused(error.to_string()))?
+        .root
+        .map(|root| root.path)
+        .ok_or_else(|| {
+            refused(format!(
+                "no flavor {flavor}: no game root; choose the game folder"
+            ))
+        })
+}
+
+/// The toolbox of a flavor (task 074): its sets with their addons, its characters, its SavedVariables with
+/// their sizes and orphans, and whether its client runs. Reads only.
+#[tauri::command]
+pub async fn toolbox(flavor: String) -> ToolboxAnswer {
+    blocking(
+        move || match root_of_process(&flavor) {
+            Ok(root) => toolbox::load(&root, &flavor, home_dir().as_deref(), voice()),
+            Err(message) => ToolboxAnswer::refused(message),
+        },
+        ToolboxAnswer::refused,
+    )
+    .await
+}
+
+/// Applies a stored set to every character of a flavor, or to the one `character` (and `realm`) names
+/// (task 074 over tasks 014 and 027); refused while the client runs (task 023) and while another toolbox
+/// write goes.
+#[tauri::command]
+pub async fn apply_set(
+    app: tauri::AppHandle,
+    flavor: String,
+    set: String,
+    character: Option<String>,
+    realm: Option<String>,
+) -> ToolboxAnswer {
+    blocking(
+        move || {
+            let run = app.state::<ToolboxRun>();
+            let Some(_guard) = run.start() else {
+                return ToolboxAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::busy_line(),
+                ));
+            };
+            match root_of_process(&flavor) {
+                Ok(root) => toolbox::apply(
+                    &root,
+                    &flavor,
+                    &set,
+                    character.as_deref(),
+                    realm.as_deref(),
+                    home_dir().as_deref(),
+                    voice(),
+                ),
+                Err(message) => ToolboxAnswer::refused(message),
+            }
+        },
+        ToolboxAnswer::refused,
+    )
+    .await
+}
+
+/// Moves a flavor's orphan SavedVariables into the dated zip of its backups folder (task 074 over task
+/// 025); refused while the client runs (task 023), while an update runs (an install swaps addon folders,
+/// which the orphan rule reads) and while another toolbox write goes.
+#[tauri::command]
+pub async fn clean_saved_variables(app: tauri::AppHandle, flavor: String) -> ToolboxAnswer {
+    blocking(
+        move || {
+            if app.state::<UpdateRun>().is_running() {
+                return ToolboxAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::updating_line(),
+                ));
+            }
+            let run = app.state::<ToolboxRun>();
+            let Some(_guard) = run.start() else {
+                return ToolboxAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::busy_line(),
+                ));
+            };
+            match root_of_process(&flavor) {
+                Ok(root) => toolbox::clean(&root, &flavor, home_dir().as_deref(), voice()),
+                Err(message) => ToolboxAnswer::refused(message),
+            }
+        },
+        ToolboxAnswer::refused,
     )
     .await
 }

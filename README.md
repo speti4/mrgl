@@ -61,7 +61,9 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
 - **A toolbox, not only a manager.** WTF backup and restore, addon sets (a raid set, a levelling set: the
   enabled addons of every character switched with one command), the SavedVariables sizes with the cleanup
   of files whose addon is gone, a junction link for the addons you develop yourself, and a window on top of
-  it all.
+  it all. The window's Toolbox tab of each flavor applies a saved set to every character or to one picked
+  by name, and lists the SavedVariables with their sizes and the orphans, which one button moves into a
+  dated backup zip; both refuse while the game runs.
 - **Lists instead of a catalog.** An exported list names sources and versions only, so a friend can import
   it: a zip in hand or a linked folder stays out of it, and a list that names a local path is refused. The
   repo keeps a Forever starter list, the usual addons whose GitHub releases carry a Forever build, at
@@ -96,7 +98,7 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 ```powershell
 cargo build --release
 target\release\mrgl.exe --version
-target\release\mrgl-app.exe                                                 # the window: every flavor's addons, their updates and states
+target\release\mrgl-app.exe                                                 # the window: every flavor's addons, their updates and states, its toolbox
 target\release\mrgl.exe list --flavor forever                               # what is installed, managed by mrgl or not
 target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # remember a game folder installed elsewhere
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever            # install the release's Forever asset
