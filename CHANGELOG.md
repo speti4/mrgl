@@ -20,6 +20,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The command line's update check writes the last-check file the window reads ([087](https://github.com/speti4/mrgl/blob/main/tasks/done/087-cli-update-check-writes-the-last-check-file.md))
 - The doctor names a staging folder kept for its `previous\` folders ([088](https://github.com/speti4/mrgl/blob/main/tasks/done/088-doctor-names-a-staging-folder-kept-for-its-previous-folders.md))
 - `update <name>` says what happened when another entry of the same source already has the pick's version ([089](https://github.com/speti4/mrgl/blob/main/tasks/done/089-update-one-reports-a-second-entry-of-the-same-source.md))
+- `import` runs the dependency check after an install, as `add` and `update` do ([090](https://github.com/speti4/mrgl/blob/main/tasks/done/090-import-runs-the-dependency-check-after-an-install.md))
 
 ### M2 Window MVP
 

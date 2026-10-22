@@ -35,9 +35,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::dependencies::AddonDependencies;
 use crate::error::{Error, Result};
 use crate::install::{Engine, PickInstalled, SourceInstalled, SourceRequest, Wanted};
-use crate::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
+use crate::interface::{InterfaceMismatch, InterfaceOutOfDate};
 use crate::scan;
 use crate::sources::{Source, SourceSpec};
 use crate::state::{self, State};
@@ -306,6 +307,9 @@ pub struct Imported {
     pub interface_mismatch: Option<InterfaceMismatch>,
     /// The installed addon's TOC is behind the flavor's build: the client's `Out of date` (task 082).
     pub interface_out_of_date: Option<InterfaceOutOfDate>,
+    /// The dependency check of each installed folder after the whole import (task 090); empty for an
+    /// entry that installed nothing. A missing dependency is a line in `warnings` too.
+    pub dependencies: Vec<AddonDependencies>,
     /// Plain lines the install engine reported for this entry.
     pub warnings: Vec<String>,
 }
@@ -429,6 +433,7 @@ pub fn import(
             detail,
             interface_mismatch: None,
             interface_out_of_date: None,
+            dependencies: Vec::new(),
             warnings: Vec::new(),
         };
         if kind == EntrySource::Linked {
@@ -525,22 +530,29 @@ pub fn import(
         }
     }
 
-    if items.iter().any(|item| item.outcome == Outcome::Installed) {
-        let after = scan::scan_flavor(&engine.flavor)?;
-        for item in items
-            .iter_mut()
-            .filter(|item| item.outcome == Outcome::Installed)
-        {
-            let primary = item.folders.first().and_then(|primary| {
-                after
-                    .addons
+    // The checks of the install summary of `add` and `update` (tasks 029, 082, 090), over the flavor as
+    // the whole import left it: the interface check of each installed addon and its missing dependencies.
+    let installed: Vec<&mut Imported> = items
+        .iter_mut()
+        .filter(|item| item.outcome == Outcome::Installed)
+        .collect();
+    if !installed.is_empty() {
+        let folders: Vec<&[String]> = installed
+            .iter()
+            .map(|item| item.folders.as_slice())
+            .collect();
+        let checks = engine.check_installed_each(&folders);
+        for (item, checks) in installed.into_iter().zip(checks) {
+            item.warnings.extend(checks.warnings);
+            item.warnings.extend(
+                checks
+                    .dependencies
                     .iter()
-                    .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
-            });
-            item.interface_mismatch =
-                primary.and_then(|addon| interface::check_addon(addon, engine.flavor.version));
-            item.interface_out_of_date = primary
-                .and_then(|addon| interface::out_of_date_addon(addon, engine.flavor.version));
+                    .filter_map(AddonDependencies::warning),
+            );
+            item.interface_mismatch = checks.mismatch;
+            item.interface_out_of_date = checks.out_of_date;
+            item.dependencies = checks.dependencies;
         }
     }
     Ok(ImportReport { items, warnings })

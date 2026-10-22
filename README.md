@@ -196,8 +196,9 @@ game runs, like the apply); `set enable`, `set disable` and `set drop <set> <add
 stored set without touching any `AddOns.txt`, and `set save` keeps an addon that is no longer installed,
 with a warning that names it.
 
-`list` and `add` check every addon's required dependencies (the TOC's `## Dependencies` and
-`## RequiredDeps`) and name what the game will not find, as a warning, never a refusal:
+`list`, `add`, `update` and `import` check the required dependencies (the TOC's `## Dependencies` and
+`## RequiredDeps`) of every addon they list or install and name what the game will not find, as a warning,
+never a refusal:
 
 ```text
 Mrgl? Mrgl…

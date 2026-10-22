@@ -106,10 +106,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `apply`, task 027; `set undo`, `set enable|disable|drop <set> <addon>` and `--account`, task 073;
   below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
   below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
-  `tests/`. `list` and `add <file.zip>` run the dependency check
+  `tests/`. `list`, `add`, `update` and `import` (task 090) run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
-  addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
+  addon of `list`, a `dependencies` array of the installed folders under `add`'s `addon` and on every
+  installed entry of the `import` document, each with
   `folder`, `required`, `met`, `embedded` (a subset of `missing`), `missing` and `nolib` (`true`, `false` or
   `null` for unknown).
   `savedvars --flavor <flavor> [--clean]` (task 025) prints a data line per SavedVariables entry (size,
@@ -167,7 +168,13 @@ another format or schema is refused on import. `mrgl import` resolves every `git
 flavor's build and installs the current release through the engine under the entry's name, so the version
 in the list is a record, not a pin; a zip in hand is reported as not importable, a `link:` entry is skipped,
 and an addon the flavor already has (the same name, the same source, or a folder of the entry that is there,
-managed or not) is reported and left alone. `--dry-run` resolves every entry and writes nothing under
+managed or not) is reported and left alone. Once every entry is done, `import` runs the checks of the
+install summary of `add` and `update` over the addons it installed (`Engine::check_installed_each`, one
+scan of the flavor as the import left it, so a library installed later on the list counts as there; task
+090): a missing required dependency is a warning line (`NeedsLibrary needs the missing dependency
+LibMissing: install it or the addon does not load`) in the entry's `warnings` and the document's, and the
+entry's `dependencies` carries the check of each installed folder; the interface warnings follow (task 082,
+below). `--dry-run` resolves every entry and writes nothing under
 `Interface\AddOns` or in the sidecar (the release list cache of the GitHub source is written as on any
 resolve). An entry that fails does not stop the others; the run then ends with exit code 1. The list may
 come from another flavor: the picks are made for the flavor it is imported into, with a warning.

@@ -1,5 +1,6 @@
-//! End-to-end tests of what the `mrgl` exe reports: the staging folder the doctor names (task 088) and an
-//! update a second entry of the same source has installed already (task 089). Every run points `MRGL_HOME` and `MRGL_ROOT` at a temporary folder, answers the
+//! End-to-end tests of what the `mrgl` exe reports: the staging folder the doctor names (task 088), an
+//! update a second entry of the same source has installed already (task 089) and the dependency check
+//! of `import` (task 090). Every run points `MRGL_HOME` and `MRGL_ROOT` at a temporary folder, answers the
 //! sources from the fixture folder stub and reads no registry, as `tests/cli.rs` does.
 
 use std::path::{Path, PathBuf};
@@ -332,5 +333,128 @@ fn update_reports_a_second_entry_of_the_same_source_and_counts_it_apart() {
         );
         assert_eq!(addon["error"], serde_json::Value::Null, "{addon}");
         assert_eq!(game.sidecar(), before, "nothing written");
+    }
+}
+
+// --- task 090: `import` runs the dependency check after an install ---
+
+/// The fixture zips of `mrgl-core`.
+fn zips() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/zips")
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("the folder");
+    for entry in std::fs::read_dir(from).expect("read") {
+        let entry = entry.expect("entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy");
+        }
+    }
+}
+
+/// A copy of the fixture answers with a zip behind the Forever asset of `Questie/Questie` v1.2.3, so an
+/// import downloads and installs it offline.
+fn stub_with_forever_zip(game: &Game, zip: &str) -> PathBuf {
+    let stub = game.root.parent().expect("the base").join("stub");
+    let _ = std::fs::remove_dir_all(&stub);
+    copy_tree(&releases(), &stub);
+    std::fs::copy(
+        zips().join(zip),
+        stub.join("github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-forever.zip"),
+    )
+    .expect("the asset");
+    stub
+}
+
+/// A list file of one entry, `NeedsLibrary` from `github:Questie/Questie` at 1.2.3.
+fn needs_library_list(game: &Game) -> PathBuf {
+    let path = game.root.parent().expect("the base").join("list.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [{
+                "name": "NeedsLibrary",
+                "source": "github:Questie/Questie",
+                "version": "1.2.3",
+                "folders": ["NeedsLibrary"],
+            }],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    path
+}
+
+const MISSING_LINE: &str = "NeedsLibrary needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside NeedsLibrary, and the client does not count a library inside an addon's own folder)";
+
+#[test]
+fn import_warns_about_a_missing_dependency_of_an_installed_addon_and_not_of_a_complete_one() {
+    for complete in [false, true] {
+        for json in [false, true] {
+            let game = Game::new(&format!("import-dependencies-{complete}-{json}"));
+            if complete {
+                // The libraries are addons of their own already: the check finds them.
+                game.by_hand("LibEmbedded", "1.0");
+                game.by_hand("LibMissing", "1.0");
+            }
+            let stub = stub_with_forever_zip(&game, "needs-library-1.0.0.zip");
+            let list = needs_library_list(&game);
+            let output = game
+                .mrgl()
+                .env("MRGL_HTTP_STUB", &stub)
+                .arg(if json { "--json" } else { "--serious" })
+                .arg("import")
+                .arg(&list)
+                .args(["--flavor", "forever"])
+                .output()
+                .expect("run mrgl");
+            assert!(output.status.success(), "{}", stderr_last_line(&output));
+            if json {
+                let value: serde_json::Value =
+                    serde_json::from_slice(&output.stdout).expect("one JSON document");
+                let item = &value["addons"][0];
+                assert_eq!(item["outcome"], "installed", "{value}");
+                let dependencies = &item["dependencies"];
+                assert_eq!(dependencies.as_array().map(Vec::len), Some(1), "{value}");
+                assert_eq!(dependencies[0]["folder"], "NeedsLibrary");
+                let line = serde_json::Value::from(MISSING_LINE);
+                if complete {
+                    assert_eq!(dependencies[0]["missing"], serde_json::json!([]), "{value}");
+                    assert_eq!(
+                        dependencies[0]["met"],
+                        serde_json::json!(["LibEmbedded", "LibMissing", "Blizzard_Something"]),
+                        "{value}"
+                    );
+                    assert_eq!(item["warnings"], serde_json::json!([]), "{value}");
+                    assert_eq!(value["warnings"], serde_json::json!([]), "{value}");
+                } else {
+                    assert_eq!(
+                        dependencies[0]["missing"],
+                        serde_json::json!(["LibEmbedded", "LibMissing"]),
+                        "{value}"
+                    );
+                    assert_eq!(item["warnings"], serde_json::json!([line]), "{value}");
+                    assert_eq!(value["warnings"], serde_json::json!([line]), "{value}");
+                }
+            } else {
+                let text = stdout(&output);
+                let mut expected = vec![
+                    "importing 1 addon from list.json into _forever_",
+                    "NeedsLibrary  installed 1.2.3 from github:Questie/Questie",
+                ];
+                if !complete {
+                    expected.push(MISSING_LINE);
+                }
+                expected.push("imported 1 addon of list.json into _forever_: 1 installed");
+                assert_eq!(text.lines().collect::<Vec<_>>(), expected, "{text}");
+            }
+        }
     }
 }
