@@ -323,8 +323,8 @@ fn collect(
             // coverage: os-begin
             if source.kind() != io::ErrorKind::NotFound {
                 return Err(io_error("reading WTF", dir, source));
+                // coverage: os-end
             }
-            // coverage: os-end
             return Ok(());
         }
     }
