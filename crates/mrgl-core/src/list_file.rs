@@ -15,12 +15,14 @@
 //!
 //! One entry per managed addon of the state sidecar (the entries whose folders were deleted by hand are
 //! left out, D-003), with the sidecar's name, source and version and the addon's folders. The import
-//! resolves every `github:` entry through the source and installs the current release through the one
-//! install path of the engine ([`Engine::install_from_source`], task 055);
-//! the version in the file is what was installed at the export, reported next to what the import brings.
-//! A zip in hand is reported as not importable (the zip is on the other machine), a linked folder (`link:`)
-//! is skipped, and an addon the flavor has already (by name, by source, or a folder of the entry that is
-//! there) is reported and left alone at whatever version it is.
+//! resolves every entry of a source spec (`github:`, `wago:`, `wowi:`, `curse:`) through the run's sources
+//! and installs the current release through the one install path of the engine
+//! ([`Engine::install_from_source`], task 055); the version in the file is what was installed at the
+//! export, reported next to what the import brings. An entry of a source the run cannot ask (this build
+//! does not have it, or its key is not set) is reported as "source not configured" with what is missing
+//! (task 092, [`Source::missing`]). A zip in hand is reported as not importable (the zip is on the other
+//! machine), a linked folder (`link:`) is skipped, and an addon the flavor has already (by name, by source,
+//! or a folder of the entry that is there) is reported and left alone at whatever version it is.
 //!
 //! A list is shareable (task 028): it names sources and versions, never a path of one machine. Reading a
 //! list refuses an entry whose source is a zip file, a linked development folder (`link:`) or another local
@@ -188,7 +190,7 @@ impl ListEntry {
                 return Some(format!("its source {source} is a zip file"));
             }
             EntrySource::Zip => return Some(format!("its source {source} is a local path")),
-            EntrySource::GitHub(_) | EntrySource::Unsupported => {}
+            EntrySource::Spec(_) | EntrySource::Unsupported => {}
         }
         self.folders
             .iter()
@@ -200,16 +202,19 @@ impl ListEntry {
     }
 }
 
-/// What kind of source a list entry names, as far as the import is concerned.
+/// What kind of source a list entry or a sidecar entry names, as far as the import and the update check
+/// are concerned. Whether the run can ask a spec's source is the sources' answer, not the spec's
+/// ([`Source::missing`], task 092): a spec of a source this build has is resolved and installed, one of a
+/// source not configured is reported with what is missing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntrySource {
-    /// `github:<owner>/<repo>`: resolved and installed.
-    GitHub(SourceSpec),
+    /// A source spec: `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>` or `curse:<id>`.
+    Spec(SourceSpec),
     /// A zip in hand: its path is on the machine that exported the list.
     Zip,
     /// A linked development folder (`link:…`, task 005): skipped.
     Linked,
-    /// A source the import does not handle yet (`wago:`, `wowi:`, `curse:`).
+    /// Anything else: no spec mrgl reads.
     Unsupported,
 }
 
@@ -224,7 +229,7 @@ impl EntrySource {
             return EntrySource::Linked;
         }
         if let Ok(spec) = SourceSpec::parse(trimmed) {
-            return EntrySource::GitHub(spec);
+            return EntrySource::Spec(spec);
         }
         let looks_like_a_path = trimmed.contains('\\')
             || trimmed.contains('/')
@@ -277,8 +282,11 @@ pub enum Outcome {
     WouldInstall,
     /// The flavor has it already; left alone.
     AlreadyInstalled,
-    /// A zip in hand or a source the import does not handle.
+    /// A zip in hand or a source spec mrgl does not read.
     NotImportable,
+    /// A source the run cannot ask (task 092): this build does not have it, or its key is not set; the
+    /// detail says which.
+    SourceNotConfigured,
     /// A linked folder.
     Skipped,
     /// The resolve, the download or the install failed; the detail says why.
@@ -445,7 +453,7 @@ pub fn import(
             continue;
         }
         let spec = match &kind {
-            EntrySource::GitHub(spec) => Some(spec),
+            EntrySource::Spec(spec) => Some(spec),
             _ => None,
         };
         if let Some((version, detail)) = present.find(entry, spec) {
@@ -456,11 +464,16 @@ pub fn import(
             let detail = if kind == EntrySource::Zip {
                 "a zip in hand on the machine of the export; add it again with mrgl add <zip>"
             } else {
-                "a source the import does not handle yet"
+                "not a source spec mrgl reads"
             };
             items.push(item(Outcome::NotImportable, None, detail.to_string()));
             continue;
         };
+        // Task 092: a source this run cannot ask is named with what is missing, before any request.
+        if let Some(missing) = source.missing(spec) {
+            items.push(item(Outcome::SourceNotConfigured, None, missing));
+            continue;
+        }
         // The one install path of task 055, under the list's name for the addon; an exact import asks
         // for the listed version (task 057).
         let request = SourceRequest {
@@ -695,8 +708,15 @@ mod tests {
     fn the_source_kind_follows_the_spec() {
         assert_eq!(
             EntrySource::of("github:Questie/Questie"),
-            EntrySource::GitHub(SourceSpec::parse("github:Questie/Questie").expect("a spec"))
+            EntrySource::Spec(SourceSpec::parse("github:Questie/Questie").expect("a spec"))
         );
+        // Task 092: every source's spec is a spec; whether the run can ask it is the sources' answer.
+        for spec in ["wago:abc123", "wowi:123", "curse:42"] {
+            assert_eq!(
+                EntrySource::of(spec),
+                EntrySource::Spec(SourceSpec::parse(spec).expect("a spec"))
+            );
+        }
         assert_eq!(
             EntrySource::of("link:D:\\dev\\MyAddon"),
             EntrySource::Linked
@@ -710,7 +730,63 @@ mod tests {
             EntrySource::of("D:\\addons\\no-extension"),
             EntrySource::Zip
         );
-        assert_eq!(EntrySource::of("wago:abc123"), EntrySource::Unsupported);
+        assert_eq!(
+            EntrySource::of("bitbucket:abc123"),
+            EntrySource::Unsupported
+        );
+    }
+
+    #[test]
+    fn an_entry_of_a_source_not_configured_says_what_is_missing() {
+        let (base, engine) = engine("not-configured");
+        let entry = |name: &str, source: &str| ListEntry {
+            name: name.to_string(),
+            source: source.to_string(),
+            version: "1.0.0".to_string(),
+            folders: vec![name.to_string()],
+        };
+        let list = ListFile {
+            format: FORMAT.to_string(),
+            schema: SCHEMA,
+            flavor: "wowf".to_string(),
+            exported_at: None,
+            addons: vec![
+                entry("OneFolder", "github:Example/One"),
+                entry("Wowi", "wowi:123"),
+                entry("Odd", "bitbucket:abc"),
+            ],
+        };
+        let sources = crate::sources::Sources::none().with(
+            crate::sources::SourceKind::GitHub,
+            OneZip {
+                zip: zips().join("one-folder-1.2.0.zip"),
+                version: "1.2.0",
+            },
+        );
+        for dry_run in [true, false] {
+            let report = import(&engine, &sources, &list, false, dry_run).expect("imports");
+            let outcomes: Vec<(Outcome, &str)> = report
+                .items
+                .iter()
+                .map(|item| (item.outcome, item.detail.as_str()))
+                .skip(1)
+                .collect();
+            assert_eq!(
+                outcomes,
+                [
+                    (
+                        Outcome::SourceNotConfigured,
+                        "this build has no WoWInterface source"
+                    ),
+                    (Outcome::NotImportable, "not a source spec mrgl reads"),
+                ]
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(Outcome::SourceNotConfigured).expect("json"),
+            "source-not-configured"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -92,9 +92,15 @@ pub enum Error {
         staging: PathBuf,
     },
 
-    /// A source spec the manager cannot read: not `github:<owner>/<repo>` (task 003).
+    /// A source spec the manager cannot read: none of `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`,
+    /// `curse:<id>` or a page address they are read from (tasks 003, 092).
     #[error("unknown source: {spec} ({hint})")]
     UnknownSource { spec: String, hint: &'static str },
+
+    /// A spec of a source this run cannot ask (task 092): this build does not have it, or its key is not
+    /// set; `missing` says which ([`crate::sources::Source::missing`]).
+    #[error("source not configured: {spec} ({missing})")]
+    SourceNotConfigured { spec: String, missing: String },
 
     /// The network: no connection, a timeout, a TLS failure, a body cut short.
     #[error("cannot reach {url}: {reason}")]

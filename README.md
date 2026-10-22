@@ -148,6 +148,14 @@ pick for forever: github:<owner>/<repo> v2.1.0 (Addon-v2.1.0-forever.zip, flavor
 release notes: Quest arrows point the right way again (https://github.com/<owner>/<repo>/releases/tag/v2.1.0)
 ```
 
+A source spec names where an addon comes from: `github:<owner>/<repo>` (or the repository's address),
+`wago:<id>`, `wowi:<id>` (or the WoWInterface page, `www.wowinterface.com/downloads/info<id>…`) and
+`curse:<id>` (or `www.curseforge.com/projects/<id>`). A Wago or CurseForge addon page names the addon by a
+slug, not its id, so mrgl refuses it and says where the id is (the `X-Wago-ID` or `X-Curse-Project-ID` line
+of the addon's TOC). This build has the GitHub source only: `add` with a spec of another source says
+`source not configured` and what is missing, an imported list reports such an entry the same way, and the
+update check leaves it not checked.
+
 On a standard install no flag is needed: mrgl finds the game folder through the registry (the launcher's
 key, or the game's Uninstall entry) or under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
 run would use and where it came from, and `mrgl root <folder>` remembers one (also `--root <folder>` or
@@ -224,7 +232,8 @@ folder of the same name already there is skipped, never replaced; an install nev
 addon, and `unlink` removes exactly the junctions `link` made, never a folder and never a file of yours.
 
 An exported list carries each managed addon's source and version; `import` installs the current release of
-every `github:` entry the flavor does not have yet, and leaves the others alone (a zip in hand stays on the
+every entry the flavor does not have yet whose source this build has (`github:`), reports an entry of a
+source not configured with what is missing, and leaves the others alone (a zip in hand stays on the
 machine it came from, a linked folder is linked again). `list` and an install warn when an addon's
 `## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor;
 `scan` and `list` mark an addon `out of date` when its interface is from the flavor's expansion but older

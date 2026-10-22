@@ -1550,13 +1550,110 @@ fn add_takes_a_flavor_folder_path_and_needs_a_flavor() {
 #[test]
 fn an_unknown_source_spec_is_a_plain_error() {
     let output = mrgl()
-        .args(["add", "wago:something", "--flavor", "forever"])
+        .args(["add", "bitbucket:something", "--flavor", "forever"])
         .output()
         .expect("run mrgl");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),
-        "unknown source: wago:something (expected github:<owner>/<repo>)"
+        "unknown source: bitbucket:something (expected github:<owner>/<repo>, wago:<id>, wowi:<id> or curse:<id>)"
+    );
+}
+
+// --- task 092: a source this build does not have names what is missing ---
+
+#[test]
+fn add_of_a_source_this_build_lacks_names_what_is_missing() {
+    for (spec, line) in [
+        (
+            "wago:something",
+            "source not configured: wago:something (this build has no Wago source)",
+        ),
+        (
+            "https://www.wowinterface.com/downloads/info123-Name.html",
+            "source not configured: wowi:123 (this build has no WoWInterface source)",
+        ),
+        (
+            "curse:42",
+            "source not configured: curse:42 (this build has no CurseForge source)",
+        ),
+    ] {
+        for dry_run in [false, true] {
+            let mut command = mrgl();
+            command.args(["--serious", "add", spec, "--flavor", "forever"]);
+            if dry_run {
+                command.arg("--dry-run");
+            }
+            let output = command.output().expect("run mrgl");
+            assert_eq!(output.status.code(), Some(1), "{spec}");
+            assert_eq!(stderr_last_line(&output), line, "{spec}");
+        }
+    }
+    // Through the voice: the murloc line comes before the plain one.
+    let output = mrgl()
+        .args(["add", "wago:something", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.lines().count() >= 2, "{stderr}");
+    assert_eq!(
+        stderr_last_line(&output),
+        "source not configured: wago:something (this build has no Wago source)"
+    );
+}
+
+#[test]
+fn import_reads_a_list_entry_of_a_source_this_build_lacks_as_not_configured() {
+    let game = Game::new("import-not-configured");
+    let base = game.root.parent().expect("the base").to_path_buf();
+    let list = base.join("not-configured.json");
+    std::fs::write(
+        &list,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [
+                { "name": "Questie", "source": "github:Questie/Questie", "version": "1.2.3",
+                  "folders": ["Questie"] },
+                { "name": "Clique", "source": "wowi:123", "version": "1.0.0", "folders": ["Clique"] },
+            ],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    let output = game
+        .mrgl()
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line
+            == "Clique  source not configured (wowi:123): this build has no WoWInterface source"),
+        "{text}"
+    );
+    assert!(
+        stdout_last_line(&output)
+            .ends_with("1 to install, 1 source not configured; nothing written"),
+        "{text}"
+    );
+    let output = game
+        .mrgl()
+        .args(["--json", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["addons"][1]["outcome"], "source-not-configured");
+    assert_eq!(
+        value["addons"][1]["detail"],
+        "this build has no WoWInterface source"
     );
 }
 
@@ -1955,7 +2052,7 @@ fn add_failures_are_plain_lines_with_exit_code_one() {
     let cases = [
         (
             vec!["add", "wago:abc", "--flavor", "forever", "--dry-run"],
-            "unknown source: wago:abc (expected github:<owner>/<repo>)",
+            "source not configured: wago:abc (this build has no Wago source)",
         ),
         (
             vec!["add", "github:Questie/Questie", "--dry-run"],
@@ -5684,6 +5781,29 @@ fn update_dry_run_reports_every_state_of_a_fixture_sidecar_and_writes_nothing() 
     );
     assert_eq!(game_snapshot(&game), before, "a dry run writes nothing");
     assert!(!game.home.join("wowf").join("staging").exists());
+}
+
+#[test]
+fn update_does_not_ask_a_source_this_build_lacks_and_says_what_is_missing() {
+    let game = managed_game(
+        "update-not-configured",
+        &[
+            ("Clique", "wowi:123", "1.0.0", ""),
+            ("Questie", "github:Questie/Questie", "1.2.3", ""),
+        ],
+    );
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[1..3],
+        [
+            "Clique  1.0.0  not checked: source not configured: wowi:123 (this build has no WoWInterface source)",
+            "checking Questie against github:Questie/Questie (2 of 2)",
+        ],
+        "{text}"
+    );
 }
 
 #[test]

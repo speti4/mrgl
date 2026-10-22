@@ -17,7 +17,19 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   task 021; the resolve walks the channel's releases from the current one down to the first with an asset
   for the flavor, the newest release that has one, and says so in the pick's reason when it passed newer
   ones, and the no-asset error names the newest release and how many releases were looked at, task 066;
-  later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
+  the spec forms, `SourceSpec`: `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>` and `curse:<id>`, and the
+  page addresses an id is read from without a request, `github.com/<owner>/<repo>`,
+  `www.wowinterface.com/downloads/info<id>…` and `www.curseforge.com/projects/<id>`, while a Wago or
+  CurseForge addon page names a slug and is refused with where the id is, task 092; the router,
+  `sources::Sources` in `sources/router.rs`, one slot per `SourceKind`, the one value the command line and
+  the window build per run, `Sources::from_env`, and the window's offline view over a client that fails
+  every request, `Sources::cached`: it hands each spec to its source and answers
+  `Error::SourceNotConfigured`, `source not configured: <spec> (<what is missing>)`, for a source this build
+  does not have or cannot ask, which `Source::missing` tells before any request, so `add` fails, the list
+  import reports `source-not-configured` and the update check leaves the entry not checked; the Forever
+  signal from the cache is the trait's `cached_forever_build`, `unknown` wherever a source does not name
+  Forever, and the request budget of a spec is `request_budget_for`, task 092; the Wago, WoWInterface and
+  CurseForge sources join the router as they come, M4), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
@@ -62,7 +74,7 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   Forever notes (`forever`, task 011: the build signal `yes`, `no` or `unknown` that
   `sources::github::forever_build` derives from a release, and the curated `data/forever-notes.json`
   compiled in with `include_str!`, with the stale rule; from the cache alone,
-  `GitHub::cached_forever_build` takes the release a Forever resolve on the addon's channel would take,
+  the GitHub source's `cached_forever_build` takes the release a Forever resolve on the addon's channel would take,
   `sources::github::forever_build_on`: the channel's releases newest first down to the first with a
   Forever asset, as the resolve walks them since task 066, `unknown` when the walk meets a release whose
   `release.json` is not cached, and the newest release's own signal when none has one, task 078), the
@@ -164,9 +176,11 @@ The addon list (task 015) is a JSON file, `format` `mrgl-list`, `schema` 1: the 
 from (`flavor`), when (`exported_at`, RFC 3339 in UTC) and one entry per managed addon under `addons`, with
 the sidecar's `name`, `source` and `version` and the addon's `folders`. `mrgl export` writes the sidecar's
 entries whose folders are still there (the list itself on the standard output without `--to`); a file of
-another format or schema is refused on import. `mrgl import` resolves every `github:` entry for the target
-flavor's build and installs the current release through the engine under the entry's name, so the version
-in the list is a record, not a pin; a zip in hand is reported as not importable, a `link:` entry is skipped,
+another format or schema is refused on import. `mrgl import` resolves every entry of a source spec for
+the target flavor's build through the run's sources and installs the current release through the engine
+under the entry's name, so the version in the list is a record, not a pin; an entry of a source this build
+does not have or cannot ask is reported as `source not configured` with what is missing (outcome
+`source-not-configured`, task 092), a zip in hand is reported as not importable, a `link:` entry is skipped,
 and an addon the flavor already has (the same name, the same source, or a folder of the entry that is there,
 managed or not) is reported and left alone. Once every entry is done, `import` runs the checks of the
 install summary of `add` and `update` over the addons it installed (`Engine::check_installed_each`, one
@@ -642,8 +656,9 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   every row of the Forever flavor its Forever status (`build`, `note`, `verified`, `source`, `stale`). The
   list never goes online (task 010): a row's `check` (`state`, `label`, `latest`, `order`, `detail` and the
   check's data `line`) and its `update` are the answer of `update::check`, with its version order (task 068), run
-  against the GitHub source through an `Http` that fails every request as an unreachable network does, so
-  the source answers from the release list and `release.json` that the last check or install cached (its
+  against the run's sources (`Sources::cached`, task 092) over an `Http` that fails every request as an
+  unreachable network does, so the GitHub source answers from the release list and `release.json` that the
+  last check or install cached (its
   offline rule, task 041), counts no request against the rate limit and never stamps the cache as
   confirmed. `update` is set for `update-available` only, so a newer installed version, a pin or a guess is no
   update; an addon whose answer needs the network (nothing cached) has no `check`. What the cache cannot
@@ -656,7 +671,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   other state). The file is a cache: a missing, unreadable or foreign one is no answer. An answer holds
   while the sidecar entry keeps the source and the version it was given for, so an update or a reinstall
   (by the command line too) drops it; an ignored addon shows its ignore instead. The Forever `build` is
-  `GitHub::cached_forever_build` on the addon's channel: the release the resolve would take, not the
+  the source's `cached_forever_build` on the addon's channel (`unknown` from a source that does not name
+  Forever, task 092): for GitHub the release the resolve would take, not the
   channel's newest one (task 078). A row also carries its
   `channel` (`null` when unmanaged), and a flavor `addons_folder`, false when the client was never started
   for it.
@@ -985,11 +1001,19 @@ binary that copies itself and runs the copy is the pattern an antivirus heuristi
 Windows Defender quarantined the test binaries for it (task 063). The backup tests copy the fixture `WTF`
 tree into such a folder.
 
-The sources talk to the network through the `Http` trait of `mrgl_core::sources`. `MRGL_HTTP_STUB=<folder>`
+The sources talk to the network through the `Http` trait of `mrgl_core::sources`, a GET and a POST (task
+092; a client that only answers GETs refuses a POST as the network does). `MRGL_HTTP_STUB=<folder>`
 makes the command line answer every request from that folder instead (the URL's host and path under it,
 `.json` appended when the bare path is no file, a 404 for a missing file, an `ETag` from the content and a
 304 for a matching `If-None-Match`), which is how the end-to-end tests run `add` offline against
-`tests/fixtures/releases/`; a unit test builds a `FolderHttp` or an in-memory stub directly.
+`tests/fixtures/releases/`; a unit test builds a `FolderHttp` or an in-memory stub directly. The query
+string picks a file of its own first (task 092): `…/addons/abc?game_version=retail` is answered from
+`…/addons/abc@game_version=retail.json` (or the name without `.json`), the pairs sorted by name with `&`
+between them, `page` left out (pages have their own suffix, below) and a character Windows refuses in a
+file name (`<>:"/\|?*`) written as `_`; without such a file the query is ignored, as for every fixture
+before it, so two answers of one path that differ only in the query (two flavors of one addon) come from
+two files. A POST is answered from the same files as a GET of its URL, and the stub keeps its body with
+the request for the test to read (`FolderHttp::requests`).
 `MRGL_GITHUB_TOKEN` holds a personal access token for the GitHub API (60 requests an hour without one); it is
 sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
@@ -1117,7 +1141,7 @@ it on a line after the pick, and `--json` writes `forever: { build, note, kind, 
 next to `pick` (the window's `{ build, note }` with the date, the source and the stale flag; `null` for
 another flavor). `list` on Forever marks each managed addon's primary folder (`forever:yes`, with `,note` and
 `,stale`, a warning line per curated note, and the same `forever` object in the JSON, `null` for an
-unmanaged addon) from the cache alone (`GitHub::cached_forever_build`): no request, so `list` stays offline
+unmanaged addon) from the cache alone (`Source::cached_forever_build`, through the router): no request, so `list` stays offline
 and fast, and without a cached release list and the `release.json` of its current release the build is
 `unknown`.
 

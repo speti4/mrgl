@@ -24,7 +24,7 @@
 //! The same release says whether the addon publishes a Forever build at all ([`forever_build`], task 011):
 //! the pick carries it, and every release's `release.json` is cached per tag next to the list (task 042), so
 //! a repeated resolve of the same release downloads it once and `list` can answer from the cache alone
-//! ([`GitHub::cached_forever_build`]), offline, for the release a Forever resolve would take (task 078). Once the API has answered with the list, fresh or
+//! ([`Source::cached_forever_build`]), offline, for the release a Forever resolve would take (task 078). Once the API has answered with the list, fresh or
 //! confirmed unchanged, the files of tags it no longer holds are dropped (task 072).
 //!
 //! When the API cannot be reached (no network, a timeout) and the release list is cached, the resolve
@@ -523,14 +523,11 @@ impl<H: Http> GitHub<H> {
             .then_some(cached.release_json)
     }
 
-    /// Whether the repository publishes a `forever` build, from the cache alone (task 011): the release a
-    /// Forever resolve on the channel takes from the cached release list, the newest one with an asset for
-    /// Forever (task 078, [`forever_build_on`]), with the `release.json` cached for its tag; never a
-    /// request, so `list` and the window stay offline and fast. `Unknown` when nothing is cached, the cache
-    /// is unreadable, or the walk meets a release whose `release.json` is not cached for its tag (the list
-    /// moved on and no resolve has fetched the new one yet).
-    pub fn cached_forever_build(&self, spec: &SourceSpec, channel: Channel) -> ForeverBuild {
-        let SourceSpec::GitHub { owner, repo } = spec;
+    /// The Forever signal of [`Source::cached_forever_build`], from the cache alone.
+    fn forever_build_from_cache(&self, spec: &SourceSpec, channel: Channel) -> ForeverBuild {
+        let Ok((owner, repo)) = repository(spec) else {
+            return ForeverBuild::Unknown;
+        };
         let Some(cached) = self
             .cache_file(owner, repo)
             .and_then(|path| std::fs::read(path).ok())
@@ -672,7 +669,7 @@ impl<H: Http> GitHub<H> {
         let Some(asset) = release.release_json_asset() else {
             return Ok(None);
         };
-        let SourceSpec::GitHub { owner, repo } = spec;
+        let (owner, repo) = repository(spec)?;
         // A release's `release.json` does not change once uploaded: the cached one of this tag and this
         // asset answers without a request (task 042).
         if let Some(raw) = self.cached_release_json(owner, repo, release, asset)
@@ -734,6 +731,21 @@ impl<H: Http> GitHub<H> {
             }),
             status => Err(status_error(status, url, &response)),
         }
+    }
+}
+
+/// The clause of a spec of another source handed to the GitHub source itself (the router never does).
+const NOT_GITHUB: &str = "the GitHub source answers github: specs only";
+
+/// The owner and the repository of a GitHub spec; a spec of another source is
+/// [`Error::SourceNotConfigured`], since this source cannot answer it (task 092).
+fn repository(spec: &SourceSpec) -> Result<(&str, &str)> {
+    match spec {
+        SourceSpec::GitHub { owner, repo } => Ok((owner, repo)),
+        other => Err(Error::SourceNotConfigured {
+            spec: other.to_string(),
+            missing: NOT_GITHUB.to_string(),
+        }),
     }
 }
 
@@ -898,7 +910,7 @@ impl<H: Http> GitHub<H> {
     /// The versions of the cached release list, newest first, drafts left out: the list the last resolve
     /// read or confirmed, so no request (task 068).
     fn cached_versions(&self, spec: &SourceSpec) -> Option<Vec<String>> {
-        let SourceSpec::GitHub { owner, repo } = spec;
+        let (owner, repo) = repository(spec).ok()?;
         let bytes = std::fs::read(self.cache_file(owner, repo)?).ok()?;
         let cached: CachedReleases<Vec<Release>> = serde_json::from_slice(&bytes).ok()?;
         Some(
@@ -1059,7 +1071,7 @@ impl<H: Http> Source for GitHub<H> {
     /// an asset for the flavor is passed, any other error stands. When none has one, the newest release's
     /// error says how many releases were looked at.
     fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
-        let SourceSpec::GitHub { owner, repo } = spec;
+        let (owner, repo) = repository(spec)?;
         let (releases, stale) = self.release_list(owner, repo)?;
         let candidates = releases_on(&releases, target.channel);
         if candidates.is_empty() {
@@ -1116,7 +1128,7 @@ impl<H: Http> Source for GitHub<H> {
     /// cache when offline, like the current one (task 041). A version the list lacks is looked for on the
     /// pages after it, up to [`MAX_PAGES`] in all, before it reads as not offered (task 066).
     fn resolve_version(&self, spec: &SourceSpec, target: &Target, version: &str) -> Result<Pick> {
-        let SourceSpec::GitHub { owner, repo } = spec;
+        let (owner, repo) = repository(spec)?;
         let (mut releases, stale) = self.release_list(owner, repo)?;
         if release_of_version(&releases, version).is_none() && stale.is_none() {
             self.further_pages(owner, repo, &mut releases, |page| {
@@ -1139,6 +1151,21 @@ impl<H: Http> Source for GitHub<H> {
     /// The anonymous rate limit of this run (task 068).
     fn request_budget(&self) -> Option<sources::RequestBudget> {
         self.budget()
+    }
+
+    /// A spec of another source is not this source's to answer (task 092).
+    fn missing(&self, spec: &SourceSpec) -> Option<String> {
+        repository(spec).err().map(|_| NOT_GITHUB.to_string())
+    }
+
+    /// Whether the repository publishes a `forever` build, from the cache alone (tasks 011, 078): the
+    /// release a Forever resolve on the channel takes from the cached release list, the newest one with an
+    /// asset for Forever ([`forever_build_on`]), with the `release.json` cached for its tag; never a
+    /// request, so `list` and the window stay offline and fast. `Unknown` when nothing is cached, the
+    /// cache is unreadable, or the walk meets a release whose `release.json` is not cached for its tag (the
+    /// list moved on and no resolve has fetched the new one yet).
+    fn cached_forever_build(&self, spec: &SourceSpec, channel: Channel) -> ForeverBuild {
+        self.forever_build_from_cache(spec, channel)
     }
 
     /// Downloads the picked asset; a byte count other than the size the release list names is refused

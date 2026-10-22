@@ -6,9 +6,9 @@
 //! the view draws next to the row's state (task 081).
 //!
 //! Everything is offline: the "update available" fact is the answer of the update check (`update::check`,
-//! tasks 006 and 068, with its version order) run against the GitHub source through [`Offline`], an [`Http`]
-//! that fails every request as the network does, so the source answers from its own cache by its offline
-//! rule (task 041) and never opens a socket (task 010). The window's own check asks the sources and lays
+//! tasks 006 and 068, with its version order) run against the run's sources (`Sources::cached`, task 092)
+//! over [`Offline`], an [`Http`] that fails every request as the network does, so each source answers from
+//! its own cache by its offline rule (task 041) and never opens a socket (task 010). The window's own check asks the sources and lays
 //! its answer over this one ([`flavor_view`]'s `online`), and what it found that the cache cannot tell
 //! again (a source gone, a failed check, the budget stop) is kept in the flavor's `last-check.json` and
 //! laid over every later list until the next check replaces it (task 078, `mrgl_core::last_check`). The functions take the game root and the mrgl
@@ -27,8 +27,9 @@ use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use mrgl_core::last_check::LastCheck;
 use mrgl_core::link;
 use mrgl_core::scan::{self, Addon, Scan};
-use mrgl_core::sources::github::{self, GitHub};
-use mrgl_core::sources::{Channel, Http, Pick, Request, Response, Source, SourceSpec, Target};
+use mrgl_core::sources::{
+    Channel, Http, Pick, Request, Response, Source, SourceSpec, Sources, Target,
+};
 use mrgl_core::state::{Entry, FlavorHome, State};
 use mrgl_core::update::{self, AddonUpdate, UpdateState, VersionOrder};
 use mrgl_core::voice::{Kind, Voice};
@@ -36,10 +37,10 @@ use serde::Serialize;
 
 use crate::commands::Message;
 
-/// An [`Http`] that never reaches the network: every request fails as an unreachable network does, so the
-/// GitHub source answers from its cached release list and `release.json` (task 041) without counting a
-/// request against the rate limit (task 068) and without stamping the cache as confirmed, and a repository
-/// it has no cache of is an error the list reads as "nothing known".
+/// An [`Http`] that never reaches the network: every request fails as an unreachable network does, so each
+/// source answers from its cache (the GitHub source from its cached release list and `release.json`, task
+/// 041) without counting a request against the rate limit (task 068) and without stamping the cache as
+/// confirmed, and an addon its source has no cache of is an error the list reads as "nothing known".
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Offline;
 
@@ -346,14 +347,10 @@ pub fn flavor_view(flavor: Flavor, home: Option<&Path>, online: &[AddonUpdate]) 
     };
     warnings.extend(scan.warnings.iter().cloned());
     let state = read_state(&id, home, &mut warnings);
-    let github = GitHub::new(
-        Offline,
-        None,
-        home.map(|home| home.join(github::CACHE_SUBDIR)),
-    );
+    let sources = Sources::cached(std::sync::Arc::new(Offline), home);
     let mut checked: BTreeMap<String, AddonUpdate> = BTreeMap::new();
     if let Some(home) = home {
-        for addon in offline_check(&flavor, home, &github) {
+        for addon in offline_check(&flavor, home, &sources) {
             checked.insert(addon.name.to_ascii_lowercase(), addon);
         }
         // The last online check's answers the cache cannot give again (task 078).
@@ -364,17 +361,17 @@ pub fn flavor_view(flavor: Flavor, home: Option<&Path>, online: &[AddonUpdate]) 
     for addon in online {
         checked.insert(addon.name.to_ascii_lowercase(), addon.clone());
     }
-    view.addons = rows(&scan, &state, &github, &checked);
+    view.addons = rows(&scan, &state, &sources, &checked);
     view.warnings = warnings;
     view
 }
 
-/// The update check of a flavor against the source's cache alone ([`Offline`]): what the last check or
+/// The update check of a flavor against the sources' caches alone ([`Offline`]): what the last check or
 /// install left there, in the check's own order. An addon whose answer needed the network (no cache, or a
 /// pin without a cached release) is left out: nothing is known of it.
-fn offline_check(flavor: &Flavor, home: &Path, github: &GitHub<Offline>) -> Vec<AddonUpdate> {
+fn offline_check(flavor: &Flavor, home: &Path, sources: &Sources) -> Vec<AddonUpdate> {
     let engine = Engine::with_home(flavor.clone(), home);
-    let Ok(check) = update::check(&engine, github, None, &mut |_| {}) else {
+    let Ok(check) = update::check(&engine, sources, None, &mut |_| {}) else {
         return Vec::new();
     };
     check
@@ -407,11 +404,11 @@ fn read_state(id: &FlavorId, home: Option<&Path>, warnings: &mut Vec<String>) ->
 }
 
 /// The rows of a scan, in its order, against the sidecar, the update check's addons by their lower-case
-/// name, the cached releases (the Forever build) and the scan's build (the interface check).
-pub fn rows<H: Http>(
+/// name, the sources' caches (the Forever build) and the scan's build (the interface check).
+pub fn rows<S: Source + ?Sized>(
     scan: &Scan,
     state: &State,
-    github: &GitHub<H>,
+    sources: &S,
     checked: &BTreeMap<String, AddonUpdate>,
 ) -> Vec<Row> {
     let checks = dependencies::check(scan, Some(state));
@@ -435,7 +432,7 @@ pub fn rows<H: Http>(
             let forever = forever_flavor.then(|| match managed {
                 Some((name, entry)) => forever
                     .entry(name.to_ascii_lowercase())
-                    .or_insert_with(|| forever_status(github, entry))
+                    .or_insert_with(|| forever_status(sources, entry))
                     .clone(),
                 None => unknown_forever(),
             });
@@ -510,7 +507,8 @@ fn row(
     }
 }
 
-/// The badge of a sidecar source: `github:<owner>/<repo>`, `link:<folder>`, or the path of a zip in hand.
+/// The badge of a sidecar source: `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`, `curse:<id>` (the
+/// kinds the TOC hints use, task 092), `link:<folder>`, or the path of a zip in hand.
 pub fn badge_of_source(source: &str) -> Badge {
     if let Some(folder) = link::linked_folder(source) {
         return Badge {
@@ -518,10 +516,18 @@ pub fn badge_of_source(source: &str) -> Badge {
             id: folder.to_string(),
         };
     }
-    if let Ok(SourceSpec::GitHub { owner, repo }) = SourceSpec::parse(source) {
-        return Badge {
-            kind: "github",
-            id: format!("{owner}/{repo}"),
+    if let Ok(spec) = SourceSpec::parse(source) {
+        return match spec {
+            SourceSpec::GitHub { owner, repo } => Badge {
+                kind: "github",
+                id: format!("{owner}/{repo}"),
+            },
+            SourceSpec::Wago { id } => Badge { kind: "wago", id },
+            SourceSpec::WowInterface { id } => Badge { kind: "wowi", id },
+            SourceSpec::CurseForge { id } => Badge {
+                kind: "curseforge",
+                id,
+            },
         };
     }
     let name = Path::new(source)
@@ -551,11 +557,12 @@ fn hinted_badge(toc: &mrgl_core::toc::Toc) -> Option<Badge> {
     })
 }
 
-/// The Forever status of a managed addon, as `mrgl list` gives it: the build signal from the source's
-/// cache (GitHub only) and the curated note of its source spec.
-fn forever_status<H: Http>(github: &GitHub<H>, entry: &Entry) -> ForeverStatus {
+/// The Forever status of a managed addon, as `mrgl list` gives it: the build signal from its source's
+/// cache (`unknown` from a source that does not name Forever, task 092) and the curated note of its
+/// source spec.
+fn forever_status<S: Source + ?Sized>(sources: &S, entry: &Entry) -> ForeverStatus {
     let build = match SourceSpec::parse(&entry.source) {
-        Ok(spec) => github.cached_forever_build(&spec, entry.channel()),
+        Ok(spec) => sources.cached_forever_build(&spec, entry.channel()),
         Err(_) => ForeverBuild::Unknown,
     };
     ForeverStatus::for_source(&entry.source, build)

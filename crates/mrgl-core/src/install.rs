@@ -1533,16 +1533,21 @@ fn toc_version(dir: &Path, folder: &str) -> Option<String> {
 }
 
 /// The names a zip suggests for its addon (task 065), the strongest first: the zip's stem without its
-/// version and flavor suffix ([`stem_name`]: `DBM-Core` for `DBM-Core-12.0.11-classic`), then the
-/// repository of a `github:<owner>/<repo>` source. [`derive_name`] takes a folder that answers one of them.
+/// version and flavor suffix ([`stem_name`]: `DBM-Core` for `DBM-Core-12.0.11-classic`), then the name
+/// the source spec suggests ([`SourceSpec::name_hint`]: the repository of a `github:<owner>/<repo>` source;
+/// the id of the other sources is no name, task 092). [`derive_name`] takes a folder that answers one of them.
 pub fn name_hints(zip_stem: &str, source: &str) -> Vec<String> {
     let mut hints = Vec::new();
     let stem = stem_name(zip_stem);
     if !stem.is_empty() {
         hints.push(stem.to_string());
     }
-    if let Ok(SourceSpec::GitHub { repo, .. }) = SourceSpec::parse(source) {
-        hints.push(repo);
+    if let Some(hint) = SourceSpec::parse(source)
+        .ok()
+        .as_ref()
+        .and_then(SourceSpec::name_hint)
+    {
+        hints.push(hint.to_string());
     }
     hints
 }
@@ -1761,6 +1766,8 @@ mod tests {
             name_hints("A-v1.0.0-forever", "github:o/Repo"),
             ["A", "Repo"]
         );
+        assert_eq!(name_hints("A-v1.0.0", "wago:L6Jb2R6v"), ["A"]);
+        assert_eq!(name_hints("A-v1.0.0", "curse:3358"), ["A"]);
     }
 
     #[test]

@@ -41,8 +41,7 @@ use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sets::{self, AddonSet};
-use mrgl_core::sources::github::GitHub;
-use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
+use mrgl_core::sources::{self, Channel, Source, SourceSpec, Sources, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
 use mrgl_core::update::{self, CheckProgress, SummaryOf, UpdateState};
 use mrgl_core::voice::{Kind, Voice};
@@ -100,11 +99,13 @@ enum Command {
         /// remembered).
         folder: Option<PathBuf>,
     },
-    /// Install an addon from a source: the path of a zip in hand, or `github:<owner>/<repo>` (the current
-    /// release's asset for the flavor; an addon installed already at that version is left as it is), later
-    /// `wago:`, `wowi:`, `curse:`.
+    /// Install an addon from a source: the path of a zip in hand, or a source spec (the current release's
+    /// asset for the flavor; an addon installed already at that version is left as it is):
+    /// `github:<owner>/<repo>`, or `wago:<id>`, `wowi:<id>`, `curse:<id>` once this build has that source.
     Add {
-        /// The source spec (`github:<owner>/<repo>`), or a zip path (a `.zip` name or an existing file).
+        /// The source spec (`github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`, `curse:<id>`, or a page
+        /// address with the id: github.com/<owner>/<repo>, www.wowinterface.com/downloads/info<id>,
+        /// www.curseforge.com/projects/<id>), or a zip path (a `.zip` name or an existing file).
         source: String,
         /// The flavor to install into: `forever`, `retail`, `classic`, `era`, a `.flavor.info` id or a
         /// flavor folder. The installed build is read from the game folder (`MRGL_ROOT` or `mrgl root`)
@@ -998,8 +999,9 @@ fn check_dependencies(scan: &Scan, warnings: &mut Vec<String>) -> Vec<AddonDepen
 }
 
 /// Task 011: the Forever status of every managed addon of a Forever listing, by its primary folder in lower
-/// case; `None` for another flavor. Offline: the build signal comes from the GitHub source's cache alone (the
-/// release list and the `release.json` the last `add` fetched), so without a cached list it is `unknown`.
+/// case; `None` for another flavor. Offline: the build signal comes from each source's cache alone (task
+/// 092: [`Source::cached_forever_build`]; GitHub's release list and the `release.json` the last `add`
+/// fetched), so without a cached list, or from a source that does not name Forever, it is `unknown`.
 fn forever_statuses(
     scan: &Scan,
     warnings: &mut Vec<String>,
@@ -1017,13 +1019,13 @@ fn forever_statuses(
             }
         };
     // A corrupt sidecar is `list_state`'s to report (task 037: rebuilt without a word).
-    let github = GitHub::from_env(sources::http_from_env());
+    let sources = Sources::from_env();
     for entry in loaded.state.addons.values() {
         let Some(folder) = entry.folders.first() else {
             continue;
         };
         let build = match SourceSpec::parse(&entry.source) {
-            Ok(spec) => github.cached_forever_build(&spec, entry.channel()),
+            Ok(spec) => sources.cached_forever_build(&spec, entry.channel()),
             Err(_) => ForeverBuild::Unknown,
         };
         statuses.insert(
@@ -1229,14 +1231,18 @@ fn add_command(
     max_unpacked: Option<u64>,
 ) -> Result<(), String> {
     let spec = SourceSpec::parse(source).map_err(|error| error.to_string())?;
+    // Task 092: a source this run cannot ask names what is missing before anything else is read.
+    let sources = Sources::from_env();
+    if let Some(error) = sources::not_configured(&sources, &spec) {
+        return Err(error.to_string());
+    }
     let mut warnings = Vec::new();
     if !dry_run {
         let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
         let folder_name = engine.flavor.folder_name();
-        let github = GitHub::from_env(sources::http_from_env());
         let SourceInstalled { pick, outcome } = engine
             .install_from_source(
-                &github,
+                &sources,
                 &SourceRequest::current(spec.clone()),
                 &mut install_progress(reporter, &engine, &mut warnings),
             )
@@ -1299,8 +1305,7 @@ fn add_command(
     if !reporter.json {
         reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
     }
-    let github = GitHub::from_env(sources::http_from_env());
-    let pick = github
+    let pick = sources
         .resolve(&spec, &target)
         .map_err(|error| error.to_string())?;
     // Task 041: a pick from the cached release list, offline, is a warning on the screen and in the JSON.
@@ -2392,8 +2397,8 @@ fn import_command(
             format!("{verb} {count} from {file_name} into {folder_name}{versions}"),
         );
     }
-    let github = GitHub::from_env(sources::http_from_env());
-    let report = list_file::import(&engine, &github, &list, exact, dry_run)
+    let sources = Sources::from_env();
+    let report = list_file::import(&engine, &sources, &list, exact, dry_run)
         .map_err(|error| error.to_string())?;
     warnings.extend(report.warnings.iter().cloned());
     for item in &report.items {
@@ -2437,6 +2442,7 @@ fn import_command(
             (Outcome::WouldInstall, "to install"),
             (Outcome::AlreadyInstalled, "already installed"),
             (Outcome::NotImportable, "not importable"),
+            (Outcome::SourceNotConfigured, "source not configured"),
             (Outcome::Skipped, "skipped"),
             (Outcome::Failed, "failed"),
             (Outcome::VersionNotOffered, "version not offered"),
@@ -2447,7 +2453,10 @@ fn import_command(
             count => Some(format!("{count} {label}")),
         })
         .collect();
-        let kind = if !failed.is_empty() || report.count(Outcome::VersionNotOffered) > 0 {
+        let kind = if !failed.is_empty()
+            || report.count(Outcome::VersionNotOffered) > 0
+            || report.count(Outcome::SourceNotConfigured) > 0
+        {
             Kind::Warning
         } else if report.count(Outcome::Installed) + report.count(Outcome::WouldInstall) > 0 {
             Kind::Success
@@ -2496,6 +2505,9 @@ fn import_line(item: &list_file::Imported) -> String {
         Outcome::WouldInstall => format!("would install {version} from {}{listed}", item.source),
         Outcome::AlreadyInstalled => format!("already installed, left alone: {}", item.detail),
         Outcome::NotImportable => format!("not importable ({}): {}", item.source, item.detail),
+        Outcome::SourceNotConfigured => {
+            format!("source not configured ({}): {}", item.source, item.detail)
+        }
         Outcome::Skipped => format!("skipped ({}): {}", item.source, item.detail),
         Outcome::Failed => format!("failed: {}", item.detail),
         Outcome::VersionNotOffered => format!(
@@ -2589,10 +2601,10 @@ fn update_command(
             format!("checking {what} of {folder_name} against their sources"),
         );
     }
-    let github = GitHub::from_env(sources::http_from_env());
+    let sources = Sources::from_env();
     // Task 068: a progress line before each addon the source is asked about, its data line once it is
     // checked, and the one line of a stop before the rate limit, as they happen.
-    let check = update::check(&engine, &github, name, &mut |step| {
+    let check = update::check(&engine, &sources, name, &mut |step| {
         if reporter.json {
             return;
         }
@@ -2674,7 +2686,7 @@ fn update_command(
                 );
             }
             let outcome = engine.install_from_source(
-                &github,
+                &sources,
                 &request,
                 &mut install_progress(reporter, &engine, &mut warnings),
             );

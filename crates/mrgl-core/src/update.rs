@@ -1,7 +1,8 @@
 //! The update check (task 006): every managed addon of a flavor's state sidecar against its source's current
 //! release on the addon's own channel (task 021), one [`UpdateState`] per addon. An ignored addon is
 //! skipped without a request; a pinned one is checked and left alone; a zip in hand and a linked folder
-//! have no source to ask. An addon with an update carries the pick the check made, and
+//! have no source to ask, and neither has a spec of a source the run cannot ask (task 092: this build does
+//! not have it, or its key is not set), which is not checked and says what is missing. An addon with an update carries the pick the check made, and
 //! [`AddonUpdate::request`] hands it to the one install path of the engine
 //! ([`Engine::install_from_source`], task 055) without a second request but the download. The check reads
 //! and never writes (the GitHub source may write its own release list cache).
@@ -45,7 +46,7 @@ pub enum UpdateState {
     Ignored,
     /// The source has no release or no asset for the flavor any more, or the repository is gone (404).
     SourceGone,
-    /// No source to ask: a zip in hand, a linked development folder, a source not handled yet.
+    /// No source to ask: a zip in hand, a linked development folder, a source not configured (task 092).
     NotChecked,
     /// The source could not be asked: offline, a rate limit, a server error.
     Failed,
@@ -143,7 +144,7 @@ impl AddonUpdate {
             return None;
         }
         let pick = self.pick.as_ref()?;
-        let EntrySource::GitHub(spec) = EntrySource::of(&self.source) else {
+        let EntrySource::Spec(spec) = EntrySource::of(&self.source) else {
             return None;
         };
         Some(SourceRequest {
@@ -496,22 +497,22 @@ pub fn check_until<S: Source + ?Sized>(
             break;
         }
         let index = position + 1;
-        let asks = asks_source(entry);
-        if asks
+        let asks = asks_source(source, entry);
+        if let Some(spec) = asks.as_ref()
             && stopped.is_none()
-            && let Some(budget) = source.request_budget()
+            && let Some(budget) = source.request_budget_for(spec)
             && budget.remaining == 0
         {
             let not_checked = entries[position..]
                 .iter()
-                .filter(|(_, entry)| asks_source(entry))
+                .filter(|(_, entry)| asks_source(source, entry).is_some())
                 .count();
             let stop = BudgetStop::of(budget, not_checked);
             progress(CheckProgress::Stopped { stop: &stop });
             stopped = Some(stop);
         }
         let addon = match &stopped {
-            Some(stop) if asks => {
+            Some(stop) if asks.is_some() => {
                 let mut addon = unchecked(name, entry, UpdateState::RateLimited);
                 addon.detail = Some(format!(
                     "the check stopped before {}'s rate limit",
@@ -520,7 +521,7 @@ pub fn check_until<S: Source + ?Sized>(
                 addon
             }
             _ => {
-                if asks {
+                if asks.is_some() {
                     progress(CheckProgress::Checking {
                         index,
                         total,
@@ -545,10 +546,16 @@ pub fn check_until<S: Source + ?Sized>(
     })
 }
 
-/// Whether the check asks a source about an entry: not an ignored one, and only one of a source it
-/// handles.
-fn asks_source(entry: &Entry) -> bool {
-    !entry.ignored && matches!(EntrySource::of(&entry.source), EntrySource::GitHub(_))
+/// The spec the check asks a source about for an entry: not an ignored one, and only a spec of a source
+/// the run can ask ([`Source::missing`], task 092).
+fn asks_source<S: Source + ?Sized>(source: &S, entry: &Entry) -> Option<SourceSpec> {
+    if entry.ignored {
+        return None;
+    }
+    match EntrySource::of(&entry.source) {
+        EntrySource::Spec(spec) if source.missing(&spec).is_none() => Some(spec),
+        _ => None,
+    }
 }
 
 /// An entry as the check reports it before it asks anything: the sidecar's facts and a state.
@@ -578,19 +585,24 @@ fn check_entry<S: Source + ?Sized>(
     if entry.ignored {
         return addon;
     }
+    let not_checked = |mut addon: AddonUpdate, detail: String| {
+        addon.state = UpdateState::NotChecked;
+        addon.detail = Some(detail);
+        addon
+    };
     let spec = match EntrySource::of(&entry.source) {
-        EntrySource::GitHub(spec) => spec,
+        EntrySource::Spec(spec) => match crate::sources::not_configured(source, &spec) {
+            // Task 092: a source this run cannot ask says what is missing, before any request.
+            Some(error) => return not_checked(addon, error.to_string()),
+            None => spec,
+        },
         other => {
-            addon.state = UpdateState::NotChecked;
-            addon.detail = Some(
-                match other {
-                    EntrySource::Zip => "a zip in hand; a newer zip goes in with mrgl add <zip>",
-                    EntrySource::Linked => "a linked development folder",
-                    _ => "a source the update check does not handle yet",
-                }
-                .to_string(),
-            );
-            return addon;
+            let detail = match other {
+                EntrySource::Zip => "a zip in hand; a newer zip goes in with mrgl add <zip>",
+                EntrySource::Linked => "a linked development folder",
+                _ => "not a source spec mrgl reads",
+            };
+            return not_checked(addon, detail.to_string());
         }
     };
     let target = Target::from_flavor(&engine.flavor).with_channel(entry.channel);
