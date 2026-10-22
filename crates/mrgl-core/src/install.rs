@@ -17,9 +17,15 @@
 //! the write goes on; only a `WTF` write is refused while it runs. The engine asks the system's process list
 //! unless [`Engine::with_processes`] hands it another (the tests' stand-in client).
 //!
-//! [`Engine::install_pick`] is that hand-over for a source's [`Pick`] (task 040): the asset is downloaded
-//! through the source into the staging folder and goes through the same call, unless the sidecar has the
-//! addon from that source at that version already.
+//! [`Engine::install_from_source`] is the one path of every source-backed install (task 055: `add
+//! github:`, `import`, `update`): it resolves the request on the addon's own channel (task 021), finds an
+//! addon the sidecar has from that source at that version already (and stops there), downloads the asset
+//! into a fresh folder under `staging\` and sends it through the same stage and commit as a zip in hand
+//! (task 040). [`Engine::install_pick`] is the same path for a pick in hand.
+//!
+//! The link guard (task 005, [`Engine::refuse_links`]) runs in [`Engine::commit`], before the first folder
+//! moves, so every path that stages and commits (a zip, a source, a rollback) refuses to install over a
+//! linked addon or a junction mrgl did not make.
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
@@ -32,7 +38,7 @@ use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
 use crate::scan;
-use crate::sources::{Channel, Pick, Source};
+use crate::sources::{Channel, Pick, Source, SourceSpec, Target};
 use crate::state::{self, Entry, FlavorHome, LoadedState, State};
 use crate::toc::{self, TocName};
 use crate::zip_entry::{self, ZipRole};
@@ -143,13 +149,63 @@ pub struct Marked {
     pub warnings: Vec<String>,
 }
 
-/// A step of [`Engine::install_pick`], for the caller's progress line.
+/// A step of [`Engine::install_from_source`], for the caller's progress line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickStep<'a> {
+    /// The source is about to be asked for the release (none for a pick in hand).
+    Resolving {
+        spec: &'a SourceSpec,
+        target: &'a Target,
+    },
+    /// The source answered with this pick (none for a pick in hand).
+    Picked { pick: &'a Pick },
     /// The asset is about to be downloaded into this file under the staging folder.
     Downloading { pick: &'a Pick, to: &'a Path },
     /// The asset is downloaded; the engine's install call starts.
     Installing { pick: &'a Pick, zip: &'a Path },
+}
+
+/// Which release of a source an install takes (task 055).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Wanted {
+    /// The current release on the addon's channel: the channel of its sidecar entry, `stable` for an
+    /// addon the sidecar does not have.
+    Current,
+    /// A pick made already (by the caller, or by the update check), installed as it is: no second request.
+    Pick(Box<Pick>),
+    /// The release that carries this version, on any channel (task 057, `import --exact`):
+    /// [`Source::resolve_version`], [`crate::Error::VersionNotOffered`] when the source has none.
+    Version(String),
+}
+
+/// An install from a source, as the one path takes it (task 055).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceRequest {
+    /// The source.
+    pub spec: SourceSpec,
+    /// Which of its releases.
+    pub wanted: Wanted,
+    /// The name the sidecar records the addon by when it has no entry from this source (the list file's
+    /// name on `import`); `None` derives it from the folders. An entry from the source keeps its name.
+    pub name: Option<String>,
+}
+
+impl SourceRequest {
+    /// The current release of a source, under the name the sidecar knows it by or the folders give it.
+    pub fn current(spec: SourceSpec) -> SourceRequest {
+        SourceRequest {
+            spec,
+            wanted: Wanted::Current,
+            name: None,
+        }
+    }
+}
+
+/// What [`Engine::install_from_source`] did: the pick it took and what came of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceInstalled {
+    pub pick: Pick,
+    pub outcome: PickInstalled,
 }
 
 /// What an install from a source's pick did.
@@ -341,7 +397,10 @@ impl Engine {
     /// Swaps the staged folders into `Interface\AddOns` one at a time, removes the folders the previous
     /// version had and this one lacks, records the install in the state (and writes it) and keeps the zip
     /// in the cache. When a swap fails, every folder moved so far is put back and the error says so.
+    /// Before anything moves, a staged folder that is a linked addon or a junction mrgl did not make is
+    /// refused (task 005, [`Engine::refuse_links`]): here, so no path that stages and commits can skip it.
     pub fn commit(&self, mut staged: Staged, state: &mut State) -> Result<Installed> {
+        self.refuse_links(state, &staged.folders())?;
         let addons_dir = self.addons_dir();
         std::fs::create_dir_all(&addons_dir).map_err(|source| Error::Io {
             context: "creating the AddOns folder",
@@ -434,57 +493,82 @@ impl Engine {
     }
 
     /// Installs a zip: reads the sidecar (dropping the entries whose folders were deleted by hand), stages
-    /// the zip, refuses it over a linked addon or a junction it did not make (task 005,
-    /// [`Engine::refuse_links`]), swaps the folders in and records the install.
+    /// the zip, swaps the folders in and records the install; the commit refuses a linked addon or a
+    /// junction mrgl did not make (task 005).
     pub fn install(&self, zip: &Path, metadata: &Metadata) -> Result<Installed> {
         let loaded = self.load_state()?;
         let mut state = loaded.state;
         let scan = scan::scan_flavor(&self.flavor)?;
         let dropped = state.reconcile(&scan);
         let staged = self.stage(zip, metadata)?;
-        self.refuse_links(&state, &staged.folders())?;
-        let mut installed = self.commit(staged, &mut state)?;
-        let mut warnings: Vec<String> = loaded.warning.into_iter().collect();
-        warnings.extend(dropped.into_iter().map(|name| {
-            format!("{name} was deleted by hand since its install and is no longer managed")
-        }));
-        warnings.append(&mut installed.warnings);
-        installed.warnings = warnings;
-        Ok(installed)
+        let installed = self.commit(staged, &mut state)?;
+        Ok(with_run_warnings(installed, loaded.warning, dropped))
     }
 
-    /// Installs a source's pick (task 040). When the sidecar has an addon from the pick's source (ASCII
-    /// case-insensitive, as GitHub's names are) at the pick's version and its folders are there, nothing is
-    /// downloaded and nothing moves. Otherwise the asset is downloaded through the source into a fresh
-    /// folder under `staging\` and handed to [`Engine::install`] with the pick's source and version as the
-    /// metadata (the TOC's `## Version` stays the fallback), under the name the sidecar already knows the
-    /// addon by when it came from this source; an addon at another version is updated by that same call.
-    /// The download is removed once the call returns, whatever it returned; the engine keeps its own copy
+    /// The target an addon from a source is picked for: the engine's flavor and build, on the channel of
+    /// the addon's sidecar entry (task 021): the entry from that source, else the entry of that name, else
+    /// `stable`.
+    pub fn target_for(&self, state: &State, source: &str, name: Option<&str>) -> Target {
+        let channel = managed_entry(state, source, name)
+            .map(|(_, entry)| entry.channel)
+            .unwrap_or_default();
+        Target::from_flavor(&self.flavor).with_channel(channel)
+    }
+
+    /// The pick a request asks for, made for the engine's flavor on the addon's own channel
+    /// ([`Engine::target_for`]): what the one install path would install, for a dry run. Reads the
+    /// sidecar, writes nothing (the source may write its own cache).
+    pub fn resolve<S: Source + ?Sized>(&self, source: &S, request: &SourceRequest) -> Result<Pick> {
+        let state = self.load_state()?.state;
+        let target = self.target_for(&state, &request.spec.to_string(), request.name.as_deref());
+        resolve_on(source, request, &target)
+    }
+
+    /// The one install path of a source (task 055): `add github:`, `import` and `update` all come here.
+    /// The request is resolved on the addon's own channel ([`Engine::target_for`]); when the sidecar has
+    /// an addon from the pick's source (ASCII case-insensitive, as GitHub's names are) at the pick's version
+    /// and its folders are there, nothing is downloaded and nothing moves. Otherwise the asset is downloaded
+    /// through the source into a fresh folder under `staging\`, staged and committed with the pick's source
+    /// and version as the metadata (the TOC's `## Version` stays the fallback), under the name the sidecar
+    /// knows the addon by when it came from this source, else the request's; an addon at another version
+    /// is updated by that same commit, which also refuses a linked addon or a foreign junction. The
+    /// download is removed once the install returns, whatever it returned; the engine keeps its own copy
     /// in the cache.
-    pub fn install_pick<S: Source + ?Sized>(
+    pub fn install_from_source<S: Source + ?Sized>(
         &self,
         source: &S,
-        pick: &Pick,
+        request: &SourceRequest,
         progress: &mut dyn FnMut(PickStep<'_>),
-    ) -> Result<PickInstalled> {
+    ) -> Result<SourceInstalled> {
         let loaded = self.load_state()?;
         let mut state = loaded.state;
+        let pick = match &request.wanted {
+            Wanted::Pick(pick) => (**pick).clone(),
+            _ => {
+                let target =
+                    self.target_for(&state, &request.spec.to_string(), request.name.as_deref());
+                progress(PickStep::Resolving {
+                    spec: &request.spec,
+                    target: &target,
+                });
+                let pick = resolve_on(source, request, &target)?;
+                progress(PickStep::Picked { pick: &pick });
+                pick
+            }
+        };
         let scan = scan::scan_flavor(&self.flavor)?;
-        // In memory only: an entry whose folders were deleted by hand does not count as installed, and the
-        // install call below reconciles again and writes the sidecar.
-        state.reconcile(&scan);
-        let managed = state
-            .addons
-            .into_iter()
-            .find(|(_, entry)| entry.source.eq_ignore_ascii_case(&pick.source));
+        let dropped = state.reconcile(&scan);
+        let managed = managed_entry(&state, &pick.source, None)
+            .map(|(name, entry)| (name.to_string(), entry.clone()));
         if let Some((name, entry)) = &managed
             && entry.version == pick.version
         {
-            return Ok(PickInstalled::AlreadyInstalled(AlreadyInstalled {
+            let outcome = PickInstalled::AlreadyInstalled(AlreadyInstalled {
                 name: name.clone(),
                 entry: entry.clone(),
                 warnings: loaded.warning.into_iter().collect(),
-            }));
+            });
+            return Ok(SourceInstalled { pick, outcome });
         }
         let dir = fresh_staging_dir(
             &self.home.staging_dir(),
@@ -492,16 +576,43 @@ impl Engine {
         )?;
         let _download = RemoveOnDrop(dir.clone());
         let zip = dir.join(state::file_safe(&pick.asset));
-        progress(PickStep::Downloading { pick, to: &zip });
-        source.fetch(pick, &zip)?;
-        progress(PickStep::Installing { pick, zip: &zip });
+        progress(PickStep::Downloading {
+            pick: &pick,
+            to: &zip,
+        });
+        source.fetch(&pick, &zip)?;
+        progress(PickStep::Installing {
+            pick: &pick,
+            zip: &zip,
+        });
         let metadata = Metadata {
             source: pick.source.clone(),
             version: Some(pick.version.clone()),
-            name: managed.map(|(name, _)| name),
+            name: managed.map(|(name, _)| name).or(request.name.clone()),
             nolib: Some(pick.nolib),
         };
-        self.install(&zip, &metadata).map(PickInstalled::Installed)
+        let staged = self.stage(&zip, &metadata)?;
+        let installed = self.commit(staged, &mut state)?;
+        let outcome =
+            PickInstalled::Installed(with_run_warnings(installed, loaded.warning, dropped));
+        Ok(SourceInstalled { pick, outcome })
+    }
+
+    /// The one install path ([`Engine::install_from_source`]) for a pick in hand (task 040): no request
+    /// to the source but the download.
+    pub fn install_pick<S: Source + ?Sized>(
+        &self,
+        source: &S,
+        pick: &Pick,
+        progress: &mut dyn FnMut(PickStep<'_>),
+    ) -> Result<PickInstalled> {
+        let request = SourceRequest {
+            spec: SourceSpec::parse(&pick.source)?,
+            wanted: Wanted::Pick(Box::new(pick.clone())),
+            name: None,
+        };
+        self.install_from_source(source, &request, progress)
+            .map(|installed| installed.outcome)
     }
 
     /// Removes a managed addon: its folders under `Interface\AddOns`, its entry and its cache. A name the
@@ -807,6 +918,51 @@ fn keep_marks(
         ));
     }
     entry
+}
+
+/// The sidecar entry of an addon from a source: the entry whose source is that spec (ASCII
+/// case-insensitive), else the entry of the name given. The one lookup of the install path (task 055).
+fn managed_entry<'a>(
+    state: &'a State,
+    source: &str,
+    name: Option<&str>,
+) -> Option<(&'a str, &'a Entry)> {
+    state
+        .addons
+        .iter()
+        .find(|(_, entry)| entry.source.eq_ignore_ascii_case(source))
+        .map(|(name, entry)| (name.as_str(), entry))
+        .or_else(|| name.and_then(|name| state.entry(name)))
+}
+
+/// The pick a request asks for, on a target: the source's current release, the pick in hand, or the
+/// release of a version.
+fn resolve_on<S: Source + ?Sized>(
+    source: &S,
+    request: &SourceRequest,
+    target: &Target,
+) -> Result<Pick> {
+    match &request.wanted {
+        Wanted::Current => source.resolve(&request.spec, target),
+        Wanted::Pick(pick) => Ok((**pick).clone()),
+        Wanted::Version(version) => source.resolve_version(&request.spec, target, version),
+    }
+}
+
+/// An install's warnings after the run's own: the sidecar read as fresh, then the addons deleted by hand
+/// since their install, then what the commit said.
+fn with_run_warnings(
+    mut installed: Installed,
+    sidecar: Option<String>,
+    dropped: Vec<String>,
+) -> Installed {
+    let mut warnings: Vec<String> = sidecar.into_iter().collect();
+    warnings.extend(dropped.into_iter().map(|name| {
+        format!("{name} was deleted by hand since its install and is no longer managed")
+    }));
+    warnings.append(&mut installed.warnings);
+    installed.warnings = warnings;
+    installed
 }
 
 /// Folders of other managed addons that the new install now owns leave those entries; an entry left with

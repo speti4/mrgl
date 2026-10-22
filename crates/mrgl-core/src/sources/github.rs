@@ -160,6 +160,16 @@ pub fn current_release_on(releases: &[Release], channel: Channel) -> Option<&Rel
     }
 }
 
+/// The release that carries a version (task 057): its tag, or its tag without the leading `v`
+/// ([`Release::version`]), a draft never; the channel does not matter, a version asked for by name is
+/// taken as a prerelease too. The newest such release when the list has two.
+pub fn release_of_version<'a>(releases: &'a [Release], version: &str) -> Option<&'a Release> {
+    releases
+        .iter()
+        .filter(|release| !release.draft)
+        .find(|release| release.version() == version || release.tag_name == version)
+}
+
 /// The `release.json` flavor keys (and asset-name suffixes) a target accepts, best first: the packager's
 /// own key, then the synonyms the client's TOC suffixes spell. The progressing classic has one flavor id for
 /// several game types, so its key follows the installed build's major version; without a build every game
@@ -750,14 +760,17 @@ fn rate_limit_reset(response: &Response) -> Option<i64> {
     })
 }
 
-impl<H: Http> Source for GitHub<H> {
-    fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
-        let SourceSpec::GitHub { owner, repo } = spec;
-        let (releases, stale) = self.release_list(owner, repo)?;
-        let release =
-            current_release_on(&releases, target.channel).ok_or_else(|| Error::NoRelease {
-                spec: spec.to_string(),
-            })?;
+impl<H: Http> GitHub<H> {
+    /// The pick of one release for a target: the asset its `release.json` names, else one by its name
+    /// (a guess), or why there is none. The resolve of the current release and the one of a version
+    /// (task 057) share it; `stale` says the release list came from the cache, offline (task 041).
+    fn pick_of(
+        &self,
+        spec: &SourceSpec,
+        release: &Release,
+        target: &Target,
+        stale: Option<Stale>,
+    ) -> Result<Pick> {
         let (release_json, mut notes) = match self.release_json(spec, release)? {
             Some(Ok(release_json)) => (Some(release_json), None),
             Some(Err(reason)) => (None, Some(reason)),
@@ -821,6 +834,31 @@ impl<H: Http> Source for GitHub<H> {
             forever_build,
             stale,
         })
+    }
+}
+
+impl<H: Http> Source for GitHub<H> {
+    fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
+        let SourceSpec::GitHub { owner, repo } = spec;
+        let (releases, stale) = self.release_list(owner, repo)?;
+        let release =
+            current_release_on(&releases, target.channel).ok_or_else(|| Error::NoRelease {
+                spec: spec.to_string(),
+            })?;
+        self.pick_of(spec, release, target, stale)
+    }
+
+    /// The release tagged with the version, from the same release list with every page it walks
+    /// ([`release_of_version`]); from the cache when offline, like the current one (task 041).
+    fn resolve_version(&self, spec: &SourceSpec, target: &Target, version: &str) -> Result<Pick> {
+        let SourceSpec::GitHub { owner, repo } = spec;
+        let (releases, stale) = self.release_list(owner, repo)?;
+        let release =
+            release_of_version(&releases, version).ok_or_else(|| Error::VersionNotOffered {
+                spec: spec.to_string(),
+                version: version.to_string(),
+            })?;
+        self.pick_of(spec, release, target, stale)
     }
 
     /// Downloads the picked asset; a byte count other than the size the release list names is refused
@@ -938,6 +976,44 @@ mod tests {
             current_release_on(&[draft, stable.clone()], Channel::Stable),
             Some(&stable)
         );
+    }
+
+    #[test]
+    fn a_version_is_found_by_its_tag_with_or_without_the_v_and_never_in_a_draft() {
+        let mut draft = release("v3.0.0", &[]);
+        draft.draft = true;
+        let mut beta = release("v2.0.0-beta", &[]);
+        beta.prerelease = true;
+        let plain = release("1.0.0", &[]);
+        let releases = vec![draft, beta.clone(), release("v1.5.0", &[]), plain.clone()];
+        assert_eq!(release_of_version(&releases, "2.0.0-beta"), Some(&beta));
+        assert_eq!(release_of_version(&releases, "v2.0.0-beta"), Some(&beta));
+        assert_eq!(release_of_version(&releases, "1.0.0"), Some(&plain));
+        assert_eq!(release_of_version(&releases, "3.0.0"), None, "a draft");
+        assert_eq!(release_of_version(&releases, "0.9.0"), None);
+    }
+
+    #[test]
+    fn resolve_version_picks_the_asset_of_that_release_or_says_it_is_not_offered() {
+        let list = r#"[
+            {"tag_name":"v1.1.0","assets":[{"name":"A-v1.1.0-forever.zip","browser_download_url":"https://dl.test/A-v1.1.0-forever.zip"}]},
+            {"tag_name":"v1.0.0","assets":[{"name":"A-v1.0.0-forever.zip","browser_download_url":"https://dl.test/A-v1.0.0-forever.zip"}]}
+        ]"#;
+        let github = GitHub::new(MapHttp::new().answer(RELEASES_URL, 200, list), None, None);
+        let target = Target::new(FlavorId::Forever);
+        let pick = github
+            .resolve_version(&spec(), &target, "1.0.0")
+            .expect("the older release");
+        assert_eq!(pick.release, "v1.0.0");
+        assert_eq!(pick.version, "1.0.0");
+        assert_eq!(pick.asset, "A-v1.0.0-forever.zip");
+        let current = github.resolve(&spec(), &target).expect("the current one");
+        assert_eq!(current.version, "1.1.0");
+        let error = github
+            .resolve_version(&spec(), &target, "0.9.0")
+            .expect_err("not offered");
+        assert!(matches!(error, Error::VersionNotOffered { .. }), "{error}");
+        assert_eq!(error.to_string(), "no release 0.9.0 in github:o/r");
     }
 
     #[test]

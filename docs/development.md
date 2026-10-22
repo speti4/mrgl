@@ -17,11 +17,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
-  result, never a refusal, task 038; it refuses to install over a linked addon or a junction it did not
-  make; `Engine::install_pick` takes a source's pick to it, task 040: the sidecar is checked for the addon
-  from that source at that version, else the asset is downloaded through the source's `Http` into the
-  staging folder and goes through the same install call with the pick's source and version, and the
-  download is removed once the call returns; the rollback, `Engine::rollback`, sends the entry's previous
+  result, never a refusal, task 038; its commit, `Engine::commit`, refuses to install over a linked addon
+  or a junction it did not make before the first folder moves, so every path that stages and commits does,
+  task 055; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
+  below; the rollback, `Engine::rollback`, sends the entry's previous
   version and its zip from the cache through the same stage and swap with the entry's source, pins the
   addon there and leaves both zips in the cache, so a second rollback goes forward again, task 022), the
   dev addon links (`link`, task 005: a directory junction under `Interface\AddOns` for every
@@ -71,11 +70,12 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
   task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
   (task 024), `link <folder>` and `unlink <folder>` (task 005), `export --flavor <flavor> [--to <file>]`
-  and `import <file> --flavor <flavor> [--dry-run]` (task 015), `pin <name> [version]`, `unpin`, `ignore`,
+  and `import <file> --flavor <flavor> [--exact] [--dry-run]` (tasks 015 and 057), `pin <name> [version]`,
+  `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
-  `rollback <name>` (task 022), `update` (a stub that answers with the task that builds it until that task lands), with `--json` for
-  machines and `--serious` for the
-  murloc-averse; its end-to-end tests under `tests/`. `list` and `add <file.zip>` run the dependency check
+  `rollback <name>` (task 022), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
+  below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
+  `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
   addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
@@ -115,6 +115,51 @@ managed or not) is reported and left alone. `--dry-run` resolves every entry and
 `Interface\AddOns` or in the sidecar (the release list cache of the GitHub source is written as on any
 resolve). An entry that fails does not stop the others; the run then ends with exit code 1. The list may
 come from another flavor: the picks are made for the flavor it is imported into, with a warning.
+
+`mrgl import --exact` (task 057) installs the version the list names for each entry instead of the current
+release: the request asks the source for that version (`Wanted::Version`, `Source::resolve_version`), and
+the GitHub source takes the release of the same list whose tag is the version, with or without its leading
+`v`, never a draft, on any channel (`sources::github::release_of_version`), and picks its asset for the
+flavor as for the current one. An entry whose version the source no longer offers is reported (`<name>
+skipped, version <v> not offered: no release <v> in <source>`, outcome `version-not-offered` in the JSON,
+`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup sees the
+releases the release list holds: the first page, and the pages after it only while none holds a stable
+release (task 042), so a version older than the first page reads as not offered. The JSON document carries
+`exact`.
+
+The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:`, `import`
+and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
+or a pick made already, and the name the list file gives the addon) and resolves it for the flavor's build
+on the addon's own channel, the channel of its sidecar entry from that source (else of the entry of that
+name, else `stable`, `Engine::target_for`, task 021). An addon the sidecar has from that source at the
+pick's version, its folders there, is installed already: nothing is downloaded and nothing moves. Otherwise
+the asset is downloaded into a fresh folder under `staging\`, staged and committed with the pick's source
+and version under the name the sidecar knows the source by (else the request's name, else the folders'),
+and the download is removed whatever the install returned. `Engine::resolve` is the same resolve alone, for
+a dry run, and `Engine::install_pick` the same path for a pick in hand. The link refusal of task 005 sits in
+`Engine::commit`, so a zip in hand, a source, an import, an update and a rollback all refuse to install over
+a linked addon or a junction mrgl did not make. The command line reports every install with one summary
+(the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
+interface checks).
+
+The update check (task 006) is `update::check` in the core: every managed addon of the sidecar (or the one
+a name or a folder names) against its source's current release on the addon's own channel, one
+`UpdateState` each, read-only. `up-to-date`: the release's version is the installed one. `update-available`:
+another version, picked from metadata. `guess-only`: another version whose asset for the flavor is a guess
+by its name; it is reported, not installed, and `mrgl add <source>` installs it anyway. `pinned`: checked
+and reported with the current release, left alone. `ignored`: skipped without a request. `source-gone`: no
+release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
+hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
+limit, a server error). Another version counts as an update whatever its number: the source's current
+release on the addon's channel is the one to have. An addon whose folders were deleted by hand is left out
+with a warning. `mrgl update --all` and `mrgl update <name>` print a plain data line per addon
+(`Questie  1.2.2 -> 1.2.3  update available`), ask once for the updates (`--yes` answers; without a
+terminal or with `--json` the command stops and says what `--yes` does, exit 1), install each through the
+one install path with the pick the check made (`AddonUpdate::request`, no second resolve) and end with the
+summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
+`1 update available` and writes nothing). `--json` is one `update` document: every addon with `state`,
+`latest`, `pick`, `updated` and the installed `addon` block, the `counts` per state and the warnings. An
+update or a check that fails does not stop the others; the run then ends with exit code 1.
 
 The interface check (task 015) compares the `## Interface` numbers of the TOC the flavor loads with the
 installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,
@@ -526,8 +571,8 @@ keeps `checked_at`, when the API last confirmed the list (RFC 3339 in UTC, refre
 and the pick carries `stale: { checked_at, reason }` (`null` for a fresh pick). `Pick::stale_warning` is the
 warning line, `offline: <source> <tag> is from the release list cached <local time>, the pick may be stale
 (<the network error>)` (`cached at an unknown time` for a cache without the date): `add --dry-run` and `add`
-print it as a warning and list it in the JSON `warnings`; the update check of task 006 reads the same flag
-from its picks. The asset itself is never cached before an install, so an `add` offline only gets as far as
+print it as a warning and list it in the JSON `warnings`, and so do `import` (the entry's `warnings`) and
+`update` (one line per stale pick of the check), through the one install path of task 055. The asset itself is never cached before an install, so an `add` offline only gets as far as
 finding the release installed already. The folder stub with a folder that does not exist answers every
 request with a network error, which is how the tests go offline.
 

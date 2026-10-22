@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 19 backlog (2 ready · 0 blocked · 2 waiting · 15 ideas) · 0 in progress · 35 done · 3 dropped · 5 decisions
+**State:** 16 backlog (1 ready · 0 blocked · 2 waiting · 13 ideas) · 0 in progress · 38 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -22,7 +22,6 @@ _Generated 2026-10-22 — edit the files, not this section._
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 006 | [Update check: installed state against the latest release per flavor; update --a…](backlog/006-update-check-and-update-all.md) | S | 2026-10-21 |
 | 045 | [Pre-launch manual round on the real install: the commands no fixture covers](backlog/045-pre-launch-manual-round-on-the-real-install.md) | S | 2026-10-21 |
 
 ### Needs decision
@@ -45,12 +44,6 @@ _none_
 
 ### Ideas
 
-#### M1 Core + CLI
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 055 | [One install path: a core helper for resolve, download and install, the link ref…](backlog/055-one-core-helper-for-resolve-download-and-install.md) | M | 2026-10-21 |
-
 #### M2 Window MVP
 
 | # | Task | Size | Created |
@@ -68,7 +61,6 @@ _none_
 | 014 | [Addon sets with enable and disable](backlog/014-addon-sets-with-enable-and-disable.md) | M | 2026-10-21 |
 | 027 | [Per-character addon sets](backlog/027-per-character-addon-sets.md) | S | 2026-10-21 |
 | 028 | [Lists as discovery: a shareable list format and a Forever starter list in the r…](backlog/028-lists-as-discovery-and-forever-starter-list.md) | S | 2026-10-21 |
-| 057 | [An import option that installs the listed version, not the current release](backlog/057-import-option-for-the-listed-version.md) | S | 2026-10-21 |
 | 062 | [link takes a single addon folder as well as a development folder](backlog/062-link-takes-a-single-addon-folder.md) | S | 2026-10-21 |
 
 #### M4 Sources
@@ -108,16 +100,16 @@ _none_
 |---|---|---|
 | 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
 | 061 | [CI compiles the non-Windows paths of the core](done/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 |
+| 057 | [An import option that installs the listed version, not the current release](done/057-import-option-for-the-listed-version.md) | 2026-10-22 |
+| 055 | [One install path: a core helper for resolve, download and install, the link ref…](done/055-one-core-helper-for-resolve-download-and-install.md) | 2026-10-22 |
 | 051 | [A Windows version line in the doctor report](done/051-windows-version-line-in-the-doctor-report.md) | 2026-10-22 |
 | 046 | [The asset download's error path: a 404 names the asset, the size is checked](done/046-asset-download-404-names-the-missing-asset.md) | 2026-10-22 |
 | 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](done/043-second-registry-source-for-the-game-root.md) | 2026-10-22 |
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](done/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | 2026-10-22 |
 | 041 | [Offline resolve from the cached release list, with a warning](done/041-offline-resolve-from-the-cached-release-list.md) | 2026-10-22 |
 | 039 | [A bound on the unpacked size of a zip](done/039-bound-on-the-unpacked-size-of-a-zip.md) | 2026-10-22 |
-| 033 | [Close the GitHub milestone a release ships: a step in the release checklist](done/033-close-the-milestone-of-a-shipped-release.md) | 2026-10-22 |
-| 025 | [SavedVariables: size per addon and orphan cleanup into a backup zip; CLI savedv…](done/025-savedvariables-size-and-orphan-cleanup.md) | 2026-10-22 |
 
-_25 more in `done/`._
+_28 more in `done/`._
 
 ### Decisions
 

@@ -16,6 +16,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - Flavor detection and the AddOns scan with TOC parsing; CLI `scan`, `list` and `root` ([002](https://github.com/speti4/mrgl/blob/main/tasks/done/002-flavor-detection-and-addons-scan-with-toc-parsing.md))
 - GitHub release source: `release.json`, flavor-correct asset pick, ETag cache; CLI `add github:<owner>/<repo>` ([003](https://github.com/speti4/mrgl/blob/main/tasks/done/003-github-release-source-with-release-json.md))
 - Install engine: zip to staging, addon-folder detection, atomic swap, rollback, the state sidecar; `add <zip>` and `remove` ([004](https://github.com/speti4/mrgl/blob/main/tasks/done/004-install-engine-with-state-sidecar.md))
+- Update check: installed state against the latest release per flavor; `update --all` with dry-run and `--yes` ([006](https://github.com/speti4/mrgl/blob/main/tasks/done/006-update-check-and-update-all.md))
 - Build version fallback from the client exe when `.build.info` has no row for the flavor ([019](https://github.com/speti4/mrgl/blob/main/tasks/done/019-build-version-fallback-from-the-client-exe.md))
 - Pin, ignore and the pre-release channel per addon; CLI `pin`, `unpin`, `ignore` and `unignore` ([021](https://github.com/speti4/mrgl/blob/main/tasks/done/021-pin-ignore-and-prerelease-channel.md))
 - Rollback to the previous version from the kept zip; CLI `rollback` ([022](https://github.com/speti4/mrgl/blob/main/tasks/done/022-rollback-from-the-kept-zip.md))
@@ -45,6 +46,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - WTF backup and restore ([013](https://github.com/speti4/mrgl/blob/main/tasks/done/013-wtf-backup-and-restore.md))
 - Addon list export and import, and a TOC-interface versus build warning ([015](https://github.com/speti4/mrgl/blob/main/tasks/done/015-list-export-import-and-interface-warning.md))
 - SavedVariables: size per addon and orphan cleanup into a backup zip; CLI `savedvars` ([025](https://github.com/speti4/mrgl/blob/main/tasks/done/025-savedvariables-size-and-orphan-cleanup.md))
+- An import option that installs the listed version, not the current release ([057](https://github.com/speti4/mrgl/blob/main/tasks/done/057-import-option-for-the-listed-version.md))
 
 ### M5 Trust
 
@@ -58,5 +60,6 @@ The repository, the task standard and the empty workspace: no app yet.
 - CONTRIBUTING.md names the mirrored issues as the task files' public face ([032](https://github.com/speti4/mrgl/blob/main/tasks/done/032-contributing-names-the-mirrored-issues.md))
 - Close the GitHub milestone a release ships: a step in the release checklist ([033](https://github.com/speti4/mrgl/blob/main/tasks/done/033-close-the-milestone-of-a-shipped-release.md))
 - One zip-entry check for the install engine and the backup restore ([044](https://github.com/speti4/mrgl/blob/main/tasks/done/044-one-zip-entry-check-for-the-engine-and-the-backup.md))
+- One install path: a core helper for resolve, download and install, the link refusal in the commit ([055](https://github.com/speti4/mrgl/blob/main/tasks/done/055-one-core-helper-for-resolve-download-and-install.md))
 - CI compiles the non-Windows paths of the core ([061](https://github.com/speti4/mrgl/blob/main/tasks/done/061-ci-compiles-the-non-windows-paths.md))
 - The stand-in client of the tests is a copy of a signed system executable, not of the test binary ([063](https://github.com/speti4/mrgl/blob/main/tasks/done/063-stand-in-client-from-a-signed-system-exe.md))

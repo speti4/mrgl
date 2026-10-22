@@ -31,6 +31,14 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
   the AddOns folder stays the truth and the state is a cache you can delete any time. It touches `WTF` only
   for a backup restore, an addon set or a SavedVariables cleanup you asked for. It lives next to the
   CurseForge app without a fight.
+- **Updates you can read first.** `mrgl update --all --dry-run` checks every addon mrgl installed against
+  its source, each on its own release channel, and says where each stands: up to date, update available, a
+  guess only (no `release.json` names the flavor, so it is not installed blindly), source gone, pinned,
+  ignored, or not checked (a zip in hand, a linked folder); `mrgl update --all` installs the updates after
+  one confirmation (`--yes` for scripts), leaves a pinned addon alone and skips an ignored one.
+- **A known-good set on another machine.** `mrgl export` writes the managed addons into a list file and
+  `mrgl import` installs it elsewhere, at the current releases, or with `--exact` at the versions the list
+  names; a version the source no longer offers is reported and skipped.
 - **A toolbox, not only a manager.** WTF backup and restore, addon sets, the SavedVariables sizes with the
   cleanup of files whose addon is gone, a junction link for the addons you develop yourself, and a window on
   top of it all.
@@ -57,6 +65,9 @@ target\release\mrgl.exe unlink D:\dev\my-addons --flavor forever            # ex
 target\release\mrgl.exe pin SomeAddon 1.2.0 --flavor forever                # keep it at 1.2.0 (no version: the installed one)
 target\release\mrgl.exe unpin SomeAddon --flavor forever                    # let updates reach it again
 target\release\mrgl.exe rollback SomeAddon --flavor forever                 # the previous version back from the kept zip, pinned
+target\release\mrgl.exe update --all --flavor forever --dry-run             # where every managed addon stands
+target\release\mrgl.exe update --all --flavor forever                       # install the updates, asks first (--yes: no)
+target\release\mrgl.exe update SomeAddon --flavor forever                   # the same for one addon
 target\release\mrgl.exe ignore SomeAddon --flavor forever                   # updates skip it (unignore undoes it)
 target\release\mrgl.exe channel SomeAddon prerelease --flavor forever       # follow its beta builds (stable undoes it)
 target\release\mrgl.exe backup --flavor forever                             # the WTF folder into a dated zip
@@ -67,6 +78,7 @@ target\release\mrgl.exe savedvars --clean --flavor forever                  # th
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
 target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
 target\release\mrgl.exe import forever-addons.json --flavor forever --dry-run   # what installing that list would do
+target\release\mrgl.exe import forever-addons.json --flavor forever --exact     # the versions the list names, not the current ones
 ```
 
 `add --dry-run` names the asset it picked and why; when the release has notes, the next line is their first

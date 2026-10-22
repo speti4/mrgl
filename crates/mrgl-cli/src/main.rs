@@ -12,12 +12,11 @@
 //! interface warning of `list` and `add` are task 015; `pin`, `unpin`, `ignore`, `unignore` and
 //! `channel`, with their marks in `list`, are task 021; `rollback` (the previous version from the kept
 //! zip, then pinned) is task 022; `savedvars` (the SavedVariables sizes and the orphan cleanup) is task
-//! 025; the other subcommands follow the M1 plan (`tasks/roadmap.md`) and answer
-//! "not implemented yet" with their task id until that task lands, so the help text and the voice are
-//! testable from the first commit.
+//! 025; every source-backed install takes the one install path of the engine (task 055); `update` (the
+//! update check and `update --all`) is task 006.
 
 use std::collections::BTreeMap;
-use std::io::BufRead;
+use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -29,15 +28,19 @@ use mrgl_core::discover::{self, GameRoot, ROOT_ENV, RootOrigin};
 use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
-use mrgl_core::install::{Engine, Marked, Metadata, PickInstalled, PickStep};
+use mrgl_core::install::{
+    AlreadyInstalled, Engine, Installed, Marked, Metadata, PickInstalled, PickStep,
+    SourceInstalled, SourceRequest,
+};
 use mrgl_core::interface::{self, InterfaceMismatch};
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::GitHub;
-use mrgl_core::sources::{self, Channel, Pick, Source, SourceSpec, Target};
+use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
+use mrgl_core::update::{self, UpdateState};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::zip_entry;
 use mrgl_core::{Error, VERSION};
@@ -112,20 +115,21 @@ enum Command {
         #[arg(long, value_name = "SIZE", value_parser = parse_max_unpacked)]
         max_unpacked: Option<u64>,
     },
-    /// Check the installed addons against their sources and update them.
+    /// Check the managed addons against their sources, each on its own channel, and update them after one
+    /// confirmation: a pinned addon is reported and left alone, an ignored one skipped.
     Update {
-        /// Every addon of the flavor, not one by name.
-        #[arg(long)]
+        /// Every managed addon of the flavor.
+        #[arg(long, conflicts_with = "name", required_unless_present = "name")]
         all: bool,
-        /// One addon by name.
+        /// One managed addon by name, or one of its folders.
         name: Option<String>,
         /// The flavor id or folder.
         #[arg(long)]
         flavor: Option<String>,
-        /// Resolve and report, write nothing.
+        /// Check and report, write nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Skip the confirmation.
+        /// Update without asking (scripts; needed without a terminal and with --json).
         #[arg(short = 'y', long)]
         yes: bool,
     },
@@ -205,13 +209,17 @@ enum Command {
         to: Option<PathBuf>,
     },
     /// Install the addons of a list file `export` wrote: every `github:` entry the flavor does not have
-    /// yet, at its current release.
+    /// yet, at its current release, or with `--exact` at the version the list names.
     Import {
         /// The list file.
         file: PathBuf,
         /// The flavor id or folder to install into.
         #[arg(long)]
         flavor: Option<String>,
+        /// Install the version the list names for each entry (its release), not the current release; an
+        /// entry whose version the source no longer offers is reported and skipped.
+        #[arg(long)]
+        exact: bool,
         /// Resolve every entry and report what would happen, write nothing.
         #[arg(long)]
         dry_run: bool,
@@ -302,35 +310,6 @@ fn parse_channel(text: &str) -> Result<Channel, String> {
     Channel::parse(text).ok_or_else(|| format!("unknown channel {text}: stable or prerelease"))
 }
 
-impl Command {
-    /// The "not yet" answer of a command whose task has not landed: its name and the task.
-    fn not_yet(&self) -> Option<Error> {
-        let (command, task) = match self {
-            Command::Scan { .. }
-            | Command::List { .. }
-            | Command::Root { .. }
-            | Command::Add { .. }
-            | Command::Remove { .. }
-            | Command::Link { .. }
-            | Command::Unlink { .. }
-            | Command::Backup { .. }
-            | Command::Export { .. }
-            | Command::Import { .. }
-            | Command::Pin { .. }
-            | Command::Unpin { .. }
-            | Command::Ignore { .. }
-            | Command::Unignore { .. }
-            | Command::Channel { .. }
-            | Command::Rollback { .. }
-            | Command::Savedvars { .. } => return None,
-            Command::Doctor { .. } => return None,
-            Command::Update { all: true, .. } => ("update --all", "006"),
-            Command::Update { .. } => ("update", "006"),
-        };
-        Some(Error::NotImplemented { command, task })
-    }
-}
-
 /// Prints the two-line messages, the plain data lines, or JSON when asked.
 struct Reporter {
     voice: Voice,
@@ -404,9 +383,6 @@ fn main() -> ExitCode {
 
 /// Runs a command; the error is the plain line of the failure.
 fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
-    if let Some(not_yet) = command.not_yet() {
-        return Err(not_yet.to_string());
-    }
     match command {
         Command::Scan { folder } => {
             let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
@@ -472,8 +448,9 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
         Command::Import {
             file,
             flavor,
+            exact,
             dry_run,
-        } => import_command(reporter, &file, flavor.as_deref(), dry_run)?,
+        } => import_command(reporter, &file, flavor.as_deref(), exact, dry_run)?,
         Command::Pin {
             name,
             version,
@@ -501,7 +478,13 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
         Command::Savedvars { flavor, clean } => {
             savedvars_command(reporter, flavor.as_deref(), clean)?
         }
-        _ => unreachable!("every other command answered with its task"),
+        Command::Update {
+            all: _,
+            name,
+            flavor,
+            dry_run,
+            yes,
+        } => update_command(reporter, name.as_deref(), flavor.as_deref(), dry_run, yes)?,
     }
     Ok(())
 }
@@ -1138,9 +1121,9 @@ fn add_target(spec: Option<&str>, warnings: &mut Vec<String>) -> Result<Target, 
 }
 
 /// `mrgl add <source> --flavor <flavor> [--dry-run]`: resolve the release for the flavor and report the
-/// pick; without `--dry-run` the pick is downloaded and installed through the engine (task 040,
-/// [`install_from_source`]), and an addon the sidecar has from that source at that version already is
-/// reported as such, with nothing downloaded.
+/// pick; without `--dry-run` the pick is downloaded and installed through the engine's one install path
+/// (tasks 040 and 055, [`Engine::install_from_source`]), and an addon the sidecar has from that source at
+/// that version already is reported as such, with nothing downloaded.
 fn add_command(
     reporter: &Reporter,
     source: &str,
@@ -1153,37 +1136,32 @@ fn add_command(
     if !dry_run {
         let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
         let folder_name = engine.flavor.folder_name();
-        let (pick, outcome) = install_from_source(reporter, &engine, &spec, &mut warnings)?;
-        // The same companions as `add <file.zip>`: the running-client warning (task 038), the
-        // dependency check (task 029) and the interface check (task 015) of the installed folders.
-        let (installed, addon, client_warning, mismatch) = match &outcome {
-            PickInstalled::Installed(installed) => {
-                warnings.extend(installed.warnings.iter().cloned());
-                let dependencies =
-                    installed_dependencies(&engine, &installed.folders, &mut warnings);
-                let mismatch = installed_mismatch(&engine, installed.folders.first());
-                let addon = serde_json::json!({
-                    "name": installed.name,
-                    "version": installed.version,
-                    "previous_version": installed.previous_version,
-                    "source": pick.source,
-                    "folders": installed.folders,
-                    "removed_folders": installed.removed_folders,
-                    "dependencies": dependencies,
-                });
-                (true, addon, installed.client_warning.clone(), mismatch)
-            }
+        let github = GitHub::from_env(sources::http_from_env());
+        let SourceInstalled { pick, outcome } = engine
+            .install_from_source(
+                &github,
+                &SourceRequest::current(spec.clone()),
+                &mut install_progress(reporter, &engine, &mut warnings),
+            )
+            .map_err(|error| error.to_string())?;
+        // The same companions as `add <file.zip>`, from the one summary helper of task 055: the
+        // running-client warning (task 038), the dependency check (task 029) and the interface check
+        // (task 015) of the installed folders.
+        let (installed, summary, client_warning, kind) = match &outcome {
+            PickInstalled::Installed(installed) => (
+                true,
+                install_summary(&engine, installed, &pick.source, &mut warnings),
+                installed.client_warning.clone(),
+                Kind::Success,
+            ),
             PickInstalled::AlreadyInstalled(current) => {
                 warnings.extend(current.warnings.iter().cloned());
-                let addon = serde_json::json!({
-                    "name": current.name,
-                    "version": current.entry.version,
-                    "previous_version": current.entry.previous_version,
-                    "source": current.entry.source,
-                    "folders": current.entry.folders,
-                    "removed_folders": [],
-                });
-                (false, addon, None, None)
+                (
+                    false,
+                    already_installed_summary(current, &folder_name),
+                    None,
+                    Kind::Nothing,
+                )
             }
         };
         // The Forever signal and note of task 011, on the install as on the dry run.
@@ -1200,9 +1178,9 @@ fn add_command(
                 "forever": forever,
                 "installed": installed,
                 "already_installed": !installed,
-                "addon": addon,
+                "addon": summary.addon,
                 "client_warning": client_warning,
-                "interface_mismatch": mismatch,
+                "interface_mismatch": summary.mismatch,
                 "warnings": warnings,
             }));
             return Ok(());
@@ -1210,7 +1188,7 @@ fn add_command(
         for warning in client_warning.iter().chain(&warnings) {
             reporter.say(Kind::Warning, warning);
         }
-        if let Some(mismatch) = &mismatch {
+        if let Some(mismatch) = &summary.mismatch {
             reporter.say(
                 Kind::Warning,
                 interface_after_install(mismatch, &folder_name),
@@ -1220,40 +1198,7 @@ fn add_command(
             let (kind, text) = forever_message(status);
             reporter.say(kind, text);
         }
-        match outcome {
-            PickInstalled::Installed(installed) => {
-                let folders = format!(
-                    "{}: {}",
-                    count_folders(installed.folders.len()),
-                    installed.folders.join(", ")
-                );
-                let mut summary = match &installed.previous_version {
-                    Some(previous) => format!(
-                        "updated {} from {previous} to {} ({folders}) in {folder_name}",
-                        installed.name, installed.version
-                    ),
-                    None => format!(
-                        "installed {} {} ({folders}) into {folder_name}",
-                        installed.name, installed.version
-                    ),
-                };
-                if !installed.removed_folders.is_empty() {
-                    summary.push_str(&format!(
-                        ", {} of the previous version removed ({})",
-                        count_folders(installed.removed_folders.len()),
-                        installed.removed_folders.join(", ")
-                    ));
-                }
-                reporter.say(Kind::Success, summary);
-            }
-            PickInstalled::AlreadyInstalled(current) => reporter.say(
-                Kind::Nothing,
-                format!(
-                    "{} {} is installed already in {folder_name} from {}, nothing to do",
-                    current.name, current.entry.version, current.entry.source
-                ),
-            ),
-        }
+        reporter.say(kind, summary.line);
         return Ok(());
     }
     let target = add_target(flavor, &mut warnings)?;
@@ -1306,55 +1251,137 @@ fn add_command(
     Ok(())
 }
 
-/// The install path of a source spec (task 040): resolves the release for the engine's flavor and hands
-/// the pick to the engine ([`Engine::install_pick`]), which downloads it into the staging folder and
-/// installs it, or finds it installed already. In human mode it says what runs (resolving, the pick,
-/// downloading, installing); with `--json` it prints nothing. The caller reports the outcome and the
-/// warnings, which this pushes to.
-fn install_from_source(
-    reporter: &Reporter,
+/// The progress of the one install path (task 055, [`Engine::install_from_source`]), the same lines for
+/// every caller: resolving, the pick, downloading, installing. A pick that is a guess is pushed to the
+/// warnings instead, so it is in the JSON document too and on the screen with the other warnings; in
+/// `--json` mode nothing else is said.
+fn install_progress<'a>(
+    reporter: &'a Reporter,
     engine: &Engine,
-    spec: &SourceSpec,
-    warnings: &mut Vec<String>,
-) -> Result<(Pick, PickInstalled), String> {
-    let target = Target::from_flavor(&engine.flavor);
-    let name = target.flavor_name().to_string();
+    warnings: &'a mut Vec<String>,
+) -> impl FnMut(PickStep<'_>) + 'a {
+    let name = Target::from_flavor(&engine.flavor)
+        .flavor_name()
+        .to_string();
     let folder_name = engine.flavor.folder_name();
-    if !reporter.json {
-        reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
+    move |step| {
+        // Task 041: a pick from the cached release list, offline, is a warning on the screen and in the JSON.
+        if let PickStep::Picked { pick } = step {
+            warnings.extend(pick.stale_warning());
+        }
+        install_step(reporter, &name, &folder_name, warnings, step);
     }
-    let github = GitHub::from_env(sources::http_from_env());
-    let pick = github
-        .resolve(spec, &target)
-        .map_err(|error| error.to_string())?;
-    // Task 041: a pick from the cached release list, offline, is a warning on the screen and in the JSON.
-    warnings.extend(pick.stale_warning());
-    if pick.guess {
-        // A guess is worth a warning in the JSON document too, not only on the screen.
-        warnings.push(format!("pick for {name}, a guess: {}", pick.summary()));
-    } else if !reporter.json {
-        reporter.say(
+}
+
+/// One progress step of [`install_progress`].
+fn install_step(
+    reporter: &Reporter,
+    name: &str,
+    folder_name: &str,
+    warnings: &mut Vec<String>,
+    step: PickStep<'_>,
+) {
+    match step {
+        PickStep::Picked { pick } if pick.guess => {
+            warnings.push(format!("pick for {name}, a guess: {}", pick.summary()));
+        }
+        _ if reporter.json => {}
+        PickStep::Resolving { spec, .. } => {
+            reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
+        }
+        PickStep::Picked { pick } => reporter.say(
             Kind::Progress,
             format!("pick for {name}: {}", pick.summary()),
-        );
+        ),
+        PickStep::Downloading { pick, .. } => {
+            reporter.say(Kind::Progress, format!("downloading {}", pick.asset));
+        }
+        PickStep::Installing { pick, .. } => reporter.say(
+            Kind::Progress,
+            format!("installing {} into {folder_name}", pick.asset),
+        ),
     }
-    let outcome = engine
-        .install_pick(&github, &pick, &mut |step| {
-            if reporter.json {
-                return;
-            }
-            match step {
-                PickStep::Downloading { pick, .. } => {
-                    reporter.say(Kind::Progress, format!("downloading {}", pick.asset));
-                }
-                PickStep::Installing { pick, .. } => reporter.say(
-                    Kind::Progress,
-                    format!("installing {} into {folder_name}", pick.asset),
-                ),
-            }
-        })
-        .map_err(|error| error.to_string())?;
-    Ok((pick, outcome))
+}
+
+/// What every install path reports about an addon it installed (task 055): the `addon` block of the
+/// JSON document, the interface check of the primary folder (task 015) and the plain summary line.
+struct InstallSummary {
+    addon: serde_json::Value,
+    mismatch: Option<InterfaceMismatch>,
+    line: String,
+}
+
+/// The one summary of an install, for `add <file.zip>`, `add github:` and `update` (task 055): the
+/// engine's warnings and those of the dependency check of the installed folders (task 029) go to
+/// `warnings`; the `addon` block names the addon as the sidecar records it now; the line is `installed
+/// <name> <version> (<folders>) into <flavor folder>`, or `updated <name> from <previous> to <version>
+/// (<folders>) in <flavor folder>`, with the folders of the previous version that went.
+fn install_summary(
+    engine: &Engine,
+    installed: &Installed,
+    source: &str,
+    warnings: &mut Vec<String>,
+) -> InstallSummary {
+    warnings.extend(installed.warnings.iter().cloned());
+    let dependencies = installed_dependencies(engine, &installed.folders, warnings);
+    let mismatch = installed_mismatch(engine, installed.folders.first());
+    let addon = serde_json::json!({
+        "name": installed.name,
+        "version": installed.version,
+        "previous_version": installed.previous_version,
+        "source": source,
+        "folders": installed.folders,
+        "removed_folders": installed.removed_folders,
+        "dependencies": dependencies,
+    });
+    let folder_name = engine.flavor.folder_name();
+    let folders = format!(
+        "{}: {}",
+        count_folders(installed.folders.len()),
+        installed.folders.join(", ")
+    );
+    let mut line = match &installed.previous_version {
+        Some(previous) => format!(
+            "updated {} from {previous} to {} ({folders}) in {folder_name}",
+            installed.name, installed.version
+        ),
+        None => format!(
+            "installed {} {} ({folders}) into {folder_name}",
+            installed.name, installed.version
+        ),
+    };
+    if !installed.removed_folders.is_empty() {
+        line.push_str(&format!(
+            ", {} of the previous version removed ({})",
+            count_folders(installed.removed_folders.len()),
+            installed.removed_folders.join(", ")
+        ));
+    }
+    InstallSummary {
+        addon,
+        mismatch,
+        line,
+    }
+}
+
+/// The summary of an addon the one install path found installed already at the pick's version: the
+/// sidecar's entry as the `addon` block, nothing removed, and the nothing-to-do line.
+fn already_installed_summary(current: &AlreadyInstalled, folder_name: &str) -> InstallSummary {
+    InstallSummary {
+        addon: serde_json::json!({
+            "name": current.name,
+            "version": current.entry.version,
+            "previous_version": current.entry.previous_version,
+            "source": current.entry.source,
+            "folders": current.entry.folders,
+            "removed_folders": [],
+        }),
+        mismatch: None,
+        line: format!(
+            "{} {} is installed already in {folder_name} from {}, nothing to do",
+            current.name, current.entry.version, current.entry.source
+        ),
+    }
 }
 
 /// The release notes under the pick (task 030): the notes line, then the release page, as one message of the
@@ -1553,25 +1580,15 @@ fn add_zip(
     let installed = engine
         .install(&zip, &metadata)
         .map_err(|error| error.to_string())?;
-    warnings.extend(installed.warnings.iter().cloned());
-    let dependencies = installed_dependencies(&engine, &installed.folders, &mut warnings);
-    let mismatch = installed_mismatch(&engine, installed.folders.first());
+    let summary = install_summary(&engine, &installed, &metadata.source, &mut warnings);
     if reporter.json {
         reporter.document(serde_json::json!({
             "kind": "add",
             "flavor": &engine.flavor,
             "dry_run": false,
-            "addon": {
-                "name": installed.name,
-                "version": installed.version,
-                "previous_version": installed.previous_version,
-                "source": metadata.source,
-                "folders": installed.folders,
-                "removed_folders": installed.removed_folders,
-                "dependencies": dependencies,
-            },
+            "addon": summary.addon,
             "client_warning": installed.client_warning,
-            "interface_mismatch": mismatch,
+            "interface_mismatch": summary.mismatch,
             "warnings": warnings,
         }));
         return Ok(());
@@ -1579,31 +1596,8 @@ fn add_zip(
     for warning in installed.client_warning.iter().chain(&warnings) {
         reporter.say(Kind::Warning, warning);
     }
-    let mut summary = match &installed.previous_version {
-        Some(previous) => format!(
-            "updated {} from {previous} to {} ({}: {}) in {folder_name}",
-            installed.name,
-            installed.version,
-            count_folders(installed.folders.len()),
-            installed.folders.join(", ")
-        ),
-        None => format!(
-            "installed {} {} ({}: {}) into {folder_name}",
-            installed.name,
-            installed.version,
-            count_folders(installed.folders.len()),
-            installed.folders.join(", ")
-        ),
-    };
-    if !installed.removed_folders.is_empty() {
-        summary.push_str(&format!(
-            ", {} of the previous version removed ({})",
-            count_folders(installed.removed_folders.len()),
-            installed.removed_folders.join(", ")
-        ));
-    }
-    reporter.say(Kind::Success, summary);
-    if let Some(mismatch) = &mismatch {
+    reporter.say(Kind::Success, summary.line);
+    if let Some(mismatch) = &summary.mismatch {
         reporter.say(
             Kind::Warning,
             interface_after_install(mismatch, &folder_name),
@@ -2253,12 +2247,15 @@ fn export_command(
 
 /// `mrgl import <file> --flavor <id> [--dry-run]`: every `github:` entry of a list file that the flavor
 /// does not have is resolved and installed (task 015); a zip in hand is not importable, a linked folder
-/// is skipped, an addon the flavor has is left alone. `--dry-run` resolves and reports, and writes
-/// nothing. An entry that fails does not stop the others; the command then ends with exit code 1.
+/// is skipped, an addon the flavor has is left alone. `--exact` installs the version the list names
+/// (task 057): an entry whose version the source no longer offers is reported, skipped and counted.
+/// `--dry-run` resolves and reports, and writes nothing. An entry that fails does not stop the others;
+/// the command then ends with exit code 1.
 fn import_command(
     reporter: &Reporter,
     file: &Path,
     flavor: Option<&str>,
+    exact: bool,
     dry_run: bool,
 ) -> Result<(), String> {
     let mut warnings = Vec::new();
@@ -2281,14 +2278,19 @@ fn import_command(
         } else {
             "importing"
         };
+        let versions = if exact {
+            " at the versions it names"
+        } else {
+            ""
+        };
         reporter.say(
             Kind::Progress,
-            format!("{verb} {count} from {file_name} into {folder_name}"),
+            format!("{verb} {count} from {file_name} into {folder_name}{versions}"),
         );
     }
     let github = GitHub::from_env(sources::http_from_env());
-    let report =
-        list_file::import(&engine, &github, &list, dry_run).map_err(|error| error.to_string())?;
+    let report = list_file::import(&engine, &github, &list, exact, dry_run)
+        .map_err(|error| error.to_string())?;
     warnings.extend(report.warnings.iter().cloned());
     for item in &report.items {
         warnings.extend(item.warnings.iter().cloned());
@@ -2306,6 +2308,7 @@ fn import_command(
             "flavor": &engine.flavor,
             "file": &path,
             "list_flavor": &list.flavor,
+            "exact": exact,
             "dry_run": dry_run,
             "addons": &report.items,
             "warnings": warnings,
@@ -2334,6 +2337,7 @@ fn import_command(
             (Outcome::NotImportable, "not importable"),
             (Outcome::Skipped, "skipped"),
             (Outcome::Failed, "failed"),
+            (Outcome::VersionNotOffered, "version not offered"),
         ]
         .into_iter()
         .filter_map(|(outcome, label)| match report.count(outcome) {
@@ -2341,7 +2345,7 @@ fn import_command(
             count => Some(format!("{count} {label}")),
         })
         .collect();
-        let kind = if !failed.is_empty() {
+        let kind = if !failed.is_empty() || report.count(Outcome::VersionNotOffered) > 0 {
             Kind::Warning
         } else if report.count(Outcome::Installed) + report.count(Outcome::WouldInstall) > 0 {
             Kind::Success
@@ -2392,8 +2396,271 @@ fn import_line(item: &list_file::Imported) -> String {
         Outcome::NotImportable => format!("not importable ({}): {}", item.source, item.detail),
         Outcome::Skipped => format!("skipped ({}): {}", item.source, item.detail),
         Outcome::Failed => format!("failed: {}", item.detail),
+        Outcome::VersionNotOffered => format!(
+            "skipped, version {} not offered: {}",
+            item.listed_version, item.detail
+        ),
     };
     format!("{}  {what}", item.name)
+}
+
+/// What `update` did with one addon the check found an update for.
+enum Applied {
+    Updated(InstallSummary),
+    Failed(String),
+}
+
+/// `mrgl update --all | <name> --flavor <id> [--dry-run] [--yes]` (task 006): the update check of the core
+/// (`update::check`) over every managed addon or the one named, a data line per addon, then one
+/// confirmation for the updates it found (`--yes` answers it; without a terminal or with `--json` it is
+/// needed), then each update through the one install path of the engine (task 055) with the pick the
+/// check made, and the summary that counts every state (`2 addons updated, 12 up to date, 1 pinned, 1
+/// ignored`). `--dry-run` checks and writes nothing. An update or a check that fails does not stop the
+/// others; the command then ends with exit code 1.
+fn update_command(
+    reporter: &Reporter,
+    name: Option<&str>,
+    flavor: Option<&str>,
+    dry_run: bool,
+    yes: bool,
+) -> Result<(), String> {
+    let mut warnings = Vec::new();
+    let engine = engine_for(flavor, &mut warnings)?;
+    let folder_name = engine.flavor.folder_name();
+    if !reporter.json {
+        let what = name.map_or("the managed addons".to_string(), |name| name.to_string());
+        reporter.say(
+            Kind::Progress,
+            format!("checking {what} of {folder_name} against their sources"),
+        );
+    }
+    let github = GitHub::from_env(sources::http_from_env());
+    let check = update::check(&engine, &github, name).map_err(|error| error.to_string())?;
+    warnings.extend(check.warnings.iter().cloned());
+    // Task 041: a pick from the cached release list, offline, is a warning here as on `add`.
+    warnings.extend(
+        check
+            .addons
+            .iter()
+            .filter_map(|addon| addon.pick.as_ref()?.stale_warning()),
+    );
+    let updates: Vec<&update::AddonUpdate> = check.updates().collect();
+    if !reporter.json {
+        for addon in &check.addons {
+            reporter.line(addon.line());
+        }
+    }
+
+    let mut applied: BTreeMap<String, Applied> = BTreeMap::new();
+    if !dry_run && !updates.is_empty() {
+        let count = count_addons(updates.len());
+        if !yes {
+            if reporter.json {
+                return Err(format!(
+                    "{count} to update, nothing updated: --json needs --yes, nobody is there to answer the confirmation"
+                ));
+            }
+            if !std::io::stdin().is_terminal() {
+                return Err(format!(
+                    "{count} to update, nothing updated: no terminal to answer the confirmation; --yes updates without asking"
+                ));
+            }
+            reporter.say(
+                Kind::Warning,
+                format!("update {count} in {folder_name}? type y to go on"),
+            );
+            if !confirmed() {
+                reporter.say(Kind::Nothing, "update cancelled, nothing changed");
+                return Ok(());
+            }
+        }
+        for addon in &updates {
+            let Some(request) = addon.request() else {
+                continue;
+            };
+            if !reporter.json {
+                reporter.say(
+                    Kind::Progress,
+                    format!(
+                        "updating {} from {} to {}",
+                        addon.name,
+                        addon.version,
+                        addon.latest.as_deref().unwrap_or_default()
+                    ),
+                );
+            }
+            let outcome = engine.install_from_source(
+                &github,
+                &request,
+                &mut install_progress(reporter, &engine, &mut warnings),
+            );
+            let result = match outcome {
+                Ok(SourceInstalled {
+                    pick,
+                    outcome: PickInstalled::Installed(installed),
+                }) => {
+                    if let Some(line) = &installed.client_warning
+                        && !warnings.contains(line)
+                    {
+                        warnings.push(line.clone());
+                    }
+                    let summary = install_summary(&engine, &installed, &pick.source, &mut warnings);
+                    if !reporter.json {
+                        reporter.say(Kind::Success, &summary.line);
+                    }
+                    Applied::Updated(summary)
+                }
+                Ok(SourceInstalled {
+                    outcome: PickInstalled::AlreadyInstalled(current),
+                    ..
+                }) => Applied::Updated(already_installed_summary(&current, &folder_name)),
+                Err(error) => {
+                    let line = format!("{}: {error}", addon.name);
+                    if !reporter.json {
+                        reporter.say(Kind::Error, &line);
+                    }
+                    Applied::Failed(line)
+                }
+            };
+            applied.insert(addon.name.clone(), result);
+        }
+    }
+
+    let updated = applied
+        .values()
+        .filter(|result| matches!(result, Applied::Updated(_)))
+        .count();
+    let mut failed: Vec<&str> = applied
+        .iter()
+        .filter(|(_, result)| matches!(result, Applied::Failed(_)))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    failed.extend(
+        check
+            .addons
+            .iter()
+            .filter(|addon| addon.state == UpdateState::Failed)
+            .map(|addon| addon.name.as_str()),
+    );
+
+    if reporter.json {
+        let addons: Vec<serde_json::Value> = check
+            .addons
+            .iter()
+            .map(|addon| {
+                let mut value = serde_json::to_value(addon).unwrap_or_default();
+                let (updated, installed, error) = match applied.get(&addon.name) {
+                    Some(Applied::Updated(summary)) => (true, Some(summary.addon.clone()), None),
+                    Some(Applied::Failed(line)) => (false, None, Some(line.clone())),
+                    None => (false, None, None),
+                };
+                value["updated"] = updated.into();
+                value["addon"] = installed.into();
+                value["error"] = error.into();
+                value
+            })
+            .collect();
+        let counts: serde_json::Map<String, serde_json::Value> = UpdateState::ALL
+            .iter()
+            .map(|state| {
+                let key = serde_json::to_value(state)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .unwrap_or_default();
+                (key, check.count(*state).into())
+            })
+            .collect();
+        reporter.document(serde_json::json!({
+            "kind": "update",
+            "flavor": &engine.flavor,
+            "dry_run": dry_run,
+            "addons": addons,
+            "updated": updated,
+            "counts": counts,
+            "warnings": warnings,
+        }));
+    } else {
+        for warning in &warnings {
+            reporter.say(Kind::Warning, warning);
+        }
+        let (kind, summary) = update_summary(&check, dry_run, updated, &folder_name);
+        reporter.say(kind, summary);
+    }
+    if failed.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} of {folder_name} failed: {}; the other addons are done",
+        count_addons(failed.len()),
+        failed.join(", ")
+    ))
+}
+
+/// The summary of an update run: what was updated (or, on a dry run, what would be), then every other
+/// state's count, the zeros left out: `2 addons updated, 12 up to date, 1 pinned, 1 ignored`. A warning
+/// when something needs a look (a guess, a source gone, a failure), a success when something was
+/// updated or found, nothing to do otherwise.
+fn update_summary(
+    check: &update::UpdateCheck,
+    dry_run: bool,
+    updated: usize,
+    folder_name: &str,
+) -> (Kind, String) {
+    if check.addons.is_empty() {
+        return (
+            Kind::Nothing,
+            format!("no managed addons in {folder_name}, nothing to update"),
+        );
+    }
+    let available = check.count(UpdateState::UpdateAvailable);
+    let not_updated = available.saturating_sub(updated);
+    let mut parts: Vec<String> = Vec::new();
+    if dry_run {
+        match available {
+            0 => {}
+            1 => parts.push("1 update available".to_string()),
+            count => parts.push(format!("{count} updates available")),
+        }
+    } else {
+        if updated > 0 {
+            parts.push(format!("{} updated", count_addons(updated)));
+        }
+        if not_updated > 0 {
+            parts.push(format!("{not_updated} failed"));
+        }
+    }
+    for state in UpdateState::ALL
+        .into_iter()
+        .filter(|state| *state != UpdateState::UpdateAvailable)
+    {
+        let count = check.count(state);
+        if count > 0 {
+            parts.push(format!("{count} {}", state.label()));
+        }
+    }
+    let attention = [
+        UpdateState::GuessOnly,
+        UpdateState::SourceGone,
+        UpdateState::Failed,
+    ]
+    .into_iter()
+    .any(|state| check.count(state) > 0)
+        || (!dry_run && not_updated > 0);
+    let kind = if attention {
+        Kind::Warning
+    } else if (dry_run && available > 0) || updated > 0 {
+        Kind::Success
+    } else {
+        Kind::Nothing
+    };
+    let text = if dry_run {
+        format!("dry run: {}; nothing written", parts.join(", "))
+    } else if updated > 0 {
+        parts.join(", ")
+    } else {
+        format!("nothing updated: {}", parts.join(", "))
+    };
+    (kind, text)
 }
 
 /// `mrgl doctor [--flavor <flavor>] [--root <folder>]`: the diagnostic report (task 024). The plain output

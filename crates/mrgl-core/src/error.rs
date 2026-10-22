@@ -282,6 +282,11 @@ pub enum Error {
         expected: u64,
         got: u64,
     },
+
+    /// The source has no release of the version asked for (task 057, `import --exact`): it was deleted, or
+    /// it was never published under that tag.
+    #[error("no release {version} in {spec}")]
+    VersionNotOffered { spec: String, version: String },
 }
 
 /// The crate's result type.
