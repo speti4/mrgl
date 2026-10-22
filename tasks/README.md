@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 11 backlog (0 ready · 0 blocked · 4 waiting · 7 ideas) · 0 in progress · 89 done · 5 dropped · 6 decisions
+**State:** 13 backlog (0 ready · 0 blocked · 4 waiting · 9 ideas) · 2 in progress · 85 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -58,13 +58,15 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 107 | [The window's row menu and the offline sketch follow the sources of this build](backlog/107-the-windows-row-menu-and-offline-sketch-follow-the-sources-of-this-build.md) | S | 2026-10-22 |
-| 109 | [The window's adopt view: the report and --apply in the toolbox](backlog/109-the-windows-adopt-view.md) | M | 2026-10-22 |
-| 110 | [The window's install paths warn in a folder the CurseForge app manages](backlog/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
 | # | Task | Size | Created |
 |---|---|---|---|
+| 101 | [The update check stops per source at a rate limit, not as a whole](backlog/101-the-update-check-stops-per-source-at-a-rate-limit.md) | S | 2026-10-22 |
+| 104 | [A WoWInterface file waiting for approval is a state of its own in the update ch…](backlog/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md) | S | 2026-10-22 |
+| 105 | [A Wago page address resolves to its wago:<id> through the keyless slugs list](backlog/105-a-wago-page-address-resolves-to-its-id.md) | S | 2026-10-22 |
+| 106 | [The Wago update check asks for its addons in bulk, one request per game version](backlog/106-the-wago-update-check-asks-in-bulk.md) | S | 2026-10-22 |
 | 111 | [A read-only adopt round on the real retail and classic folders](backlog/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md) | S | 2026-10-22 |
 
 #### M5 Trust
@@ -81,7 +83,12 @@ _none_
 
 ### In progress
 
-_none_
+#### M2 Window MVP
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 109 | [The window's adopt view: the report and --apply in the toolbox](wip/109-the-windows-adopt-view.md) | 2026-10-22 | `none` |
+| 110 | [The window's install paths warn in a folder the CurseForge app manages](wip/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
@@ -97,18 +104,18 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
-| 106 | [The Wago update check asks for its addons in bulk, one request per game version](done/106-the-wago-update-check-asks-in-bulk.md) | 2026-10-22 |
-| 105 | [A Wago page address resolves to its wago:<id> through the keyless slugs list](done/105-a-wago-page-address-resolves-to-its-id.md) | 2026-10-22 |
-| 104 | [A WoWInterface file waiting for approval is a state of its own in the update ch…](done/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md) | 2026-10-22 |
 | 102 | [The window's offline sketch says "source not configured" as the core does](done/102-the-ui-mock-says-source-not-configured-as-the-core-does.md) | 2026-10-22 |
-| 101 | [The update check stops per source at a rate limit, not as a whole](done/101-the-update-check-stops-per-source-at-a-rate-limit.md) | 2026-10-22 |
 | 100 | [The install path picks the named entry among two sidecar entries of one source](done/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md) | 2026-10-22 |
 | 099 | [The window's update reports a second entry of the same source that has the pick…](done/099-the-windows-update-reports-a-second-entry-of-the-same-source.md) | 2026-10-22 |
 | 098 | [Adopt --apply: sidecar entries without a reinstall, and the .curseclient guard](done/098-adopt-apply-writes-sidecar-entries-without-a-reinstall.md) | 2026-10-22 |
 | 097 | [Adopt, the report: what source each unmanaged addon of a folder has](done/097-adopt-the-report-of-the-sources-of-an-addons-folder.md) | 2026-10-22 |
 | 095 | [The Wago source](done/095-the-wago-source.md) | 2026-10-22 |
+| 094 | [The WoWInterface source](done/094-the-wowinterface-source.md) | 2026-10-22 |
+| 093 | [API keys: one place to set, read and name them](done/093-api-keys-one-place-to-set-read-and-name-them.md) | 2026-10-22 |
+| 092 | [One source per spec: the router, the spec forms and the generic paths](done/092-one-source-per-spec-the-router-and-the-generic-paths.md) | 2026-10-22 |
+| 091 | [The remaining toolbox lines move into the core: the set list note, the not-inst…](done/091-the-remaining-toolbox-lines-move-into-the-core.md) | 2026-10-22 |
 
-_79 more in `done/`._
+_75 more in `done/`._
 
 ### Decisions
 
