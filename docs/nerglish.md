@@ -32,7 +32,8 @@ who skips the murloc line loses nothing.
 - The data lines of a listing (`scan`, `list`: one addon per line; `doctor`: one fact per line, a block to
   paste into a bug report). The summary after them is the message and carries the two lines.
 - `--serious` on any command, or the environment variable `MRGL_SERIOUS=1`: the murloc line is dropped and only
-  the plain line prints. The flag wins over the variable when both are set.
+  the plain line prints. The flag wins over the variable when both are set, and the variable (`0` keeps the
+  murloc) wins over the window's serious switch, which `config.json` keeps (task 034).
 - Exit codes: `0` success, `1` an error the plain line explains, `2` a usage error (`clap`). Never a murloc
   code.
 

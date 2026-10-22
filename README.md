@@ -60,6 +60,7 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 ```powershell
 cargo build --release
 target\release\mrgl.exe --version
+target\release\mrgl-app.exe                                                 # the window: every flavor's addons and their states
 target\release\mrgl.exe list --flavor forever                               # what is installed, managed by mrgl or not
 target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # remember a game folder installed elsewhere
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever            # install the release's Forever asset

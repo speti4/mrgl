@@ -202,6 +202,11 @@ button:disabled {
   gap: 0.4rem;
   color: var(--muted);
 }
+/* The serious switch when MRGL_SERIOUS decides it (task 034): shown, not changeable; the title says why. */
+.check:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
 /* ---- the main area: the empty state and the chosen flavor */
 
@@ -229,6 +234,22 @@ button:disabled {
 .plain {
   font-size: 1.1rem;
   margin: 0.25rem 0 1rem;
+}
+.empty .primary {
+  justify-self: center;
+  margin-top: 0.5rem;
+}
+/* The text area "copy diagnostics" selects when the clipboard API refuses: in the page, out of sight. */
+.offscreen {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+}
+code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9em;
 }
 #flavor {
   flex: 1;
@@ -347,6 +368,17 @@ button:disabled {
   white-space: nowrap;
 }
 .folder:empty {
+  display: none;
+}
+/* The required dependencies no folder answers (task 029), under the name. */
+.missing {
+  font-size: 0.8rem;
+  color: var(--warn);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.missing:empty {
   display: none;
 }
 .version-cell {
@@ -468,6 +500,10 @@ button:disabled {
 }
 .forever-unknown::before {
   color: var(--muted);
+}
+/* A curated note verified longer ago than the stale age (task 011). */
+.forever-stale {
+  font-style: italic;
 }
 
 /* The row actions (task 010 fills them): a menu that opens on the ellipsis. */

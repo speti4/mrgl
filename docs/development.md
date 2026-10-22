@@ -86,8 +86,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   addon, `account-wide` or `realm / character`, never the account folder's name, which `--json` carries,
   `orphan` or `client`) and a summary, `--clean` moves the orphans; `--json` is the `savedvars` or the
   `savedvars-clean` document.
-- `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`), the static UI under `ui/`, the
-  capability file and the icon.
+- `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`: the IPC commands in
+  `commands.rs`, the flavor list in `list.rs`, task 009), the static UI under `ui/`, the capability file and
+  the icon; see [The UI](#the-ui).
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
   [Forever notes](#forever-notes)).
 - `lists/` — shareable addon lists in the format `mrgl export` writes (`list_file`, task 015), read by
@@ -247,7 +248,10 @@ fixtures under `zips/` that test it, written by `make-zips.py`: `declares-too-mu
 Every human-readable message of the CLI and the window goes through `mrgl_core::voice`: a murloc line and a
 plain English line, the murloc one picked by the message's kind (banner, progress, success, nothing to do,
 warning, error, fatal) from the table in `voice.rs`. JSON output (`--json`) and log lines are plain.
-`--serious` or `MRGL_SERIOUS=1` drops the murloc line. Tests assert the plain line, so a change to the murloc
+`--serious` or `MRGL_SERIOUS=1` drops the murloc line. The switch has three sources, the first that says
+wins: the `--serious` flag, then a non-empty `MRGL_SERIOUS` (`0` keeps the murloc, anything else drops it),
+then the `serious` preference in `config.json` that the window's switch writes (task 034,
+`voice::serious_from`). Tests assert the plain line, so a change to the murloc
 vocabulary breaks no test. The vocabulary and the rules are in [nerglish.md](nerglish.md); the decision is
 D-005.
 
@@ -345,24 +349,66 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   field, "Update all"), the addon list (one row per addon: name and folder, version and the version an update
   brings, the source badge, the state pill, the Forever note slot of task 011, and a row menu for the actions
   of tasks 010 and 021, with a progress slot per row), a legend, a status bar and the toast stack. The theme
-  toggle and the serious switch sit at the bottom of the sidebar.
+  toggle and the serious switch sit at the bottom of the sidebar, with "Game folder…" and "Copy
+  diagnostics" (task 009). The theme and the switch are kept by the shell in `config.json`, not in the web
+  view's storage (task 034, below).
 - `style.css` holds every color as a token on `:root`: the light set, the dark set under
   `prefers-color-scheme: dark` (unless the toggle says light) and under `data-theme="dark"` (the toggle), one
   token per state (managed, update available, linked, guess only, unmanaged) and per source badge (github,
   wago, wowi, curseforge, zip, linked; a dashed badge is a source known only from a TOC hint).
 - `main.js` is the view: it reads `window.Data`, draws what it gets and never composes a murloc line. It does
   not know whether the rows are made up.
+- `data.js` is the window's data module (task 009): the contract behind `window.Data`, each call one Tauri
+  command of `src/commands.rs` (below). `index.html` loads it and nothing else for the data.
 - `mock-data.js` is the data module of the sketch, made-up rows in the shape the core answers with; its header
-  comment is the contract (`Data.version()`, `Data.flavors()`, `Data.updateAll(flavorId, report)`, a flavor
-  as `flavor.rs` serializes it plus its friendly name and addons, an addon as `scan.rs` gives it plus the
-  facts of the sidecar, the sources, the update check, the Forever notes and pin / ignore). Task 009 adds the
-  module that invokes the Tauri commands behind the same `window.Data`, `index.html` loads that one instead,
-  and the layout stays; the mock stays for a look at the page without the core.
+  comment is the contract (`Data.version()`, `Data.flavors()`, `Data.chooseRoot()`, `Data.diagnostics()`,
+  `Data.resolve(flavorId, folder)`, `Data.updateAll(flavorId, report)`; a flavor as `flavor.rs` serializes
+  it plus its friendly name, the source of its build and its addons; an addon as `scan.rs` gives it plus the
+  facts of the sidecar, the sources, the cached release list, the Forever notes, pin / ignore and the
+  missing dependencies). For a look at the page without the core, open `crates/mrgl-app/ui/index.html` in a
+  browser: without the Tauri global, `data.js` writes the mock's script tag instead, and the made-up rows
+  show (the folder dialog and the clipboard need the window).
 - The pure modules, each with a test file of the same name under `tests/ui/`: `state.js` (an addon's one state
   from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels),
-  `search.js` (every word of the query in the name, folder, source kind or source id), `theme.js` (auto,
-  light, dark), `flavors.js` (the navigation order and the friendly names) and `voice.js` (the two lines and
+  `search.js` (every word of the query in the name, folder, source kind or source id), `preferences.js`
+  (the window's preferences from an answer of the shell: the theme, the switch, the switch locked when
+  `MRGL_SERIOUS` decides it, and the one-time carry-over of a value the sketch kept in `localStorage`),
+  `theme.js` (auto, light, dark), `flavors.js` (the navigation order and the friendly names) and `voice.js` (the two lines and
   where a message goes, see [nerglish.md](nerglish.md), "The window").
+
+The IPC commands (`src/commands.rs`, task 009) are thin wrappers over the core and over the plain functions
+of `src/list.rs`, which take the game root and the mrgl home folder as arguments, so `tests/flavor_list.rs`
+checks the rows on a made-up game folder without a window. Every message they return is
+`{ kind, murloc, plain }`: the core's voice kind (`Kind::as_str`) picks the place in the window, and a
+serious voice sends the murloc line empty. Whatever reads the disk or the network runs on a blocking thread.
+
+- `app_version`: the version for the status bar.
+- `flavors`: the game root as every CLI command resolves it (`MRGL_ROOT`, the remembered root, then the
+  discovery; a discovered root is used and not remembered), its flavor folders and their rows, and a banner.
+  A row joins the scan (folder, the TOC's title without color escapes, a junction), the flavor's state
+  sidecar (managed, the installed version, the source, pinned, ignored), a TOC hint for an unmanaged addon
+  (Wago, then WoWInterface, then CurseForge, drawn as a guess), the dependency check (`missing`), and on
+  every row of the Forever flavor its Forever status (`build`, `note`, `verified`, `source`, `stale`). The
+  list never goes online: "update available" is the GitHub source's cached release list (the one `add`
+  leaves), read through an `Http` that answers every request with "not modified", whose current release on
+  the entry's channel is not the installed version; without a cached list no update is known.
+- `choose_root`: the folder dialog (`tauri-plugin-dialog`, called from Rust); a game folder, or a flavor
+  folder whose parent is one, is remembered in `config.json` as `mrgl root <folder>` does and answered with
+  its flavors; a cancelled dialog answers nothing.
+- `diagnostics`: the doctor's report (`mrgl_core::doctor`, see [The doctor](#the-doctor)) as the text
+  `mrgl doctor` prints, with the message for a copy that worked and one for a copy the clipboard refused;
+  the view writes it with `navigator.clipboard` (a selection copy as the fallback), so no clipboard plugin
+  joins.
+- `resolve`: a managed addon through its source, for the flavor's build and on its channel: the source's
+  own `Pick`, the handover to the update actions of task 010.
+- `update_all`: answers that the update actions are task 010, in the voice.
+- `preferences` and `set_preferences` (task 034): the theme (`auto`, `light`, `dark`) and the serious
+  switch as they apply, which source decided the switch (`environment` locks the window's switch: the
+  window cannot override `MRGL_SERIOUS`), and what `config.json` stores (`theme`, `serious`, next to
+  `root`). The view reads them at start, writes a toggle's change at once, and carries an old
+  `localStorage` value over once for a key the file does not have, then removes the old keys; a cleared
+  web view draws what the file says. Each writer of `config.json` sets only its own keys and keeps the
+  others, so `mrgl root` keeps the preferences and the window keeps the root.
 
 The application icon is generated once by `scripts\make-icon.py` (Pillow; run it as
 `uv run --with pillow python -I scripts\make-icon.py`) and committed: `icon.ico` for the
@@ -641,7 +687,9 @@ PE file with one `.rsrc` section and no code: `_classic_era_\WowClassic.exe` car
 all, and `stubs\` holds a 32-bit image and a resource without a string table for the parser's unit tests.
 No stub is a game executable or a copy of one.
 
-The command line keeps `config.json` (the remembered game folder) under the mrgl home folder,
+The command line and the window keep `config.json` under the mrgl home folder (`root`, the remembered game
+folder, written by `mrgl root` and the window's chooser; `theme` and `serious`, the window's preferences of
+task 034, the second also the third source of the voice's serious switch),
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
 sidecar `state.json`, the addon sets `sets.json` (task 014),
 the install engine's `staging\` (a zip is unpacked and checked here before anything

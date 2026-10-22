@@ -9,8 +9,10 @@ const Voice = require("../../ui/voice.js");
 
 Data.settings.delay = 0;
 
-const ROW_KEYS = ["folder", "name", "version", "linked", "source", "managed", "guessed", "update", "pinned", "ignored", "forever"];
-const FLAVOR_KEYS = ["id", "name", "folder", "version", "interface", "curse_client", "warnings", "addons"];
+// The keys of the contract (the header of ui/mock-data.js); `src/list.rs` serializes the same ones, which its
+// tests hold it to.
+const ROW_KEYS = ["folder", "name", "version", "linked", "source", "managed", "guessed", "update", "pinned", "ignored", "forever", "missing"];
+const FLAVOR_KEYS = ["id", "name", "folder", "version", "interface", "version_source", "version_file", "curse_client", "warnings", "addons"];
 
 test("the answer carries a root, the four flavors and a banner", async () => {
   const answer = await Data.flavors();
@@ -19,6 +21,7 @@ test("the answer carries a root, the four flavors and a banner", async () => {
     answer.flavors.map((flavor) => flavor.id).sort(),
     ["wow", "wow_classic", "wow_classic_era", "wowf"]
   );
+  assert.equal(answer.root_origin, "remembered");
   assert.equal(answer.message.kind, "banner");
   assert.equal(answer.message.murloc, "Mrglglgl.");
   assert.match(answer.message.plain, /^4 flavors under /);
@@ -87,4 +90,37 @@ test("the other flavors answer with the other kinds", async () => {
   assert.deepEqual(await kinds("wow_classic"), ["progress", "warning"]);
   assert.deepEqual(await kinds("wow_classic"), ["warning"], "the second run has only the pinned one left to report");
   assert.deepEqual(await kinds("wow_mrgl"), ["error"]);
+});
+
+test("the other calls of the contract answer in the voice's shape", async () => {
+  const choice = await Data.chooseRoot();
+  assert.equal(choice.flavors, null);
+  assert.equal(choice.message.kind, "warning");
+  const report = await Data.diagnostics();
+  assert.match(report.text, /^mrgl: /);
+  assert.equal(report.copied.kind, "success");
+  assert.equal(report.failed.kind, "error");
+  const resolved = await Data.resolve("wowf", "BigWigs");
+  assert.equal(resolved.pick.version, "v401.0");
+  const refused = await Data.resolve("wowf", "RaidLogger");
+  assert.equal(refused.pick, null);
+  assert.equal(refused.message.kind, "error");
+});
+
+test("a row names its missing dependencies and a stale note", async () => {
+  const { flavors } = await Data.flavors();
+  const rows = flavors.flatMap((flavor) => flavor.addons);
+  assert.ok(rows.every((row) => Array.isArray(row.missing)));
+  assert.ok(rows.some((row) => row.missing.length > 0), "a row with a missing dependency");
+  assert.ok(rows.some((row) => row.forever && row.forever.stale), "a stale Forever note");
+});
+
+test("the mock keeps the preferences for the page's life", async () => {
+  const before = await Data.preferences();
+  assert.deepEqual(before, { theme: "auto", serious: false, serious_source: "default", stored: { theme: null, serious: null } });
+  const after = await Data.setPreferences({ theme: "dark", serious: true });
+  assert.equal(after.theme, "dark");
+  assert.equal(after.serious, true);
+  assert.equal(after.serious_source, "file");
+  assert.deepEqual((await Data.preferences()).stored, { theme: "dark", serious: true });
 });

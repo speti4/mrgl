@@ -111,6 +111,38 @@ fn serious_environment_drops_the_murloc_line() {
 }
 
 #[test]
+fn the_config_files_serious_preference_is_the_third_source() {
+    // Task 034: the window's switch writes `serious` into config.json; the flag and MRGL_SERIOUS come first.
+    let home = temp_home("serious-preference");
+    std::fs::create_dir_all(&home).expect("home");
+    std::fs::write(home.join("config.json"), r#"{ "serious": true }"#).expect("config");
+    let plain = format!("mrgl {}", env!("CARGO_PKG_VERSION"));
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .arg("--version")
+        .output()
+        .expect("run mrgl");
+    assert_eq!(
+        stdout(&output).trim_end(),
+        plain,
+        "the file makes it serious"
+    );
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .env("MRGL_SERIOUS", "0")
+        .arg("--version")
+        .output()
+        .expect("run mrgl");
+    assert_eq!(
+        stdout(&output).lines().count(),
+        2,
+        "MRGL_SERIOUS=0 wins over the file: {}",
+        stdout(&output)
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
 fn help_is_plain_with_and_without_the_flag() {
     for args in [vec!["--help"], vec!["--serious", "--help"]] {
         let output = mrgl().args(&args).output().expect("run mrgl");
