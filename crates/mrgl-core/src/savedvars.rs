@@ -318,8 +318,15 @@ fn collect(
         }
         Ok(metadata) if metadata.is_dir() => {}
         Ok(_) => return Ok(()),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => return Err(io_error("reading WTF", dir, source)), // coverage: os
+        Err(source) => {
+            // A character without the folder is the usual case; any other failure is the system's.
+            // coverage: os-begin
+            if source.kind() != io::ErrorKind::NotFound {
+                return Err(io_error("reading WTF", dir, source));
+            }
+            // coverage: os-end
+            return Ok(());
+        }
     }
     let entries = fs::read_dir(dir).map_err(|source| io_error("reading WTF", dir, source))?;
     let mut pairs: BTreeMap<String, Pair> = BTreeMap::new();

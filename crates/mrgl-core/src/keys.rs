@@ -980,6 +980,10 @@ mod tests {
         // Unset or empty is the Credential Manager; its name is all that is asked of it here.
         assert_eq!(store_from_env(None).name(), CREDENTIAL_MANAGER);
         assert_eq!(
+            store_from_env(Some(OsStr::new("on"))).name(),
+            CREDENTIAL_MANAGER
+        );
+        assert_eq!(
             store_from_env(Some(OsStr::new(""))).name(),
             CREDENTIAL_MANAGER
         );
