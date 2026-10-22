@@ -5,8 +5,10 @@ release notes next to it.
 
 .DESCRIPTION
 The version is the workspace Cargo.toml one, the only place it is written. The zip holds mrgl.exe (the
-command line), mrgl-app.exe (the window) and THIRD-PARTY-LICENSES.html (cargo-about over the crates compiled
-into the exes, with about.toml and scripts\third-party-licenses.hbs). Next to the zip go SHA256SUMS.txt (the
+command line), mrgl-app.exe (the window), THIRD-PARTY-LICENSES.html (cargo-about over the crates compiled
+into the exes, with about.toml and scripts\third-party-licenses.hbs) and lists\forever-starter.json (the
+Forever starter list, so `mrgl import lists\forever-starter.json --flavor forever` works from the unpacked
+zip). Next to the zip go SHA256SUMS.txt (the
 zip's SHA-256 in `sha256sum -c` format) and release-notes-<version>.md (scripts\changelog.py --notes, the
 body of the GitHub release). CI runs this script on a v<version> tag with -Tag set, which must match the
 version; by hand the tag check is skipped. Needs cargo, cargo-about in the version
@@ -82,7 +84,8 @@ if (-not $SkipBuild) {
 
 $cli = Join-Path $root "target\release\mrgl.exe"
 $app = Join-Path $root "target\release\mrgl-app.exe"
-foreach ($file in @($cli, $app)) {
+$starter = Join-Path $root "lists\forever-starter.json"
+foreach ($file in @($cli, $app, $starter)) {
     if (-not (Test-Path $file)) { throw "missing: $file" }
 }
 
@@ -97,6 +100,9 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item $cli (Join-Path $stage "mrgl.exe")
 Copy-Item $app (Join-Path $stage "mrgl-app.exe")
+# The starter list at its path in the repo, so the README's import line works from the unpacked zip as written.
+New-Item -ItemType Directory -Force (Join-Path $stage "lists") | Out-Null
+Copy-Item $starter (Join-Path $stage "lists\forever-starter.json")
 
 # The notices of the crates compiled into the exes (their MIT, Apache-2.0, BSD and MPL-2.0 licenses ask for
 # them). cargo-about reads the graph through `cargo metadata`, which wants the sources of every platform's

@@ -7,7 +7,14 @@ not the list. The summary under a heading is written by hand and kept by the gen
 
 ## Unreleased
 
-The repository, the task standard and the empty workspace: no app yet.
+The first release, 0.1.0: one portable zip with the `mrgl` command line and the `mrgl-app` window, both with
+the murloc icon, nothing to install. The command line scans every flavor, installs and updates addons from
+GitHub releases flavor-correctly (a zip in hand too), pins, ignores, rolls back, links development folders,
+backs up and restores `WTF`, keeps addon sets, cleans up orphaned SavedVariables, exports and imports lists
+and prints a diagnostic report. The window lists every flavor's addons with their state and their Forever
+notes, checks for updates and updates all or one. The zip carries the Forever starter list:
+`mrgl import lists\forever-starter.json --flavor forever` installs it. Pre-alpha: unsigned exes, Windows 11
+only.
 
 <!-- The summary above is written by hand; the list below is generated from tasks/done/ by scripts/changelog.py. -->
 

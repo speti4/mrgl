@@ -85,7 +85,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `savedvars --flavor <flavor> [--clean]` (task 025) prints a data line per SavedVariables entry (size,
   addon, `account-wide` or `realm / character`, never the account folder's name, which `--json` carries,
   `orphan` or `client`) and a summary, `--clean` moves the orphans; `--json` is the `savedvars` or the
-  `savedvars-clean` document.
+  `savedvars-clean` document. Its `build.rs` (task 012) gives `mrgl.exe` the window's icon as a Windows
+  resource, with the standard library alone: it rewrites `crates/mrgl-app/icons/icon.ico` as a compiled
+  resource file (`.res`, one `RT_ICON` per image and the `RT_GROUP_ICON` that lists them) and passes it to
+  the MSVC linker, which takes a `.res` as an input file; other targets skip it.
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`: the IPC commands in
   `commands.rs`, the flavor list in `list.rs`, task 009; the update check, the updates and the row marks in
   `actions.rs`, task 010), the static UI under `ui/`, the capability file and the icon; see
@@ -474,10 +477,18 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   web view draws what the file says. Each writer of `config.json` sets only its own keys and keeps the
   others, so `mrgl root` keeps the preferences and the window keeps the root.
 
-The application icon is generated once by `scripts\make-icon.py` (Pillow; run it as
-`uv run --with pillow python -I scripts\make-icon.py`) and committed: `icon.ico` for the
-Windows exe and `icon.png` for the window icon on the other targets. It is a glyph of our own, never Blizzard
-artwork.
+The application icon is a murloc head of our own drawing (task 012; fan art within D-005, no Blizzard
+artwork, no game file): geometry in `scripts\make-icon.py`, rendered with Pillow and committed. `icon.ico`
+holds every size the Windows shell asks for (16, 20, 24, 32, 40, 48, 64, 96, 128 and 256 px, each drawn on its
+own, with a thicker outline and fewer details below 32 px so the face reads at 16), `icon.png` (512 px) is the
+window icon on the other targets. Its colors are the theme tokens of `style.css`, so one drawing serves the
+light and the dark theme. `tauri-build` embeds the `.ico` in `mrgl-app.exe` (the title bar and the taskbar take
+it from there), the CLI's `build.rs` embeds the same file in `mrgl.exe`, and both build scripts rerun when it
+changes. To change the drawing, edit the script and regenerate both files:
+
+```powershell
+uv run --with pillow python -I scripts\make-icon.py   # crates\mrgl-app\icons\icon.ico and icon.png
+```
 
 ## CI and releases
 
@@ -552,7 +563,10 @@ does not move with the pin.
 ### The release
 
 `scripts\release.ps1` builds the release profile (fat LTO, stripped) and packs `target\release\mrgl.exe`,
-`target\release\mrgl-app.exe` and `THIRD-PARTY-LICENSES.html` into `dist\mrgl-<version>.zip`. The version is
+`target\release\mrgl-app.exe`, `THIRD-PARTY-LICENSES.html` and the Forever starter list into
+`dist\mrgl-<version>.zip`. The list sits at `lists\forever-starter.json` in the zip, its path in the repo, so
+`mrgl import lists\forever-starter.json --flavor forever` works from the unpacked zip without the repo (task
+012); both exes carry the murloc icon ([The UI](#the-ui)). The version is
 the workspace `Cargo.toml` one, the only place it is written: `tauri-build` stamps it into the app exe's
 properties and both exes print it. Next to the zip it writes `SHA256SUMS.txt` (the zip's SHA-256 in the
 `sha256sum -c` format) and `release-notes-<version>.md`. The license page comes from

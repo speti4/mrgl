@@ -279,7 +279,9 @@ def render_notes(sections: list[Section], version: str, url: str) -> str:
         f"`(Get-FileHash {zip_name}).Hash` prints the same value in capitals. The zip also has a build provenance",
         f"attestation: `gh attestation verify {zip_name} --repo speti4/mrgl` shows that this repository's release",
         "workflow built it. The zip holds `THIRD-PARTY-LICENSES.html`, the open-source crates compiled into the exes",
-        f"and their licenses. The full history is in [CHANGELOG.md]({url}/blob/main/CHANGELOG.md).",
+        "and their licenses, and `lists/forever-starter.json`, the Forever starter list: in the unpacked folder,",
+        "`mrgl import lists/forever-starter.json --flavor forever` installs it (add `--dry-run` to see the picks",
+        f"first). The full history is in [CHANGELOG.md]({url}/blob/main/CHANGELOG.md).",
     ]
     return sync_issues._trim(lines) + "\n"
 
