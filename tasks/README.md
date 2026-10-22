@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 10 backlog (0 ready · 0 blocked · 3 waiting · 7 ideas) · 1 in progress · 95 done · 5 dropped · 6 decisions
+**State:** 9 backlog (0 ready · 0 blocked · 3 waiting · 6 ideas) · 2 in progress · 95 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -65,7 +65,6 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
-| 117 | [Test hardening toward full line and branch coverage](backlog/117-test-hardening-toward-full-line-and-branch-coverage.md) | L | 2026-10-22 |
 
 #### M6 macOS preview
 
@@ -80,6 +79,12 @@ _none_
 | # | Task | Started | Plan |
 |---|---|---|---|
 | 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
+
+#### M5 Trust
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 117 | [Test hardening toward full line and branch coverage](wip/117-test-hardening-toward-full-line-and-branch-coverage.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
