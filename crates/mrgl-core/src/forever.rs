@@ -24,6 +24,9 @@ pub const SCHEMA: u32 = 1;
 /// A note verified longer ago than this is stale: Forever's restrictions and the addons move with every
 /// patch, so a note older than a season is shown with a warning until someone verifies it again.
 pub const STALE_AFTER_DAYS: i64 = 90;
+/// How many days a `verified` date may lie after today in UTC: a note dated by the local day east of UTC
+/// is a day ahead of UTC between local and UTC midnight, and the schema check still takes it.
+pub const VERIFIED_SLACK_DAYS: i64 = 1;
 
 /// Whether an addon's source publishes a `forever` build, as its current release says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -116,7 +119,7 @@ impl CuratedNotes {
 
     /// Everything wrong with the file, one line each; empty when the file holds to the schema: the schema
     /// number, every key a canonical source spec, every kind known, every reason one line, every date a real
-    /// day no later than `today`, every source an `https://` URL.
+    /// day no later than [`VERIFIED_SLACK_DAYS`] after `today` (UTC), every source an `https://` URL.
     pub fn problems(&self, today: i64) -> Vec<String> {
         let mut problems = Vec::new();
         if self.schema != SCHEMA {
@@ -134,10 +137,11 @@ impl CuratedNotes {
                     ));
                 }
                 match day_number(verified) {
-                    Some(day) if day <= today => {}
-                    Some(_) => {
-                        problems.push(format!("{what}: verified {verified} is in the future"))
-                    }
+                    Some(day) if day <= today + VERIFIED_SLACK_DAYS => {}
+                    Some(_) => problems.push(format!(
+                        "{what}: verified {verified} is in the future, more than \
+                         {VERIFIED_SLACK_DAYS} day after today in UTC"
+                    )),
                     None => problems.push(format!(
                         "{what}: verified {verified} is not a YYYY-MM-DD date"
                     )),
@@ -399,6 +403,37 @@ mod tests {
         }
         let unknown_field = r#"{ "schema": 1, "kinds": {}, "addons": {}, "extra": true }"#;
         assert!(CuratedNotes::parse(unknown_field).is_err());
+    }
+
+    #[test]
+    fn a_verified_date_may_be_one_day_after_today_in_utc() {
+        let dated = |verified: &str| {
+            SYNTHETIC
+                .replace("2026-10-01", verified)
+                .replace("2026-06-01", verified)
+        };
+        // Today, and tomorrow in UTC (the local day east of UTC before UTC midnight), pass.
+        for verified in ["2026-10-21", "2026-10-22"] {
+            let notes = CuratedNotes::parse(&dated(verified)).expect("parses");
+            assert_eq!(
+                notes.problems(DAY_2026_10_21),
+                Vec::<String>::new(),
+                "{verified}"
+            );
+        }
+        // Two days ahead is past the slack, for a kind and for a note alike.
+        let problems = CuratedNotes::parse(&dated("2026-10-23"))
+            .expect("parses")
+            .problems(DAY_2026_10_21);
+        let late = "verified 2026-10-23 is in the future, more than 1 day after today in UTC";
+        assert_eq!(
+            problems,
+            vec![
+                format!("kind combat-log-events: {late}"),
+                format!("addon github:Example/Fresh: {late}"),
+                format!("addon github:Example/Old: {late}"),
+            ]
+        );
     }
 
     #[test]

@@ -802,8 +802,11 @@ canonical source spec. To add a note, add an entry under `addons` with the restr
 one-line reason (lower case, no trailing full stop: what does not work), the day it was checked against the
 source and the source's URL, then run `cargo test`. The schema check (`forever::tests`) rejects an unknown
 field or kind, a key that is not a canonical spec, a reason over one line, a date that is no real day or lies
-in the future, and a source that is not an `https://` URL. A note whose `verified` date is more than 90 days
-old (`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
+in the future, and a source that is not an `https://` URL. The `verified` date is the day of the check where
+you are: the schema check compares it with today in UTC and allows one day of slack
+(`forever::VERIFIED_SLACK_DAYS`, task 070), so a note dated by the local day east of UTC passes between local
+and UTC midnight, while a date two days ahead fails. A note whose `verified` date is more than 90 days old
+(`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
 checks the age in CI.
 
 Where a note comes from (task 058): a public source that a page under `docs/research/` cites, an addon author's
