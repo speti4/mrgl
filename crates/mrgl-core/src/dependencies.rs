@@ -2,7 +2,8 @@
 //! `## RequiredDeps` and the other `## Dep…` lines of the TOC the flavor loads, [`crate::toc`]) is looked up
 //! against a scan, ASCII case-insensitive as the client matches folder names:
 //!
-//! - **met**: a folder of that name is in the scan, an addon of its own;
+//! - **met**: a folder of that name is in the scan, an addon of its own, or the name starts with
+//!   [`CLIENT_PREFIX`] (`Blizzard_`), an addon the client itself ships, which no AddOns folder holds;
 //! - **embedded**: a folder of that name sits inside the addon's own folder (`Libs\LibStub`, at most
 //!   [`EMBED_DEPTH`] levels down), the library a build without `nolib` carries; a `nolib` build carries
 //!   none, so for an entry the sidecar marks `nolib` the check does not look inside;
@@ -24,6 +25,10 @@ use crate::state::State;
 /// is two, `Libs\Ace3\AceAddon-3.0` three.
 pub const EMBED_DEPTH: usize = 3;
 
+/// The name prefix of the client's own addons (`Blizzard_Communities`, `Blizzard_AuctionHouseUI`), ASCII
+/// case-insensitive: a required dependency of that name is met by the client, whatever the scan holds.
+pub const CLIENT_PREFIX: &str = "Blizzard_";
+
 /// The dependencies of one addon folder, as the check found them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct AddonDependencies {
@@ -32,7 +37,7 @@ pub struct AddonDependencies {
     /// The required names of the TOC the flavor loads, in TOC order, each once (ASCII case-insensitive);
     /// empty when the flavor loads no TOC of the folder.
     pub required: Vec<String>,
-    /// The required names an addon folder of the scan answers.
+    /// The required names an addon folder of the scan answers, or the client: a `Blizzard_` name.
     pub met: Vec<String>,
     /// The required names a folder inside the addon's own folder answers: an embedded library.
     pub embedded: Vec<String>,
@@ -123,10 +128,11 @@ fn check_addon(
     }
     let mut inside: Option<Vec<String>> = None;
     for name in &result.required {
-        let installed = scan
-            .addons
-            .iter()
-            .any(|other| other.folder.eq_ignore_ascii_case(name));
+        let installed = is_client_addon(name)
+            || scan
+                .addons
+                .iter()
+                .any(|other| other.folder.eq_ignore_ascii_case(name));
         if installed {
             result.met.push(name.clone());
         } else if nolib != Some(true)
@@ -138,6 +144,13 @@ fn check_addon(
         }
     }
     result
+}
+
+/// Whether a name is one of the client's own addons: it starts with [`CLIENT_PREFIX`], ASCII
+/// case-insensitive.
+pub fn is_client_addon(name: &str) -> bool {
+    name.get(..CLIENT_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CLIENT_PREFIX))
 }
 
 fn contains(names: &[String], name: &str) -> bool {
@@ -333,6 +346,38 @@ mod tests {
             Vec::new()
         });
         assert_eq!(asked, ["Needy"], "once per addon, and only when needed");
+    }
+
+    #[test]
+    fn a_blizzard_addon_is_met_by_the_client() {
+        let scan = scan_of(vec![addon(
+            "Needy",
+            Some(
+                "## Dependencies: Blizzard_Something, LibMissing\n## RequiredDeps: blizzard_lower\n",
+            ),
+        )]);
+        let mut asked = false;
+        let needy = &check_with(&scan, None, |_| {
+            asked = true;
+            Vec::new()
+        })[0];
+        assert_eq!(needy.met, ["Blizzard_Something", "blizzard_lower"]);
+        assert_eq!(
+            needy.missing,
+            ["LibMissing"],
+            "an addon of its own still is"
+        );
+        assert!(asked, "the folder lookup for LibMissing only");
+        let calm = scan_of(vec![addon(
+            "Calm",
+            Some("## Dependencies: Blizzard_Something\n"),
+        )]);
+        let calm = &check_with(&calm, None, |_| panic!("no folder lookup for the client"))[0];
+        assert_eq!(calm.met, ["Blizzard_Something"]);
+        assert!(!calm.has_missing() && calm.warning().is_none());
+        assert!(is_client_addon("BLIZZARD_x"));
+        assert!(!is_client_addon("Blizzard") && !is_client_addon("MyBlizzard_Thing"));
+        assert!(!is_client_addon("Bliz") && !is_client_addon("Blizzárd_x"));
     }
 
     #[test]

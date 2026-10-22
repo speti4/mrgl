@@ -151,8 +151,9 @@ Mrgl? Mrgl…
 Needy needs the missing dependency LibMissing: install it or the addon does not load
 ```
 
-A dependency counts as there when an addon folder of that name is installed, or when the addon carries the
-library inside its own folder (a release that is not a `nolib` build). `--json` has the details per addon
+A dependency counts as there when an addon folder of that name is installed, when it is one of the game's
+own `Blizzard_` addons, or when the addon carries the library inside its own folder (a release that is not
+a `nolib` build). `--json` has the details per addon
 under `dependencies`.
 
 Something not working? `mrgl doctor` prints what a bug report needs: the game folder and how it was found,

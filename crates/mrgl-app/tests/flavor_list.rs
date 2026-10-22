@@ -86,7 +86,7 @@ impl Fixture {
         fixture.addon(
             "_retail_",
             "Needy",
-            "## Interface: 120105\n## Version: 0.1\n## Dependencies: LibGone, Plain\n",
+            "## Interface: 120105\n## Version: 0.1\n## Dependencies: LibGone, Plain, Blizzard_Something\n",
         );
         fixture.addon("_retail_", "Plain", "## Interface: 120105\n## Version: 3\n");
         fixture.addon(
@@ -298,7 +298,11 @@ fn the_retail_rows_carry_their_states_facts() {
     );
 
     let needy = row(retail, "Needy");
-    assert_eq!(needy.missing, ["LibGone"], "Plain is an addon of its own");
+    assert_eq!(
+        needy.missing,
+        ["LibGone"],
+        "Plain is an addon of its own, Blizzard_Something the client's (task 064)"
+    );
     assert_eq!(needy.name, "Needy", "no title: the folder");
 
     let plain = row(retail, "Plain");

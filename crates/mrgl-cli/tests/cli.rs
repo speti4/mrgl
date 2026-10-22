@@ -2618,8 +2618,8 @@ fn list_json_carries_the_dependencies_of_every_addon() {
         addon("Needy")["dependencies"],
         serde_json::json!({
             "folder": "Needy",
-            "required": ["LibMet", "LibEmbedded", "LibMissing"],
-            "met": ["LibMet"],
+            "required": ["LibMet", "LibEmbedded", "LibMissing", "Blizzard_Something"],
+            "met": ["LibMet", "Blizzard_Something"],
             "embedded": ["LibEmbedded"],
             "missing": ["LibMissing"],
             "nolib": null,
@@ -2728,6 +2728,11 @@ fn add_warns_after_the_install_when_a_dependency_is_missing() {
     let dependencies = &value["addon"]["dependencies"][0];
     assert_eq!(dependencies["folder"], "NeedsLibrary");
     assert_eq!(dependencies["embedded"], serde_json::json!(["LibEmbedded"]));
+    assert_eq!(
+        dependencies["met"],
+        serde_json::json!(["Blizzard_Something"]),
+        "the client's own addon (task 064)"
+    );
     assert_eq!(dependencies["missing"], serde_json::json!(["LibMissing"]));
     assert_eq!(
         dependencies["nolib"],

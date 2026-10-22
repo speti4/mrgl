@@ -27,6 +27,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - Offline resolve from the cached release list, with a warning ([041](https://github.com/speti4/mrgl/blob/main/tasks/done/041-offline-resolve-from-the-cached-release-list.md))
 - GitHub source: pagination past 30 releases, the rate-limit reset time, `release.json` cached per tag ([042](https://github.com/speti4/mrgl/blob/main/tasks/done/042-github-source-pagination-rate-limit-and-per-tag-cache.md))
 - The asset download's error path: a 404 names the asset, the size is checked ([046](https://github.com/speti4/mrgl/blob/main/tasks/done/046-asset-download-404-names-the-missing-asset.md))
+- The dependency check counts the client's own `Blizzard_*` addons as present ([064](https://github.com/speti4/mrgl/blob/main/tasks/done/064-blizzard-addons-are-not-missing-dependencies.md))
 
 ### M2 Window MVP
 

@@ -42,7 +42,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a lookup trait with a stub), the
   dependency check (`dependencies`, task 029: every required name of the TOC the flavor loads, `## Dependencies`,
   `## RequiredDeps` and the other `## Dep…` lines, ASCII case-insensitive, is *met* when an addon folder of
-  that name is in the scan, *embedded* when a folder of that name sits inside the addon's own folder, at
+  that name is in the scan or the name starts with `Blizzard_`, an addon the client ships (task 064),
+  *embedded* when a folder of that name sits inside the addon's own folder, at
   most three levels down, which a build without `nolib` carries, and *missing* otherwise; an optional
   dependency is never reported; the sidecar entry's `nolib` flag, recorded from the pick at install, turns
   the embedded lookup off for a `nolib` build, and an entry without it is unknown, embedded possible), the
@@ -605,7 +606,8 @@ up from the first line, task 013), a second `WTF` tree for the addon sets (`addo
 two characters on two realms of one account, one `AddOns.txt` with CRLF endings, the other with LF, a line
 the client never wrote and no last line break, and the account's `SavedVariables` that is no realm), a
 third game folder for the dependency check (`dependencies/`, task
-029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency, and a
+029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency and one
+on a client addon, `Blizzard_Something`, task 064, and a
 library folder inside an addon that a `nolib` entry in a test's sidecar turns into a missing one), and a
 development folder for the junction links (`dev/`: two addons with a TOC and a folder without one, task
 005; the tests copy it into a temporary folder and make their junctions there). A real addon zip, a real

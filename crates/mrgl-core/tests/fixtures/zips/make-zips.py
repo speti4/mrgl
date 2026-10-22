@@ -119,7 +119,7 @@ write("escaping-path.zip", [
 write("needs-library-1.0.0.zip", [
     ("NeedsLibrary/NeedsLibrary.toc",
      toc("Needs Library", "1.0.0",
-         extra="## Dependencies: LibEmbedded, LibMissing\r\n## OptionalDeps: LibOptional\r\n")),
+         extra="## Dependencies: LibEmbedded, LibMissing, Blizzard_Something\r\n## OptionalDeps: LibOptional\r\n")),
     ("NeedsLibrary/core.lua", "-- NeedsLibrary 1.0.0\n"),
     ("NeedsLibrary/Libs/LibEmbedded/LibEmbedded.lua", "-- an embedded library\n"),
 ])
