@@ -11,6 +11,8 @@ pub mod commands;
 pub mod list;
 pub mod toolbox;
 
+use tauri::Manager;
+
 /// Builds the window and runs the event loop until it closes.
 pub fn run() {
     tauri::Builder::default()
@@ -18,6 +20,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(actions::UpdateRun::default())
         .manage(toolbox::ToolboxRun::default())
+        .setup(|app| {
+            // Task 079: the title bar follows the theme preference from the start, not the system's.
+            if let Some(window) = app.get_webview_window("main") {
+                commands::apply_native_theme(&window, &commands::preferences().theme);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::app_version,
             commands::flavors,

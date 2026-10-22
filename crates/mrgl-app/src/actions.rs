@@ -350,6 +350,13 @@ pub fn run<S: Source + ?Sized>(
                 }) => {
                     installed.warnings.iter().cloned().for_each(&mut warn);
                     installed.client_warning.iter().cloned().for_each(&mut warn);
+                    // Task 079: the checks the command line's install summary reports, a missing
+                    // dependency and an interface of another build, as warnings of the answer.
+                    engine
+                        .check_installed(&installed.folders)
+                        .lines(&folder_name)
+                        .into_iter()
+                        .for_each(&mut warn);
                     let from = installed
                         .previous_version
                         .as_deref()

@@ -36,8 +36,10 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 
 use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
+use crate::dependencies::{self, AddonDependencies};
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
+use crate::interface::{self, InterfaceMismatch};
 use crate::scan;
 use crate::sources::{Channel, Pick, Source, SourceSpec, Target};
 use crate::state::{self, Entry, FlavorHome, LoadedState, State};
@@ -342,6 +344,35 @@ impl Default for Processes {
     }
 }
 
+/// What [`Engine::check_installed`] found about the folders of an install.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InstalledChecks {
+    /// The dependency check of each installed folder (task 029).
+    pub dependencies: Vec<AddonDependencies>,
+    /// The primary folder names no interface of the flavor's build (task 015).
+    pub mismatch: Option<InterfaceMismatch>,
+    /// Why there is no check: the flavor's folder could not be scanned.
+    pub warnings: Vec<String>,
+}
+
+impl InstalledChecks {
+    /// The warning lines, in order: a scan that failed, each missing dependency, the interface mismatch.
+    pub fn lines(&self, folder_name: &str) -> Vec<String> {
+        let mut lines = self.warnings.clone();
+        lines.extend(
+            self.dependencies
+                .iter()
+                .filter_map(AddonDependencies::warning),
+        );
+        lines.extend(
+            self.mismatch
+                .iter()
+                .map(|mismatch| mismatch.after_install_line(folder_name)),
+        );
+        lines
+    }
+}
+
 /// The engine for one flavor: its game folder and its folder under the mrgl home.
 #[derive(Debug, Clone)]
 pub struct Engine {
@@ -407,6 +438,39 @@ impl Engine {
     /// The sidecar as it is on disk (a missing or corrupt one is fresh, with a warning for the corrupt).
     pub fn load_state(&self) -> Result<LoadedState> {
         self.home.read_state(&self.flavor.id)
+    }
+
+    /// The checks an install reports about the folders it just installed, the command line's summary and
+    /// the window's update alike (tasks 015, 029, 079): the dependency check of those folders against the
+    /// flavor as it is now, and the interface check of the first one, the primary folder. One scan; a scan
+    /// that fails is a warning and no check.
+    pub fn check_installed(&self, folders: &[String]) -> InstalledChecks {
+        let scan = match scan::scan_flavor(&self.flavor) {
+            Ok(scan) => scan,
+            Err(error) => {
+                return InstalledChecks {
+                    warnings: vec![error.to_string()],
+                    ..InstalledChecks::default()
+                };
+            }
+        };
+        let state = self.load_state().ok().map(|loaded| loaded.state);
+        let installed = |folder: &str| folders.iter().any(|one| one.eq_ignore_ascii_case(folder));
+        let dependencies = dependencies::check(&scan, state.as_ref())
+            .into_iter()
+            .filter(|check| installed(&check.folder))
+            .collect();
+        let mismatch = folders.first().and_then(|primary| {
+            scan.addons
+                .iter()
+                .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
+                .and_then(|addon| interface::check_addon(addon, self.flavor.version))
+        });
+        InstalledChecks {
+            dependencies,
+            mismatch,
+            warnings: Vec::new(),
+        }
     }
 
     /// Unpacks a zip into a fresh folder under `staging\`, refusing any entry that would land outside it,

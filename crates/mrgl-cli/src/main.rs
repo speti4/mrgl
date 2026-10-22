@@ -31,8 +31,8 @@ use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{
-    AlreadyInstalled, Engine, Installed, Mark, Metadata, PickInstalled, PickStep, SourceInstalled,
-    SourceRequest,
+    AlreadyInstalled, Engine, Installed, InstalledChecks, Mark, Metadata, PickInstalled, PickStep,
+    SourceInstalled, SourceRequest,
 };
 use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use mrgl_core::link;
@@ -964,33 +964,6 @@ fn check_dependencies(scan: &Scan, warnings: &mut Vec<String>) -> Vec<AddonDepen
     checks
 }
 
-/// The dependency check after an install (task 029): the flavor's folder as it is now, the results of the
-/// folders just installed, and a warning line for each with a missing required dependency.
-fn installed_dependencies(
-    engine: &Engine,
-    folders: &[String],
-    warnings: &mut Vec<String>,
-) -> Vec<AddonDependencies> {
-    let scan = match scan::scan_flavor(&engine.flavor) {
-        Ok(scan) => scan,
-        Err(error) => {
-            warnings.push(error.to_string());
-            return Vec::new();
-        }
-    };
-    let state = engine.load_state().ok().map(|loaded| loaded.state);
-    let checks: Vec<AddonDependencies> = dependencies::check(&scan, state.as_ref())
-        .into_iter()
-        .filter(|check| {
-            folders
-                .iter()
-                .any(|folder| folder.eq_ignore_ascii_case(&check.folder))
-        })
-        .collect();
-    warnings.extend(checks.iter().filter_map(AddonDependencies::warning));
-    checks
-}
-
 /// Task 011: the Forever status of every managed addon of a Forever listing, by its primary folder in lower
 /// case; `None` for another flavor. Offline: the build signal comes from the GitHub source's cache alone (the
 /// release list and the `release.json` the last `add` fetched), so without a cached list it is `unknown`.
@@ -1151,24 +1124,6 @@ fn out_of_date_summary(out_of_date: &[InterfaceOutOfDate]) -> Option<String> {
     ))
 }
 
-/// The warning after an install whose addon names no interface of the flavor's build.
-fn interface_after_install(mismatch: &InterfaceMismatch, folder_name: &str) -> String {
-    format!(
-        "{} of {folder_name}; the zip may be for another flavor",
-        mismatch.line()
-    )
-}
-
-/// The interface check of a freshly installed addon, by its primary folder; a scan that fails gives none.
-fn installed_mismatch(engine: &Engine, primary: Option<&String>) -> Option<InterfaceMismatch> {
-    let primary = primary?;
-    let scan = scan::scan_flavor(&engine.flavor).ok()?;
-    scan.addons
-        .iter()
-        .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
-        .and_then(|addon| interface::check_addon(addon, engine.flavor.version))
-}
-
 /// One addon as a JSON object, the one builder of `scan` and `list`: the scan's fields (`folder`, `path`,
 /// `tocs`, `other_tocs`, `chosen`, `linked`), and for `list` (a status) `managed`, `name` (the managed
 /// addon that owns the folder), `source` (its spec as the sidecar has it) and `version` (the installed
@@ -1296,10 +1251,7 @@ fn add_command(
             reporter.say(Kind::Warning, warning);
         }
         if let Some(mismatch) = &summary.mismatch {
-            reporter.say(
-                Kind::Warning,
-                interface_after_install(mismatch, &folder_name),
-            );
+            reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
         }
         if let Some(status) = forever.as_ref() {
             let (kind, text) = forever_message(status);
@@ -1430,8 +1382,19 @@ fn install_summary(
     warnings: &mut Vec<String>,
 ) -> InstallSummary {
     warnings.extend(installed.warnings.iter().cloned());
-    let dependencies = installed_dependencies(engine, &installed.folders, warnings);
-    let mismatch = installed_mismatch(engine, installed.folders.first());
+    let checks = engine.check_installed(&installed.folders);
+    warnings.extend(checks.warnings.iter().cloned());
+    warnings.extend(
+        checks
+            .dependencies
+            .iter()
+            .filter_map(AddonDependencies::warning),
+    );
+    let InstalledChecks {
+        dependencies,
+        mismatch,
+        ..
+    } = checks;
     let addon = serde_json::json!({
         "name": installed.name,
         "version": installed.version,
@@ -1705,10 +1668,7 @@ fn add_zip(
     }
     reporter.say(Kind::Success, summary.line);
     if let Some(mismatch) = &summary.mismatch {
-        reporter.say(
-            Kind::Warning,
-            interface_after_install(mismatch, &folder_name),
-        );
+        reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
     }
     Ok(())
 }
@@ -2390,10 +2350,7 @@ fn import_command(
             .iter()
             .filter_map(|item| item.interface_mismatch.as_ref())
         {
-            reporter.say(
-                Kind::Warning,
-                interface_after_install(mismatch, &folder_name),
-            );
+            reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
         }
         let counts: Vec<String> = [
             (Outcome::Installed, "installed"),

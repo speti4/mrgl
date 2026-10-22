@@ -379,6 +379,22 @@ pub fn preferences_answer(
     }
 }
 
+/// The theme the native window takes for a theme preference (task 079), so the title bar matches the
+/// page: `light` and `dark` set it, `auto` (and anything else) leaves the system's, `None`.
+pub fn native_theme(theme: &str) -> Option<tauri::Theme> {
+    match theme {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    }
+}
+
+/// Gives the window the native theme of a theme preference, at start and on every change of it. A theme
+/// the platform cannot set is no error: the title bar keeps the system's, the page is drawn all the same.
+pub fn apply_native_theme(window: &tauri::WebviewWindow, theme: &str) {
+    let _ = window.set_theme(native_theme(theme));
+}
+
 /// The preferences of this process.
 #[tauri::command]
 pub fn preferences() -> PreferencesAnswer {
@@ -389,9 +405,11 @@ pub fn preferences() -> PreferencesAnswer {
 }
 
 /// Stores the given preferences in `config.json` (a missing one stays as it is) and answers with them as
-/// they apply; the error is the message that says why nothing was stored.
+/// they apply; the error is the message that says why nothing was stored. The window takes the theme as
+/// it applies ([`apply_native_theme`], task 079).
 #[tauri::command]
 pub fn set_preferences(
+    window: tauri::WebviewWindow,
     theme: Option<String>,
     serious: Option<bool>,
 ) -> Result<PreferencesAnswer, Message> {
@@ -404,10 +422,9 @@ pub fn set_preferences(
                 format!("preferences not saved: {error}"),
             )
         })?;
-    Ok(preferences_answer(
-        std::env::var_os(core_voice::SERIOUS_ENV).as_deref(),
-        stored,
-    ))
+    let answer = preferences_answer(std::env::var_os(core_voice::SERIOUS_ENV).as_deref(), stored);
+    apply_native_theme(&window, &answer.theme);
+    Ok(answer)
 }
 
 /// The engine of a flavor of this process's game root, or the message that says why there is none.
@@ -718,6 +735,26 @@ mod tests {
         assert!(!answer.serious);
         assert_eq!(answer.serious_source, "default");
         assert_eq!(answer.stored.theme, None);
+    }
+
+    #[test]
+    fn the_window_takes_the_theme_the_preference_applies() {
+        // Task 079: the native title bar follows the page's theme, `auto` leaves the system's.
+        let theme_of = |stored: Option<&str>| {
+            let answer = preferences_answer(
+                None,
+                home::Preferences {
+                    theme: stored.map(str::to_string),
+                    serious: None,
+                },
+            );
+            native_theme(&answer.theme)
+        };
+        assert_eq!(theme_of(Some("light")), Some(tauri::Theme::Light));
+        assert_eq!(theme_of(Some("dark")), Some(tauri::Theme::Dark));
+        assert_eq!(theme_of(Some("auto")), None);
+        assert_eq!(theme_of(None), None, "no stored theme is auto");
+        assert_eq!(native_theme("sepia"), None, "an unknown theme is auto");
     }
 
     #[test]

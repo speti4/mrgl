@@ -55,6 +55,15 @@ impl InterfaceMismatch {
             self.build
         )
     }
+
+    /// The warning after an install whose addon names no interface of the flavor's build: the line, the
+    /// flavor folder, and that the zip may be for another flavor.
+    pub fn after_install_line(&self, folder_name: &str) -> String {
+        format!(
+            "{} of {folder_name}; the zip may be for another flavor",
+            self.line()
+        )
+    }
 }
 
 /// An addon whose loaded TOC names the build's major version, but only interface numbers below the

@@ -7012,3 +7012,21 @@ fn list_json_into_a_reader_that_closes_early_ends_quietly_with_exit_0() {
     assert!(!stderr.contains("panicked"), "{stderr}");
     assert_eq!(stderr, "", "nothing is said about the closed pipe");
 }
+
+/// Task 079: `mrgl.exe` carries the workspace version in its file properties, the `VS_VERSION_INFO`
+/// resource `build.rs` writes next to the icon, read back from the built exe by the core's own PE reader.
+#[cfg(all(windows, target_env = "msvc"))]
+#[test]
+fn the_exe_carries_the_workspace_version_in_its_properties() {
+    let number = |text: &str| text.parse::<u32>().expect("a version number");
+    let expected = mrgl_core::flavor::BuildVersion {
+        major: number(env!("CARGO_PKG_VERSION_MAJOR")),
+        minor: number(env!("CARGO_PKG_VERSION_MINOR")),
+        patch: number(env!("CARGO_PKG_VERSION_PATCH")),
+        build: 0,
+    };
+    let read = mrgl_core::pe::read_file_version(Path::new(env!("CARGO_BIN_EXE_mrgl")))
+        .expect("the exe has a version resource");
+    assert_eq!(read, expected);
+    assert_eq!(mrgl_core::VERSION, env!("CARGO_PKG_VERSION"), "one version");
+}

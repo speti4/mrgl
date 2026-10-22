@@ -140,6 +140,8 @@ impl LastCheck {
                     state: kept.state,
                     latest: kept.latest.clone(),
                     detail: kept.detail.clone(),
+                    // A kept answer has no current release to order against (task 077).
+                    order: None,
                     pick: None,
                 })
             })
@@ -201,6 +203,7 @@ mod tests {
             state,
             latest: None,
             detail: Some("the repository is gone (404)".to_string()),
+            order: None,
             pick: None,
         }
     }

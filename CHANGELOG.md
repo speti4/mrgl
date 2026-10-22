@@ -18,6 +18,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 ### M2 Window MVP
 
 - The window's cached view: the Forever build signal walks the releases like the resolve, and the last online answer is kept ([078](https://github.com/speti4/mrgl/blob/main/tasks/done/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md))
+- Window and exe polish after the first release: the checks after an update, the title bar theme, the CLI exe's version ([079](https://github.com/speti4/mrgl/blob/main/tasks/done/079-window-and-exe-polish-after-the-first-release.md))
 
 ### M3 Toolbox
 

@@ -145,6 +145,8 @@ impl Stub {
             "github:Example/Broken" => Some(("3.1.0", "no-addon.zip")),
             "github:Example/Several" => Some(("2.1.0", "several-folders-2.1.0.zip")),
             "github:Example/Wrapped" => Some(("4.0.0", "wrapped-4.0.0.zip")),
+            "github:Example/Needy" => Some(("1.0.0", "needs-library-1.0.0.zip")),
+            "github:Example/Stale" => Some(("1.0.0", "stale-interface-1.0.0.zip")),
             _ => None,
         }
     }
@@ -702,4 +704,70 @@ fn a_source_gone_stays_on_its_row_across_a_mark_and_a_restart() {
     assert_eq!(back, Some((UpdateState::UpToDate, "up to date")));
     let view = list::flavor_view(flavor, Some(&home), &[]);
     assert_ne!(gone_of(&view), gone, "nothing kept once the source answers");
+}
+
+#[test]
+fn an_update_reports_the_dependency_and_interface_checks() {
+    // Task 079: the checks the command line's install summary reports, after the window's update.
+    let game = Game::new("checks");
+    let engine = game.engine();
+    for (zip, source) in [
+        ("needs-library-1.0.0.zip", "github:Example/Needy"),
+        ("stale-interface-1.0.0.zip", "github:Example/Stale"),
+    ] {
+        engine
+            .install(
+                &zips().join(zip),
+                &Metadata {
+                    source: source.to_string(),
+                    version: Some("0.9.0".to_string()),
+                    name: None,
+                    nolib: None,
+                },
+            )
+            .unwrap_or_else(|error| panic!("installing {zip}: {error}"));
+    }
+    let (answer, _) = run_with(&game, &Stub::new(), Plan::One("NeedsLibrary".into()), None);
+    let warnings: Vec<&str> = answer
+        .messages
+        .iter()
+        .filter(|message| message.kind == "warning")
+        .map(|message| message.plain.as_str())
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            // The embedded-only library counts as missing since task 076.
+            "NeedsLibrary needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside NeedsLibrary, and the client does not count a library inside an addon's own folder)"
+        ],
+        "{:?}",
+        answer.messages
+    );
+    assert_eq!(last_plain(&answer), "1 addon updated");
+    let needy = answer
+        .flavor
+        .as_ref()
+        .expect("the flavor")
+        .addons
+        .iter()
+        .find(|row| row.folder == "NeedsLibrary")
+        .expect("the row");
+    assert_eq!(needy.version.as_deref(), Some("1.0.0"));
+    assert_eq!(needy.missing, ["LibEmbedded", "LibMissing"]);
+
+    let (answer, _) = run_with(
+        &game,
+        &Stub::new(),
+        Plan::One("StaleInterface".into()),
+        None,
+    );
+    let warning = answer
+        .messages
+        .iter()
+        .find(|message| message.kind == "warning")
+        .expect("the interface warning");
+    assert_eq!(
+        warning.plain,
+        "StaleInterface: interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor"
+    );
 }

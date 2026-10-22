@@ -106,7 +106,13 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `savedvars-clean` document. Its `build.rs` (task 012) gives `mrgl.exe` the window's icon as a Windows
   resource, with the standard library alone: it rewrites `crates/mrgl-app/icons/icon.ico` as a compiled
   resource file (`.res`, one `RT_ICON` per image and the `RT_GROUP_ICON` that lists them) and passes it to
-  the MSVC linker, which takes a `.res` as an input file; other targets skip it.
+  the MSVC linker, which takes a `.res` as an input file; other targets skip it. The same `.res` carries the
+  version resource (task 079): an `RT_VERSION` whose `VS_VERSION_INFO` block holds the package's version,
+  the workspace one, as `major.minor.patch.0` in `VS_FIXEDFILEINFO` (the prerelease flag set for a version
+  with a suffix) and as written in `Cargo.toml` in the `FileVersion` and `ProductVersion` strings, next to
+  `FileDescription`, `InternalName`, `OriginalFilename` and `ProductName`, in one US English Unicode string
+  table; so the exe's properties show the version, as the app exe's do through `tauri-build`. A test of
+  `tests/cli.rs` reads it back from the built exe with the core's PE reader (`pe::read_file_version`).
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`: the IPC commands in
   `commands.rs`, the flavor list in `list.rs`, task 009; the update check, the updates and the row marks in
   `actions.rs`, task 010; a flavor's addon sets and SavedVariables in `toolbox.rs`, task 074), the static UI
@@ -562,7 +568,12 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   updated; the answers the cache cannot give again are kept in `last-check.json` for the next list, task
   078, and a file that cannot be written is a warning) and the warnings, then the summary, `UpdateCheck::summary` of the core, which the command line
   shares (`checked _forever_: 1 update available, 2 up to date`, `2 addons updated, 1 failed, 1 up to
-  date`). One run at a time: a second one is refused with a warning. A flavor without an AddOns folder
+  date`). After each install the run reports the checks the command line's install summary reports
+  (task 079, `Engine::check_installed`, shared with it): a missing required dependency of the installed
+  folders (`NeedsLibrary needs the missing dependency LibMissing: install it or the addon does not load`)
+  and an interface of the primary folder that is not for the build (`… of _forever_; the zip may be for
+  another flavor`), each a warning of the answer; the row, read again, carries the dependency in its
+  `missing`. One run at a time: a second one is refused with a warning. A flavor without an AddOns folder
   answers that the client has not been started for it yet. The window's "Check for updates" is the check
   alone; "Update all" and a row's "Update" run the check first, so they never install on an old answer.
 - `cancel_update`: asks the run going to stop. The cancel rule: the flag is read before each addon of the
@@ -579,7 +590,10 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   window cannot override `MRGL_SERIOUS`), and what `config.json` stores (`theme`, `serious`, next to
   `root`). The view reads them at start, writes a toggle's change at once, and carries an old
   `localStorage` value over once for a key the file does not have, then removes the old keys; a cleared
-  web view draws what the file says. Each writer of `config.json` sets only its own keys and keeps the
+  web view draws what the file says. The native window follows the theme too (task 079), so the title bar
+  matches the page: at start (the `setup` hook of `lib.rs`) and on every `set_preferences`, `light` and
+  `dark` set the window's theme (`WebviewWindow::set_theme`) and `auto` leaves the system's
+  (`commands::native_theme`); a light page on a dark system has a light title bar. Each writer of `config.json` sets only its own keys and keeps the
   others, so `mrgl root` keeps the preferences and the window keeps the root.
 - `toolbox` (task 074, `toolbox::load`): a flavor's toolbox, read only. Its sets from
   `<home>\<flavor-id>\sets.json` (`sets::read_sets_at`: each set's name, save time, enabled and disabled
@@ -703,7 +717,7 @@ does not move with the pin.
 `mrgl import lists\forever-starter.json --flavor forever` works from the unpacked zip without the repo (task
 012); both exes carry the murloc icon ([The UI](#the-ui)). The version is
 the workspace `Cargo.toml` one, the only place it is written: `tauri-build` stamps it into the app exe's
-properties and both exes print it. Next to the zip it writes `SHA256SUMS.txt` (the zip's SHA-256 in the
+properties, the CLI's `build.rs` into `mrgl.exe`'s (task 079), and both exes print it. Next to the zip it writes `SHA256SUMS.txt` (the zip's SHA-256 in the
 `sha256sum -c` format) and `release-notes-<version>.md`. The license page comes from
 [cargo-about](https://github.com/EmbarkStudios/cargo-about) over the crates compiled into the exes (it reads
 the graph through `cargo metadata`, which wants the sources of every platform's crates, so the script runs
