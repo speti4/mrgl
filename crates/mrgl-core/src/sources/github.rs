@@ -191,7 +191,7 @@ pub fn flavor_keys(target: &Target) -> Vec<&'static str> {
 }
 
 /// Every flavor suffix an asset name can end with; a retail zip ends with none of them.
-const FLAVOR_SUFFIXES: [&str; 12] = [
+pub(crate) const FLAVOR_SUFFIXES: [&str; 12] = [
     "forever", "camelot", "mainline", "standard", "classic", "vanilla", "mists", "cata", "wrath",
     "wotlkc", "bcc", "tbc",
 ];

@@ -158,6 +158,13 @@ a linked addon or a junction mrgl did not make. The command line reports every i
 (the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
 interface checks).
 
+The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
+request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
+`BigWigs_Core` and `BigWigs_Options`); else the folder named after the zip's stem without its version and
+flavor suffix (`DBM-Core` for `DBM-Core-12.0.11-classic.zip`), else after the repository of a `github:`
+source, both ASCII case-insensitive (task 065); else the first folder by name. A source install of an addon
+the sidecar has from that source keeps the name it is recorded under.
+
 The update check (task 006) is `update::check` in the core: every managed addon of the sidecar (or the one
 a name or a folder names) against its source's current release on the addon's own channel, one
 `UpdateState` each, read-only. `up-to-date`: the release's version is the installed one. `update-available`:
@@ -597,7 +604,8 @@ a folder per URL the source asks, the release lists as the API writes them and `
 shape the BigWigs packager writes, `forever` next to other flavors, one without metadata, one repository
 without `release.json`, one with no release, one with a draft and a prerelease above the stable release),
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
-one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
+one addon folder in three versions, several folders in one archive, several whose core is not the first by
+name and no folder extended by the others (`boss-core-5.0.0.zip`, task 065), a TOC at the zip's root, a wrapper
 folder, a TOC with an interface for another build, a path that tries to escape the staging folder, an addon
 with an embedded and a missing required dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
