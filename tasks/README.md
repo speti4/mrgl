@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 8 backlog (0 ready · 0 blocked · 2 waiting · 6 ideas) · 0 in progress · 70 done · 3 dropped · 5 decisions
+**State:** 11 backlog (0 ready · 0 blocked · 2 waiting · 9 ideas) · 2 in progress · 65 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -40,12 +40,20 @@ _none_
 
 ### Ideas
 
-#### M3 Toolbox
+#### M1 Core + CLI
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 085 | [The window's toolbox undoes an apply, edits a set and names the account](backlog/085-window-toolbox-undo-edit-and-account.md) | M | 2026-10-22 |
-| 086 | [One summary line of set apply and savedvars in the core, shared by the command …](backlog/086-one-set-and-savedvars-summary-in-the-core.md) | S | 2026-10-22 |
+| 082 | [An install and an update report the whole interface check: out of date next to …](backlog/082-install-and-update-report-the-interface-check.md) | S | 2026-10-22 |
+| 083 | [A reinstall of the installed version says it was reinstalled, not updated from …](backlog/083-a-reinstall-of-the-installed-version-says-so.md) | S | 2026-10-22 |
+| 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](backlog/084-stale-staging-folders-are-swept.md) | S | 2026-10-22 |
+| 087 | [The command line's update check writes the last-check file the window reads](backlog/087-cli-update-check-writes-the-last-check-file.md) | S | 2026-10-22 |
+
+#### M2 Window MVP
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 081 | [The window's rows show the interface states scan and list mark](backlog/081-window-rows-show-the-interface-states.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
@@ -68,7 +76,12 @@ _none_
 
 ### In progress
 
-_none_
+#### M3 Toolbox
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 085 | [The window's toolbox undoes an apply, edits a set and names the account](wip/085-window-toolbox-undo-edit-and-account.md) | 2026-10-22 | `none` |
+| 086 | [One summary line of set apply and savedvars in the core, shared by the command …](wip/086-one-set-and-savedvars-summary-in-the-core.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
@@ -82,18 +95,18 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
-| 087 | [The command line's update check writes the last-check file the window reads](done/087-cli-update-check-writes-the-last-check-file.md) | 2026-10-22 |
-| 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](done/084-stale-staging-folders-are-swept.md) | 2026-10-22 |
-| 083 | [A reinstall of the installed version says it was reinstalled, not updated from …](done/083-a-reinstall-of-the-installed-version-says-so.md) | 2026-10-22 |
-| 082 | [An install and an update report the whole interface check: out of date next to …](done/082-install-and-update-report-the-interface-check.md) | 2026-10-22 |
-| 081 | [The window's rows show the interface states scan and list mark](done/081-window-rows-show-the-interface-states.md) | 2026-10-22 |
 | 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](done/080-housekeeping-after-wave-5.md) | 2026-10-22 |
 | 079 | [Window and exe polish after the first release: the checks after an update, the …](done/079-window-and-exe-polish-after-the-first-release.md) | 2026-10-22 |
 | 078 | [The window's cached view: the Forever build signal walks the releases like the …](done/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | 2026-10-22 |
 | 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](done/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | 2026-10-22 |
 | 076 | [The dependency and interface checks say what the client says: an embedded-only …](done/076-the-checks-say-what-the-client-says.md) | 2026-10-22 |
+| 075 | [The CLI's output survives a closed pipe](done/075-cli-output-survives-a-closed-pipe.md) | 2026-10-22 |
+| 074 | [The window's toolbox: a set switch and a SavedVariables view](done/074-window-toolbox-sets-and-savedvariables.md) | 2026-10-22 |
+| 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](done/073-addon-sets-undo-edit-and-account.md) | 2026-10-22 |
+| 072 | [GitHub cache housekeeping: stale per-tag release.json files and the old single …](done/072-github-cache-housekeeping.md) | 2026-10-22 |
+| 071 | [Fold the duplicates: one WTF walker, one size formatter, no dead error variant](done/071-fold-the-duplicated-helpers.md) | 2026-10-22 |
 
-_60 more in `done/`._
+_55 more in `done/`._
 
 ### Decisions
 
