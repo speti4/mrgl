@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 14 backlog (0 ready · 0 blocked · 4 waiting · 10 ideas) · 0 in progress · 78 done · 5 dropped · 6 decisions
+**State:** 15 backlog (0 ready · 0 blocked · 4 waiting · 11 ideas) · 0 in progress · 80 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -64,11 +64,12 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 094 | [The WoWInterface source](backlog/094-the-wowinterface-source.md) | M | 2026-10-22 |
-| 095 | [The Wago source](backlog/095-the-wago-source.md) | M | 2026-10-22 |
 | 097 | [Adopt, the report: what source each unmanaged addon of a folder has](backlog/097-adopt-the-report-of-the-sources-of-an-addons-folder.md) | M | 2026-10-22 |
 | 098 | [Adopt --apply: sidecar entries without a reinstall, and the .curseclient guard](backlog/098-adopt-apply-writes-sidecar-entries-without-a-reinstall.md) | M | 2026-10-22 |
 | 101 | [The update check stops per source at a rate limit, not as a whole](backlog/101-the-update-check-stops-per-source-at-a-rate-limit.md) | S | 2026-10-22 |
+| 104 | [A WoWInterface file waiting for approval is a state of its own in the update ch…](backlog/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md) | S | 2026-10-22 |
+| 105 | [A Wago page address resolves to its wago:<id> through the keyless slugs list](backlog/105-a-wago-page-address-resolves-to-its-id.md) | S | 2026-10-22 |
+| 106 | [The Wago update check asks for its addons in bulk, one request per game version](backlog/106-the-wago-update-check-asks-in-bulk.md) | S | 2026-10-22 |
 
 #### M5 Trust
 
@@ -100,6 +101,8 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 095 | [The Wago source](done/095-the-wago-source.md) | 2026-10-22 |
+| 094 | [The WoWInterface source](done/094-the-wowinterface-source.md) | 2026-10-22 |
 | 093 | [API keys: one place to set, read and name them](done/093-api-keys-one-place-to-set-read-and-name-them.md) | 2026-10-22 |
 | 092 | [One source per spec: the router, the spec forms and the generic paths](done/092-one-source-per-spec-the-router-and-the-generic-paths.md) | 2026-10-22 |
 | 091 | [The remaining toolbox lines move into the core: the set list note, the not-inst…](done/091-the-remaining-toolbox-lines-move-into-the-core.md) | 2026-10-22 |
@@ -108,10 +111,8 @@ _none_
 | 088 | [The doctor names a staging folder kept for its previous\ folders](done/088-doctor-names-a-staging-folder-kept-for-its-previous-folders.md) | 2026-10-22 |
 | 087 | [The command line's update check writes the last-check file the window reads](done/087-cli-update-check-writes-the-last-check-file.md) | 2026-10-22 |
 | 086 | [One summary line of set apply and savedvars in the core, shared by the command …](done/086-one-set-and-savedvars-summary-in-the-core.md) | 2026-10-22 |
-| 085 | [The window's toolbox undoes an apply, edits a set and names the account](done/085-window-toolbox-undo-edit-and-account.md) | 2026-10-22 |
-| 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](done/084-stale-staging-folders-are-swept.md) | 2026-10-22 |
 
-_68 more in `done/`._
+_70 more in `done/`._
 
 ### Decisions
 

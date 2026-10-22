@@ -1,0 +1,16 @@
+[
+ {
+  "UID": "1003",
+  "UICATID": "21",
+  "UIVersion": "1.1.0",
+  "UIDate": 1785000000000,
+  "UIMD5": "5f4dcc3b5aa765d61d8327deb882cf99",
+  "UIFileName": "MrglPending-1.1.0.zip",
+  "UIDownload": "https://cdn.wowinterface.com/downloads/getfile.php?id=1003&d=1785000000&minion",
+  "UIPending": "1",
+  "UIName": "Mrgl Pending",
+  "UIAuthorName": "mrgl fixtures",
+  "UIDescription": "A made-up project of the mrgl fixtures.",
+  "UIChangeLog": "## 1.1.0\r\n- a made-up change\r\n"
+ }
+]

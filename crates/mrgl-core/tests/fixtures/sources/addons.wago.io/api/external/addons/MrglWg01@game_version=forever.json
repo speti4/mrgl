@@ -1,0 +1,19 @@
+{
+ "id": "MrglWg01",
+ "slug": "mrgl-wago-one",
+ "display_name": "Mrgl Wago One",
+ "website_url": "https://example.invalid/mrgl",
+ "recent_release": {
+  "stable": {
+   "label": "2.0.0",
+   "download_link": "https://addons.wago.io/downloads/MrglWg01/2.0.0-forever.zip",
+   "created_at": "2026-10-01T10:00:00Z",
+   "supported_forever_patches": [
+    "1.60.1"
+   ],
+   "changelog": "## 2.0.0\r\n- made up for Forever"
+  },
+  "beta": null,
+  "alpha": null
+ }
+}

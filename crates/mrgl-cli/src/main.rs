@@ -42,7 +42,7 @@ use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sets::{self, AddonSet};
-use mrgl_core::sources::{self, Channel, Source, SourceSpec, Sources, Target};
+use mrgl_core::sources::{self, Channel, Source, SourceKind, SourceSpec, Sources, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
 use mrgl_core::update::{self, CheckProgress, SummaryOf, UpdateState};
 use mrgl_core::voice::{Kind, Voice};
@@ -1240,12 +1240,10 @@ fn forever_note(status: &ForeverStatus) -> Option<String> {
 
 /// Task 011: the Forever line of an `add`, after the pick: the derived build signal and the curated note.
 /// A success when the source publishes a Forever build and no note applies, a warning otherwise.
-fn forever_message(status: &ForeverStatus) -> (Kind, String) {
-    let why = match status.build {
-        ForeverBuild::Yes => "release.json names forever",
-        ForeverBuild::No => "release.json names no forever flavor",
-        ForeverBuild::Unknown => "no release.json says",
-    };
+fn forever_message(status: &ForeverStatus, source: &str) -> (Kind, String) {
+    // Each source says it its own way (task 094): GitHub by `release.json`, WoWInterface by its list.
+    let kind = SourceSpec::parse(source).map_or(SourceKind::GitHub, |spec| spec.kind());
+    let why = sources::forever_why(kind, status.build);
     let mut text = format!("forever build: {} ({why})", status.build);
     if let Some(note) = forever_note(status) {
         text.push_str(&format!("; note: {note}"));
@@ -1452,7 +1450,7 @@ fn add_command(
         }
         summary.say_interface(reporter, &folder_name);
         if let Some(status) = forever.as_ref() {
-            let (kind, text) = forever_message(status);
+            let (kind, text) = forever_message(status, &pick.source);
             reporter.say(kind, text);
         }
         reporter.say(kind, summary.line);
@@ -1499,7 +1497,7 @@ fn add_command(
         }
         say_release_notes(reporter, &pick);
         if let Some(status) = forever.as_ref() {
-            let (kind, text) = forever_message(status);
+            let (kind, text) = forever_message(status, &pick.source);
             reporter.say(kind, text);
         }
         reporter.say(Kind::Nothing, "dry run: nothing installed");
@@ -3643,28 +3641,28 @@ mod tests {
     #[test]
     fn the_forever_line_names_the_build_and_the_note() {
         assert_eq!(
-            forever_message(&status(ForeverBuild::Yes, false, false)),
+            forever_message(&status(ForeverBuild::Yes, false, false), "github:o/r"),
             (
                 Kind::Success,
                 "forever build: yes (release.json names forever)".to_string()
             )
         );
         assert_eq!(
-            forever_message(&status(ForeverBuild::Unknown, false, false)),
+            forever_message(&status(ForeverBuild::Unknown, false, false), "github:o/r"),
             (
                 Kind::Warning,
                 "forever build: unknown (no release.json says)".to_string()
             )
         );
         assert_eq!(
-            forever_message(&status(ForeverBuild::Yes, true, false)),
+            forever_message(&status(ForeverBuild::Yes, true, false), "github:o/r"),
             (
                 Kind::Warning,
                 "forever build: yes (release.json names forever); note: threat colors are off (verified 2026-06-01, https://example.test/note)".to_string()
             )
         );
         assert_eq!(
-            forever_message(&status(ForeverBuild::No, true, true)).1,
+            forever_message(&status(ForeverBuild::No, true, true), "github:o/r").1,
             "forever build: no (release.json names no forever flavor); note: threat colors are off (verified 2026-06-01, stale: older than 90 days, https://example.test/note)"
         );
     }

@@ -240,6 +240,12 @@ pub struct BudgetStop {
     pub not_checked: usize,
     /// How to get a larger limit.
     pub hint: String,
+    /// The limit's window after the count ([`RequestBudget::window`]), not in the JSON.
+    #[serde(skip)]
+    pub window: &'static str,
+    /// When the limit resets, in words, without a reset time ([`RequestBudget::resets`]), not in the JSON.
+    #[serde(skip)]
+    pub resets: &'static str,
 }
 
 impl BudgetStop {
@@ -251,6 +257,8 @@ impl BudgetStop {
             reset: budget.reset,
             not_checked,
             hint: budget.hint,
+            window: budget.window,
+            resets: budget.resets,
         }
     }
 
@@ -265,11 +273,11 @@ impl BudgetStop {
                 "the limit resets at {} (local time)",
                 crate::sources::local_time_text(reset)
             ),
-            None => "the limit resets within the hour".to_string(),
+            None => format!("the limit resets {}", self.resets),
         };
         format!(
-            "stopped the check before {}'s rate limit of {} requests an hour without a token: {addons} not checked, {reset}; {}",
-            self.host, self.limit, self.hint
+            "stopped the check before {}'s rate limit of {} requests{}: {addons} not checked, {reset}; {}",
+            self.host, self.limit, self.window, self.hint
         )
     }
 }
@@ -887,6 +895,8 @@ mod tests {
             reset: None,
             not_checked: 1,
             hint: "set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour".into(),
+            window: " an hour without a token",
+            resets: "within the hour",
         };
         assert_eq!(
             stop.line(),

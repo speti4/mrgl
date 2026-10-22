@@ -19,6 +19,8 @@ thiserror.workspace = true
 # zips of task 013 are written and read back with the same zip crate.
 zip.workspace = true
 sha2.workspace = true
+# The WoWInterface source checks a download against the MD5 its API names (task 094).
+md-5.workspace = true
 # The GitHub source reads the releases API and downloads an asset (task 003); a test never uses it, the
 # folder-backed stub of `sources` stands in.
 ureq.workspace = true

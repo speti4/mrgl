@@ -36,6 +36,26 @@ BOM in a fixture survives every checkout.
   `releases.json.headers`, the `Link` header to `releases.page-2.json`, whose first release is the stable
   `v1.0.0` with a `release.json` that names `forever`; the folder stub serves a `page` above 1 from
   `<answer>.page-<n>.json` and adds the lines of a `<answer>.headers` file to the answer's headers.
+- `sources/` — the answers of the WoWInterface (task 094) and the Wago (task 095) sources, laid out like
+  `releases/`. WoWInterface:
+  `api.mmoui.com/v3/game/WOW/filedetails/<id>.json` per project (an array of one, as the API answers) and a
+  trimmed `filelist.json` with the compatibility lists and the folders, and the files behind the download
+  addresses under `cdn.wowinterface.com/downloads/`, named by the stub's query mapping
+  (`getfile.php@d=1785000000&id=<id>&minion`). `1001` (`MrglCompat`) lists retail, Classic Era and
+  Cataclysm Classic, `1002` (`MrglNoList`) lists nothing, `1003` (`MrglPending`) waits for approval and has
+  no file, `1004` (`MrglBadSum`) names an MD5 its file does not have, `1005` (`MrglForever`) lists a
+  made-up Forever version, `1006` is in the file list alone with two folders. Every name is made up; the
+  files are stored zips written by `zips/make-zips.py`, so the MD5 the answers name does not depend on the
+  zlib at hand. Wago: `addons.wago.io/api/external/addons/<id>@game_version=<v>.json`, one answer per game
+  version through the stub's query mapping, in the shape of the external API's (`recent_release` with
+  `stable`, `beta`, `alpha`, each with `label`, `download_link`, `created_at`, `supported_<v>_patches`):
+  `MrglWg01` has a Forever and a retail release with a stored zip behind each
+  (`downloads/MrglWg01/2.0.0-forever.zip` and `-retail.zip`, one `MrglWagoOne` folder with the flavor's
+  interface), `MrglWg02` answers for Forever without a release, `MrglWg03` has the three stabilities for
+  retail, a beta and an alpha for Forever and a stable release for `mop`, `MrglWg04` answers 401 and
+  `MrglWg05` 200 with no request left (each through a `.headers` file);
+  `api/data/slugs@game_version=forever.json` is the keyless slug list, naming `MrglWg01`, `MrglWg03` and
+  `MrglWg05`. Every id, slug and name is made up.
 - `zips/*.zip` — small archives for the install engine (task 004), written by `zips/make-zips.py` (fixed
   timestamps and entry order, so a rerun changes no byte; `python -I` it after editing a shape): one addon
   folder in three versions (`one-folder-1.0.0` with `old.lua`, `1.1.0` with `new.lua` instead, `1.2.0`),

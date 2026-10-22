@@ -578,6 +578,7 @@ impl mrgl_core::sources::Source for OneZip {
             asset: "One-forever.zip".to_string(),
             url: "https://github.test/One-forever.zip".to_string(),
             size: None,
+            md5: None,
             flavor: "forever".to_string(),
             interface: Some(16001),
             guess: false,

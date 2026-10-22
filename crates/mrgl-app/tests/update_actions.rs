@@ -175,6 +175,7 @@ impl Source for Stub {
             asset: zip.to_string(),
             url: format!("https://example.invalid/{zip}"),
             size: None,
+            md5: None,
             flavor: "forever".to_string(),
             interface: Some(16001),
             guess: false,
@@ -203,6 +204,8 @@ impl Source for Stub {
             reset: None,
             hint: "set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour"
                 .to_string(),
+            window: " an hour without a token",
+            resets: "within the hour",
         })
     }
 }

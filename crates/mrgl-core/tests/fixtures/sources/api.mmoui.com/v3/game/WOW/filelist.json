@@ -1,0 +1,83 @@
+[
+ {
+  "UID": "1001",
+  "UIVersion": "v2.0.0",
+  "UIName": "Mrgl Compat",
+  "UIFileInfoURL": "https://www.wowinterface.com/downloads/info1001-MrglCompat.html",
+  "UICompatibility": [
+   {
+    "version": "12.0.7",
+    "name": "Made-up Patch"
+   },
+   {
+    "version": "1.15.7",
+    "name": "Classic"
+   },
+   {
+    "version": "4.4.2",
+    "name": "Cataclysm Classic"
+   }
+  ],
+  "UIDir": [
+   "MrglCompat"
+  ]
+ },
+ {
+  "UID": "1002",
+  "UIVersion": "1.0.0",
+  "UIName": "Mrgl No List",
+  "UIFileInfoURL": "https://www.wowinterface.com/downloads/info1002-MrglNoList.html",
+  "UICompatibility": null,
+  "UIDir": [
+   "MrglNoList"
+  ]
+ },
+ {
+  "UID": "1004",
+  "UIVersion": "1.0.0",
+  "UIName": "Mrgl Bad Sum",
+  "UICompatibility": [
+   {
+    "version": "12.0.7",
+    "name": "Made-up Patch"
+   }
+  ],
+  "UIDir": [
+   "MrglBadSum"
+  ]
+ },
+ {
+  "UID": "1005",
+  "UIVersion": "3.1.0",
+  "UIName": "Mrgl Forever",
+  "UIFileInfoURL": "https://www.wowinterface.com/downloads/info1005-MrglForever.html",
+  "UICompatibility": [
+   {
+    "version": "1.60.1",
+    "name": "Made-up Forever Patch"
+   },
+   {
+    "version": "1.15.7",
+    "name": "Classic"
+   }
+  ],
+  "UIDir": [
+   "MrglForever"
+  ]
+ },
+ {
+  "UID": "1006",
+  "UIVersion": "0.1",
+  "UIName": "Mrgl Elsewhere",
+  "UICompatibility": [
+   {
+    "version": "11.2.7",
+    "name": "Made-up Patch"
+   }
+  ],
+  "UIDir": [
+   "MrglElsewhere",
+   "MrglElsewhere_Options"
+  ]
+ }
+]

@@ -13,6 +13,8 @@
 
 pub mod github;
 pub mod router;
+pub mod wago;
+pub mod wowinterface;
 
 pub use router::Sources;
 
@@ -394,6 +396,11 @@ pub struct Pick {
     pub url: String,
     /// The asset's size in bytes, when the source says.
     pub size: Option<u64>,
+    /// The asset's MD5 as the source names it, lower-case hex (WoWInterface's `UIMD5`, task 094): the
+    /// download is refused before it is written when its own MD5 differs ([`check_md5`]); `None`, and
+    /// left out of the JSON, when the source names none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
     /// The flavor key the pick rests on: the `release.json` flavor (`forever`, `mainline`, `mists`, …) or
     /// the asset-name suffix the heuristics matched.
     pub flavor: String,
@@ -462,6 +469,61 @@ impl Pick {
             "{} {} ({}, flavor {}{interface}{prerelease}): {}",
             self.source, self.release, self.asset, self.flavor, self.reason
         )
+    }
+}
+
+/// The MD5 of some bytes, lower-case hex (task 094).
+pub fn md5_hex(bytes: &[u8]) -> String {
+    use md5::{Digest, Md5};
+    Md5::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The download of a pick against the MD5 its source names (task 094), before anything writes or opens it:
+/// [`Error::AssetChecksumMismatch`] when they differ, nothing to check when the pick names none.
+pub fn check_md5(pick: &Pick, body: &[u8]) -> Result<()> {
+    let Some(expected) = pick.md5.as_deref() else {
+        return Ok(());
+    };
+    let got = md5_hex(body);
+    if got.eq_ignore_ascii_case(expected) {
+        return Ok(());
+    }
+    Err(Error::AssetChecksumMismatch {
+        spec: pick.source.clone(),
+        release: pick.release.clone(),
+        asset: pick.asset.clone(),
+        expected: expected.to_ascii_lowercase(),
+        got,
+    })
+}
+
+/// The version a release name carries (tasks 003, 094): the name without a leading `v` or `V` when a digit
+/// follows (`v1.2.3` is `1.2.3`, `1.2.3` and `version-1` stay).
+pub fn version_of_tag(tag: &str) -> &str {
+    match tag.strip_prefix('v').or_else(|| tag.strip_prefix('V')) {
+        Some(rest) if rest.starts_with(|c: char| c.is_ascii_digit()) => rest,
+        _ => tag,
+    }
+}
+
+/// Why a source says what it says of the Forever build (tasks 011, 094), for the `forever build:` line: the
+/// GitHub source reads `release.json`, WoWInterface its compatibility list, Wago its releases per game
+/// version (task 095).
+pub fn forever_why(kind: SourceKind, build: ForeverBuild) -> &'static str {
+    match (kind, build) {
+        (SourceKind::WowInterface, ForeverBuild::Yes) => {
+            "WoWInterface lists a Forever compatibility"
+        }
+        (SourceKind::WowInterface, _) => "WoWInterface lists no Forever compatibility",
+        (SourceKind::Wago, ForeverBuild::Yes) => "Wago lists a release for forever",
+        (SourceKind::Wago, ForeverBuild::No) => "Wago lists no release for forever",
+        (SourceKind::Wago, ForeverBuild::Unknown) => "Wago could not say",
+        (_, ForeverBuild::Yes) => "release.json names forever",
+        (_, ForeverBuild::No) => "release.json names no forever flavor",
+        (_, ForeverBuild::Unknown) => "no release.json says",
     }
 }
 
@@ -554,6 +616,13 @@ pub struct RequestBudget {
     pub reset: Option<i64>,
     /// How to get a larger limit, for the message line.
     pub hint: String,
+    /// The limit's window as the message line says it after the count, with its leading space (` an hour
+    /// without a token`), empty when the source does not name one (task 095: Wago).
+    #[serde(skip)]
+    pub window: &'static str,
+    /// When the limit resets, in words, for a stop whose answers named no reset time (`within the hour`).
+    #[serde(skip)]
+    pub resets: &'static str,
 }
 
 /// One HTTP request, as a source issues it: a GET, or a POST with its body ([`Http::post`], task 092).
@@ -1445,6 +1514,59 @@ mod tests {
         ] {
             assert_eq!(unix_from_rfc3339(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn md5_follows_the_rfc_1321_test_suite_and_a_pick_is_checked_against_it() {
+        for (text, md5) in [
+            ("", "d41d8cd98f00b204e9800998ecf8427e"),
+            ("a", "0cc175b9c0f1b6a831c399e269772661"),
+            ("abc", "900150983cd24fb0d6963f7d28e17f72"),
+            ("message digest", "f96b697d7cb7938d525a2f31aaf161d0"),
+            (
+                "abcdefghijklmnopqrstuvwxyz",
+                "c3fcd3d76192e4007dfb496cca67e13b",
+            ),
+        ] {
+            assert_eq!(md5_hex(text.as_bytes()), md5, "{text:?}");
+        }
+        let pick = |md5: Option<&str>| Pick {
+            source: "wowi:1".into(),
+            release: "v1".into(),
+            version: "1".into(),
+            published: None,
+            prerelease: false,
+            asset: "A.zip".into(),
+            url: "https://x.test/a".into(),
+            size: None,
+            md5: md5.map(str::to_string),
+            flavor: "mainline".into(),
+            interface: None,
+            guess: false,
+            reason: String::new(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: ForeverBuild::Unknown,
+            stale: None,
+        };
+        assert!(check_md5(&pick(None), b"anything").is_ok());
+        assert!(check_md5(&pick(Some("900150983CD24FB0D6963F7D28E17F72")), b"abc").is_ok());
+        let error = check_md5(&pick(Some("0cc175b9c0f1b6a831c399e269772661")), b"abc").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "refused A.zip of wowi:1 v1: its MD5 is 900150983cd24fb0d6963f7d28e17f72, the source names 0cc175b9c0f1b6a831c399e269772661; the download was damaged or the file changed, try again"
+        );
+        assert_eq!(version_of_tag("v1.2.3"), "1.2.3");
+        assert_eq!(version_of_tag("version-1"), "version-1");
+        assert_eq!(
+            forever_why(SourceKind::WowInterface, ForeverBuild::Unknown),
+            "WoWInterface lists no Forever compatibility"
+        );
+        assert_eq!(
+            forever_why(SourceKind::GitHub, ForeverBuild::Unknown),
+            "no release.json says"
+        );
     }
 
     #[test]

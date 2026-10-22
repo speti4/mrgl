@@ -30,6 +30,10 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 # SHA-256 of every installed file for the state sidecar's file list (D-003, task 004): a stable hash the
 # repair and rollback of later tasks can compare against; std has no hash function meant for files.
 sha2 = "0.10"
+# The MD5 a WoWInterface download is checked against before the engine opens it (task 094): the API names
+# the file's MD5 and no other hash. RustCrypto's MD5, the family `sha2` comes from, so its `digest` and
+# buffer crates are in the tree already; one small pure Rust crate instead of a hand-rolled MD5.
+md-5 = "0.10"
 # The HTTP client of the sources (task 003): the GitHub releases API and the asset downloads, blocking, with
 # rustls compiled in (no OpenSSL, nothing to install, D-002); std has no HTTP and Tauri's own client belongs to
 # the window. Its `ring` provider compiles C and assembly through the MSVC tools the build already needs.
