@@ -7383,7 +7383,7 @@ fn set_account_picks_a_character_under_two_accounts() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr_last_line(&output),
-        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLSETS), Fixture Realm (MRGLTWO); the same realm is under more than one account: name one with --account"
+        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLSETS), Fixture Realm (MRGLTWO); the same realm is under more than one account: pick the account too, with --account"
     );
     assert_eq!(snapshot(&wtf), before, "nothing was written");
 

@@ -924,12 +924,10 @@ fn one_realm_and_name_under_two_accounts_apply_to_the_chosen_account() {
     let before = snapshot(&game.wtf());
     let ambiguous = game.apply("raid", Some("Mrgltest"), Some("Fixture Realm"));
     assert_eq!(ambiguous.messages[0].kind, "error");
-    assert!(
-        ambiguous.messages[0]
-            .plain
-            .contains("the same realm is under more than one account"),
-        "{}",
-        ambiguous.messages[0].plain
+    assert_eq!(
+        ambiguous.messages[0].plain,
+        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLSETS), Fixture Realm (MRGLTWIN); the same realm is under more than one account: pick the account too",
+        "the core's words, no flag (task 091)"
     );
     assert_eq!(snapshot(&game.wtf()), before, "nothing written");
 
@@ -1082,4 +1080,32 @@ fn the_wtf_writes_are_refused_while_the_stand_in_client_runs() {
     let answer = game.apply_in("raid", Some("Mrgltest"), Some("Fixture Realm"), Some(TWIN));
     assert_eq!(answer.messages.last().expect("a summary").kind, "success");
     assert!(game.clean().zip.is_some());
+}
+
+#[test]
+fn the_set_list_note_reads_as_on_the_command_line() {
+    let game = Game::new("set-note");
+    let path = game.sets_path();
+    let mut file = sets::read_sets_at(&path, &FlavorId::parse("wowf")).expect("the sets");
+    file.sets.remove("solo");
+    sets::write_sets_at(&path, &file).expect("one set left");
+    let note = view(&game.load()).sets_note.clone();
+    assert_eq!(
+        (note.kind, note.plain),
+        (
+            "success",
+            format!("1 set of _forever_ in {}", path.display())
+        )
+    );
+
+    std::fs::remove_file(&path).expect("no sets file");
+    let note = view(&game.load()).sets_note.clone();
+    assert_eq!(
+        (note.kind, note.plain.as_str()),
+        (
+            "nothing",
+            "no sets of _forever_ yet: `mrgl set save <name>` saves one"
+        ),
+        "the line `mrgl set list` prints (task 091)"
+    );
 }

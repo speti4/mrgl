@@ -337,7 +337,9 @@ byte, and `set save <name> --character <name>` takes the set from that one file 
 disagreement). The character is picked from the `WTF` account folders by its folder's name, ignoring case;
 `--realm` narrows a name more than one realm has. A name on two realms without `--realm` is refused with the
 realms listed, and a name no character has with the characters listed; when one realm and name are under
-two accounts the error names the accounts, and `--account <name>` on `save` and `apply` (task 073, with
+two accounts the error names the accounts and asks to pick the account (the core's words name no flag, so
+the window shows them as they are; the command line adds `, with --account`, task 091), and `--account <name>`
+on `save` and `apply` (task 073, with
 `--character`) picks the account folder, ignoring case; an account with no character is refused with the
 accounts listed. The guard of task 023 holds as for every character: nothing is
 written while the client runs. In `mrgl_core::sets` the choice is `Target` (`EveryCharacter`, or
@@ -415,7 +417,9 @@ the toolbox's `sets::Applied::summary` (`mrgl set apply`, the window's set switc
 `` `mrgl savedvars --clean` `` or the window's cleanup) and `savedvars::Cleaned::summary` (`mrgl savedvars
 --clean`, the window's cleanup), task 086, then `sets::Undone::summary` (`mrgl set undo`, the window's
 undo) and `sets::Edited::summary` with its `Edited::not_installed` warning (`mrgl set
-enable|disable|drop`, the window's chips), task 085. A count and its verb agree (`voice::count_noun`: `1 orphan (12 B)
+enable|disable|drop`, the window's chips), task 085, then the set list note `sets::SetsFile::summary`
+(`mrgl set list`, the note under the window's set picker) and the apply's `sets::Applied::not_installed_warning`
+(`mrgl set apply`, the window's set switch), task 091. A count and its verb agree (`voice::count_noun`: `1 orphan (12 B)
 has no addon folder`, `2 orphans (50 B) have …`). The CLI tests and the window's `tests/toolbox.rs` assert
 the same lines.
 
@@ -682,8 +686,9 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
 - `toolbox` (task 074, `toolbox::load`): a flavor's toolbox, read only. Its sets from
   `<home>\<flavor-id>\sets.json` (`sets::read_sets_at`: each set's name, save time, enabled and disabled
   counts and addons, each with its state and whether a folder of its name is under `Interface\AddOns`) with
-  the note under the picker (`2 sets of _forever_ in …`, or that there is none yet, with the hint to
-  `mrgl set save <name>`; saving a set stays on the command line), its characters (`sets::characters`: name,
+  the note under the picker (the core's `SetsFile::summary`, the line `mrgl set list` prints: `2 sets of
+  _forever_ in …`, or that there is none yet, with the hint to `mrgl set save <name>`; saving a set stays on
+  the command line), its characters (`sets::characters`: name,
   realm, the `<realm>/<character>` label and `account`; the account folder's name stays out of the answer,
   as out of the command line's plain lines, unless another account has a character of the same realm and
   name, task 085), `undo` (task 085, `sets::undo_record`: the last apply that changed a file, its set, when
@@ -703,7 +708,7 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   `sets::apply_set_in_account` with its `Target` writes only the files that change. The answer carries the
   toolbox as it is now (its `undo` now this apply), `changes` (per character the lines it changed or added,
   and whether the file is new), the not-installed warning and the summary of `mrgl set apply` (the core's
-  `Applied::summary`: `applied set raid to Second Realm/Grrlwave of _forever_: 3 addon lines changed`, `set
+  `Applied::not_installed_warning` and `Applied::summary`: `applied set raid to Second Realm/Grrlwave of _forever_: 3 addon lines changed`, `set
   raid already matches every character of _forever_ (2 characters), nothing written`).
 - `undo_set` (task 085 over task 073, `toolbox::undo`): the guard first, then `sets::undo_apply`, which puts
   every `AddOns.txt` the last apply replaced back byte for byte and removes the ones it created. The answer

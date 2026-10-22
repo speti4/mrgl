@@ -3005,7 +3005,7 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             let target = set_target(character, realm);
             let saved =
                 sets::save_set_in_account(&flavor, &path, &name, &target, account.as_deref())
-                    .map_err(|error| error.to_string())?;
+                    .map_err(set_error)?;
             warnings.extend(saved.warnings.iter().cloned());
             if reporter.json {
                 reporter.document(serde_json::json!({
@@ -3074,7 +3074,7 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             }
             let applied =
                 sets::apply_set_in_account(&flavor, &path, &name, &target, account.as_deref())
-                    .map_err(|error| error.to_string())?;
+                    .map_err(set_error)?;
             report_applied(reporter, &flavor, &target, &applied, warnings);
         }
         SetAction::Undo { .. } => {
@@ -3130,20 +3130,8 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
                 ));
             }
             warn(&warnings);
-            match file.sets.len() {
-                0 => reporter.say(
-                    Kind::Nothing,
-                    format!("no sets of {folder_name} yet: `mrgl set save <name>` saves one"),
-                ),
-                1 => reporter.say(
-                    Kind::Success,
-                    format!("1 set of {folder_name} in {}", path.display()),
-                ),
-                count => reporter.say(
-                    Kind::Success,
-                    format!("{count} sets of {folder_name} in {}", path.display()),
-                ),
-            }
+            let (kind, note) = file.summary(&path, &folder_name);
+            reporter.say(kind, note);
         }
         SetAction::Show { name, .. } => {
             let (name, set) =
@@ -3256,13 +3244,7 @@ fn report_applied(
         };
         reporter.line(format!("{}: {what}", change.character.label()));
     }
-    if !applied.not_installed.is_empty() {
-        warnings.push(format!(
-            "set {} names addons that are not installed in {folder_name}, their lines are written all the same: {}",
-            applied.name,
-            applied.not_installed.join(", ")
-        ));
-    }
+    warnings.extend(applied.not_installed_warning(&folder_name));
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
     }
@@ -3354,6 +3336,19 @@ fn report_edited(
     }
     let (kind, summary) = edited.summary(&folder_name);
     reporter.say(kind, summary);
+}
+
+/// The error of `set save` and `set apply` as the command line says it: the core's words, and for one
+/// realm and name under two accounts the flag that picks the account after them (task 091; the core's
+/// words name no flag, so the window shows them as they are).
+fn set_error(error: Error) -> String {
+    match &error {
+        Error::AmbiguousCharacter {
+            by: sets::CharacterPick::Account,
+            ..
+        } => format!("{error}, with --account"),
+        _ => error.to_string(),
+    }
 }
 
 /// The target of `--character` and `--realm` (task 027): one character, or every character without them.

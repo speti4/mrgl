@@ -694,7 +694,7 @@ fn one_realm_under_two_accounts_names_the_accounts() {
     .expect_err("ambiguous");
     assert_eq!(
         error.to_string(),
-        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLONE), Fixture Realm (MRGLTWO); the same realm is under more than one account: name one with --account"
+        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLONE), Fixture Realm (MRGLTWO); the same realm is under more than one account: pick the account too"
     );
     let found = sets::find_character_in_account(
         &characters,
@@ -998,7 +998,7 @@ fn one_realm_and_name_under_two_accounts_resolve_with_the_account() {
     assert!(
         error
             .to_string()
-            .ends_with("more than one account: name one with --account"),
+            .ends_with("more than one account: pick the account too"),
         "{error}"
     );
     assert_eq!(snapshot(&wtf_of(&root)), before);
