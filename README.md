@@ -173,9 +173,9 @@ refused before anything opens it. The source needs no key.
 The Wago API needs your own key (`MRGL_WAGO_KEY`, or `mrgl key set wago`; mrgl ships none). mrgl asks Wago
 for the flavor's own game version (`forever`, `retail`, `classic` for Classic Era, the progressing classic by
 its build), takes the stable release or, on an addon's `prerelease` channel, the newest of the stable, beta
-and alpha ones, sends the key to `addons.wago.io` only, and stops asking Wago in an update check before the
-rate limit Wago's answers name, while the other sources are still asked. A 401 says the key is missing or
-not accepted.
+and alpha ones, sends the key to `addons.wago.io` only, asks for every Wago addon of a flavor in one request
+when it checks for updates, and stops asking Wago in an update check before the rate limit Wago's answers
+name, while the other sources are still asked. A 401 says the key is missing or not accepted.
 
 `mrgl adopt` looks at the addons mrgl did not install and says where each one comes from: the Wago,
 WoWInterface and CurseForge ids and the GitHub website its TOC names, or, for an addon whose TOC names none,

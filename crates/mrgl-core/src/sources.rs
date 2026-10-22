@@ -571,6 +571,23 @@ pub trait Source {
         self.request_budget()
     }
 
+    /// Asks about several specs of this source at once, before the update check asks them one by one
+    /// (task 106): a source with a bulk lookup sends it here, one request where it can, and holds the
+    /// answers for the run, so [`Source::resolve`] answers those specs without a request of its own
+    /// ([`Source::holds`]). A failed bulk lookup is no error: each spec is then asked alone. The default
+    /// asks nothing.
+    fn prefetch(&self, specs: &[SourceSpec], target: &Target) {
+        let _ = (specs, target);
+    }
+
+    /// Whether the source holds the answer for a spec and a target from a bulk lookup of this run
+    /// ([`Source::prefetch`]), so resolving it sends no request and the request budget is not read for it
+    /// (task 106). The default holds nothing.
+    fn holds(&self, spec: &SourceSpec, target: &Target) -> bool {
+        let _ = (spec, target);
+        false
+    }
+
     /// What this run lacks to ask about a spec, as the clause of the "source not configured" line
     /// ([`Error::SourceNotConfigured`]): a source this build does not have, a key that is not set; `None`
     /// when the source can be asked (task 092). The default asks anything.

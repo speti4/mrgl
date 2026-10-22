@@ -36,7 +36,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `unknown` otherwise; `sources::wago`, the Wago source of task 095, see [Fixtures](#fixtures): the
   external API with the user's key, the game version per flavor, the three recent releases onto the
   channels, the rate limit its answers name, the Forever signal from a release for `forever` or the keyless
-  slug list; the CurseForge source joins the router as it comes, M4; adopt's question to a source, whether it
+  slug list, and the update check's bulk lookup of task 106 behind the trait's `prefetch` and `holds`; the
+  CurseForge source joins the router as it comes, M4; adopt's question to a source, whether it
   publishes a build for a flavor, is the trait's `offers`, and the folders a source names without a download
   are its `folders`, task 097), the adopt report (`adopt`, task 097, see [Adopt](#adopt)), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
@@ -1281,7 +1282,16 @@ and `x-ratelimit-remaining`): the update check reads it before each Wago addon a
 asking Wago while the other sources are still asked (task 101), `stopped asking Wago before its rate limit
 of 60 requests: <n> addons not checked, the limit resets after a short wait (Wago does not say when); run
 the check again then` (the words for the limit's window come with the budget, `RequestBudget::window` and
-`resets`). The answers are cached per addon, one per game version, under `<home>/cache/wago/<id>.json` with `checked_at`, and the offline rule of the GitHub source holds; the
+`resets`). The whole update check asks in bulk (task 106): before its first addon it hands every spec it
+will ask to its source (`Source::prefetch`, through the router per source), and the Wago source sends one
+`POST addons.wago.io/api/external/addons/_recents?game_version=<v>` with `{"addons": [<id>, …]}` and the
+key for the game version of the flavor (`Wago::recents`), unless the budget has no request left. The answer,
+the addons under `addons` by id (or a list, `sources::wago::parse_recents`), is held for the run and written
+into the same cache files a single answer goes to; the check reads no budget for an addon the source holds
+(`Source::holds`) and resolves it without a request, while an addon the bulk answer lacks (one without a
+release for the game version), or every addon after a bulk request that failed, is asked alone as before.
+`add`, `import` and `update <name>` keep the single request. The answers are cached per addon, one per game
+version, under `<home>/cache/wago/<id>.json` with `checked_at`, and the offline rule of the GitHub source holds; the
 window's offline view (`Sources::cached`) has no key and reads that cache alone. The Forever signal is `yes`
 when the addon has a release for `forever` and `no` when Wago answers without one; the keyless data endpoint
 `addons.wago.io/api/data/slugs?game_version=forever` (every addon with a release for that game version, slug
@@ -1293,7 +1303,10 @@ retail release with a stored zip behind each (`downloads/MrglWg01/2.0.0-<v>.zip`
 `zips/make-zips.py`), `MrglWg02` answers for Forever without a release, `MrglWg03` has the three
 stabilities for retail, none stable for Forever and one for `mop`, `MrglWg04` answers 401 and `MrglWg05`
 answers with `X-RateLimit-Remaining: 0` (both through a `.headers` file), and
-`api/data/slugs@game_version=forever.json` names `MrglWg01`, `MrglWg03` and `MrglWg05`. The tests pass a
+`api/data/slugs@game_version=forever.json` names `MrglWg01`, `MrglWg03` and `MrglWg05`. The bulk answers
+are `api/external/addons/_recents@game_version=<v>.json`, which the stub answers the POST from: `MrglWg01`
+and `MrglWg03` for Forever (`MrglWg05` is left out, so its single answer still uses the limit up in the
+budget tests), `MrglWg01` to `MrglWg03` for retail. The tests pass a
 made-up key and assert that it goes to `addons.wago.io` only and reaches no output and no cache file.
 
 The adopt fixture (task 097) is a game folder of its own, `adopt/`: a `.build.info` with a Forever and a

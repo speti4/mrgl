@@ -143,6 +143,28 @@ impl Source for Sources {
         self.slot(spec)?.request_budget_for(spec)
     }
 
+    /// Each source gets the specs it answers, in their order, and only those it can ask (task 106).
+    fn prefetch(&self, specs: &[SourceSpec], target: &Target) {
+        for kind in SourceKind::ALL {
+            let Some(source) = self.slots[kind.index()].as_deref() else {
+                continue;
+            };
+            let own: Vec<SourceSpec> = specs
+                .iter()
+                .filter(|spec| spec.kind() == kind && source.missing(spec).is_none())
+                .cloned()
+                .collect();
+            if !own.is_empty() {
+                source.prefetch(&own, target);
+            }
+        }
+    }
+
+    fn holds(&self, spec: &SourceSpec, target: &Target) -> bool {
+        self.slot(spec)
+            .is_some_and(|source| source.holds(spec, target))
+    }
+
     fn missing(&self, spec: &SourceSpec) -> Option<String> {
         match self.slot(spec) {
             Some(source) => source.missing(spec),

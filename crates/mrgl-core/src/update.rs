@@ -541,6 +541,24 @@ pub fn check_until<S: Source + ?Sized>(
     };
     let total = entries.len();
     let mut addons = Vec::with_capacity(total);
+    // Task 106: the whole check asks each source about its addons at once where the source can (Wago's
+    // bulk lookup, one request per game version); a single addon's check keeps the single request.
+    if only.is_none() && !cancelled() {
+        let specs: Vec<SourceSpec> = entries
+            .iter()
+            .filter_map(|(_, entry)| asks_source(source, entry))
+            .collect();
+        if !specs.is_empty() {
+            source.prefetch(&specs, &Target::from_flavor(&engine.flavor));
+        }
+    }
+    // The spec an entry still needs a request for: one the source does not hold from the bulk lookup.
+    let requests = |entry: &Entry| {
+        asks_source(source, entry).filter(|spec| {
+            let target = Target::from_flavor(&engine.flavor).with_channel(entry.channel);
+            !source.holds(spec, &target)
+        })
+    };
     // Task 101: one stop per source, so a source's used-up limit leaves the other sources asked.
     let mut stopped: Vec<BudgetStop> = Vec::new();
     for (position, (name, entry)) in entries.iter().enumerate() {
@@ -549,17 +567,16 @@ pub fn check_until<S: Source + ?Sized>(
         }
         let index = position + 1;
         let asks = asks_source(source, entry);
-        let kind = asks.as_ref().map(SourceSpec::kind);
-        if let Some(spec) = asks.as_ref()
+        let request = requests(entry);
+        let kind = request.as_ref().map(SourceSpec::kind);
+        if let Some(spec) = request.as_ref()
             && !stopped.iter().any(|stop| Some(stop.source) == kind)
             && let Some(budget) = source.request_budget_for(spec)
             && budget.remaining == 0
         {
             let not_checked = entries[position..]
                 .iter()
-                .filter(|(_, entry)| {
-                    asks_source(source, entry).is_some_and(|spec| Some(spec.kind()) == kind)
-                })
+                .filter(|(_, entry)| requests(entry).is_some_and(|spec| Some(spec.kind()) == kind))
                 .count();
             let stop = BudgetStop::of(spec.kind(), budget, not_checked);
             progress(CheckProgress::Stopped { stop: &stop });

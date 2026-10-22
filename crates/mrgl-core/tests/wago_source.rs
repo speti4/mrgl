@@ -3,16 +3,20 @@
 //! no real key is used: the tests pass a made-up one. The addons: `MrglWg01` has a Forever and a retail
 //! release (and a zip behind each), `MrglWg02` answers for Forever without a release, `MrglWg03` has the three
 //! stabilities for retail and no stable one for Forever, `MrglWg04` answers 401, `MrglWg05` answers with no
-//! request left; the keyless slug list of `forever` names `MrglWg01`, `MrglWg03` and `MrglWg05`.
+//! request left; the keyless slug list of `forever` names `MrglWg01`, `MrglWg03` and `MrglWg05`. The bulk
+//! answers of task 106 (`addons/_recents@game_version=<v>.json`) hold `MrglWg01` and `MrglWg03` for Forever
+//! and the first three for retail.
 
 use std::path::{Path, PathBuf};
 
 use mrgl_core::error::Error;
-use mrgl_core::flavor::{BuildVersion, FlavorId};
+use mrgl_core::flavor::{BuildVersion, FlavorId, read_flavor};
 use mrgl_core::forever::ForeverBuild;
+use mrgl_core::install::{Engine, Metadata};
 use mrgl_core::keys;
 use mrgl_core::sources::wago::{self, Wago};
 use mrgl_core::sources::{Channel, FolderHttp, Source, SourceKind, SourceSpec, Target};
+use mrgl_core::update::{self, UpdateState};
 
 /// A made-up key: no test reads or uses a real one.
 const KEY: &str = "made-up-wago-key-for-tests";
@@ -377,4 +381,248 @@ fn offline_the_cached_answer_stands() {
     );
     assert!(view.http().requests().is_empty(), "never a request");
     let _ = std::fs::remove_dir_all(&cache);
+}
+
+// --- task 106: the update check asks Wago in bulk, one request per game version ---
+
+/// A temporary game root with a Forever and a retail flavor and a mrgl home folder, removed at the end.
+struct Sandbox {
+    dir: PathBuf,
+}
+
+impl Sandbox {
+    fn new(name: &str) -> Sandbox {
+        let dir = temp_dir(name);
+        let root = dir.join("World of Warcraft");
+        std::fs::create_dir_all(&root).expect("the game root");
+        std::fs::write(
+            root.join(".build.info"),
+            "Version!STRING:0|Product!STRING:0\n1.60.1.70245|wowf\n12.1.5.70448|wow\n",
+        )
+        .expect(".build.info");
+        for (folder, product) in [("_forever_", "wowf"), ("_retail_", "wow")] {
+            std::fs::create_dir_all(root.join(folder).join("Interface/AddOns"))
+                .expect("the AddOns folder");
+            std::fs::write(
+                root.join(folder).join(".flavor.info"),
+                format!("Product Flavor!STRING:0\n{product}\n"),
+            )
+            .expect(".flavor.info");
+        }
+        Sandbox { dir }
+    }
+
+    /// The engine of a flavor folder with its addons installed from the fixture zips under `wago:` specs.
+    fn engine(&self, folder: &str, addons: &[(&str, &str, &str)]) -> Engine {
+        let flavor =
+            read_flavor(&self.dir.join("World of Warcraft").join(folder)).expect("the flavor");
+        let engine = Engine::with_home(flavor, &self.dir.join("home"));
+        let zips = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/zips");
+        for (zip, source, version) in addons {
+            engine
+                .install(
+                    &zips.join(zip),
+                    &Metadata {
+                        source: source.to_string(),
+                        version: Some(version.to_string()),
+                        name: None,
+                        nolib: None,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("installing {zip}: {error}"));
+        }
+        engine
+    }
+
+    fn cache(&self) -> PathBuf {
+        self.dir.join("home").join(wago::CACHE_SUBDIR)
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// The ids a bulk request asked about, from its body.
+fn bulk_ids(request: &mrgl_core::sources::Request) -> Vec<String> {
+    let body: serde_json::Value =
+        serde_json::from_slice(request.body.as_deref().expect("a POST")).expect("a JSON body");
+    body["addons"]
+        .as_array()
+        .expect("the ids")
+        .iter()
+        .map(|id| id.as_str().expect("an id").to_string())
+        .collect()
+}
+
+#[test]
+fn the_update_check_asks_wago_once_per_game_version_and_caches_each_answer() {
+    let sandbox = Sandbox::new("bulk");
+    let addons = [
+        ("one-folder-1.0.0.zip", "wago:MrglWg01", "1.0.0"),
+        ("several-folders-2.0.0.zip", "wago:MrglWg02", "0.9.0"),
+        ("wrapped-4.0.0.zip", "wago:MrglWg03", "3.0.0"),
+    ];
+    let asked = ["MrglWg01", "MrglWg02", "MrglWg03"];
+    for (folder, game_version, held) in [
+        ("_forever_", "forever", ["MrglWg01", "MrglWg03"].as_slice()),
+        (
+            "_retail_",
+            "retail",
+            ["MrglWg01", "MrglWg02", "MrglWg03"].as_slice(),
+        ),
+    ] {
+        let engine = sandbox.engine(folder, &addons);
+        let http = FolderHttp::new(fixtures());
+        let wago = Wago::new(&http, Some(KEY.to_string()), Some(sandbox.cache()));
+        let check = update::check(&engine, &wago, None, &mut |_| {}).expect("checks");
+        let requests = http.requests();
+        let posts: Vec<_> = requests
+            .iter()
+            .filter(|request| request.body.is_some())
+            .collect();
+        assert_eq!(posts.len(), 1, "one POST for {game_version}");
+        assert_eq!(
+            posts[0].url,
+            format!(
+                "https://addons.wago.io/api/external/addons/_recents?game_version={game_version}"
+            )
+        );
+        assert_eq!(bulk_ids(posts[0]), asked);
+        assert_eq!(
+            posts[0].header_value("Authorization"),
+            Some(format!("Bearer {KEY}").as_str())
+        );
+        assert_eq!(
+            posts[0].header_value("Content-Type"),
+            Some("application/json")
+        );
+        // An addon the bulk answer lacks (MrglWg02 has no Forever release) is asked alone; the others are not.
+        let singles: Vec<&str> = requests
+            .iter()
+            .filter(|request| request.body.is_none())
+            .filter_map(|request| {
+                request
+                    .url
+                    .strip_prefix("https://addons.wago.io/api/external/addons/")
+            })
+            .collect();
+        let alone: Vec<String> = asked
+            .iter()
+            .filter(|id| !held.contains(id))
+            .map(|id| format!("{id}?game_version={game_version}"))
+            .collect();
+        assert_eq!(singles, alone, "{game_version}");
+        let states: Vec<(String, UpdateState)> = check
+            .addons
+            .iter()
+            .map(|addon| (addon.source.clone(), addon.state))
+            .collect();
+        // Forever: MrglWg02 has no release, MrglWg03 only a beta and an alpha; retail: stable releases.
+        let (two, three) = if game_version == "forever" {
+            (UpdateState::SourceGone, UpdateState::UpdateAvailable)
+        } else {
+            (UpdateState::UpdateAvailable, UpdateState::UpToDate)
+        };
+        assert_eq!(
+            states,
+            [
+                ("wago:MrglWg01".to_string(), UpdateState::UpdateAvailable),
+                ("wago:MrglWg02".to_string(), two),
+                ("wago:MrglWg03".to_string(), three),
+            ],
+            "{game_version}"
+        );
+        // The bulk answers land in the same cache files as a single answer.
+        for id in held {
+            let cached: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(sandbox.cache().join(format!("{id}.json"))).expect("the cache file"),
+            )
+            .expect("JSON");
+            assert_eq!(
+                cached["answers"][game_version]["addon"]["id"], *id,
+                "{id} {game_version}"
+            );
+            assert!(cached["answers"][game_version]["checked_at"].is_string());
+        }
+    }
+    // Both game versions sit side by side in one addon's cache file.
+    let cached: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(sandbox.cache().join("MrglWg01.json")).expect("the cache file"),
+    )
+    .expect("JSON");
+    assert!(cached["answers"]["forever"].is_object() && cached["answers"]["retail"].is_object());
+}
+
+#[test]
+fn one_addons_check_keeps_the_single_request_and_a_used_up_budget_sends_no_bulk() {
+    let sandbox = Sandbox::new("bulk-single");
+    let engine = sandbox.engine(
+        "_forever_",
+        &[
+            ("one-folder-1.0.0.zip", "wago:MrglWg01", "1.0.0"),
+            ("wrapped-4.0.0.zip", "wago:MrglWg03", "3.0.0"),
+        ],
+    );
+    let http = FolderHttp::new(fixtures());
+    let wago = Wago::new(&http, Some(KEY.to_string()), None);
+    let check = update::check(&engine, &wago, Some("OneFolder"), &mut |_| {}).expect("checks");
+    assert_eq!(check.addons.len(), 1);
+    let urls: Vec<String> = http
+        .requests()
+        .iter()
+        .map(|request| request.url.clone())
+        .collect();
+    assert_eq!(
+        urls,
+        ["https://addons.wago.io/api/external/addons/MrglWg01?game_version=forever"],
+        "`update <name>` asks the one addon"
+    );
+
+    // With no request left the bulk lookup is not sent, and the check stops before the limit.
+    let http = FolderHttp::new(fixtures());
+    let wago = Wago::new(&http, Some(KEY.to_string()), None);
+    let forever = target(FlavorId::Forever, None);
+    wago.resolve(&spec("wago:MrglWg05"), &forever)
+        .expect("no request left after it");
+    let check = update::check(&engine, &wago, None, &mut |_| {}).expect("checks");
+    assert!(http.requests().iter().all(|request| request.body.is_none()));
+    assert_eq!(http.requests().len(), 1, "nothing after the used-up budget");
+    assert_eq!(check.count(UpdateState::RateLimited), 2);
+    assert_eq!(check.stopped.len(), 1);
+    assert_eq!(check.stopped[0].source, SourceKind::Wago);
+    assert!(!wago.holds(&spec("wago:MrglWg01"), &forever));
+}
+
+#[test]
+fn a_bulk_answer_is_held_for_the_run_and_answers_without_a_request() {
+    let http = FolderHttp::new(fixtures());
+    let wago = Wago::new(&http, Some(KEY.to_string()), None);
+    let forever = target(FlavorId::Forever, None);
+    let answered = wago
+        .recents(&["MrglWg01", "MrglWg03", "MrglWg05"], "forever")
+        .expect("the bulk answer");
+    assert_eq!(answered, ["MrglWg01", "MrglWg03"]);
+    assert!(wago.holds(&spec("wago:MrglWg01"), &forever));
+    assert!(!wago.holds(&spec("wago:MrglWg05"), &forever));
+    assert!(
+        !wago.holds(&spec("wago:MrglWg01"), &target(FlavorId::Retail, None)),
+        "held for its game version only"
+    );
+    let pick = wago
+        .resolve(&spec("wago:MrglWg03"), &forever)
+        .expect("from the bulk answer");
+    assert_eq!(pick.version, "3.2.0-alpha");
+    assert_eq!(http.requests().len(), 1, "the resolve sent nothing");
+    let budget = wago.request_budget().expect("a budget");
+    assert_eq!((budget.sent, budget.remaining), (1, 59), "the POST counts");
+    // Without the key nothing is sent.
+    let keyless = Wago::new(FolderHttp::new(fixtures()), None, None);
+    assert!(matches!(
+        keyless.recents(&["MrglWg01"], "forever"),
+        Err(Error::SourceNotConfigured { .. })
+    ));
+    assert!(keyless.http().requests().is_empty());
 }

@@ -8245,13 +8245,15 @@ fn import_takes_a_wago_entry_and_update_stops_before_wagos_rate_limit() {
     assert_eq!(sidecar(&game)["addons"]["MrglWagoOne"]["version"], "2.0.0");
     assert!(game.addon("MrglWagoOne").join("MrglWagoOne.toc").is_file());
 
-    // The first answer says no request is left: the check stops before Wago's limit.
+    // The bulk answer (task 106) holds One and Three; Five is asked alone and its answer says no request
+    // is left, so Two, which the bulk answer lacks, is not asked: the check stops before Wago's limit.
     let game = managed_game(
         "wago-budget",
         &[
             ("Five", "wago:MrglWg05", "0.9.0", ""),
             ("One", "wago:MrglWg01", "1.0.0", ""),
             ("Three", "wago:MrglWg03", "3.0.0", ""),
+            ("Two", "wago:MrglWg02", "1.0.0", ""),
         ],
     );
     let output = game
@@ -8272,12 +8274,15 @@ fn import_takes_a_wago_entry_and_update_stops_before_wagos_rate_limit() {
         text.lines().collect::<Vec<_>>(),
         [
             "checking the managed addons of _forever_ against their sources",
-            "checking Five against wago:MrglWg05 (1 of 3)",
+            "checking Five against wago:MrglWg05 (1 of 4)",
             "Five  0.9.0 -> 1.0.0  update available",
-            "stopped asking Wago before its rate limit of 60 requests: 2 addons not checked, the limit resets after a short wait (Wago does not say when); run the check again then",
-            "One  1.0.0  not checked (rate limit): not asked before Wago's rate limit",
-            "Three  3.0.0  not checked (rate limit): not asked before Wago's rate limit",
-            "dry run: 1 update available, 2 not checked (Wago's rate limit); nothing written",
+            "checking One against wago:MrglWg01 (2 of 4)",
+            "One  1.0.0 -> 2.0.0  update available",
+            "checking Three against wago:MrglWg03 (3 of 4)",
+            "Three  3.0.0 -> 3.2.0-alpha  update available",
+            "stopped asking Wago before its rate limit of 60 requests: 1 addon not checked, the limit resets after a short wait (Wago does not say when); run the check again then",
+            "Two  1.0.0  not checked (rate limit): not asked before Wago's rate limit",
+            "dry run: 3 updates available, 1 not checked (Wago's rate limit); nothing written",
         ],
         "{text}"
     );
@@ -8432,4 +8437,83 @@ fn update_stops_asking_wago_at_its_rate_limit_and_goes_on_asking_github() {
     );
     assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.2.3");
     assert_eq!(sidecar(&game)["addons"]["Late"]["version"], "1.0.0");
+}
+
+// --- task 106: the Wago update check asks in bulk ---
+
+#[test]
+fn update_all_takes_the_wago_answers_from_one_bulk_request() {
+    // A stub without the single answers of MrglWg01 and MrglWg03 for Forever: the check still answers
+    // both, from the bulk answer, and writes them into the same cache files.
+    let game = managed_game(
+        "wago-bulk",
+        &[
+            ("One", "wago:MrglWg01", "1.0.0", ""),
+            ("Three", "wago:MrglWg03", "3.0.0", ""),
+        ],
+    );
+    let stub = game.home.join("stub-bulk");
+    copy_tree(&sources_stub(), &stub);
+    for id in ["MrglWg01", "MrglWg03"] {
+        std::fs::remove_file(stub.join(format!(
+            "addons.wago.io/api/external/addons/{id}@game_version=forever.json"
+        )))
+        .expect("the single answer goes");
+    }
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .env("MRGL_WAGO_KEY", WAGO_TEST_KEY)
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "checking the managed addons of _forever_ against their sources",
+            "checking One against wago:MrglWg01 (1 of 2)",
+            "One  1.0.0 -> 2.0.0  update available",
+            "checking Three against wago:MrglWg03 (2 of 2)",
+            "Three  3.0.0 -> 3.2.0-alpha  update available",
+            "dry run: 2 updates available; nothing written",
+        ],
+        "{text}"
+    );
+    for id in ["MrglWg01", "MrglWg03"] {
+        let cached: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(game.home.join(format!("cache/wago/{id}.json"))).expect("the cache"),
+        )
+        .expect("JSON");
+        assert_eq!(cached["answers"]["forever"]["addon"]["id"], id);
+    }
+    // `update <name>` keeps the single request, which this stub no longer answers.
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .env("MRGL_WAGO_KEY", WAGO_TEST_KEY)
+        .args([
+            "--serious",
+            "update",
+            "One",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(
+        stdout(&output).lines().any(|line| line
+            == "One  1.0.0  source gone: Wago answered 404 for https://addons.wago.io/api/external/addons/MrglWg01?game_version=forever: no such addon, or it was removed"),
+        "{}",
+        stdout(&output)
+    );
 }
