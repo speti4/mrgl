@@ -510,12 +510,14 @@ code {
   font-size: 0.82rem;
   color: var(--muted);
 }
-.savedvars-table {
+.savedvars-table,
+.adopt-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
 }
-.savedvars-table th {
+.savedvars-table th,
+.adopt-table th {
   text-align: left;
   font-size: 0.72rem;
   font-weight: 600;
@@ -525,10 +527,12 @@ code {
   padding: 0.25rem 0.5rem;
   border-bottom: 1px solid var(--line);
 }
-.savedvars-table td {
+.savedvars-table td,
+.adopt-table td {
   padding: 0.3rem 0.5rem;
   border-bottom: 1px solid var(--line);
   overflow-wrap: anywhere;
+  vertical-align: top;
 }
 .savedvars-table .size {
   text-align: right;
@@ -542,6 +546,60 @@ code {
 .savedvars-client .savedvars-status,
 .savedvars-unknown .savedvars-status {
   color: var(--muted);
+}
+
+/* The adopt card (task 109): a row per unmanaged addon, its folders under its name, a line per source,
+   and what adopt makes of it with its class in a pill of the class's color. */
+.adopt-folders {
+  display: block;
+  font-size: 0.78rem;
+}
+.adopt-sources {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.adopt-class {
+  --state-color: var(--state-unmanaged);
+  margin-right: 0.4rem;
+}
+.adopt-without-curseforge .adopt-class {
+  --state-color: var(--state-managed);
+}
+.adopt-only-curseforge .adopt-class {
+  --state-color: var(--state-update);
+}
+.adopt-no-build .adopt-class {
+  --state-color: var(--interface-mismatch);
+}
+.adopt-verdict {
+  overflow-wrap: anywhere;
+}
+
+/* The confirmation of an adopt in a folder the CurseForge app manages (task 109). */
+.confirm {
+  max-width: 34rem;
+  padding: 1rem 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+}
+.confirm::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+.confirm h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
 }
 
 /* ---- the list: a header line, one row per addon */

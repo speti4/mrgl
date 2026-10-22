@@ -30,6 +30,11 @@
 //   Data.editSet(flavorId, set, addon, action)  -> the same      `edit_set` (085): enable | disable | drop
 //   Data.cleanSavedVariables(flavorId)    -> the same            `clean_saved_variables`: the orphans into
 //                                       the dated zip
+//   Data.adopt(flavorId)             -> Promise<{ adopt, flavor, adopted, messages }>  `adopt` (109): the
+//                                       adopt report, nothing written
+//   Data.adoptApply(flavorId, alongside)  -> the same            `adopt_apply` (109): the adoptable addons
+//                                       into the sidecar; `alongside` the confirmation in a folder the
+//                                       CurseForge app manages
 //
 // Opened in a plain browser (no Tauri global, `ui/index.html` from the disk), the module writes the script
 // tag of `mock-data.js` instead, so the page shows the sketch's made-up rows: a look at the layout without
@@ -92,6 +97,8 @@
       undoSet: (flavorId) => invoke("undo_set", { flavor: flavorId }),
       editSet: (flavorId, set, addon, action) => invoke("edit_set", { flavor: flavorId, set, addon, action }),
       cleanSavedVariables: (flavorId) => invoke("clean_saved_variables", { flavor: flavorId }),
+      adopt: (flavorId) => invoke("adopt", { flavor: flavorId }),
+      adoptApply: (flavorId, alongside) => invoke("adopt_apply", { flavor: flavorId, alongside: Boolean(alongside) }),
     };
   }
 

@@ -4,8 +4,8 @@
 //! commands in [`commands`]; `ui/data.js` calls them behind `window.Data`. Everything that does not need a
 //! webview lives in plain modules with tests ([`list`]: the flavors and their addon rows; [`actions`]: the
 //! update check, the updates and the marks; [`toolbox`]: a flavor's addon sets with their undo and edit and
-//! its SavedVariables, tasks 074 and 085); the window only shows what the core says, in the voice's two
-//! lines (D-005).
+//! its SavedVariables, tasks 074 and 085, and the adopt report with its apply, task 109); the window only
+//! shows what the core says, in the voice's two lines (D-005).
 
 pub mod actions;
 pub mod commands;
@@ -45,7 +45,9 @@ pub fn run() {
             commands::apply_set,
             commands::undo_set,
             commands::edit_set,
-            commands::clean_saved_variables
+            commands::clean_saved_variables,
+            commands::adopt,
+            commands::adopt_apply
         ])
         .run(tauri::generate_context!())
         .expect("error while running the mrgl window");

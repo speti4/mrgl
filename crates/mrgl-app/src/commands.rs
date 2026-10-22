@@ -11,7 +11,8 @@ use mrgl_core::doctor;
 use mrgl_core::flavor;
 use mrgl_core::home;
 use mrgl_core::install::Engine;
-use mrgl_core::sources::Sources;
+use mrgl_core::keys;
+use mrgl_core::sources::{SourceKind, Sources};
 use mrgl_core::voice::{self as core_voice, Kind, Voice};
 use serde::Serialize;
 use tauri::Manager;
@@ -20,7 +21,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::actions::{self, ActionAnswer, Plan, UpdateEvent, UpdateRun};
 use crate::list::{self, FlavorsAnswer, ResolveAnswer};
-use crate::toolbox::{self, ToolboxAnswer, ToolboxRun};
+use crate::toolbox::{self, AdoptAnswer, ToolboxAnswer, ToolboxRun};
 
 /// A message as the UI shows it: the kind (it picks the place, `ui/voice.js`), the murloc line (empty when
 /// serious) and the plain line.
@@ -566,6 +567,14 @@ pub async fn mark(
                     "an update is running; pin, ignore and the channel wait until it ends",
                 ));
             }
+            // Task 109: an adopt writes the sidecar too.
+            if app.state::<ToolboxRun>().is_running() {
+                return ActionAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::marks_wait_line(),
+                ));
+            }
             let mark = match actions::mark_of(&action, value.as_deref()) {
                 Ok(mark) => mark,
                 Err(plain) => {
@@ -724,6 +733,75 @@ pub async fn clean_saved_variables(app: tauri::AppHandle, flavor: String) -> Too
             }
         },
         ToolboxAnswer::refused,
+    )
+    .await
+}
+
+/// Whether this process has a source's key (`MRGL_<SOURCE>_KEY` or the key store), as `mrgl adopt` asks.
+fn has_key(kind: SourceKind) -> bool {
+    keys::of_process(kind).is_some()
+}
+
+/// The adopt report of a flavor (task 109 over task 097, `toolbox::adopt_report`): every unmanaged addon
+/// with its sources, each asked through the router (`MRGL_HTTP_STUB` answers for them as on the command
+/// line) whether it has a build for the flavor. Writes nothing; it may run while an update or a toolbox
+/// write goes.
+#[tauri::command]
+pub async fn adopt(flavor: String) -> AdoptAnswer {
+    blocking(
+        move || match root_of_process(&flavor) {
+            Ok(root) => toolbox::adopt_report(
+                &root,
+                &flavor,
+                home_dir().as_deref(),
+                &Sources::from_env(),
+                &has_key,
+                voice(),
+            ),
+            Err(message) => AdoptAnswer::refused(message),
+        },
+        AdoptAnswer::refused,
+    )
+    .await
+}
+
+/// Adopts a flavor's unmanaged addons into its sidecar (task 109 over task 098, `toolbox::adopt_apply`);
+/// `alongside` is the confirmation of the dialog in a folder the CurseForge app manages, the window's
+/// `--alongside-curseforge`. Refused while an update runs (both write the sidecar) and while another
+/// toolbox write goes; an update and a mark wait for it the same way.
+#[tauri::command]
+pub async fn adopt_apply(app: tauri::AppHandle, flavor: String, alongside: bool) -> AdoptAnswer {
+    blocking(
+        move || {
+            if app.state::<UpdateRun>().is_running() {
+                return AdoptAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::adopt_updating_line(),
+                ));
+            }
+            let run = app.state::<ToolboxRun>();
+            let Some(_guard) = run.start() else {
+                return AdoptAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::busy_line(),
+                ));
+            };
+            match root_of_process(&flavor) {
+                Ok(root) => toolbox::adopt_apply(
+                    &root,
+                    &flavor,
+                    alongside,
+                    home_dir().as_deref(),
+                    &Sources::from_env(),
+                    &has_key,
+                    voice(),
+                ),
+                Err(message) => AdoptAnswer::refused(message),
+            }
+        },
+        AdoptAnswer::refused,
     )
     .await
 }

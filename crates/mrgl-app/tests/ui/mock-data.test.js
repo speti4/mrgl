@@ -375,3 +375,101 @@ test("the mock keeps the preferences for the page's life", async () => {
   assert.equal(after.serious_source, "file");
   assert.deepEqual((await Data.preferences()).stored, { theme: "dark", serious: true });
 });
+
+// The adopt answer of the contract (task 109); `src/toolbox.rs` serializes the same keys, which
+// `tests/adopt.rs` holds it to. These tests come last: an apply turns rows into managed ones.
+const ADOPT_KEYS = ["adopt", "adopted", "flavor", "messages"];
+const ADOPT_VIEW_KEYS = ["counts", "curse_client", "flavor", "folder", "left_out", "marker", "rows", "summary"];
+const ADOPT_ROW_KEYS = ["adopt_as", "class", "details", "folders", "line", "name", "needs", "pages", "sources", "verdict", "version"];
+const ADOPT_SOURCE_KEYS = ["build", "from", "missing", "needs", "source", "spec", "taken_by", "why"];
+const sorted = (object) => Object.keys(object).sort();
+
+test("the adopt report keeps the contract's keys, every class and the core's lines (task 109)", async () => {
+  const classes = new Set();
+  for (const id of ["wow", "wow_classic", "wow_classic_era", "wowf"]) {
+    const answer = await Data.adopt(id);
+    assert.deepEqual(sorted(answer), ADOPT_KEYS, id);
+    assert.deepEqual(sorted(answer.adopt), ADOPT_VIEW_KEYS, id);
+    assert.deepEqual(answer.messages, [answer.adopt.summary], `${id}: the summary, said`);
+    const { rows, counts } = answer.adopt;
+    assert.equal(counts.addons, rows.length, id);
+    assert.equal(counts.without_curseforge + counts.only_curseforge + counts.no_build + counts.no_source, rows.length, id);
+    for (const row of rows) {
+      assert.deepEqual(sorted(row), ADOPT_ROW_KEYS, `${id}/${row.name}`);
+      for (const source of row.sources) assert.deepEqual(sorted(source), ADOPT_SOURCE_KEYS, `${id}/${row.name}`);
+      assert.equal(row.details.length, row.sources.length + row.pages.length, `${id}/${row.name}`);
+      classes.add(row.class);
+    }
+    assert.equal(Boolean(answer.adopt.marker), answer.adopt.curse_client, id);
+  }
+  assert.deepEqual([...classes].sort(), ["no-build", "no-source", "only-curseforge", "without-curseforge"]);
+
+  const forever = (await Data.adopt("wowf")).adopt;
+  assert.deepEqual(
+    forever.rows.map((row) => row.line),
+    [
+      "Details #Details.20261010.14521.165: adopt as github:Tercioo/Details-Damage-Meter",
+      "Leatrix_Plus 5.5.26: only with CurseForge, needs MRGL_CURSEFORGE_KEY",
+      "RaidLogger 0.9: no known source",
+    ]
+  );
+  assert.deepEqual(forever.rows[0].details, [
+    "curse:61284 from X-Curse-Project-ID: needs MRGL_CURSEFORGE_KEY",
+    "github:Tercioo/Details-Damage-Meter from the GitHub mapping: forever build yes (release.json names forever)",
+  ]);
+  assert.equal(
+    forever.summary.plain,
+    "3 unmanaged addons in _forever_: 1 can be adopted without CurseForge, 1 only with CurseForge, 1 with no known source; adopt --apply adopts 1 of them"
+  );
+  const retail = (await Data.adopt("wow")).adopt;
+  assert.equal(retail.marker.kind, "warning");
+  assert.equal(
+    retail.marker.plain,
+    "the CurseForge app manages _retail_ (its .curseclient marker is there): a folder belongs to one manager, so adopt --apply writes nothing there without --alongside-curseforge"
+  );
+  assert.equal(retail.rows[0].verdict, "needs MRGL_WAGO_KEY or MRGL_CURSEFORGE_KEY", "DBM-Core: either key would let it");
+  assert.equal((await Data.adopt("wow_mrgl")).messages[0].kind, "error");
+});
+
+test("the adopt apply refuses a marked folder without the confirmation and warns with it (task 109)", async () => {
+  const refused = await Data.adoptApply("wow_classic_era", false);
+  assert.equal(refused.adopt, null);
+  assert.deepEqual(refused.adopted, []);
+  assert.equal(refused.messages.length, 1);
+  assert.equal(refused.messages[0].kind, "error");
+  assert.match(refused.messages[0].plain, /^the CurseForge app manages _classic_era_ .*: adopt --apply wrote nothing; --alongside-curseforge /);
+  const { flavors } = await Data.flavors();
+  const bartender = () => flavors.find((flavor) => flavor.id === "wow_classic_era").addons.find((row) => row.folder === "Bartender4");
+  assert.equal(bartender().managed, false, "nothing written");
+
+  const era = await Data.adoptApply("wow_classic_era", true);
+  assert.deepEqual(era.adopted, ["adopted Bartender4 4.15.7 as wowi:11190 (1 folder: Bartender4)"]);
+  assert.deepEqual(
+    era.messages.map((message) => [message.kind, message.plain]),
+    [
+      [
+        "warning",
+        "adopting alongside the CurseForge app in _classic_era_: it may still update or flag the adopted folders, and its .curseclient marker stays where it is",
+      ],
+      [
+        "success",
+        "2 unmanaged addons in _classic_era_: 1 can be adopted without CurseForge, 0 only with CurseForge, 1 with no known source; adopted 1 addon into the sidecar, no download and no folder changed: the next update installs each from its source",
+      ],
+    ]
+  );
+  assert.equal(era.flavor.id, "wow_classic_era");
+  assert.deepEqual([bartender().managed, bartender().guessed, bartender().source], [true, false, { kind: "wowi", id: "11190" }]);
+  assert.deepEqual(era.adopt.rows.map((row) => row.name), ["RaidLogger"]);
+
+  const again = await Data.adoptApply("wow_classic_era", true);
+  assert.deepEqual(again.adopted, []);
+  const last = again.messages[again.messages.length - 1];
+  assert.equal(last.kind, "nothing");
+  assert.match(last.plain, /; nothing adopted, the sidecar is unchanged$/);
+
+  const retail = await Data.adoptApply("wow", true);
+  assert.ok(retail.messages.some((message) => message.kind === "warning" && message.plain === "DBM-Core not adopted: needs MRGL_WAGO_KEY or MRGL_CURSEFORGE_KEY"));
+  const forever = await Data.adoptApply("wowf", false);
+  assert.deepEqual(forever.adopted, ["adopted Details #Details.20261010.14521.165 as github:Tercioo/Details-Damage-Meter (1 folder: Details)"]);
+  assert.ok(forever.messages.every((message) => !message.plain.includes(".curseclient")), "Forever has no marker");
+});

@@ -2,7 +2,8 @@
 // account when two accounts have the realm and the name) and the target an option names, the set the
 // picker shows, the edit controls of its chips, the state of the apply, undo and cleanup buttons, what the
 // undo puts back, the SavedVariables rows the table shows and the lines of what an apply changed or an
-// undo put back. Pure, so `tests/ui/toolbox.test.js` runs it under Node; `main.js` draws what it answers.
+// undo put back; the adopt card's rows, the words of a row's class and its two buttons (task 109). Pure,
+// so `tests/ui/toolbox.test.js` runs it under Node; `main.js` draws what it answers.
 // Every message comes from Rust; the labels here are the panel's own words.
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -14,7 +15,7 @@
   const EVERY = "";
 
   // Why a toolbox button waits while a toolbox write goes (one at a time).
-  const BUSY = "a set apply, undo or edit or a cleanup is running";
+  const BUSY = "a set apply, undo or edit, an adopt or a cleanup is running";
 
   // A character's option value: `<realm>/<name>`, with `<account>/` in front when the realm and the name
   // sit under two accounts (task 085: only then does the answer carry the account). A folder name cannot
@@ -217,9 +218,85 @@
     });
   }
 
+  // ---- the adopt card (task 109): the report of the flavor's unmanaged addons and its apply
+
+  // The words of a row's class (`adopt::Class`).
+  const CLASS_LABELS = {
+    "without-curseforge": "without CurseForge",
+    "only-curseforge": "only with CurseForge",
+    "no-build": "no build for the flavor",
+    "no-source": "no known source",
+  };
+
+  function classLabel(klass) {
+    return CLASS_LABELS[klass] || String(klass || "");
+  }
+
+  // The rows of the card in the report's order (by name): the name, the folders when there are several,
+  // the version, what adopt makes of it (the core's verdict), the class and its words, and the core's line
+  // per source and page.
+  function adoptRows(adopt) {
+    return (adopt ? adopt.rows : []).map((row) => ({
+      name: row.name,
+      folders: row.folders.length > 1 ? row.folders.join(", ") : "",
+      version: row.version || "—",
+      verdict: row.verdict,
+      class: row.class,
+      label: classLabel(row.class),
+      adoptable: Boolean(row.adopt_as),
+      details: row.details.slice(),
+      line: row.line,
+    }));
+  }
+
+  // The button that asks the sources for the report: `{ enabled, label, title }`; it waits while they are
+  // asked. The report writes nothing, so neither a toolbox write nor an update stops it.
+  function askButton(adopt, asking) {
+    return {
+      enabled: !asking,
+      label: asking ? "Asking the sources…" : adopt ? "Ask again" : "Ask the sources",
+      title: asking
+        ? "the sources are being asked"
+        : "ask the sources each unmanaged addon names whether they publish a build for this flavor; nothing is written",
+    };
+  }
+
+  // The adopt button: `{ enabled, label, title, confirm }`, disabled without a report, while the sources
+  // are asked, while a toolbox write or an update runs (both write the sidecar) and when no addon can be
+  // adopted in this run. `confirm`: the CurseForge app manages the folder, so the dialog asks first (the
+  // window's `--alongside-curseforge`).
+  function adoptButton(adopt, busy, updating, asking) {
+    const n = adopt ? adopt.counts.adoptable_now : 0;
+    const label = n === 0 ? "Nothing to adopt" : `Adopt ${n} addon${n === 1 ? "" : "s"}`;
+    const why = !adopt
+      ? "ask the sources first"
+      : asking
+        ? "the sources are being asked"
+        : busy
+          ? BUSY
+          : updating
+            ? "an update is running; the adopt waits until it ends"
+            : n === 0
+              ? "no unmanaged addon has a source this run can write"
+              : null;
+    const confirm = Boolean(adopt && adopt.curse_client);
+    return {
+      enabled: !why,
+      label,
+      title:
+        why ||
+        `write a sidecar entry for each from the source its row names; nothing is downloaded and no folder changes: the next update installs each from its source${confirm ? ". The CurseForge app manages this folder: you are asked first" : ""}`,
+      confirm,
+    };
+  }
+
   return {
     EVERY,
     BUSY,
+    classLabel,
+    adoptRows,
+    askButton,
+    adoptButton,
     characterName,
     targetOptions,
     targetOf,

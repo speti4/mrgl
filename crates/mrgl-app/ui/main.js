@@ -1,7 +1,8 @@
 // The view (task 017): the flavor navigation, the addon list, the search, the voice's two places and the
 // theme; the game folder chooser and "copy diagnostics" (task 009); the update check, "update all", a row's
 // update with its progress slot, the cancel and the row menu's marks (task 010); the toolbox tab of a
-// flavor with its set picker and its SavedVariables table (task 074). It reads `window.Data` and draws what
+// flavor with its set picker and its SavedVariables table (task 074), and its adopt card with the
+// confirmation in a folder the CurseForge app manages (task 109). It reads `window.Data` and draws what
 // it gets; it does not know whether the rows are made up (`mock-data.js`) or the core's answers
 // (`data.js`), and it never composes a murloc line.
 (function () {
@@ -164,6 +165,11 @@
   let pickedSet = null;
   let pickedTarget = Toolbox.EVERY;
   let orphansOnly = false;
+  // The adopt report per flavor id, as the last answer drew it: `{ adopt, adopted }` (task 109); the
+  // flavor whose sources are being asked, and the flavor the confirmation dialog asks for.
+  const adopts = {};
+  let adoptAsking = null;
+  let confirming = null;
 
   function selected() {
     return flavors.find((flavor) => flavor.id === selectedId) || null;
@@ -545,6 +551,112 @@
     cleanButton.textContent = clean.label;
     cleanButton.disabled = !clean.enabled;
     cleanButton.title = clean.title;
+
+    renderAdopt(flavor);
+  }
+
+  // The adopt card (task 109): the report's summary, the marker's warning, the two buttons, a row per
+  // unmanaged addon with the core's lines, and what the last apply wrote.
+  function renderAdopt(flavor) {
+    const entry = adopts[flavor.id] || null;
+    const adopt = entry ? entry.adopt : null;
+    const asking = adoptAsking === flavor.id;
+    const note = $("adopt-note");
+    if (adopt) drawNote(note, adopt.summary);
+    else {
+      note.className = "note muted";
+      note.textContent = asking
+        ? `asking the sources of the unmanaged addons of ${flavor.folder}…`
+        : `where the unmanaged addons of ${flavor.folder} come from, asked of their sources on demand`;
+    }
+    const marker = adopt && adopt.marker ? heard(adopt.marker) : null;
+    $("adopt-marker").hidden = !marker;
+    $("adopt-marker").textContent = marker ? marker.plain : "";
+    $("adopt-marker").title = marker ? Voice.oneLine(marker) : "";
+
+    const ask = Toolbox.askButton(adopt, asking);
+    const askButton = $("adopt-ask");
+    askButton.textContent = ask.label;
+    askButton.disabled = !ask.enabled;
+    askButton.title = ask.title;
+    const apply = Toolbox.adoptButton(adopt, toolboxBusy, Boolean(run), asking);
+    const applyButton = $("adopt-apply");
+    applyButton.textContent = apply.label;
+    applyButton.disabled = !apply.enabled;
+    applyButton.title = apply.title;
+
+    const rows = Toolbox.adoptRows(adopt);
+    const body = $("adopt-rows");
+    body.replaceChildren();
+    for (const row of rows) {
+      const line = document.createElement("tr");
+      line.className = `adopt-${row.class}`;
+      line.title = row.line;
+      const name = document.createElement("td");
+      name.textContent = row.name;
+      if (row.folders) {
+        const folders = document.createElement("span");
+        folders.className = "adopt-folders muted";
+        folders.textContent = row.folders;
+        name.append(folders);
+      }
+      const version = document.createElement("td");
+      version.textContent = row.version;
+      const sources = document.createElement("td");
+      const list = document.createElement("ul");
+      list.className = "adopt-sources";
+      for (const detail of row.details) {
+        const item = document.createElement("li");
+        item.textContent = detail;
+        list.append(item);
+      }
+      sources.append(list);
+      const verdict = document.createElement("td");
+      verdict.className = "adopt-verdict";
+      const pill = document.createElement("span");
+      pill.className = "pill adopt-class";
+      pill.textContent = row.label;
+      verdict.append(pill, document.createTextNode(row.verdict));
+      line.append(name, version, sources, verdict);
+      body.append(line);
+    }
+    $("adopt-table").hidden = rows.length === 0;
+
+    const done = $("adopt-done");
+    const adopted = entry ? entry.adopted : [];
+    done.hidden = adopted.length === 0;
+    done.replaceChildren();
+    for (const text of adopted) {
+      const item = document.createElement("li");
+      item.textContent = text;
+      done.append(item);
+    }
+  }
+
+  // Keeps an adopt answer's report and its `adopted …` lines (an answer without a report leaves the drawn
+  // one), puts the flavor it carries in place (the adopted rows are managed now), and says its messages in
+  // order, the summary last.
+  function applyAdoptAnswer(flavorId, answer) {
+    if (answer && answer.adopt) adopts[flavorId] = { adopt: answer.adopt, adopted: answer.adopted || [] };
+    if (answer && answer.flavor) {
+      replaceFlavor(answer.flavor);
+      renderNav();
+    }
+    for (const message of (answer && answer.messages) || []) say(message);
+  }
+
+  async function askSources(flavor) {
+    if (adoptAsking) return;
+    adoptAsking = flavor.id;
+    renderFlavor();
+    try {
+      applyAdoptAnswer(flavor.id, await Data.adopt(flavor.id));
+    } catch (error) {
+      say({ kind: "error", murloc: "", plain: `the adopt report of ${flavor.name} failed: ${error}` });
+    } finally {
+      adoptAsking = null;
+      if (selectedId === flavor.id) renderFlavor();
+    }
   }
 
   // Keeps a toolbox answer's toolbox and changes (an answer without a toolbox leaves the drawn one) and
@@ -570,13 +682,14 @@
     }
   }
 
-  // A toolbox write, one at a time: the panel waits, then draws the answer.
-  async function toolboxWrite(flavor, what, call) {
+  // A toolbox write, one at a time: the panel waits, then draws the answer (a toolbox answer, or with
+  // `apply` another kind, the adopt's).
+  async function toolboxWrite(flavor, what, call, apply) {
     if (toolboxBusy) return;
     toolboxBusy = true;
     renderFlavor();
     try {
-      applyToolboxAnswer(flavor.id, await call());
+      (apply || applyToolboxAnswer)(flavor.id, await call());
     } catch (error) {
       say({ kind: "error", murloc: "", plain: `${what} in ${flavor.name} failed: ${error}` });
     } finally {
@@ -642,6 +755,40 @@
   $("clean-savedvars").addEventListener("click", () => {
     const flavor = selected();
     if (flavor) toolboxWrite(flavor, "the SavedVariables cleanup", () => Data.cleanSavedVariables(flavor.id));
+  });
+
+  // The adopt card (task 109): the report on demand, the apply, and in a folder the CurseForge app manages
+  // the dialog first, whose confirmation is the window's `--alongside-curseforge`.
+  $("adopt-ask").addEventListener("click", () => {
+    const flavor = selected();
+    if (flavor) askSources(flavor);
+  });
+
+  function adoptWrite(flavor, alongside) {
+    toolboxWrite(flavor, "the adopt", () => Data.adoptApply(flavor.id, alongside), applyAdoptAnswer);
+  }
+
+  const adoptConfirm = $("adopt-confirm");
+
+  $("adopt-apply").addEventListener("click", () => {
+    const flavor = selected();
+    const entry = flavor && adopts[flavor.id];
+    if (!entry) return;
+    if (!entry.adopt.curse_client) {
+      adoptWrite(flavor, false);
+      return;
+    }
+    confirming = flavor;
+    drawNote($("adopt-confirm-marker"), entry.adopt.marker || entry.adopt.summary);
+    adoptConfirm.returnValue = "";
+    adoptConfirm.showModal();
+  });
+
+  // The dialog closes with the button pressed (`alongside` or `cancel`), or empty on Escape.
+  adoptConfirm.addEventListener("close", () => {
+    const flavor = confirming;
+    confirming = null;
+    if (flavor && adoptConfirm.returnValue === "alongside") adoptWrite(flavor, true);
   });
 
   // ---- the actions: search, the update check, "update all", a row's update, the cancel and the marks
@@ -747,8 +894,10 @@
       $("empty-murloc").textContent = shown.murloc;
       $("empty-plain").textContent = shown.plain;
     }
-    // Another game folder has other toolboxes: the drawn ones go, the open tab reads its flavor again.
+    // Another game folder has other toolboxes and reports: the drawn ones go, the open tab reads its
+    // flavor again (the adopt report waits for its button).
     for (const id of Object.keys(toolboxes)) delete toolboxes[id];
+    for (const id of Object.keys(adopts)) delete adopts[id];
     renderNav();
     renderFlavor();
     const flavor = selected();

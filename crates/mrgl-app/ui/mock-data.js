@@ -40,6 +40,12 @@
 //   Data.cleanSavedVariables(flavorId)    -> the same            the orphan SavedVariables into the dated
 //                                       zip; the apply, the undo and the cleanup are refused while the client
 //                                       runs (task 023), an edit is not
+//   Data.adopt(flavorId)             -> Promise<{ adopt, flavor, adopted, messages }>  task 109: the adopt
+//                                       report of the flavor's unmanaged addons (`mrgl adopt`), nothing written
+//   Data.adoptApply(flavorId, alongside) -> the same             the report's adoptable addons into the
+//                                       sidecar (`adopt --apply`); in a flavor with the CurseForge app's marker
+//                                       refused unless `alongside` (the dialog's confirmation, the window's
+//                                       `--alongside-curseforge`), then a warning
 //
 // A message is `{ kind, murloc, plain }` as `mrgl_core::voice` says it: the kind picks the murloc line, the
 // plain line carries every fact, and a serious voice sends the murloc line empty (D-005). The murloc table
@@ -108,6 +114,26 @@
 //     changes: [{ character, changed: [{ name, state }], created }],
 //     undone: { set, applied_at, restore, remove } | null,  085: what an undo put back
 //     zip: string | null,
+//     messages: [message] }
+//
+// An adopt answer (task 109, `src/toolbox.rs` over `mrgl_core::adopt`): the report as it is now (null when
+// nothing was read, or the apply was refused before it asked a source), the flavor as it is now after an
+// apply (the adopted rows managed), the `adopted …` line of each entry written, the messages, the summary
+// last:
+//
+//   { adopt: { flavor, folder, curse_client,    the flavor's id and folder, the CurseForge app's marker
+//              marker,                          its warning line, or null
+//              rows: [{ name, folders, version, the core's row, as `mrgl adopt --json` writes it
+//                       sources: [{ spec, source, from, build, why, needs, missing, taken_by }],
+//                       pages, class, adopt_as, needs,   class without-curseforge | only-curseforge |
+//                                               no-build | no-source
+//                       line, verdict, details }],  the addon's line, what adopt makes of it, a line
+//                                               per source and page
+//              left_out, counts: { addons, without_curseforge, only_curseforge, no_build, no_source,
+//                                  adoptable_now },
+//              summary } | null,                a message: the counts and how many an apply adopts
+//     flavor: flavor | null,
+//     adopted: [string],
 //     messages: [message] }
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -928,6 +954,241 @@
     return Promise.resolve(toolboxAnswer(flavor, [say("success", line)], { zip }));
   }
 
+  // ---- adopt (task 109): the made-up sources of the unmanaged rows, in the order of the core's hints
+  // (`adopt.rs`: `X-Wago-ID`, `X-WoWI-ID`, `X-Curse-Project-ID`, `X-Website` on github.com, then the GitHub
+  // mapping), each with a made-up build answer for the flavor. The sketch's run has no key: a Wago or a
+  // CurseForge source needs its key and is never written. A row without an entry has no source.
+  const HINT_LABELS = {
+    "wago-id": "X-Wago-ID",
+    "wowi-id": "X-WoWI-ID",
+    "curse-project-id": "X-Curse-Project-ID",
+    website: "X-Website",
+    mapping: "the GitHub mapping",
+  };
+  const KEY_NAMES = { wago: "MRGL_WAGO_KEY", curse: "MRGL_CURSEFORGE_KEY" };
+  const KEY_SOURCES = { wago: "Wago", curse: "CurseForge" };
+
+  function candidate(spec, from, build, why) {
+    const source = spec.slice(0, spec.indexOf(":"));
+    const needs = KEY_NAMES[source] || null;
+    return {
+      spec,
+      source,
+      from,
+      build: needs && source === "curse" ? "unknown" : build,
+      why: needs && source === "curse" ? `source not configured: ${spec} (${KEY_NAMES[source]} is not set)` : why,
+      needs,
+      missing: needs ? `source not configured: ${spec} (${needs} is not set; ${KEY_SOURCES[source]} needs its key)` : null,
+      taken_by: null,
+    };
+  }
+
+  const ADOPT_SOURCES = {
+    Details: {
+      sources: (flavor) => [
+        candidate("curse:61284", "curse-project-id"),
+        candidate("github:Tercioo/Details-Damage-Meter", "mapping", "yes", `release.json names ${flavorName(flavor)}`),
+      ],
+    },
+    "DBM-Core": {
+      sources: (flavor) => [
+        candidate("wago:qv63LLKb", "wago-id", "yes", `Wago lists a release for ${flavorName(flavor)}`),
+        candidate("curse:3358", "curse-project-id"),
+      ],
+    },
+    Leatrix_Plus: { sources: () => [candidate("curse:289009", "curse-project-id")] },
+    Bartender4: {
+      sources: (flavor) => [
+        candidate("wowi:11190", "wowi-id", "yes", "WoWInterface lists compatibility 1.15.9 (Made-up Era Patch)"),
+        candidate("curse:4525", "curse-project-id"),
+      ],
+    },
+    OldMinimap: {
+      sources: (flavor) => [
+        candidate(
+          "github:example/OldMinimap",
+          "website",
+          "no",
+          `no asset for flavor ${flavorName(flavor)} in github:example/OldMinimap v1.0 (release.json names mainline; assets: OldMinimap-1.0.zip, release.json; looked at 1 release)`
+        ),
+      ],
+    },
+    RaidLogger: { sources: () => [], pages: ["https://www.example.invalid/raid-logger"] },
+  };
+
+  // The flavor as the core's lines name it: the friendly name.
+  function flavorName(flavor) {
+    return flavor.name;
+  }
+
+  // The source's line under its addon, as `Candidate::line` writes it (without the indent).
+  function candidateLine(source, flavor) {
+    let line = `${source.spec} from ${HINT_LABELS[source.from]}: `;
+    const lacks = source.needs ? `needs ${source.needs}` : source.missing;
+    if (lacks && source.build === "unknown") line += lacks;
+    else {
+      line += `${flavorName(flavor)} build ${source.build} (${source.why})`;
+      if (lacks) line += `; ${lacks}`;
+    }
+    if (source.taken_by) line += `; the source of the managed ${source.taken_by} already`;
+    return line;
+  }
+
+  // One unmanaged row of the report, as `adopt::report` makes it: the class from the answers, the spec
+  // to adopt it as (the first usable `yes`, else the first usable `unknown`), the keys that would let it.
+  function adoptRow(row, flavor) {
+    const made = ADOPT_SOURCES[row.folder] || { sources: () => [] };
+    const sources = made.sources(flavor);
+    const pages = made.pages || [];
+    const offers = sources.filter((source) => source.build !== "no");
+    const klass = offers.some((source) => source.source !== "curse")
+      ? "without-curseforge"
+      : offers.length
+        ? "only-curseforge"
+        : sources.length
+          ? "no-build"
+          : "no-source";
+    const usable = (source) => !source.missing && !source.taken_by;
+    const chosen =
+      sources.find((source) => usable(source) && source.build === "yes") ||
+      sources.find((source) => usable(source) && source.build === "unknown");
+    const adopt_as = chosen ? chosen.spec : null;
+    const needs = adopt_as ? [] : [...new Set(offers.map((source) => source.needs).filter(Boolean))];
+    const needsText = needs.length ? `needs ${needs.join(" or ")}` : null;
+    const verdict = adopt_as
+      ? `adopt as ${adopt_as}`
+      : klass === "without-curseforge"
+        ? needsText || "no source this run can write"
+        : klass === "only-curseforge"
+          ? needsText
+            ? `only with CurseForge, ${needsText}`
+            : "only with CurseForge"
+          : klass === "no-build"
+            ? `no ${flavorName(flavor)} build at its sources`
+            : "no known source";
+    const folders = [row.folder];
+    const version = row.version || null;
+    return {
+      name: row.folder,
+      folders,
+      version,
+      sources,
+      pages,
+      class: klass,
+      adopt_as,
+      needs,
+      line: `${row.folder} ${version || "(no version)"}: ${verdict}`,
+      verdict,
+      details: [
+        ...sources.map((source) => candidateLine(source, flavor)),
+        ...pages.map((page) => `page ${page} from X-Website, not a source mrgl reads`),
+      ],
+    };
+  }
+
+  // The counts line of `Report::counts_line`.
+  function countsLine(flavor, counts) {
+    if (counts.addons === 0) return ["nothing", `no unmanaged addons in ${flavor.folder}: nothing to adopt`];
+    let line = `${count(counts.addons, "unmanaged addon")} in ${flavor.folder}: ${counts.without_curseforge} can be adopted without CurseForge, ${counts.only_curseforge} only with CurseForge, ${counts.no_source} with no known source`;
+    if (counts.no_build > 0) line += `, ${counts.no_build} with no ${flavorName(flavor)} build at their sources`;
+    return ["success", line];
+  }
+
+  // The report of a flavor in the shape of `AdoptView`: its unmanaged rows (not linked), by name.
+  function adoptView(flavor) {
+    const rows = flavor.addons
+      .filter((row) => !row.managed && !row.linked)
+      .map((row) => adoptRow(row, flavor))
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    const counts = { addons: rows.length, without_curseforge: 0, only_curseforge: 0, no_build: 0, no_source: 0, adoptable_now: 0 };
+    for (const row of rows) {
+      counts[row.class.replace(/-/g, "_")] += 1;
+      if (row.adopt_as) counts.adoptable_now += 1;
+    }
+    const [kind, line] = countsLine(flavor, counts);
+    return {
+      flavor: flavor.id,
+      folder: flavor.folder,
+      curse_client: flavor.curse_client,
+      marker: flavor.curse_client
+        ? say(
+            "warning",
+            `the CurseForge app manages ${flavor.folder} (its .curseclient marker is there): a folder belongs to one manager, so adopt --apply writes nothing there without --alongside-curseforge`
+          )
+        : null,
+      rows,
+      left_out: [],
+      counts,
+      summary: say(kind, counts.adoptable_now > 0 ? `${line}; adopt --apply adopts ${counts.adoptable_now} of them` : line),
+    };
+  }
+
+  function adoptAnswer(adopt, messages, extra) {
+    return Object.assign({ adopt, flavor: null, adopted: [], messages }, extra || {});
+  }
+
+  // The made-up report: the core's lines, nothing written.
+  function adopt(flavorId) {
+    const flavor = flavors.find((item) => item.id === flavorId);
+    if (!flavor) return Promise.resolve(adoptAnswer(null, [say("error", `no flavor ${flavorId}: no such flavor folder under ${ROOT}`)]));
+    const view = adoptView(flavor);
+    return Promise.resolve(adoptAnswer(view, [view.summary]));
+  }
+
+  // The made-up apply, with the guard and the lines of `adopt --apply`: each adoptable row becomes a
+  // managed row of its source, no folder changes.
+  function adoptApply(flavorId, alongside) {
+    const flavor = flavors.find((item) => item.id === flavorId);
+    if (!flavor) return Promise.resolve(adoptAnswer(null, [say("error", `no flavor ${flavorId}: no such flavor folder under ${ROOT}`)]));
+    if (flavor.curse_client && !alongside) {
+      return Promise.resolve(
+        adoptAnswer(null, [
+          say(
+            "error",
+            `the CurseForge app manages ${flavor.folder} (its .curseclient marker is there) and a folder belongs to one manager: adopt --apply wrote nothing; --alongside-curseforge adopts its addons anyway, and the CurseForge app may still update those folders`
+          ),
+        ])
+      );
+    }
+    const report = adoptView(flavor);
+    const adopted = [];
+    const messages = [];
+    if (flavor.curse_client) {
+      messages.push(
+        say(
+          "warning",
+          `adopting alongside the CurseForge app in ${flavor.folder}: it may still update or flag the adopted folders, and its .curseclient marker stays where it is`
+        )
+      );
+    }
+    for (const row of report.rows) {
+      if (!row.adopt_as) {
+        if (row.class === "without-curseforge" || row.class === "only-curseforge") messages.push(say("warning", `${row.name} not adopted: ${row.verdict}`));
+        continue;
+      }
+      const addonRow = flavor.addons.find((item) => item.folder === row.name);
+      const [kind, id] = [row.adopt_as.slice(0, row.adopt_as.indexOf(":")), row.adopt_as.slice(row.adopt_as.indexOf(":") + 1)];
+      const version = row.version || "unknown";
+      addonRow.source = { kind: kind === "curse" ? "curseforge" : kind, id };
+      addonRow.managed = true;
+      addonRow.guessed = false;
+      addonRow.channel = "stable";
+      addonRow.version = version;
+      refresh(addonRow);
+      adopted.push(`adopted ${row.name} ${version} as ${row.adopt_as} (1 folder: ${row.name})`);
+    }
+    const [, line] = countsLine(flavor, report.counts);
+    messages.push(
+      adopted.length
+        ? say(
+            "success",
+            `${line}; adopted ${count(adopted.length, "addon")} into the sidecar, no download and no folder changed: the next update installs each from its source`
+          )
+        : say("nothing", `${line}; nothing adopted, the sidecar is unchanged`)
+    );
+    return Promise.resolve(adoptAnswer(adoptView(flavor), messages, { flavor, adopted }));
+  }
+
   return {
     version,
     flavors: flavors_,
@@ -946,6 +1207,8 @@
     undoSet,
     editSet,
     cleanSavedVariables,
+    adopt,
+    adoptApply,
     settings,
   };
 });
