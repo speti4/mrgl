@@ -107,8 +107,9 @@ uvx zizmor .github    # .github/
 
 When code or tests change, the coverage measurement the `coverage` job repeats ([docs/development.md,
 "Coverage"](docs/development.md#coverage)): the two installs once, then the run and the check, which fails below
-the floors or when an exclusion in the code is missing from the list in the docs. It runs the whole suite once
-more under instrumentation, so expect about twice the time of `cargo test`:
+the floors, on a `coverage: os` mark a test reaches, or when an exclusion in the code is missing from the list in
+the docs. It runs the whole suite once more under instrumentation, so expect about twice the time of
+`cargo test`:
 
 ```powershell
 # Once: the nightly of scripts/coverage-toolchain.txt and cargo-llvm-cov in the version of
@@ -118,8 +119,8 @@ cargo install cargo-llvm-cov --version (Get-Content scripts/cargo-llvm-cov-versi
 # Every time: the nightly's name from the pin file, the summary as JSON, the table and the floors.
 $nightly = (Get-Content scripts/coverage-toolchain.txt -Raw).Trim()
 New-Item -ItemType Directory -Force target/llvm-cov | Out-Null
-cargo "+$nightly" llvm-cov --workspace --branch --locked --json --summary-only --output-path target/llvm-cov/summary.json
-python -I scripts/coverage-check.py target/llvm-cov/summary.json
+cargo "+$nightly" llvm-cov --workspace --branch --locked --lcov --output-path target/llvm-cov/lcov.info
+python -I scripts/coverage-check.py target/llvm-cov/lcov.info
 cargo "+$nightly" llvm-cov report --branch --html --open    # the lines a test misses, file by file
 ```
 

@@ -140,9 +140,9 @@ jobs:
           '
 
   # Line and branch coverage of the three crates (task 117): the tests once more under cargo-llvm-cov on the
-  # nightly of scripts/coverage-toolchain.txt (branch coverage is nightly-only), the summary as JSON, and
-  # scripts/coverage-check.py prints the table into the job summary and fails below its floors or when an
-  # exclusion in the code and the list in docs/development.md differ. The stable toolchain of the local action
+  # nightly of scripts/coverage-toolchain.txt (branch coverage is nightly-only), the result as lcov, and
+  # scripts/coverage-check.py prints the table into the job summary and fails below its floors, on a stale
+  # `coverage: os` mark, or when an exclusion in the code and the list in docs/development.md differ. The stable toolchain of the local action
   # builds cargo-llvm-cov (pinned in scripts/cargo-llvm-cov-version.txt, installed as the release job installs
   # cargo-about); the nightly only runs the measurement. No Rust cache, as in the msrv job: llvm-cov builds in
   # its own target folder anyway. Not a required check until the floors read 100.
@@ -169,11 +169,11 @@ jobs:
         run: |
           cargo "+$COVERAGE_TOOLCHAIN" llvm-cov --workspace --branch --locked --no-report
           mkdir -p target/llvm-cov
-          cargo "+$COVERAGE_TOOLCHAIN" llvm-cov report --branch --json --summary-only --output-path target/llvm-cov/summary.json
+          cargo "+$COVERAGE_TOOLCHAIN" llvm-cov report --branch --lcov --output-path target/llvm-cov/lcov.info
           cargo "+$COVERAGE_TOOLCHAIN" llvm-cov report --branch --show-missing-lines
       - name: The table and the floors
         shell: bash
-        run: python -I scripts/coverage-check.py target/llvm-cov/summary.json | tee -a "$GITHUB_STEP_SUMMARY"
+        run: python -I scripts/coverage-check.py target/llvm-cov/lcov.info | tee -a "$GITHUB_STEP_SUMMARY"
 
   # zizmor over the workflows, the local action and dependabot.yml; findings fail the job as annotations. No SARIF upload to code
   # scanning: an uploaded finding would not fail this required check.

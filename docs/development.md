@@ -1147,13 +1147,16 @@ CONTRIBUTING.md, "Checks before a commit": `scripts/coverage-toolchain.txt` (the
 coverage nightly to <date>` pull request that re-measures (a nightly can change the branch count without a
 code change) and adjusts the floors with a sentence why.
 
-`scripts/coverage-check.py` reads the job's JSON summary, prints the table (per crate, then per file by missed
+`scripts/coverage-check.py` reads the job's lcov export, prints the table (per crate, then per file by missed
 lines) into the job summary, and fails below its two floors, `LINES_FLOOR` and `BRANCHES_FLOOR` at its top: the
 one place they are written. They only rise: a pull request that lands tests raises them to what it measured,
 and they end at 100 when task 117 closes; from then on, a pull request that leaves a line or a branch untested
-is red before the merge.
+is red before the merge. The lcov export, not the JSON summary, is the measure: the summary counts every
+instantiation of a generic function on its own, so a branch one instantiation never takes shows as missed there
+while the text and HTML reports, which merge the instantiations, show it covered; the lcov lines and branches
+are that merged view, the one a reader of the report can act on.
 
-What no test can reach is excluded in the code, never by a file pattern: the item carries
+What no test can reach is excluded in the code, never by a file pattern. There are two forms. The item carries
 `#[cfg_attr(coverage_nightly, coverage(off))]` under one comment line `// coverage: off — <reason>` (further
 comment lines continue the reason), and the list below carries the same path and the same words. The script
 checks the two against each other and fails on an attribute without a reason or on a list that differs from the
@@ -1163,7 +1166,16 @@ and the crate-level feature gate behind it exist only there, and the workspace's
 exclusion is allowed only on a function or a module whose failure arms only the operating system or the desktop
 can provoke; the logic around such a call is split into a function a test reaches. Two classes need no entry
 below: every `#[cfg(test)]` module and item carries the attribute (the test code is not the subject, and its
-`assert!` arms would be phantom branches), and the `cfg(not(windows))` twins are not measured at all. The
+`assert!` arms would be phantom branches), and the `cfg(not(windows))` twins are not measured at all.
+
+The second form is for a single arm inside a tested function: a failure only the operating system can provoke
+(a read of a folder the code just listed, a write to a file it just created, a rename of a path it just made, a
+system call's own failure, a race between two reads of one path). Such a line ends with `// coverage: os`, or
+the lines sit between a `// coverage: os-begin` line and a `// coverage: os-end` line; the script leaves those
+lines and their branches out of the counts, and fails on a marked line a test does reach, so a mark cannot
+outlive the line's testability. An arm a test can provoke with a locked file, a file where a folder is expected,
+a read-only attribute, a stub process list or a stub rename is tested, never marked. The marks are the register
+of this form (`grep -rn "coverage: os" crates/`); the list below is the register of the attribute form, the
 reasoned exclusions:
 
 - `mrgl-app/src/main.rs`: the Tauri event loop needs a WebView2 window and a desktop session

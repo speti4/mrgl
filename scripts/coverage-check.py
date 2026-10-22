@@ -1,31 +1,41 @@
-"""Prints the coverage table of a cargo-llvm-cov summary and fails below the floors.
+"""Prints the coverage table of a cargo-llvm-cov lcov export and fails below the floors.
 
 The `coverage` job (.github/workflows/ci.yml) and the local run of CONTRIBUTING.md measure the three crates with
-cargo-llvm-cov on the nightly of scripts/coverage-toolchain.txt, export the summary as JSON and hand it here:
+cargo-llvm-cov on the nightly of scripts/coverage-toolchain.txt, export the result as lcov and hand it here:
 
-    cargo +nightly-YYYY-MM-DD llvm-cov --workspace --branch --locked --json --summary-only --output-path summary.json
-    python -I scripts/coverage-check.py summary.json
+    cargo +nightly-YYYY-MM-DD llvm-cov --workspace --branch --locked --lcov --output-path lcov.info
+    python -I scripts/coverage-check.py lcov.info
 
-The table (Markdown, so the job summary renders it) has one row per crate and one per file, sorted by missed
-lines: lines covered with the missed count, branches covered with the missed count. The run fails when the
-workspace total of either is below its floor, the two constants below: they are the one place the floors are
-written, they only rise (every pull request that lands tests raises them to what it measured), and they end at
-100 when task 117 closes.
+The lcov export is read, not the JSON summary: the summary counts every instantiation of a generic function on
+its own, so a branch one instantiation never takes counts as missed while the text and HTML reports, which merge
+the instantiations, show it covered. The lcov lines (`DA`) and branches (`BRDA`) are the merged view, the one a
+reader of the report can act on.
 
-The second check is the exclusion register. An item a test cannot reach carries `#[cfg_attr(coverage_nightly,
-coverage(off))]` under one comment line `// coverage: off — <reason>` (more comment lines continue the reason);
-a `#[cfg(test)]` item carries the attribute with no reason (the test code is not the subject). docs/development.md,
-"Coverage", lists every reasoned site as `- `<path under crates/>`: <reason>`, the same words. The check fails
-on an attribute with neither a `#[cfg(test)]` nor a reason above it, and on any difference between the sites
-in the code and the list in the docs, so the list cannot go stale. Nothing beyond the standard library.
+The table (Markdown, so the job summary renders it) has one row per crate and one per file with something
+missed, sorted by missed lines: lines covered with the missed count, branches covered with the missed count. The
+run fails when the workspace total of either is below its floor, the two constants below: they are the one
+place the floors are written, they only rise (every pull request that lands tests raises them to what it
+measured), and they end at 100 when task 117 closes.
+
+Two kinds of exclusion are checked against the code. An item a test cannot reach carries
+`#[cfg_attr(coverage_nightly, coverage(off))]` under one comment line `// coverage: off — <reason>` (more
+comment lines continue the reason); a `#[cfg(test)]` item carries the attribute with no reason (the test code is
+not the subject). docs/development.md, "Coverage", lists every reasoned site as `- `<path under crates/>`:
+<reason>`, the same words; the check fails on an attribute with neither a `#[cfg(test)]` nor a reason above it,
+and on any difference between the sites in the code and the list in the docs. A failure arm only the operating
+system can provoke (a read of a folder the code just listed, a write to a file it just created, a system call's
+own failure) carries `// coverage: os` at the end of its line, or sits between a `// coverage: os-begin` line and
+a `// coverage: os-end` line; those lines and their branches are left out of the counts, and a marked line a test
+does reach fails the run, so a stale mark cannot hide a line that became testable. Nothing beyond the standard
+library.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 LINES_FLOOR = 86.0
@@ -33,63 +43,90 @@ BRANCHES_FLOOR = 81.0
 
 ATTRIBUTE = "#[cfg_attr(coverage_nightly, coverage(off))]"
 REASON_PREFIX = "// coverage: off — "
+OS_LINE = re.compile(r"//\s*coverage: os(\s|$|—)")
+OS_BEGIN = re.compile(r"//\s*coverage: os-begin(\s|$|—)")
+OS_END = re.compile(r"//\s*coverage: os-end(\s|$|—)")
 DOCS = Path("docs/development.md")
 DOCS_HEADING = "### Coverage"
 
 
-def crate_of(path: str) -> str:
-    """`mrgl-core` from any spelling of `…/crates/mrgl-core/src/x.rs`."""
-    parts = path.replace("\\", "/").split("/")
-    return parts[parts.index("crates") + 1] if "crates" in parts else "?"
-
-
 def short(path: str) -> str:
-    """`mrgl-core/src/x.rs` from any spelling of the full path."""
+    """`mrgl-core/src/x.rs` from any spelling of the full path, or the path itself outside `crates/`."""
     parts = path.replace("\\", "/").split("/")
     return "/".join(parts[parts.index("crates") + 1 :]) if "crates" in parts else path
 
 
-def cell(summary: dict, kind: str) -> str:
-    count = summary[kind]["count"]
-    covered = summary[kind]["covered"]
-    if count == 0:
-        return "–"
-    return f"{covered / count * 100:.2f}% ({count - covered} missed of {count})"
+def read_lcov(path: Path) -> dict[str, tuple[dict[int, int], dict[tuple[int, str, str], bool]]]:
+    """Per file: the hit count per line (the most of any instantiation) and whether each branch was taken."""
+    files: dict[str, tuple[dict[int, int], dict[tuple[int, str, str], bool]]] = {}
+    current = None
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("SF:"):
+            current = files.setdefault(short(line[3:]), ({}, {}))
+        elif line.startswith("DA:") and current:
+            number, hits = line[3:].split(",")[:2]
+            current[0][int(number)] = max(current[0].get(int(number), 0), int(hits))
+        elif line.startswith("BRDA:") and current:
+            number, block, branch, taken = line[5:].split(",")
+            key = (int(number), block, branch)
+            current[1][key] = current[1].get(key, False) or taken not in ("-", "0")
+    return files
 
 
-def add(into: dict, summary: dict) -> None:
-    for kind in ("lines", "branches"):
-        into.setdefault(kind, {"count": 0, "covered": 0})
-        into[kind]["count"] += summary[kind]["count"]
-        into[kind]["covered"] += summary[kind]["covered"]
+def os_marks(root: Path) -> dict[str, set[int]]:
+    """The lines marked as reachable only through the operating system, per file under `crates/`."""
+    marks: dict[str, set[int]] = defaultdict(set)
+    for path in sorted((root / "crates").glob("*/src/**/*.rs")):
+        name = "/".join(path.relative_to(root / "crates").parts)
+        inside = False
+        for number, text in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if OS_BEGIN.search(text):
+                inside = True
+            elif OS_END.search(text):
+                inside = False
+            elif inside or OS_LINE.search(text):
+                marks[name].add(number)
+    return marks
 
 
-def percent(summary: dict, kind: str) -> float:
-    count = summary[kind]["count"]
-    return 100.0 if count == 0 else summary[kind]["covered"] / count * 100
+class Count:
+    def __init__(self) -> None:
+        self.lines = 0
+        self.lines_missed = 0
+        self.branches = 0
+        self.branches_missed = 0
+
+    def add(self, other: "Count") -> None:
+        self.lines += other.lines
+        self.lines_missed += other.lines_missed
+        self.branches += other.branches
+        self.branches_missed += other.branches_missed
+
+    def percent(self, kind: str) -> float:
+        total = getattr(self, kind)
+        return 100.0 if total == 0 else (total - getattr(self, f"{kind}_missed")) / total * 100
+
+    def cell(self, kind: str) -> str:
+        total = getattr(self, kind)
+        if total == 0:
+            return "–"
+        return f"{self.percent(kind):.2f}% ({getattr(self, f'{kind}_missed')} missed of {total})"
 
 
-def table(export: dict) -> tuple[list[str], dict]:
-    data = export["data"][0]
-    crates: dict[str, dict] = {}
-    rows = []
-    for entry in data["files"]:
-        add(crates.setdefault(crate_of(entry["filename"]), {}), entry["summary"])
-        rows.append((entry["summary"]["lines"]["count"] - entry["summary"]["lines"]["covered"], short(entry["filename"]), entry["summary"]))
-    totals = data["totals"]
-    lines = [
-        f"Coverage: {cell(totals, 'lines')} lines, {cell(totals, 'branches')} branches; "
-        f"floors {LINES_FLOOR} / {BRANCHES_FLOOR}",
-        "",
-        "| Crate or file | Lines | Branches |",
-        "|---|---|---|",
-    ]
-    for name in sorted(crates):
-        lines.append(f"| **{name}** | {cell(crates[name], 'lines')} | {cell(crates[name], 'branches')} |")
-    for missed, name, summary in sorted(rows, key=lambda row: (-row[0], row[1])):
-        if missed or summary["branches"]["count"] > summary["branches"]["covered"]:
-            lines.append(f"| `{name}` | {cell(summary, 'lines')} | {cell(summary, 'branches')} |")
-    return lines, totals
+def count(lines: dict[int, int], branches: dict[tuple[int, str, str], bool], marked: set[int]) -> Count:
+    result = Count()
+    for number, hits in lines.items():
+        if number in marked:
+            continue
+        result.lines += 1
+        result.lines_missed += hits == 0
+    for (number, _, _), taken in branches.items():
+        if number in marked:
+            continue
+        result.branches += 1
+        result.branches_missed += not taken
+    return result
 
 
 def sites_in_code(root: Path) -> tuple[set[tuple[str, str]], list[str]]:
@@ -142,18 +179,49 @@ def sites_in_docs(root: Path) -> set[tuple[str, str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("summary", type=Path, help="the --json --summary-only export of cargo-llvm-cov")
+    parser.add_argument("lcov", type=Path, help="the --lcov export of cargo-llvm-cov")
     parser.add_argument("--repo", type=Path, default=Path("."), help="the repo root (default: the current folder)")
     args = parser.parse_args()
 
-    export = json.loads(args.summary.read_text(encoding="utf-8"))
-    lines, totals = table(export)
-    print("\n".join(lines))
+    files = read_lcov(args.lcov)
+    marks = os_marks(args.repo)
     failures: list[str] = []
-    if percent(totals, "lines") < LINES_FLOOR:
-        failures.append(f"lines {percent(totals, 'lines'):.2f}% are below the floor of {LINES_FLOOR}%")
-    if percent(totals, "branches") < BRANCHES_FLOOR:
-        failures.append(f"branches {percent(totals, 'branches'):.2f}% are below the floor of {BRANCHES_FLOOR}%")
+    total = Count()
+    crates: dict[str, Count] = defaultdict(Count)
+    rows: list[tuple[str, Count]] = []
+    marked_lines = marked_branches = 0
+    for name, (lines, branches) in sorted(files.items()):
+        marked = marks.get(name, set())
+        counted = count(lines, branches, marked)
+        total.add(counted)
+        crates[name.split("/")[0]].add(counted)
+        rows.append((name, counted))
+        for number in sorted(marked):
+            if number in lines:
+                marked_lines += 1
+            marked_branches += sum(1 for (line, _, _) in branches if line == number)
+            if lines.get(number, 0) > 0 and all(taken for (line, _, _), taken in branches.items() if line == number):
+                failures.append(f"{name}:{number} is marked `coverage: os` but a test reaches it: drop the mark")
+
+    out = [
+        f"Coverage: {total.cell('lines')} lines, {total.cell('branches')} branches; "
+        f"floors {LINES_FLOOR} / {BRANCHES_FLOOR}; "
+        f"marked `coverage: os`: {marked_lines} lines and {marked_branches} branches left out",
+        "",
+        "| Crate or file | Lines | Branches |",
+        "|---|---|---|",
+    ]
+    for crate in sorted(crates):
+        out.append(f"| **{crate}** | {crates[crate].cell('lines')} | {crates[crate].cell('branches')} |")
+    for name, counted in sorted(rows, key=lambda row: (-row[1].lines_missed, row[0])):
+        if counted.lines_missed or counted.branches_missed:
+            out.append(f"| `{name}` | {counted.cell('lines')} | {counted.cell('branches')} |")
+    print("\n".join(out))
+
+    if total.percent("lines") < LINES_FLOOR:
+        failures.append(f"lines {total.percent('lines'):.2f}% are below the floor of {LINES_FLOOR}%")
+    if total.percent("branches") < BRANCHES_FLOOR:
+        failures.append(f"branches {total.percent('branches'):.2f}% are below the floor of {BRANCHES_FLOOR}%")
 
     code, problems = sites_in_code(args.repo)
     docs = sites_in_docs(args.repo)
