@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 13 backlog (0 ready · 0 blocked · 2 waiting · 11 ideas) · 0 in progress · 65 done · 3 dropped · 5 decisions
+**State:** 12 backlog (0 ready · 0 blocked · 2 waiting · 10 ideas) · 1 in progress · 65 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -49,12 +49,6 @@ _none_
 | 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](backlog/084-stale-staging-folders-are-swept.md) | S | 2026-10-22 |
 | 087 | [The command line's update check writes the last-check file the window reads](backlog/087-cli-update-check-writes-the-last-check-file.md) | S | 2026-10-22 |
 
-#### M2 Window MVP
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 081 | [The window's rows show the interface states scan and list mark](backlog/081-window-rows-show-the-interface-states.md) | S | 2026-10-22 |
-
 #### M3 Toolbox
 
 | # | Task | Size | Created |
@@ -83,7 +77,11 @@ _none_
 
 ### In progress
 
-_none_
+#### M2 Window MVP
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 081 | [The window's rows show the interface states scan and list mark](wip/081-window-rows-show-the-interface-states.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
