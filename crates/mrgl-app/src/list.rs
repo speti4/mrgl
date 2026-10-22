@@ -131,7 +131,7 @@ pub fn load(
     voice: Voice,
 ) -> FlavorsAnswer {
     let Some(root) = root else {
-        let mut plain = "no game root: none remembered, none in the launcher's registry key or the usual install folders; choose the game folder".to_string();
+        let mut plain = "no game root: none remembered, none in the registry or the usual install folders; choose the game folder".to_string();
         append_warnings(&mut plain, &warnings);
         return FlavorsAnswer {
             root: None,
