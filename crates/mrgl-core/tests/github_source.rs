@@ -1331,3 +1331,111 @@ fn the_walk_for_a_named_version_stops_at_the_page_bound() {
     );
     let _ = std::fs::remove_dir_all(&stub);
 }
+
+// --- task 068: the request budget without a token, and the release list's versions ---
+
+#[test]
+fn the_request_budget_counts_the_api_requests_and_reads_the_rate_limit_headers() {
+    let list = r#"[{"tag_name":"v1.0.0","assets":[{"name":"A-forever.zip","browser_download_url":"https://github.test/A-forever.zip"}]}]"#;
+    let stub = stub_with(
+        "budget",
+        &[
+            ("api.github.com/repos/o/counted/releases.json", list),
+            ("api.github.com/repos/o/told/releases.json", list),
+            (
+                "api.github.com/repos/o/told/releases.json.headers",
+                "X-RateLimit-Limit: 60\nX-RateLimit-Remaining: 7\nX-RateLimit-Reset: 1792598400\n",
+            ),
+            ("api.github.com/repos/o/secondary/releases.json", "{}"),
+            (
+                "api.github.com/repos/o/secondary/releases.json.headers",
+                "Status: 429\nRetry-After: 60\n",
+            ),
+        ],
+    );
+    let forever = target(FlavorId::Forever, None);
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    let budget = github.request_budget().expect("a budget without a token");
+    assert_eq!(
+        (
+            budget.host,
+            budget.limit,
+            budget.sent,
+            budget.remaining,
+            budget.reset
+        ),
+        ("GitHub", 60, 0, 60, None)
+    );
+    assert!(budget.hint.contains("MRGL_GITHUB_TOKEN"), "{}", budget.hint);
+
+    // Before an answer names the limit, every request of the run counts against the 60.
+    for _ in 0..3 {
+        github
+            .resolve(&spec("github:o/counted"), &forever)
+            .expect("a pick");
+    }
+    let budget = github.request_budget().expect("a budget");
+    assert_eq!((budget.sent, budget.remaining), (3, 57));
+
+    // An answer's own count wins, less the requests sent after it.
+    github
+        .resolve(&spec("github:o/told"), &forever)
+        .expect("a pick");
+    let budget = github.request_budget().expect("a budget");
+    assert_eq!(
+        (budget.sent, budget.remaining, budget.reset),
+        (4, 7, Some(1_792_598_400))
+    );
+    github
+        .resolve(&spec("github:o/counted"), &forever)
+        .expect("a pick");
+    assert_eq!(github.request_budget().expect("a budget").remaining, 6);
+
+    // A 429 leaves nothing, whatever was counted; the reset comes from retry-after.
+    github
+        .resolve(&spec("github:o/secondary"), &forever)
+        .expect_err("the secondary limit");
+    let budget = github.request_budget().expect("a budget");
+    assert_eq!(budget.remaining, 0);
+    assert!(budget.reset.is_some());
+
+    // Sixty requests use up the anonymous limit when no answer says otherwise.
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    for _ in 0..60 {
+        github
+            .resolve(&spec("github:o/counted"), &forever)
+            .expect("a pick");
+    }
+    assert_eq!(github.request_budget().expect("a budget").remaining, 0);
+
+    // With a token there is no budget to keep, and the network never counts.
+    let github = GitHub::new(FolderHttp::new(&stub), Some("secret".into()), None);
+    github
+        .resolve(&spec("github:o/counted"), &forever)
+        .expect("a pick");
+    assert_eq!(github.request_budget(), None);
+    let offline = GitHub::new(FolderHttp::new(stub.join("missing")), None, None);
+    offline
+        .resolve(&spec("github:o/counted"), &forever)
+        .expect_err("offline");
+    assert_eq!(offline.request_budget().expect("a budget").sent, 0);
+    let _ = std::fs::remove_dir_all(&stub);
+}
+
+#[test]
+fn the_listed_versions_are_the_cached_list_newest_first_without_drafts() {
+    let cache = temp_cache("listed");
+    let github = GitHub::new(FolderHttp::new(fixtures()), None, Some(cache.clone()));
+    let spec = spec("github:Example/Prerelease");
+    assert_eq!(github.listed_versions(&spec), None, "nothing cached yet");
+    github
+        .resolve(&spec, &target(FlavorId::Forever, None))
+        .expect("a pick");
+    let requests = github.http().requests().len();
+    assert_eq!(
+        github.listed_versions(&spec),
+        Some(vec!["1.1.0-beta".to_string(), "1.0.0".to_string()])
+    );
+    assert_eq!(github.http().requests().len(), requests, "no request");
+    let _ = std::fs::remove_dir_all(&cache);
+}

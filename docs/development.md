@@ -186,16 +186,41 @@ by its name; it is reported, not installed, and `mrgl add <source>` installs it 
 and reported with the current release, left alone. `ignored`: skipped without a request. `source-gone`: no
 release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
 hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
-limit, a server error). Another version counts as an update whatever its number: the source's current
-release on the addon's channel is the one to have. An addon whose folders were deleted by hand is left out
-with a warning. `mrgl update --all` and `mrgl update <name>` print a plain data line per addon
+limit, a server error). `installed-newer` (task 068): the installed version is newer than the current
+release on the addon's channel (a deleted release, a switch from the prerelease channel to the stable one);
+it is not an update and is left alone, its line `Switched  1.1.0-beta  newer than the current release
+1.0.0, left alone`, with `(<version> is no longer listed)` when the release list lacks the installed
+version. The order is the GitHub source's cached release list (`Source::listed_versions`, newest first,
+no request) where it lists both versions, else `update::lenient_order`: a leading `v` dropped, the numbers
+before the first `-` or `+` compared as numbers (`1.2` is `1.2.0`), and on equal numbers a version with a
+suffix before one without (`2.0.0-beta` before `2.0.0`); when neither can tell, another version counts as
+an update. `rate-limited`: not asked, the check stopped before the request limit (below). An addon whose
+folders were deleted by hand is left out with a warning.
+
+`update::check` takes a progress callback, `&mut dyn FnMut(CheckProgress)`, the one the command line and
+the window (task 010) share: `Checking { index, total, name, source }` before an addon the source is asked
+about, `Checked { index, total, addon }` after every addon with its `AddonUpdate`, and `Stopped { stop }`
+when the check stops before the request limit. The request budget: without a token the GitHub source counts
+the API requests of its run against the 60 an hour (`Source::request_budget`), and once an answer names
+`x-ratelimit-remaining` that count, less the requests since, takes over with the answer's reset time (a
+429 leaves nothing); an asset download is not counted, a token turns the budget off. Before each addon
+that needs a request the check reads the budget, and with nothing left it stops asking: the addons left
+are `rate-limited`, and `UpdateCheck::stopped` (`BudgetStop`) carries the limit, the requests sent, the
+reset time and how many addons it left, with its line `stopped the check before GitHub's rate limit of 60
+requests an hour without a token: 2 addons not checked, the limit resets at <local time> (local time); set
+MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour` (`within the hour` when no answer named
+the reset). `mrgl update --all` and `mrgl update <name>` print a progress line through the voice before
+each addon the source is asked about (`checking Questie against github:Questie/Questie (10 of 12)`), the
+stop as a warning when it happens, and a plain data line per addon as soon as it is checked
 (`Questie  1.2.2 -> 1.2.3  update available`), ask once for the updates (`--yes` answers; without a
 terminal or with `--json` the command stops and says what `--yes` does, exit 1), install each through the
 one install path with the pick the check made (`AddonUpdate::request`, no second resolve) and end with the
 summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
 `1 update available` and writes nothing). `--json` is one `update` document: every addon with `state`,
-`latest`, `pick`, `updated` and the installed `addon` block, the `counts` per state and the warnings. An
-update or a check that fails does not stop the others; the run then ends with exit code 1.
+`latest`, `pick`, `updated` and the installed `addon` block, the `counts` per state, `stopped` (the
+`BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
+update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
+the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.
 
 The interface check (task 015) compares the `## Interface` numbers of the TOC the flavor loads with the
 installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,

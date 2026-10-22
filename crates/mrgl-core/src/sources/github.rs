@@ -31,6 +31,11 @@
 //! answers from the cache, the cached `release.json` of the release included, and the pick carries
 //! [`Stale`] with the cache's date, so the caller warns that it may be stale (task 041); with nothing
 //! cached the network error stands.
+//!
+//! Without a token the source counts the API requests of its run against the 60 an hour GitHub allows
+//! ([`ANONYMOUS_LIMIT`]), and an answer's `x-ratelimit-remaining` and reset time take over once one names
+//! them; the update check reads the budget before each addon and stops before the limit (task 068). An
+//! asset download goes to the object store and is not counted.
 
 use std::path::{Path, PathBuf};
 
@@ -72,6 +77,8 @@ pub struct GitHub<H: Http> {
     http: H,
     token: Option<String>,
     cache_dir: Option<PathBuf>,
+    /// The API requests of this run and what the answers said of the rate limit (task 068).
+    budget: std::sync::Mutex<BudgetCount>,
 }
 
 /// One release as the API lists it; only the fields the pick needs.
@@ -395,6 +402,7 @@ impl<H: Http> GitHub<H> {
             http,
             token: token.filter(|token| !token.is_empty()),
             cache_dir,
+            budget: std::sync::Mutex::new(BudgetCount::default()),
         }
     }
 
@@ -543,7 +551,7 @@ impl<H: Http> GitHub<H> {
         if let Some(etag) = cached.as_ref().and_then(|cached| cached.etag.as_ref()) {
             request = request.header("If-None-Match", etag.clone());
         }
-        let response = match self.http.get(&request) {
+        let response = match self.api_get(&request) {
             Ok(response) => response,
             Err(error @ Error::Network { .. }) => {
                 let Some(cached) = cached else {
@@ -582,7 +590,7 @@ impl<H: Http> GitHub<H> {
                     && !has_stable_release(&releases)
                     && let Some(url) = next.take()
                 {
-                    let response = self.http.get(&self.api_request(url.clone()))?;
+                    let response = self.api_get(&self.api_request(url.clone()))?;
                     if response.status != 200 {
                         return Err(status_error(response.status, &url, &response));
                     }
@@ -822,6 +830,81 @@ fn rate_limit_reset(response: &Response) -> Option<i64> {
     })
 }
 
+/// How many API requests an hour GitHub allows without a token (task 068).
+pub const ANONYMOUS_LIMIT: u32 = 60;
+
+/// The API requests of one run and the rate limit the last answer that named it said (task 068).
+#[derive(Debug, Default)]
+struct BudgetCount {
+    /// The API requests answered in this run.
+    sent: u32,
+    /// The `x-ratelimit-remaining` of the last answer that had one, with `sent` at that answer.
+    remaining: Option<(u32, u32)>,
+    /// When the limit resets, in Unix seconds, from the last answer that said.
+    reset: Option<i64>,
+}
+
+impl<H: Http> GitHub<H> {
+    /// An API request through the client, counted against the rate limit with what the answer says of it:
+    /// `x-ratelimit-remaining` and the reset time; a 429 says nothing is left. A request that never got
+    /// an answer (the network) is not counted.
+    fn api_get(&self, request: &Request) -> Result<Response> {
+        let response = self.http.get(request)?;
+        if let Ok(mut budget) = self.budget.lock() {
+            budget.sent += 1;
+            let remaining = response
+                .header("x-ratelimit-remaining")
+                .and_then(|value| value.trim().parse::<u32>().ok())
+                .or((response.status == 429).then_some(0));
+            if let Some(remaining) = remaining {
+                budget.remaining = Some((remaining, budget.sent));
+            }
+            if let Some(reset) = rate_limit_reset(&response) {
+                budget.reset = Some(reset);
+            }
+        }
+        Ok(response)
+    }
+
+    /// The versions of the cached release list, newest first, drafts left out: the list the last resolve
+    /// read or confirmed, so no request (task 068).
+    fn cached_versions(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+        let SourceSpec::GitHub { owner, repo } = spec;
+        let bytes = std::fs::read(self.cache_file(owner, repo)?).ok()?;
+        let cached: CachedReleases<Vec<Release>> = serde_json::from_slice(&bytes).ok()?;
+        Some(
+            cached
+                .releases
+                .iter()
+                .filter(|release| !release.draft)
+                .map(|release| release.version().to_string())
+                .collect(),
+        )
+    }
+
+    /// The rate limit of this run without a token (task 068): [`ANONYMOUS_LIMIT`] less the requests sent
+    /// until an answer names `x-ratelimit-remaining`, then that count less the requests since. `None` with
+    /// a token, whose 5000 an hour no update check comes near.
+    fn budget(&self) -> Option<sources::RequestBudget> {
+        if self.token.is_some() {
+            return None;
+        }
+        let budget = self.budget.lock().ok()?;
+        let remaining = match budget.remaining {
+            Some((remaining, at)) => remaining.saturating_sub(budget.sent.saturating_sub(at)),
+            None => ANONYMOUS_LIMIT.saturating_sub(budget.sent),
+        };
+        Some(sources::RequestBudget {
+            host: "GitHub",
+            limit: ANONYMOUS_LIMIT,
+            sent: budget.sent,
+            remaining,
+            reset: budget.reset,
+            hint: format!("set {TOKEN_ENV} to a token of your own for 5000 requests an hour"),
+        })
+    }
+}
+
 impl<H: Http> GitHub<H> {
     /// Reads the pages of the release list after the ones `releases` holds, `page=<n>` of the API, until
     /// `found` answers for a page, a page is short (the last one), or [`MAX_PAGES`] are held (task 066).
@@ -1017,6 +1100,16 @@ impl<H: Http> Source for GitHub<H> {
                 version: version.to_string(),
             })?;
         self.pick_of(spec, release, target, stale)
+    }
+
+    /// The cached release list's versions (task 068).
+    fn listed_versions(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+        self.cached_versions(spec)
+    }
+
+    /// The anonymous rate limit of this run (task 068).
+    fn request_budget(&self) -> Option<sources::RequestBudget> {
+        self.budget()
     }
 
     /// Downloads the picked asset; a byte count other than the size the release list names is refused

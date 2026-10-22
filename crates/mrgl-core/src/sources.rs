@@ -294,6 +294,38 @@ pub trait Source {
 
     /// Downloads the picked asset to a path, creating the parent folders.
     fn fetch(&self, pick: &Pick, to: &Path) -> Result<()>;
+
+    /// The versions the source lists for a spec, newest first, as its last answer had them and without a
+    /// request (task 068: the update check's version order); `None` when the source keeps no such list.
+    fn listed_versions(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+        let _ = spec;
+        None
+    }
+
+    /// What is left of a request limit this run has to keep within (task 068: the GitHub API without a
+    /// token); `None` when the source has no limit to watch.
+    fn request_budget(&self) -> Option<RequestBudget> {
+        None
+    }
+}
+
+/// A source's request limit as this run sees it (task 068): the requests left before the source refuses,
+/// and when the limit resets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RequestBudget {
+    /// The host whose limit it is (`GitHub`).
+    pub host: &'static str,
+    /// The requests the limit allows in its window (60 an hour for the GitHub API without a token).
+    pub limit: u32,
+    /// The requests this run has sent against the limit.
+    pub sent: u32,
+    /// The requests left: the last answer's count less the requests since, or, before any answer said,
+    /// the limit less the requests sent.
+    pub remaining: u32,
+    /// When the limit resets, in Unix seconds, when an answer said.
+    pub reset: Option<i64>,
+    /// How to get a larger limit, for the message line.
+    pub hint: String,
 }
 
 /// One HTTP GET, as a source issues it.

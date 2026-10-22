@@ -617,7 +617,7 @@ fn an_update_over_a_foreign_junction_is_refused() {
         zip: zip("one-folder-1.2.0.zip"),
         version: "1.2.0",
     };
-    let check = update::check(&sandbox.engine, &source, None).expect("checks");
+    let check = update::check(&sandbox.engine, &source, None, &mut |_| {}).expect("checks");
     let addon = &check.addons[0];
     assert_eq!(addon.state, UpdateState::UpdateAvailable);
     let request = addon.request().expect("an update");
