@@ -48,7 +48,12 @@ fn mrgl() -> Command {
     command.env_remove("MRGL_CURSEFORGE_KEY");
     // No test reads or writes the real Windows Credential Manager (task 093).
     command.env("MRGL_KEY_STORE", "off");
-    command.env("MRGL_HOME", temp_home("nohome"));
+    // One home for every run that sets none of its own, never removed while the tests run: the runs of
+    // two tests overlap, and a folder deleted under a running `mrgl` is a config read that fails.
+    command.env(
+        "MRGL_HOME",
+        std::env::temp_dir().join(format!("mrgl-cli-test-{}-nohome", std::process::id())),
+    );
     // Every source answers from the fixture folder, never from the network.
     command.env("MRGL_HTTP_STUB", releases());
     // No test reads the real registry or looks under Program Files.
@@ -8918,4 +8923,1255 @@ fn import_takes_a_curse_entry() {
             .is_file()
     );
     assert!(!all_output(&output).contains(CURSE_TEST_KEY));
+}
+
+// --- task 117: the arms the earlier tests left: the banner, an output handle that cannot be written,
+// the key store in a folder, the warnings of every command, the counts in the singular and the plural ---
+
+#[test]
+fn no_command_is_the_banner_with_the_help_hint_in_text_and_in_json() {
+    let hint = format!("mrgl {}: try `mrgl --help`", env!("CARGO_PKG_VERSION"));
+    let output = mrgl().output().expect("run mrgl");
+    assert!(output.status.success());
+    let text = stdout(&output);
+    assert_eq!(text.lines().count(), 2, "{text}");
+    assert_eq!(stdout_last_line(&output), hint);
+    let output = mrgl().arg("--json").output().expect("run mrgl");
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one JSON line");
+    assert_eq!(value["kind"], "banner");
+    assert_eq!(value["message"], hint);
+}
+
+#[test]
+fn an_output_handle_that_cannot_be_written_is_a_panic_with_exit_code_101() {
+    let dir = temp_home("read-only-handles");
+    std::fs::create_dir_all(&dir).expect("the folder");
+    let sink = dir.join("sink.txt");
+    std::fs::write(&sink, "").expect("the file");
+    // A handle opened for reading as stdout: the write fails with something other than a closed pipe.
+    let output = mrgl()
+        .arg("--version")
+        .stdout(std::fs::File::open(&sink).expect("a read-only handle"))
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(101));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("failed printing to stdout: "), "{stderr}");
+    // The same handle as stderr: the error line of the run cannot be written, and the panic's own message
+    // has nowhere to go either, so the exit code alone says it.
+    let output = mrgl()
+        .args(["--serious", "list"])
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::open(&sink).expect("a read-only handle"))
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(101));
+    assert_eq!(stdout(&output), "");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn key_set_clear_and_list_round_trip_through_a_folder_store_and_never_print_the_key() {
+    let home = temp_home("key-folder-store");
+    std::fs::create_dir_all(&home).expect("the folder");
+    let store = home.join("keys");
+    let folder = format!("folder:{}", store.display());
+    let env = [("MRGL_KEY_STORE", folder.as_str())];
+    // No key anywhere: the listing says so, without the warning of a store that is off.
+    let output = mrgl_with_input(&["--serious", "key", "list"], "", &env);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "MRGL_GITHUB_TOKEN not set",
+            "MRGL_WAGO_KEY not set",
+            "MRGL_CURSEFORGE_KEY not set",
+            "0 of 3 keys set, none shown",
+        ]
+    );
+    // A key from a pipe, one per source kind, stored as a file named after its target.
+    for (source, name, target) in [
+        ("wago", "MRGL_WAGO_KEY", "mrgl:wago"),
+        ("github", "MRGL_GITHUB_TOKEN", "mrgl:github"),
+        ("curse", "MRGL_CURSEFORGE_KEY", "mrgl:curse"),
+    ] {
+        let output = mrgl_with_input(
+            &["--serious", "key", "set", source],
+            &format!("{KEY_SECRET}\n"),
+            &env,
+        );
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        assert_eq!(
+            stdout_last_line(&output),
+            format!("{name} stored in the folder key store as {target}")
+        );
+        assert!(!all_output(&output).contains(KEY_SECRET));
+        assert_eq!(
+            std::fs::read_to_string(store.join(target.replace(':', "-"))).expect("the key file"),
+            KEY_SECRET
+        );
+    }
+    let output = mrgl_with_input(&["--serious", "key", "list"], "", &env);
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "MRGL_GITHUB_TOKEN set (credential store)",
+            "MRGL_WAGO_KEY set (credential store)",
+            "MRGL_CURSEFORGE_KEY set (credential store)",
+            "3 of 3 keys set, none shown",
+        ]
+    );
+    assert!(!all_output(&output).contains(KEY_SECRET));
+    // The environment comes first: a set and a clear say so.
+    let env_too = [
+        ("MRGL_KEY_STORE", folder.as_str()),
+        ("MRGL_WAGO_KEY", "another-made-up-key-value"),
+    ];
+    let output = mrgl_with_input(&["--serious", "key", "set", "wago"], KEY_SECRET, &env_too);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "MRGL_WAGO_KEY is set in the environment too, which comes first",
+            "MRGL_WAGO_KEY stored in the folder key store as mrgl:wago",
+        ]
+    );
+    let json = mrgl_with_input(&["--json", "key", "clear", "wago"], "", &env_too);
+    assert!(json.status.success(), "{}", stderr_last_line(&json));
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one document");
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "kind": "key", "action": "clear", "source": "wago", "name": "MRGL_WAGO_KEY",
+            "target": "mrgl:wago", "changed": true,
+            "warnings": ["MRGL_WAGO_KEY is still set in the environment"],
+        })
+    );
+    assert!(!store.join("mrgl-wago").exists());
+    assert!(!all_output(&json).contains("another-made-up-key-value"));
+    let output = mrgl_with_input(&["--serious", "key", "set", "wago"], KEY_SECRET, &env);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let output = mrgl_with_input(&["--serious", "key", "clear", "wago"], "", &env_too);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "MRGL_WAGO_KEY is still set in the environment",
+            "MRGL_WAGO_KEY removed from the folder key store (mrgl:wago)",
+        ]
+    );
+    // The JSON of a set, and of a clear with nothing left to clear.
+    let json = mrgl_with_input(&["--json", "key", "set", "wago"], KEY_SECRET, &env);
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one document");
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "kind": "key", "action": "set", "source": "wago", "name": "MRGL_WAGO_KEY",
+            "target": "mrgl:wago", "changed": true, "warnings": [],
+        })
+    );
+    assert!(!all_output(&json).contains(KEY_SECRET));
+    let output = mrgl_with_input(&["--serious", "key", "clear", "wago"], "", &env);
+    assert_eq!(
+        stdout_last_line(&output),
+        "MRGL_WAGO_KEY removed from the folder key store (mrgl:wago)"
+    );
+    let output = mrgl_with_input(&["--serious", "key", "clear", "wago"], "", &env);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "no MRGL_WAGO_KEY in the folder key store (mrgl:wago), nothing removed"
+    );
+    let json = mrgl_with_input(&["--json", "key", "clear", "wago"], "", &env);
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one document");
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    // An empty pipe stores nothing and leaves the key there.
+    let output = mrgl_with_input(&["--serious", "key", "set", "github"], "", &env);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "no key read from the standard input: nothing on the standard input; pipe the key in, never as an argument"
+    );
+    assert_eq!(
+        std::fs::read_to_string(store.join("mrgl-github")).expect("the key file"),
+        KEY_SECRET
+    );
+    // A store that refuses: a file where its folder should be.
+    let file = home.join("keys-file");
+    std::fs::write(&file, "").expect("the file");
+    let folder = format!("folder:{}", file.display());
+    let output = mrgl_with_input(
+        &["--serious", "key", "set", "curse"],
+        KEY_SECRET,
+        &[("MRGL_KEY_STORE", folder.as_str())],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_last_line(&output).starts_with("cannot store the key in the folder key store: "),
+        "{}",
+        stderr_last_line(&output)
+    );
+    assert!(!all_output(&output).contains(KEY_SECRET));
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn list_warns_when_the_sidecar_cannot_be_read_and_lists_everything_unmanaged() {
+    let game = Game::new("sidecar-unreadable");
+    game.by_hand("ByHand");
+    std::fs::create_dir_all(game.state_path()).expect("a folder where the sidecar should be");
+    let output = run_in(&game, &["list"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    // The dependency check, the Forever marks and the listing each say it once.
+    assert_eq!(
+        text.lines()
+            .filter(|line| line.contains("reading the state sidecar: "))
+            .count(),
+        3,
+        "{text}"
+    );
+    assert!(
+        text.lines().any(|line| line.starts_with(
+            "state sidecar not read, every addon listed as unmanaged: reading the state sidecar: "
+        )),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("ByHand  0.1  16001  unmanaged")),
+        "{text}"
+    );
+    let value = game.list_json();
+    assert_eq!(value["counts"]["managed"], 0);
+    assert_eq!(value["warnings"].as_array().map(Vec::len), Some(3));
+}
+
+#[test]
+fn scan_counts_the_folders_without_a_toc_and_the_addons_of_another_build_in_the_plural() {
+    let game = Game::new("scan-counts");
+    for folder in ["Media", "Textures"] {
+        std::fs::create_dir_all(game.addon(folder)).expect("a folder without a TOC");
+    }
+    let toc = |folder: &str, text: &str| {
+        std::fs::create_dir_all(game.addon(folder)).expect("the folder");
+        std::fs::write(game.addon(folder).join(format!("{folder}.toc")), text).expect("the TOC");
+    };
+    // No interface line: a dash; two addons of another expansion: the mismatch warning in the plural.
+    toc("NoInterface", "## Title: No Interface\n## Version: 0.1\n");
+    toc("Elsewhere", "## Interface: 110207\n## Title: Elsewhere\n");
+    toc("Faraway", "## Interface: 110207\n## Title: Faraway\n");
+    let output = game
+        .mrgl()
+        .args(["--serious", "scan"])
+        .arg(game.root.join("_forever_"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("NoInterface  0.1  -")),
+        "{text}"
+    );
+    assert!(
+        text.lines().any(
+            |line| line.starts_with("2 addons name no interface of the build ")
+                && line.contains("Elsewhere (110207), Faraway (110207)")
+        ),
+        "{text}"
+    );
+    assert!(
+        stdout_last_line(&output).ends_with(", 2 folders without a TOC skipped"),
+        "{text}"
+    );
+}
+
+#[test]
+fn list_passes_over_a_sidecar_entry_without_folders_in_the_forever_marks() {
+    let game = Game::new("forever-no-folders");
+    addon_by_hand(&game, "OneFolder", "1.0.0");
+    std::fs::create_dir_all(game.home.join("wowf")).expect("the flavor home");
+    std::fs::write(
+        game.state_path(),
+        r#"{ "schema": 1, "flavor": "wowf", "addons": { "Ghost": { "source": "github:Questie/Questie", "version": "1.0.0", "folders": [], "files": {}, "installed_at": "2026-10-21T14:03:05Z" } } }"#,
+    )
+    .expect("the sidecar");
+    let value = game.list_json();
+    assert_eq!(listed(&value, "OneFolder")["managed"], false);
+    assert_eq!(
+        listed(&value, "OneFolder")["forever"],
+        serde_json::Value::Null
+    );
+    assert_eq!(value["warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn add_dry_run_warns_about_a_discovered_root_and_resolves_without_its_flavor_folder() {
+    let game = Game::new("dry-run-discovered");
+    let stub = discovery(None, &[&game.root]);
+    let output = mrgl()
+        .env("MRGL_HOME", &game.home)
+        .env("MRGL_DISCOVERY", &stub)
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("game root found in ")),
+        "{text}"
+    );
+    assert_eq!(stdout_last_line(&output), "dry run: nothing installed");
+    // A root with another flavor only: the flavor's build is unknown, the pick is for the flavor alone.
+    let other = game.root.parent().expect("the base").join("other");
+    std::fs::create_dir_all(other.join("_retail_")).expect("the flavor folder");
+    std::fs::write(
+        other.join(".build.info"),
+        "Version!STRING:0|Product!STRING:0\n12.1.5.70448|wow\n",
+    )
+    .expect(".build.info");
+    std::fs::write(
+        other.join("_retail_").join(".flavor.info"),
+        "Product Flavor!STRING:0\nwow\n",
+    )
+    .expect(".flavor.info");
+    let output = mrgl()
+        .env("MRGL_HOME", &game.home)
+        .env("MRGL_DISCOVERY", discovery(None, &[&other]))
+        .args([
+            "--serious",
+            "add",
+            "github:Questie/Questie",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(!text.contains("game root found"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("pick for forever: github:Questie/Questie v1.2.3")),
+        "{text}"
+    );
+    assert_eq!(stdout_last_line(&output), "dry run: nothing installed");
+}
+
+#[test]
+fn add_dry_run_shows_the_release_notes_alone_when_the_release_names_no_page() {
+    let game = Game::new("notes-no-page");
+    let stub = game.root.parent().expect("the base").join("stub");
+    copy_tree(&releases(), &stub);
+    let list = stub.join("api.github.com/repos/Example/Notes/releases.json");
+    let text = std::fs::read_to_string(&list).expect("the release list");
+    let without_page = text.replace(
+        "\"html_url\": \"https://github.com/Example/Notes/releases/tag/v2.1.0\"",
+        "\"html_url\": \"\"",
+    );
+    assert_ne!(without_page, text, "the page address is in the fixture");
+    std::fs::write(&list, without_page).expect("the list without a page");
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args([
+            "--serious",
+            "add",
+            "github:Example/Notes",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout(&output)
+            .lines()
+            .any(|line| line == "release notes: Quest arrows point the right way again"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn root_json_names_the_saved_root_and_a_home_that_is_a_file_refuses_the_save() {
+    let home = temp_home("root-json");
+    let json = mrgl()
+        .env("MRGL_HOME", &home)
+        .args(["--json", "root"])
+        .arg(fixtures())
+        .output()
+        .expect("run mrgl");
+    assert!(json.status.success(), "{}", stderr_last_line(&json));
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["kind"], "root");
+    assert_eq!(value["saved"], true);
+    assert_eq!(value["root_origin"], "remembered");
+    assert_eq!(
+        value["flavors"],
+        serde_json::json!(["wow_classic", "wow_classic_era", "wowf", "wow", "wow_mrgl"])
+    );
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    assert!(home.join("config.json").is_file());
+    // A file where the home folder should be: the game folder is fine, the config cannot be written.
+    let file = temp_home("root-home-file");
+    std::fs::write(&file, "not a folder").expect("the file");
+    let output = mrgl()
+        .env("MRGL_HOME", &file)
+        .args(["--serious", "root"])
+        .arg(fixtures())
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_last_line(&output).starts_with("creating the home folder: "),
+        "{}",
+        stderr_last_line(&output)
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn add_dry_run_of_a_zip_says_update_and_warns_in_a_folder_the_curseforge_app_manages() {
+    let game = Game::new("dry-run-update");
+    game.install("several-folders-2.0.0.zip");
+    std::fs::write(game.root.join("_forever_").join(".curseclient"), "").expect("the marker");
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(zips().join("several-folders-2.1.0.zip"))
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("the CurseForge app manages _forever_ too")),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "dry run: would update SeveralFolders from 2.0.0 to 2.1.0 (2 folders: SeveralFolders, SeveralFolders_Options) in _forever_"
+    );
+    assert_eq!(
+        sidecar(&game)["addons"]["SeveralFolders"]["version"],
+        "2.0.0"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn link_warns_without_a_build_and_counts_the_skipped_and_the_toc_less_folders() {
+    let game = Game::new("link-counts");
+    let solo = solo_copy(&game);
+    let dev = dev_copy(&game);
+    std::fs::create_dir_all(dev.join("Art")).expect("a second folder without a TOC");
+    std::fs::write(dev.join("Art").join("logo.txt"), "").expect("a file");
+    std::fs::remove_file(game.root.join(".build.info")).expect("no build");
+    // The addon folder's name is in the way: nothing is linked, after the warning of the unknown build.
+    std::fs::create_dir_all(game.addon("SoloAddon")).expect("a real folder");
+    let output = game
+        .mrgl()
+        .args(["--serious", "link"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line.starts_with("build unknown: ")),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("skipped SoloAddon: ")),
+        "{text}"
+    );
+    let last = stdout_last_line(&output);
+    assert!(
+        last.starts_with("linked no addon from ") && last.ends_with(" into _forever_, 1 skipped"),
+        "{last}"
+    );
+    // Two folders without a TOC are counted in the plural.
+    let output = game
+        .mrgl()
+        .args(["--serious", "link"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout_last_line(&output)
+            .ends_with(" into _forever_: DevAddon, OneFolder, 2 folders without a TOC left out"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn unlink_keeps_a_real_folder_in_a_junctions_place_and_warns_about_one_gone_by_hand() {
+    let game = Game::new("unlink-kept");
+    let dev = dev_copy(&game);
+    let solo = solo_copy(&game);
+    for folder in [&dev, &solo] {
+        let output = game
+            .mrgl()
+            .arg("link")
+            .arg(folder)
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+    }
+    // OneFolder's junction went by hand; DevAddon's and SoloAddon's became real folders.
+    std::fs::remove_dir(game.addon("OneFolder")).expect("the junction goes");
+    for name in ["DevAddon", "SoloAddon"] {
+        std::fs::remove_dir(game.addon(name)).expect("the junction goes");
+        std::fs::create_dir_all(game.addon(name)).expect("a real folder");
+        std::fs::write(game.addon(name).join("mine.lua"), "-- mine\n").expect("a file");
+    }
+    let output = game
+        .mrgl()
+        .args(["--serious", "unlink"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line == "OneFolder was gone from AddOns already"),
+        "{text}"
+    );
+    assert!(
+        text.lines().any(|line| line
+            == "kept DevAddon: DevAddon is a real folder now, not a junction; left in place and no longer managed"),
+        "{text}"
+    );
+    let last = stdout_last_line(&output);
+    assert!(
+        last.starts_with("unlinked 1 addon of ")
+            && last.ends_with(" from _forever_: OneFolder, 1 kept"),
+        "{last}"
+    );
+    // Nothing to unlink and one kept.
+    let output = game
+        .mrgl()
+        .args(["--serious", "unlink"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let last = stdout_last_line(&output);
+    assert!(
+        last.starts_with("unlinked 0 addons of ") && last.ends_with(" from _forever_, 1 kept"),
+        "{last}"
+    );
+    for name in ["DevAddon", "SoloAddon"] {
+        assert!(game.addon(name).join("mine.lua").is_file(), "{name} stays");
+    }
+    let state = std::fs::read_to_string(game.state_path()).expect("the sidecar");
+    assert!(!state.contains("link:"), "{state}");
+}
+
+#[test]
+fn rollback_removes_the_folders_the_previous_version_lacked_and_a_mark_warns_without_a_build() {
+    let game = Game::new("rollback-removed");
+    add_in(
+        &game,
+        &["several-folders-2.1.0.zip", "several-folders-2.0.0.zip"],
+    );
+    std::fs::remove_file(game.root.join(".build.info")).expect("no build");
+    let output = run_in(&game, &["rollback", "SeveralFolders"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line.starts_with("build unknown: ")),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "rolled back SeveralFolders from 2.0.0 to 2.1.0 (2 folders: SeveralFolders, SeveralFolders_Options) in _forever_, 1 folder of 2.0.0 removed (SeveralFolders_Data); pinned at 2.1.0, `mrgl unpin SeveralFolders` lets updates reach it again"
+    );
+    assert!(!game.addon("SeveralFolders_Data").exists());
+    let output = run_in(&game, &["unpin", "SeveralFolders"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line.starts_with("build unknown: ")),
+        "{text}"
+    );
+}
+
+#[test]
+fn backup_list_counts_the_files_the_unreadable_zips_and_the_folders_moved_aside() {
+    let root = temp_game_root_with_wtf("backup-list");
+    let flavor = root.join("_forever_");
+    let backups = root.join("backups");
+    // A WTF folder of one file backs up in the singular.
+    let one = temp_game_root("backup-one-file");
+    std::fs::remove_file(one.join(".build.info")).expect("no build: the backup warns");
+    std::fs::create_dir_all(one.join("_forever_").join("WTF")).expect("the WTF folder");
+    std::fs::write(
+        one.join("_forever_").join("WTF").join("Config.wtf"),
+        b"SET portal \"EU\"\r\n",
+    )
+    .expect("the one file");
+    let output = mrgl()
+        .args(["--serious", "backup", "--flavor"])
+        .arg(one.join("_forever_"))
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout(&output)
+            .lines()
+            .any(|line| line.starts_with("build unknown: ")),
+        "{}",
+        stdout(&output)
+    );
+    let line = stdout_last_line(&output);
+    assert!(
+        line.starts_with("backed up WTF of _forever_: 1 file, "),
+        "{line}"
+    );
+    let zip = PathBuf::from(line.rsplit(", in ").next().expect("the zip path"));
+    // A second zip by name, one that is no zip, and two WTF folders restores moved aside.
+    std::fs::copy(&zip, backups.join("WTF-2026-01-01-000000.zip")).expect("the copy");
+    std::fs::write(backups.join("WTF-broken.zip"), "not a zip").expect("the broken zip");
+    for aside in [
+        "WTF-before-restore-2026-01-01-000000",
+        "WTF-before-restore-2026-01-02-000000",
+    ] {
+        std::fs::create_dir_all(backups.join(aside)).expect("the folder moved aside");
+    }
+    let output = mrgl()
+        .args(["--serious", "backup", "--list", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("WTF-2026-01-01-000000.zip  1 file  ")),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("WTF-broken.zip  unreadable  ")),
+        "{text}"
+    );
+    assert!(
+        text.lines().any(|line| line
+            == "WTF-before-restore-2026-01-01-000000  the WTF folder a restore moved aside"),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("unreadable backup: ")),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        format!(
+            "3 backups of _forever_ in {}, 2 WTF folders moved aside by restores",
+            backups.display()
+        )
+    );
+    // No backups at all: a missing folder is an empty listing.
+    let output = mrgl()
+        .args(["--serious", "backup", "--list", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(root.join("nothing"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        format!(
+            "no backups of _forever_ in {}",
+            root.join("nothing").display()
+        )
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&one);
+}
+
+#[test]
+fn restore_goes_on_after_a_y_into_a_flavor_without_a_wtf_and_takes_a_bare_name_from_the_current_folder()
+ {
+    let root = temp_game_root_with_wtf("restore-yes");
+    let flavor = root.join("_forever_");
+    let backups = root.join("backups");
+    let before = snapshot(&flavor.join("WTF"));
+    let output = mrgl()
+        .args(["--json", "backup", "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let zip = PathBuf::from(value["zip"].as_str().expect("the zip path"));
+    let name = zip
+        .file_name()
+        .expect("a name")
+        .to_string_lossy()
+        .into_owned();
+    // The WTF folder goes, and the build is unknown from here on: the restore says both and puts the
+    // backup in place after the answer.
+    std::fs::remove_dir_all(flavor.join("WTF")).expect("WTF goes");
+    std::fs::remove_file(root.join(".build.info")).expect("no build");
+    let mut child = mrgl()
+        .args(["--serious", "backup", "--restore", &name, "--flavor"])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run mrgl");
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(b"y\n")
+            .expect("the answer");
+    }
+    let output = child.wait_with_output().expect("finished");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line.starts_with("build unknown: ")),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        format!("restored WTF of _forever_ from {name}: 8 files; there was no WTF folder before")
+    );
+    assert_eq!(snapshot(&flavor.join("WTF")), before, "byte for byte");
+    // A bare name that exists where the command runs is that file, whatever the backups folder.
+    let output = mrgl()
+        .current_dir(&backups)
+        .args([
+            "--serious",
+            "backup",
+            "--yes",
+            "--restore",
+            &name,
+            "--flavor",
+        ])
+        .arg(&flavor)
+        .arg("--to")
+        .arg(root.join("elsewhere"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout_last_line(&output).starts_with(&format!(
+            "restored WTF of _forever_ from {name}: 8 files; the previous WTF is at "
+        )),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(snapshot(&flavor.join("WTF")), before);
+    // A standard input that cannot be read is no confirmation.
+    let sink = root.join("write-only.txt");
+    let output = mrgl()
+        .args(["--serious", "backup", "--restore"])
+        .arg(&zip)
+        .arg("--flavor")
+        .arg(&flavor)
+        .arg("--to")
+        .arg(&backups)
+        .stdin(std::fs::File::create(&sink).expect("a write-only handle"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "restore cancelled, nothing changed"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn export_counts_the_managed_addons_in_the_plural_and_none_at_all_and_json_names_the_file() {
+    let game = managed_game(
+        "export-two",
+        &[
+            ("OneFolder", "github:Questie/Questie", "1.2.2", ""),
+            ("Other", "github:Example/Notes", "2.1.0", ""),
+        ],
+    );
+    let list = game.root.parent().expect("the base").join("two.json");
+    let output = game
+        .mrgl()
+        .args(["--serious", "export", "--flavor", "forever", "--to"])
+        .arg(&list)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        format!(
+            "exported 2 managed addons of _forever_ to {}",
+            list.display()
+        )
+    );
+    let json = game
+        .mrgl()
+        .args(["--json", "export", "--flavor", "forever", "--to"])
+        .arg(&list)
+        .output()
+        .expect("run mrgl");
+    assert!(json.status.success(), "{}", stderr_last_line(&json));
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one document");
+    assert_eq!(value["kind"], "export");
+    assert_eq!(value["file"].as_str(), list.to_str());
+    assert_eq!(value["list"]["addons"].as_array().map(Vec::len), Some(2));
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    // Nothing managed: the list is empty, and the summary says so on stderr, since stdout is the list.
+    let empty = Game::new("export-none");
+    let output = empty
+        .mrgl()
+        .args(["--serious", "export", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stderr_last_line(&output),
+        "exported no managed addons of _forever_"
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("the list");
+    assert_eq!(value["addons"], serde_json::json!([]));
+}
+
+#[test]
+fn import_counts_two_failures_says_an_empty_list_and_stops_on_a_sidecar_it_cannot_read() {
+    let game = Game::new("import-failures");
+    let list = write_list(
+        &game,
+        "gone.json",
+        &[
+            ("Gone", "github:Example/Missing", "1.0.0"),
+            ("GoneToo", "github:Example/MissingToo", "1.0.0"),
+        ],
+    );
+    let list = list.to_str().expect("a path").to_string();
+    let output = run_in(&game, &["import", &list, "--dry-run"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "2 addons of gone.json failed: Gone, GoneToo; the other entries are done"
+    );
+    let empty = write_list(&game, "empty.json", &[]);
+    let output = run_in(&game, &["import", empty.to_str().expect("a path")]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "no addons in empty.json, nothing to import"
+    );
+    // A sidecar that cannot be read stops the import before anything is resolved.
+    std::fs::create_dir_all(game.state_path()).expect("a folder where the sidecar should be");
+    let output = run_in(&game, &["import", &list, "--dry-run"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_last_line(&output).starts_with("reading the state sidecar: "),
+        "{}",
+        stderr_last_line(&output)
+    );
+}
+
+#[test]
+fn savedvars_warns_without_an_addons_folder_in_the_listing_and_in_the_cleanup() {
+    let root = temp_game_root_with_wtf("savedvars-no-addons");
+    let flavor = root.join("_forever_");
+    for clean in [false, true] {
+        let mut command = mrgl();
+        command
+            .env("MRGL_HOME", root.join("home"))
+            .args(["--serious", "savedvars"]);
+        if clean {
+            command.arg("--clean");
+        }
+        let output = command
+            .arg("--flavor")
+            .arg(&flavor)
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let text = stdout(&output);
+        assert!(
+            text.lines()
+                .any(|line| line.starts_with("no AddOns folder at ")
+                    && line.ends_with(": no SavedVariables file is marked an orphan")),
+            "{text}"
+        );
+        if clean {
+            assert_eq!(
+                stdout_last_line(&output),
+                "no orphans in the SavedVariables of _forever_, nothing moved"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn set_save_replaces_a_set_an_apply_creates_an_addons_txt_and_an_undo_removes_it_again() {
+    let (root, home) = temp_game_root_with_sets("create");
+    let addons = root.join("_forever_").join("Interface").join("AddOns");
+    for folder in ["RaidFrames", "BossTimers", "QuestArrows", "BagSorter"] {
+        std::fs::create_dir_all(addons.join(folder)).expect("the addon folder");
+        std::fs::write(
+            addons.join(folder).join(format!("{folder}.toc")),
+            format!("## Interface: 16001\n## Title: {folder}\n"),
+        )
+        .expect("the TOC");
+    }
+    // Every addon of the character is installed: no warning; a second save replaces the first.
+    let save = [
+        "--serious",
+        "set",
+        "save",
+        "mine",
+        "--character",
+        "Mrgltest",
+    ];
+    let output = set_run(&root, &home, &save);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(
+        text.starts_with("saved set mine of _forever_ from ")
+            && text
+                .trim_end()
+                .ends_with(": 4 addons (3 enabled, 1 disabled)"),
+        "{text}"
+    );
+    let output = set_run(&root, &home, &save);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        stdout_last_line(&output).ends_with(
+            ": 4 addons (3 enabled, 1 disabled); it replaces the set saved before under that name"
+        ),
+        "{}",
+        stdout(&output)
+    );
+    // A character folder without an AddOns.txt: the apply creates one, and the undo removes it.
+    let newbie = root
+        .join("_forever_")
+        .join("WTF")
+        .join("Account")
+        .join("MRGLSETS")
+        .join("Third Realm")
+        .join("Newbie");
+    std::fs::create_dir_all(&newbie).expect("the character folder");
+    let output = set_run(&root, &home, &["--serious", "set", "apply", "mine"]);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("Third Realm/Newbie: ")
+                && line.ends_with(" (a new AddOns.txt)")),
+        "{text}"
+    );
+    assert!(newbie.join("AddOns.txt").is_file());
+    // An undo record that cannot be removed is a warning; the files are put back all the same.
+    let extra = home.join("wowf").join("set-undo").join("extra.txt");
+    std::fs::write(&extra, "").expect("the extra file");
+    let held = {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&extra)
+            .expect("the extra file held open")
+    };
+    let output = set_run(&root, &home, &["--serious", "set", "undo"]);
+    drop(held);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line == "Third Realm/Newbie: AddOns.txt removed, the apply had created it"),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("the undo record ")
+                && line.contains(" could not be removed (")),
+        "{text}"
+    );
+    assert!(!newbie.join("AddOns.txt").exists());
+    // The JSON of show and remove.
+    let output = set_run(&root, &home, &["--json", "set", "show", "mine"]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "set-show");
+    assert_eq!(value["name"], "mine");
+    assert_eq!(
+        value["set"]["addons"].as_object().map(|map| map.len()),
+        Some(4)
+    );
+    let output = set_run(&root, &home, &["--json", "set", "remove", "mine"]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "set-remove");
+    assert_eq!(value["name"], "mine");
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    // An edit of a set that is no longer there.
+    for verb in ["enable", "disable"] {
+        let output = set_run(
+            &root,
+            &home,
+            &["--serious", "set", verb, "mine", "BagSorter"],
+        );
+        assert_eq!(output.status.code(), Some(1), "{verb}");
+        assert!(
+            stderr_last_line(&output).contains("mine"),
+            "{}",
+            stderr_last_line(&output)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn set_save_names_one_character_in_the_singular() {
+    let root = temp_game_root_with_wtf("set-one-character");
+    let home = root.join("home");
+    let output = set_run(&root, &home, &["--serious", "set", "save", "solo"]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        stdout_last_line(&output).starts_with("saved set solo of _forever_ from 1 character: "),
+        "{}",
+        stdout(&output)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn update_says_a_second_entry_of_the_source_has_the_pick_installed_and_leaves_the_addon() {
+    let line = "OneFolder not updated: Questie, a second entry of github:Questie/Questie, has 1.2.3 installed already in _forever_; OneFolder stays at 1.2.2";
+    for json in [false, true] {
+        // The addon's entry names its source by the page address; the sidecar has the canonical spec
+        // under another name, at the pick's version already.
+        let game = managed_game(
+            &format!("update-second-entry-{json}"),
+            &[
+                ("Questie", "github:Questie/Questie", "1.2.3", ""),
+                (
+                    "OneFolder",
+                    "https://github.com/Questie/Questie",
+                    "1.2.2",
+                    "",
+                ),
+            ],
+        );
+        let mut command = game.mrgl();
+        command.arg(if json { "--json" } else { "--serious" });
+        let output = command
+            .args(["update", "OneFolder", "--yes", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        if json {
+            let value: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("one document");
+            assert_eq!(value["installed_already"], 1, "{value}");
+            assert_eq!(value["updated"], 0, "{value}");
+            let addon = &value["addons"][0];
+            assert_eq!(addon["name"], "OneFolder", "{addon}");
+            assert_eq!(addon["updated"], false, "{addon}");
+            assert_eq!(addon["installed_already"]["name"], "Questie", "{addon}");
+            assert_eq!(addon["installed_already"]["version"], "1.2.3", "{addon}");
+            assert_eq!(addon["installed_already"]["same_entry"], false, "{addon}");
+            assert_eq!(addon["installed_already"]["message"], line, "{addon}");
+        } else {
+            let text = stdout(&output);
+            assert!(text.lines().any(|found| found == line), "{text}");
+            assert!(
+                stdout_last_line(&output).contains("1 installed already"),
+                "{text}"
+            );
+        }
+        assert_eq!(sidecar(&game)["addons"]["OneFolder"]["version"], "1.2.2");
+    }
+}
+
+#[test]
+fn update_counts_a_failed_install_and_names_it_in_the_error_and_the_json() {
+    let plain = "Short: refused Short-v1.0.0-forever.zip of github:Example/Short v1.0.0: 12 bytes downloaded, the release list names 2048; the download was cut short or the asset changed, try again";
+    for json in [false, true] {
+        let game = managed_game(
+            &format!("update-failed-{json}"),
+            &[("Short", "github:Example/Short", "0.9.0", "")],
+        );
+        let stub = game.root.parent().expect("the base folder").join("stub");
+        let list = stub.join("api.github.com/repos/Example/Short/releases.json");
+        std::fs::create_dir_all(list.parent().unwrap()).unwrap();
+        std::fs::write(
+            &list,
+            r#"[{"tag_name":"v1.0.0","assets":[{"name":"Short-v1.0.0-forever.zip","size":2048,"browser_download_url":"https://github.com/Example/Short/releases/download/v1.0.0/Short-v1.0.0-forever.zip"},{"name":"release.json","size":128,"browser_download_url":"https://github.com/Example/Short/releases/download/v1.0.0/release.json"}]}]"#,
+        )
+        .unwrap();
+        let asset =
+            stub.join("github.com/Example/Short/releases/download/v1.0.0/Short-v1.0.0-forever.zip");
+        std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+        std::fs::write(&asset, b"PK cut short").unwrap();
+        // The metadata names the flavor, so the pick is no guess and the check reads it as an update.
+        std::fs::write(
+            asset.with_file_name("release.json"),
+            r#"{"releases":[{"filename":"Short-v1.0.0-forever.zip","nolib":false,"metadata":[{"flavor":"forever","interface":16001}]}]}"#,
+        )
+        .unwrap();
+        let mut command = game.mrgl();
+        command
+            .env("MRGL_HTTP_STUB", &stub)
+            .arg(if json { "--json" } else { "--serious" });
+        let output = command
+            .args(["update", "--all", "--yes", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert_eq!(output.status.code(), Some(1));
+        if json {
+            let value: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("one document");
+            assert_eq!(value["updated"], 0, "{value}");
+            assert_eq!(value["addons"][0]["error"], plain, "{value}");
+            let error: serde_json::Value =
+                serde_json::from_str(&stderr_last_line(&output)).expect("a JSON error");
+            assert_eq!(
+                error["message"],
+                "1 addon of _forever_ failed: Short; the other addons are done"
+            );
+        } else {
+            let text = stdout(&output);
+            assert!(text.lines().any(|line| line == plain), "{text}");
+            assert!(stdout_last_line(&output).contains("1 failed"), "{text}");
+            assert_eq!(
+                stderr_last_line(&output),
+                "1 addon of _forever_ failed: Short; the other addons are done"
+            );
+        }
+        assert_eq!(sidecar(&game)["addons"]["Short"]["version"], "0.9.0");
+    }
+}
+
+#[test]
+fn update_of_an_addon_that_is_up_to_date_asks_nothing_without_yes() {
+    let game = managed_game(
+        "update-nothing-to-ask",
+        &[("Questie", "github:Questie/Questie", "1.2.3", "")],
+    );
+    let output = run_in(&game, &["update", "Questie"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("Questie  1.2.3  up to date")),
+        "{text}"
+    );
+    assert!(!text.contains("type y"), "{text}");
+}
+
+#[cfg(windows)]
+#[test]
+fn update_warns_once_about_the_running_client_over_two_updates() {
+    let game = managed_game(
+        "update-client",
+        &[
+            ("OneFolder", "github:Questie/Questie", "1.2.2", ""),
+            ("SeveralFolders", "github:Example/Second", "1.2.2", ""),
+        ],
+    );
+    let base = game.root.parent().expect("the base folder").to_path_buf();
+    let stub = stub_with_forever_zip(&base, "one-folder-1.1.0.zip");
+    // A second repository with the same releases, its asset the several-folders zip.
+    copy_tree(
+        &stub.join("github.com/Questie/Questie"),
+        &stub.join("github.com/Example/Second"),
+    );
+    std::fs::copy(
+        zips().join("several-folders-2.1.0.zip"),
+        stub.join("github.com/Example/Second/releases/download/v1.2.3/Questie-v1.2.3-forever.zip"),
+    )
+    .expect("the second asset");
+    let list =
+        std::fs::read_to_string(stub.join("api.github.com/repos/Questie/Questie/releases.json"))
+            .expect("the release list")
+            .replace("Questie/Questie", "Example/Second");
+    std::fs::create_dir_all(stub.join("api.github.com/repos/Example/Second")).expect("the folder");
+    std::fs::write(
+        stub.join("api.github.com/repos/Example/Second/releases.json"),
+        list,
+    )
+    .expect("the second list");
+    let Some(mut child) = spawn_stand_in(&game.root.join("_forever_")) else {
+        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        return;
+    };
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    child.stop();
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines()
+            .filter(
+                |line| line.starts_with("the client is running in _forever_ (client-stand-in.exe")
+            )
+            .count(),
+        1,
+        "the warning once for the run: {text}"
+    );
+    assert!(
+        stdout_last_line(&output).starts_with("2 addons updated"),
+        "{text}"
+    );
 }

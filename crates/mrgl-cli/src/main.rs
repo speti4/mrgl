@@ -431,9 +431,28 @@ impl Drop for InFlight {
     fn drop(&mut self) {
         IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
         if PIPE_CLOSED.load(std::sync::atomic::Ordering::SeqCst) {
-            std::process::exit(0);
+            exit_quietly();
         }
     }
+}
+
+/// Ends the run with code 0 and not a word more: the reader of the pipe is gone. Under cargo-llvm-cov the
+/// profile is written first: `std::process::exit` ends the process without the C runtime's exit handlers,
+/// one of which writes the profile, so a run that ends here would otherwise leave none and its lines would
+/// read as never run.
+fn exit_quietly() -> ! {
+    #[cfg(coverage)]
+    {
+        unsafe extern "C" {
+            fn __llvm_profile_write_file() -> i32;
+        }
+        // SAFETY: the profile runtime is linked into every instrumented build; the call takes nothing and
+        // writes the counters of this process to the profile file.
+        unsafe {
+            __llvm_profile_write_file();
+        }
+    }
+    std::process::exit(0)
 }
 
 /// The one writer of the command line (task 075): every line and document goes to stdout or stderr
@@ -458,7 +477,7 @@ fn emit(stream: Stream, text: std::fmt::Arguments<'_>) {
                 PIPE_CLOSED.store(true, std::sync::atomic::Ordering::SeqCst);
                 return;
             }
-            std::process::exit(0);
+            exit_quietly();
         }
         let name = match stream {
             Stream::Stdout => "stdout",
@@ -669,7 +688,14 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             yes,
         } => update_command(reporter, name.as_deref(), flavor.as_deref(), dry_run, yes)?,
         Command::Set { action } => set_command(reporter, action)?,
-        Command::Key { action } => key_command(reporter, action)?,
+        Command::Key { action } => key_command(
+            reporter,
+            action,
+            &*keys::store_of_process(),
+            &|name| std::env::var_os(name),
+            &mut std::io::stdin().lock(),
+            std::io::stdin().is_terminal(),
+        )?,
         Command::Adopt {
             flavor,
             apply,
@@ -682,14 +708,21 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
 /// `mrgl key set|clear <source>` and `mrgl key list` (task 093): a key from the standard input into the
 /// key store (the Windows Credential Manager, `mrgl:<source>`), out of it, or every key by name with where
 /// it comes from. The value is never an argument and never printed, in the text, the JSON or an error.
-fn key_command(reporter: &Reporter, action: KeyAction) -> Result<(), String> {
-    let store = keys::store_of_process();
-    let env = |name: &str| std::env::var_os(name);
+/// The store, the environment and the input are the process's ([`run`]); `terminal` says whether the
+/// input is one, which `set` prompts and reads one line from (a pipe is read whole).
+fn key_command(
+    reporter: &Reporter,
+    action: KeyAction,
+    store: &dyn keys::KeyStore,
+    env: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+    input: &mut dyn BufRead,
+    terminal: bool,
+) -> Result<(), String> {
     let in_env =
         |name: &str| env(name).is_some_and(|value| !value.to_string_lossy().trim().is_empty());
     match action {
         KeyAction::List => {
-            let states = keys::list(&env, &*store);
+            let states = keys::list(env, store);
             let available = store.available().err().map(|error| error.to_string());
             let set = states.iter().filter(|state| state.origin.is_set()).count();
             if reporter.json {
@@ -728,8 +761,6 @@ fn key_command(reporter: &Reporter, action: KeyAction) -> Result<(), String> {
             let name = keys::name_of(kind).unwrap_or_default();
             let target = keys::target_name(kind);
             store.available().map_err(|error| error.to_string())?;
-            let stdin = std::io::stdin();
-            let terminal = stdin.is_terminal();
             if terminal && !reporter.json {
                 reporter.say(
                     Kind::Progress,
@@ -739,9 +770,8 @@ fn key_command(reporter: &Reporter, action: KeyAction) -> Result<(), String> {
                     ),
                 );
             }
-            let value =
-                keys::read_key(&mut stdin.lock(), terminal).map_err(|error| error.to_string())?;
-            keys::set(&*store, kind, &value).map_err(|error| error.to_string())?;
+            let value = keys::read_key(input, terminal).map_err(|error| error.to_string())?;
+            keys::set(store, kind, &value).map_err(|error| error.to_string())?;
             let warnings: Vec<String> = in_env(name)
                 .then(|| format!("{name} is set in the environment too, which comes first"))
                 .into_iter()
@@ -771,7 +801,7 @@ fn key_command(reporter: &Reporter, action: KeyAction) -> Result<(), String> {
             let kind = keys::keyed_source(&source).map_err(|error| error.to_string())?;
             let name = keys::name_of(kind).unwrap_or_default();
             let target = keys::target_name(kind);
-            let removed = keys::clear(&*store, kind).map_err(|error| error.to_string())?;
+            let removed = keys::clear(store, kind).map_err(|error| error.to_string())?;
             let warnings: Vec<String> = in_env(name)
                 .then(|| format!("{name} is still set in the environment"))
                 .into_iter()
@@ -1005,10 +1035,11 @@ fn report_scan(
     warnings.extend(scan.warnings.iter().cloned());
     let client = match client::client_running(&scan.flavor) {
         Ok(client) => client,
+        // coverage: os-begin — the system's process list could not be taken
         Err(error) => {
             warnings.push(error.to_string());
             None
-        }
+        } // coverage: os-end
     };
     let mismatches = interface::check_scan(scan);
     let out_of_date = interface::out_of_date_scan(scan);
@@ -1031,8 +1062,8 @@ fn report_scan(
                 .map(|(_, entry)| entry);
             let (suffix, fields) = marks(entry);
             line.push_str(&suffix);
-            if let Some(object) = object.as_object_mut() {
-                object.extend(fields);
+            for (field, value) in fields {
+                object[field] = value;
             }
         }
         mark_dependencies(dependencies, &addon.folder, &mut line, &mut object);
@@ -1278,9 +1309,7 @@ fn mark_dependencies(
     if check.has_missing() {
         line.push_str(&format!("  missing: {}", check.missing.join(", ")));
     }
-    if let Some(object) = object.as_object_mut() {
-        object.insert("dependencies".to_string(), serde_json::json!(check));
-    }
+    object["dependencies"] = serde_json::json!(check);
 }
 
 /// The dependency check of a scan (task 029), with the `nolib` flags of the flavor's sidecar: a sidecar
@@ -1361,11 +1390,8 @@ fn mark_forever(
             line.push_str(",stale");
         }
     }
-    if let Some(serde_json::Value::Object(object)) = object {
-        object.insert(
-            "forever".to_string(),
-            serde_json::to_value(status).unwrap_or_default(),
-        );
+    if let Some(object) = object {
+        object["forever"] = serde_json::to_value(status).unwrap_or_default();
     }
 }
 
@@ -1465,25 +1491,17 @@ fn out_of_date_summary(out_of_date: &[InterfaceOutOfDate]) -> Option<String> {
 /// One addon as a JSON object, the one builder of `scan` and `list`: the scan's fields (`folder`, `path`,
 /// `tocs`, `other_tocs`, `chosen`, `linked`), and for `list` (a status) `managed`, `name` (the managed
 /// addon that owns the folder), `source` (its spec as the sidecar has it) and `version` (the installed
-/// one, else the TOC's `## Version`), `null` where unknown. A later field is one more insert.
+/// one, else the TOC's `## Version`), `null` where unknown. A later field is one more index assignment: an
+/// `Addon` serializes to an object, and `Null` would become one on the first field.
 fn addon_json(addon: &Addon, status: Option<&Status>) -> serde_json::Value {
-    let mut object = match serde_json::to_value(addon) {
-        Ok(serde_json::Value::Object(object)) => object,
-        _ => serde_json::Map::new(),
-    };
+    let mut object = serde_json::to_value(addon).unwrap_or_default();
     if let Some(status) = status {
-        object.insert("managed".into(), status.is_managed().into());
-        object.insert("name".into(), serde_json::json!(status.name));
-        object.insert(
-            "source".into(),
-            serde_json::json!(status.entry.map(|entry| &entry.source)),
-        );
-        object.insert(
-            "version".into(),
-            serde_json::json!(shown_version(addon, Some(status))),
-        );
+        object["managed"] = status.is_managed().into();
+        object["name"] = serde_json::json!(status.name);
+        object["source"] = serde_json::json!(status.entry.map(|entry| &entry.source));
+        object["version"] = serde_json::json!(shown_version(addon, Some(status)));
     }
-    serde_json::Value::Object(object)
+    object
 }
 
 /// The spec `add` resolves and records for the one typed (task 105): a Wago page address becomes
@@ -1874,8 +1892,7 @@ fn say_release_notes(reporter: &Reporter, pick: &sources::Pick) {
 fn root_command(reporter: &Reporter, folder: Option<PathBuf>) -> Result<(), String> {
     match folder {
         Some(folder) => {
-            let folder = std::path::absolute(&folder)
-                .map_err(|error| format!("resolving {}: {error}", folder.display()))?;
+            let folder = absolute(&folder)?;
             let flavors = flavor::list_flavors(&folder).map_err(|error| error.to_string())?;
             if flavors.is_empty() {
                 return Err(Error::NotAGameRoot { path: folder }.to_string());
@@ -1998,12 +2015,8 @@ fn add_zip(
     let mut warnings = Vec::new();
     let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
     warnings.extend(adopt::curse_client_warning(&engine.flavor));
-    let zip =
-        std::path::absolute(source).map_err(|error| format!("resolving {source}: {error}"))?;
-    let zip_name = zip
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| zip.display().to_string());
+    let zip = absolute(Path::new(source))?;
+    let zip_name = file_name_of(&zip);
     let metadata = Metadata {
         source: recorded.unwrap_or_else(|| zip.display().to_string()),
         version: None,
@@ -2451,8 +2464,7 @@ fn backup_command(
     let flavor = flavor::read_flavor(&folder).map_err(|error| error.to_string())?;
     warnings.extend(flavor.warnings.iter().cloned());
     let backups = match to {
-        Some(to) => std::path::absolute(&to)
-            .map_err(|error| format!("resolving {}: {error}", to.display()))?,
+        Some(to) => absolute(&to)?,
         None => backup::backups_dir(&flavor.id).map_err(|error| error.to_string())?,
     };
     let folder_name = flavor.folder_name();
@@ -2487,10 +2499,7 @@ fn backup_command(
         for aside in &listing.aside {
             reporter.line(format!(
                 "{}  the WTF folder a restore moved aside",
-                aside
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| aside.display().to_string())
+                file_name_of(aside)
             ));
         }
         for warning in &warnings {
@@ -2523,10 +2532,7 @@ fn backup_command(
 
     if let Some(zip) = restore {
         let zip = resolve_backup(zip, &backups);
-        let zip_name = zip
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| zip.display().to_string());
+        let zip_name = file_name_of(&zip);
         if !yes {
             if reporter.json {
                 return Err(
@@ -2541,7 +2547,7 @@ fn backup_command(
                     backups.display()
                 ),
             );
-            if !confirmed() {
+            if !confirmed(&mut std::io::stdin().lock()) {
                 reporter.say(Kind::Nothing, "restore cancelled, nothing changed");
                 return Ok(());
             }
@@ -2627,15 +2633,35 @@ fn resolve_backup(zip: PathBuf, backups: &Path) -> PathBuf {
     std::path::absolute(&zip).unwrap_or(zip)
 }
 
-/// Reads one line of the standard input: `y` or `yes`, in any case, is a confirmation; anything else,
-/// an empty line or a closed input is not.
-fn confirmed() -> bool {
+/// Reads one line of the input (the standard input): `y` or `yes`, in any case, is a confirmation;
+/// anything else, an empty line, a closed input or one that cannot be read is not.
+fn confirmed(input: &mut dyn BufRead) -> bool {
     let mut answer = String::new();
-    if std::io::stdin().lock().read_line(&mut answer).is_err() {
+    if input.read_line(&mut answer).is_err() {
         return false;
     }
     let answer = answer.trim();
     answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")
+}
+
+/// A path as typed, made absolute against the current folder, for a line and for a file that stays put
+/// whatever folder a later run starts in; the error is the plain line.
+fn absolute(path: &Path) -> Result<PathBuf, String> {
+    match std::path::absolute(path) {
+        Ok(path) => Ok(path),
+        // coverage: os-begin — the system's own refusal of a path: the empty path, the one case std names,
+        // never reaches here, since clap refuses an empty value first
+        Err(error) => Err(format!("resolving {}: {error}", path.display())),
+        // coverage: os-end
+    }
+}
+
+/// A path's file name for a line, the whole path when it has none (a root, a path ending in `..`).
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// `mrgl export --flavor <id> [--to <file>]`: the flavor's managed addons as a list file (task 015).
@@ -2653,8 +2679,7 @@ fn export_command(
     let list = &export.list;
     let file = match to {
         Some(to) => {
-            let to = std::path::absolute(&to)
-                .map_err(|error| format!("resolving {}: {error}", to.display()))?;
+            let to = absolute(&to)?;
             list.write(&to).map_err(|error| error.to_string())?;
             Some(to)
         }
@@ -2715,13 +2740,9 @@ fn import_command(
     let mut warnings = Vec::new();
     let engine = engine_for(flavor, &mut warnings)?;
     warnings.extend(adopt::curse_client_warning(&engine.flavor));
-    let path = std::path::absolute(file)
-        .map_err(|error| format!("resolving {}: {error}", file.display()))?;
+    let path = absolute(file)?;
     let list = ListFile::read(&path).map_err(|error| error.to_string())?;
-    let file_name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string());
+    let file_name = file_name_of(&path);
     let folder_name = engine.flavor.folder_name();
     let count = match list.addons.len() {
         1 => "1 addon".to_string(),
@@ -2971,7 +2992,7 @@ fn update_command(
     let state = engine
         .load_state()
         .map(|loaded| loaded.state)
-        .unwrap_or_else(|_| State::new(&engine.flavor.id));
+        .unwrap_or_else(|_| State::new(&engine.flavor.id)); // coverage: os — the check read it a moment ago
     if let Err(error) =
         last_check::record_check(&engine.home, &engine.flavor.id, &state, &check.addons)
     {
@@ -2987,104 +3008,97 @@ fn update_command(
             .filter_map(|addon| addon.pick.as_ref()?.stale_warning()),
     );
     let updates: Vec<&update::AddonUpdate> = check.updates().collect();
+    let available = updates.len();
+    // The updates this run installs: none on a dry run, else every one after `--yes` or the confirmation.
+    let to_apply = if dry_run {
+        Vec::new()
+    } else {
+        let stdin = std::io::stdin();
+        confirmed_updates(
+            reporter,
+            updates,
+            yes,
+            &folder_name,
+            &mut stdin.lock(),
+            stdin.is_terminal(),
+        )?
+    };
 
     let mut applied: BTreeMap<String, Applied> = BTreeMap::new();
     // Task 108: the entries the installs of this run dropped, folded into the installed addon.
     let mut folded: Vec<Folded> = Vec::new();
-    if !dry_run && !updates.is_empty() {
-        let count = count_addons(updates.len());
-        if !yes {
-            if reporter.json {
-                return Err(format!(
-                    "{count} to update, nothing updated: --json needs --yes, nobody is there to answer the confirmation"
-                ));
-            }
-            if !std::io::stdin().is_terminal() {
-                return Err(format!(
-                    "{count} to update, nothing updated: no terminal to answer the confirmation; --yes updates without asking"
-                ));
-            }
-            reporter.say(
-                Kind::Warning,
-                format!("update {count} in {folder_name}? type y to go on"),
-            );
-            if !confirmed() {
-                reporter.say(Kind::Nothing, "update cancelled, nothing changed");
-                return Ok(());
-            }
-        }
-        for addon in &updates {
-            let Some(request) = addon.request() else {
-                continue;
-            };
-            if let Some(into) = folded
-                .iter()
-                .find(|entry| entry.name.eq_ignore_ascii_case(&addon.name))
-            {
-                if !reporter.json {
-                    let (kind, line) = into.update_line(&folder_name);
-                    reporter.say(kind, line);
-                }
-                applied.insert(addon.name.clone(), Applied::Folded(Box::new(into.clone())));
-                continue;
-            }
+    // Every update carries its request: the check made the pick, and only a spec source is checked.
+    for (addon, request) in to_apply
+        .iter()
+        .filter_map(|addon| Some((addon, addon.request()?)))
+    {
+        if let Some(into) = folded
+            .iter()
+            .find(|entry| entry.name.eq_ignore_ascii_case(&addon.name))
+        {
             if !reporter.json {
-                reporter.say(
-                    Kind::Progress,
-                    format!(
-                        "updating {} from {} to {}",
-                        addon.name,
-                        addon.version,
-                        addon.latest.as_deref().unwrap_or_default()
-                    ),
-                );
+                let (kind, line) = into.update_line(&folder_name);
+                reporter.say(kind, line);
             }
-            let outcome = engine.install_from_source(
-                &sources,
-                &request,
-                &mut install_progress(reporter, &engine, &mut warnings),
-            );
-            let result = match outcome {
-                Ok(SourceInstalled {
-                    pick,
-                    outcome: PickInstalled::Installed(installed),
-                }) => {
-                    if let Some(line) = &installed.client_warning
-                        && !warnings.contains(line)
-                    {
-                        warnings.push(line.clone());
-                    }
-                    let summary = install_summary(&engine, &installed, &pick.source, &mut warnings);
-                    if !reporter.json {
-                        reporter.say(Kind::Success, &summary.line);
-                        // Task 082: the interface check of the updated addon, as `add` says it.
-                        summary.say_interface(reporter, &folder_name);
-                    }
-                    folded.extend(installed.folded.iter().cloned());
-                    Applied::Updated(Box::new(summary))
-                }
-                Ok(SourceInstalled {
-                    outcome: PickInstalled::AlreadyInstalled(current),
-                    ..
-                }) => {
-                    warnings.extend(current.warnings.iter().cloned());
-                    let already =
-                        InstalledAlready::of(&addon.name, &addon.version, &current, &folder_name);
-                    if !reporter.json {
-                        reporter.say(already.kind, &already.line);
-                    }
-                    Applied::InstalledAlready(Box::new(already))
-                }
-                Err(error) => {
-                    let line = format!("{}: {error}", addon.name);
-                    if !reporter.json {
-                        reporter.say(Kind::Error, &line);
-                    }
-                    Applied::Failed(line)
-                }
-            };
-            applied.insert(addon.name.clone(), result);
+            applied.insert(addon.name.clone(), Applied::Folded(Box::new(into.clone())));
+            continue;
         }
+        if !reporter.json {
+            reporter.say(
+                Kind::Progress,
+                format!(
+                    "updating {} from {} to {}",
+                    addon.name,
+                    addon.version,
+                    addon.latest.as_deref().unwrap_or_default()
+                ),
+            );
+        }
+        let outcome = engine.install_from_source(
+            &sources,
+            &request,
+            &mut install_progress(reporter, &engine, &mut warnings),
+        );
+        let result = match outcome {
+            Ok(SourceInstalled {
+                pick,
+                outcome: PickInstalled::Installed(installed),
+            }) => {
+                if let Some(line) = &installed.client_warning
+                    && !warnings.contains(line)
+                {
+                    warnings.push(line.clone());
+                }
+                let summary = install_summary(&engine, &installed, &pick.source, &mut warnings);
+                if !reporter.json {
+                    reporter.say(Kind::Success, &summary.line);
+                    // Task 082: the interface check of the updated addon, as `add` says it.
+                    summary.say_interface(reporter, &folder_name);
+                }
+                folded.extend(installed.folded.iter().cloned());
+                Applied::Updated(Box::new(summary))
+            }
+            Ok(SourceInstalled {
+                outcome: PickInstalled::AlreadyInstalled(current),
+                ..
+            }) => {
+                warnings.extend(current.warnings.iter().cloned());
+                let already =
+                    InstalledAlready::of(&addon.name, &addon.version, &current, &folder_name);
+                if !reporter.json {
+                    reporter.say(already.kind, &already.line);
+                }
+                Applied::InstalledAlready(Box::new(already))
+            }
+            Err(error) => {
+                let line = format!("{}: {error}", addon.name);
+                if !reporter.json {
+                    reporter.say(Kind::Error, &line);
+                }
+                Applied::Failed(line)
+            }
+        };
+        applied.insert(addon.name.clone(), result);
     }
 
     let updated = applied
@@ -3200,7 +3214,7 @@ fn update_command(
         } else {
             SummaryOf::Update {
                 updated,
-                left: 0,
+                left: available - to_apply.len(),
                 installed_already,
                 folded: folded_count,
             }
@@ -3216,6 +3230,44 @@ fn update_command(
         count_addons(failed.len()),
         failed.join(", ")
     ))
+}
+
+/// The updates a run installs, after the one confirmation of `update` (task 006): every one with `--yes`,
+/// and nothing when there is nothing to update; else the question on the terminal, answered through
+/// [`confirmed`], and a no is said as the cancel and leaves none (the summary counts them as cancelled).
+/// Without a terminal, or with `--json`, nobody can answer: the error names `--yes`. The list comes back as
+/// it came, so the caller installs exactly what was confirmed.
+fn confirmed_updates<T>(
+    reporter: &Reporter,
+    updates: Vec<T>,
+    yes: bool,
+    folder_name: &str,
+    input: &mut dyn BufRead,
+    terminal: bool,
+) -> Result<Vec<T>, String> {
+    if yes || updates.is_empty() {
+        return Ok(updates);
+    }
+    let count = count_addons(updates.len());
+    if reporter.json {
+        return Err(format!(
+            "{count} to update, nothing updated: --json needs --yes, nobody is there to answer the confirmation"
+        ));
+    }
+    if !terminal {
+        return Err(format!(
+            "{count} to update, nothing updated: no terminal to answer the confirmation; --yes updates without asking"
+        ));
+    }
+    reporter.say(
+        Kind::Warning,
+        format!("update {count} in {folder_name}? type y to go on"),
+    );
+    if confirmed(input) {
+        return Ok(updates);
+    }
+    reporter.say(Kind::Nothing, "update cancelled, nothing changed");
+    Ok(Vec::new())
 }
 
 /// `mrgl doctor [--flavor <flavor>] [--root <folder>]`: the diagnostic report (task 024). The plain output
@@ -3849,6 +3901,7 @@ fn count_characters(count: usize) -> String {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use mrgl_core::keys::KeyStore;
 
     fn status(build: ForeverBuild, note: bool, stale: bool) -> ForeverStatus {
         ForeverStatus {
@@ -3923,5 +3976,248 @@ mod tests {
         let mut object = serde_json::json!({});
         mark_forever(None, addon, None, Some(&mut object));
         assert!(!object.as_object().unwrap().contains_key("forever"));
+        // The line alone, without an object (a text listing marks lines, the document objects).
+        let mut line = "Line".to_string();
+        mark_forever(Some(&forever), addon, Some(&mut line), None);
+        assert_eq!(line, "Line  forever:yes,note,stale");
+    }
+
+    #[test]
+    fn a_max_unpacked_size_is_parsed_and_anything_else_is_refused_with_the_forms() {
+        assert_eq!(parse_max_unpacked("3G"), Ok(3 << 30));
+        assert_eq!(parse_max_unpacked("500M"), Ok(500 << 20));
+        assert_eq!(
+            parse_max_unpacked("lots"),
+            Err(
+                "not a size: lots: a whole number of bytes, or with K, M, G or T (3G, 500M)"
+                    .to_string()
+            )
+        );
+        assert_eq!(parse_channel("beta"), Ok(Channel::Prerelease));
+        assert_eq!(
+            parse_channel("nightly"),
+            Err("unknown channel nightly: stable or prerelease".to_string())
+        );
+    }
+
+    #[test]
+    fn a_closed_pipe_is_the_windows_no_data_error_or_a_broken_pipe_and_nothing_else() {
+        #[cfg(windows)]
+        assert!(is_closed_pipe(&std::io::Error::from_raw_os_error(
+            ERROR_NO_DATA
+        )));
+        assert!(is_closed_pipe(&std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "the reader is gone"
+        )));
+        assert!(!is_closed_pipe(&std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "a read-only handle"
+        )));
+        assert!(!is_closed_pipe(&std::io::Error::from_raw_os_error(5)));
+    }
+
+    /// An input whose every read fails, as a standard input handle that cannot be read does.
+    struct UnreadableInput;
+
+    impl std::io::Read for UnreadableInput {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("the standard input cannot be read"))
+        }
+    }
+
+    impl BufRead for UnreadableInput {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            Err(std::io::Error::other("the standard input cannot be read"))
+        }
+
+        fn consume(&mut self, _: usize) {}
+    }
+
+    #[test]
+    fn a_confirmation_is_y_or_yes_in_any_case_and_nothing_else() {
+        for (answer, confirmed_by) in [
+            ("y\n", true),
+            ("YES\r\n", true),
+            ("  yes  \n", true),
+            ("n\n", false),
+            ("yes please\n", false),
+            ("\n", false),
+            ("", false),
+        ] {
+            assert_eq!(
+                confirmed(&mut std::io::Cursor::new(answer)),
+                confirmed_by,
+                "{answer:?}"
+            );
+        }
+        assert!(!confirmed(&mut UnreadableInput));
+    }
+
+    /// A reporter of the plain line only, so a unit test's output stays one line per message.
+    fn serious(json: bool) -> Reporter {
+        Reporter {
+            voice: Voice::new(true),
+            json,
+        }
+    }
+
+    #[test]
+    fn the_key_prompt_is_said_on_a_terminal_and_one_line_of_it_is_the_key() {
+        let store = keys::MemoryStore::new();
+        let env = |_: &str| None;
+        let action = || KeyAction::Set {
+            source: "wago".to_string(),
+            rest: Vec::new(),
+        };
+        // A terminal: the prompt, then the first line alone is the key.
+        let mut input = std::io::Cursor::new("pasted-key\nnot-read\n");
+        key_command(&serious(false), action(), &store, &env, &mut input, true)
+            .expect("the key is stored");
+        assert_eq!(
+            store.read(SourceKind::Wago).expect("the store reads"),
+            Some("pasted-key".to_string())
+        );
+        // The same on a terminal in JSON mode: no prompt (the document is the one output), the key read.
+        let mut input = std::io::Cursor::new("second-key\n");
+        key_command(&serious(true), action(), &store, &env, &mut input, true)
+            .expect("the key is stored");
+        assert_eq!(
+            store.read(SourceKind::Wago).expect("the store reads"),
+            Some("second-key".to_string())
+        );
+        // A pipe is read whole, so two lines are not one key.
+        let mut input = std::io::Cursor::new("pasted-key\nsecond\n");
+        let error = key_command(&serious(false), action(), &store, &env, &mut input, false)
+            .expect_err("two lines are refused");
+        assert_eq!(
+            error,
+            "no key read from the standard input: the standard input holds more than one word or line, not one key"
+        );
+        assert!(!error.contains("pasted-key"));
+    }
+
+    #[test]
+    fn the_update_confirmation_hands_the_updates_back_on_a_yes_and_none_on_a_no() {
+        let reporter = serious(false);
+        let updates = vec!["OneFolder", "SeveralFolders"];
+        // `--yes`, and nothing to update: no question asked, the input untouched.
+        let mut input = std::io::Cursor::new("n\n");
+        assert_eq!(
+            confirmed_updates(
+                &reporter,
+                updates.clone(),
+                true,
+                "_forever_",
+                &mut input,
+                false
+            ),
+            Ok(updates.clone())
+        );
+        assert_eq!(
+            confirmed_updates(
+                &reporter,
+                Vec::<&str>::new(),
+                false,
+                "_forever_",
+                &mut input,
+                false
+            ),
+            Ok(Vec::new())
+        );
+        assert_eq!(input.position(), 0, "nothing read");
+        // On a terminal the answer decides.
+        let mut input = std::io::Cursor::new("y\n");
+        assert_eq!(
+            confirmed_updates(
+                &reporter,
+                updates.clone(),
+                false,
+                "_forever_",
+                &mut input,
+                true
+            ),
+            Ok(updates.clone())
+        );
+        let mut input = std::io::Cursor::new("n\n");
+        assert_eq!(
+            confirmed_updates(
+                &reporter,
+                updates.clone(),
+                false,
+                "_forever_",
+                &mut input,
+                true
+            ),
+            Ok(Vec::new())
+        );
+        // Nobody can answer: without a terminal, or in JSON mode.
+        let mut input = std::io::Cursor::new("y\n");
+        assert_eq!(
+            confirmed_updates(&reporter, updates.clone(), false, "_forever_", &mut input, false),
+            Err("2 addons to update, nothing updated: no terminal to answer the confirmation; --yes updates without asking".to_string())
+        );
+        assert_eq!(
+            confirmed_updates(&serious(true), updates, false, "_forever_", &mut input, true),
+            Err("2 addons to update, nothing updated: --json needs --yes, nobody is there to answer the confirmation".to_string())
+        );
+        assert_eq!(input.position(), 0, "nothing read");
+    }
+
+    #[test]
+    fn a_file_name_is_the_last_part_of_a_path_or_the_whole_path_without_one() {
+        assert_eq!(
+            file_name_of(Path::new("backups/WTF-2026.zip")),
+            "WTF-2026.zip"
+        );
+        assert_eq!(file_name_of(Path::new("")), "");
+        assert_eq!(file_name_of(Path::new("..")), "..");
+        #[cfg(windows)]
+        assert_eq!(file_name_of(Path::new(r"C:\")), r"C:\");
+    }
+
+    #[test]
+    fn an_import_line_names_what_happened_to_the_entry_and_why() {
+        let item = |outcome, version: Option<&str>, detail: &str| list_file::Imported {
+            name: "Thing".to_string(),
+            source: "svn:Example/Thing".to_string(),
+            listed_version: "1.0.0".to_string(),
+            outcome,
+            version: version.map(str::to_string),
+            folders: Vec::new(),
+            detail: detail.to_string(),
+            interface_mismatch: None,
+            interface_out_of_date: None,
+            dependencies: Vec::new(),
+            warnings: Vec::new(),
+        };
+        assert_eq!(
+            import_line(&item(
+                Outcome::NotImportable,
+                None,
+                "not a source spec mrgl reads"
+            )),
+            "Thing  not importable (svn:Example/Thing): not a source spec mrgl reads"
+        );
+        assert_eq!(
+            import_line(&item(
+                Outcome::Skipped,
+                None,
+                "a linked development folder; link it again with mrgl link"
+            )),
+            "Thing  skipped (svn:Example/Thing): a linked development folder; link it again with mrgl link"
+        );
+        assert_eq!(
+            import_line(&item(Outcome::Installed, Some("1.1.0"), "")),
+            "Thing  installed 1.1.0 from svn:Example/Thing, the list had 1.0.0"
+        );
+    }
+
+    #[test]
+    fn the_counts_say_one_in_the_singular() {
+        assert_eq!(count_characters(1), "1 character");
+        assert_eq!(count_characters(2), "2 characters");
+        assert_eq!(count_addons(1), "1 addon");
+        assert_eq!(count_folders(0), "0 folders");
     }
 }
