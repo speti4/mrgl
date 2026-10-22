@@ -11,6 +11,7 @@
     <script src="theme.js"></script>
     <script src="preferences.js"></script>
     <script src="flavors.js"></script>
+    <script src="actions.js"></script>
     <script src="data.js"></script>
     <script src="main.js" defer></script>
   </head>
@@ -41,7 +42,11 @@
             <p id="flavor-meta" class="muted"></p>
           </div>
           <input id="search" type="search" placeholder="Search name, folder or source" autocomplete="off" spellcheck="false" />
-          <button id="update-all" type="button" class="primary"></button>
+          <div class="flavor-actions">
+            <button id="check-updates" type="button" class="secondary">Check for updates</button>
+            <button id="update-all" type="button" class="primary"></button>
+            <button id="cancel-update" type="button" class="danger" hidden>Cancel</button>
+          </div>
         </header>
         <p id="flavor-warnings" class="warnings" hidden></p>
         <div class="list-head" aria-hidden="true">
@@ -75,17 +80,12 @@
           <span class="version-note muted"></span>
         </div>
         <div class="cell source-cell"><span class="badge"></span></div>
-        <div class="cell state-cell"><span class="pill"></span></div>
+        <div class="cell state-cell"><span class="pill"></span><span class="step muted"></span></div>
         <div class="cell forever-cell"><span class="forever"></span></div>
         <div class="cell actions-cell">
           <details class="row-menu">
             <summary aria-label="Row actions">&#8943;</summary>
-            <div class="menu">
-              <button type="button" disabled>Update</button>
-              <button type="button" disabled>Pin</button>
-              <button type="button" disabled>Unpin</button>
-              <button type="button" disabled>Ignore</button>
-            </div>
+            <div class="menu"></div>
           </details>
         </div>
         <div class="progress" hidden><div class="progress-bar"></div></div>

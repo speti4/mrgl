@@ -38,7 +38,9 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
   channel switch: never downgraded); `mrgl update --all` installs the updates after one confirmation
   (`--yes` for scripts), leaves a pinned addon alone and skips an ignored one. It says which addon it is
   checking as it goes, and without a GitHub token it stops before the 60 requests an hour run out, with the
-  time the limit resets, instead of failing addon after addon.
+  time the limit resets, instead of failing addon after addon. The window does the same per flavor: "Check
+  for updates", "Update all" with a progress bar per addon and a cancel that lets the addon in flight
+  finish, and on each row its update, pin, ignore and release channel.
 - **A known-good set on another machine.** `mrgl export` writes the managed addons into a list file and
   `mrgl import` installs it elsewhere, at the current releases, or with `--exact` at the versions the list
   names; a version the source no longer offers is reported and skipped.
@@ -63,7 +65,7 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 ```powershell
 cargo build --release
 target\release\mrgl.exe --version
-target\release\mrgl-app.exe                                                 # the window: every flavor's addons and their states
+target\release\mrgl-app.exe                                                 # the window: every flavor's addons, their updates and states
 target\release\mrgl.exe list --flavor forever                               # what is installed, managed by mrgl or not
 target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # remember a game folder installed elsewhere
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever            # install the release's Forever asset

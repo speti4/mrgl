@@ -42,6 +42,7 @@ use crate::scan;
 use crate::sources::{Channel, Pick, Source, SourceSpec, Target};
 use crate::state::{self, Entry, FlavorHome, LoadedState, State};
 use crate::toc::{self, TocName};
+use crate::voice::Kind;
 use crate::zip_entry::{self, ZipRole};
 
 /// What is known about a zip before it is installed; the engine fills what is missing from the zip.
@@ -149,6 +150,67 @@ pub struct Marked {
     /// Whether the entry changed; `false` means it was so already and nothing was written.
     pub changed: bool,
     pub warnings: Vec<String>,
+}
+
+/// One mark on a managed addon's sidecar entry (task 021), as the command line's `pin`, `unpin`, `ignore`,
+/// `unignore` and `channel` and the window's row menu (task 010) ask for it: [`Engine::apply_mark`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mark {
+    /// Pin at a version, or at the installed one when `None`.
+    Pin(Option<String>),
+    Unpin,
+    Ignore,
+    Unignore,
+    /// Follow a release channel.
+    Channel(Channel),
+}
+
+impl Mark {
+    /// The mark's name, as the JSON documents and the window's IPC call it.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Mark::Pin(_) => "pin",
+            Mark::Unpin => "unpin",
+            Mark::Ignore => "ignore",
+            Mark::Unignore => "unignore",
+            Mark::Channel(_) => "channel",
+        }
+    }
+
+    /// The message of a mark: a success when it changed the entry, nothing to do when it was so already.
+    pub fn line(&self, marked: &Marked, folder_name: &str) -> (Kind, String) {
+        let name = &marked.name;
+        let pinned = marked.pinned.as_deref().unwrap_or_default();
+        let channel = marked.channel;
+        let plain = match (self, marked.changed) {
+            (Mark::Pin(_), true) if pinned != marked.version => format!(
+                "pinned {name} at {pinned} in {folder_name} ({} is installed)",
+                marked.version
+            ),
+            (Mark::Pin(_), true) => format!("pinned {name} at {pinned} in {folder_name}"),
+            (Mark::Pin(_), false) => {
+                format!("{name} is already pinned at {pinned} in {folder_name}")
+            }
+            (Mark::Unpin, true) => format!("unpinned {name} in {folder_name}"),
+            (Mark::Unpin, false) => format!("{name} is not pinned in {folder_name}"),
+            (Mark::Ignore, true) => format!("ignoring {name} in {folder_name}"),
+            (Mark::Ignore, false) => format!("{name} is already ignored in {folder_name}"),
+            (Mark::Unignore, true) => format!("{name} is no longer ignored in {folder_name}"),
+            (Mark::Unignore, false) => format!("{name} is not ignored in {folder_name}"),
+            (Mark::Channel(_), true) => {
+                format!("{name} follows the {channel} channel in {folder_name}")
+            }
+            (Mark::Channel(_), false) => {
+                format!("{name} is already on the {channel} channel in {folder_name}")
+            }
+        };
+        let kind = if marked.changed {
+            Kind::Success
+        } else {
+            Kind::Nothing
+        };
+        (kind, plain)
+    }
 }
 
 /// A step of [`Engine::install_from_source`], for the caller's progress line.
@@ -701,6 +763,17 @@ impl Engine {
     /// Puts a managed addon on a release channel.
     pub fn set_channel(&self, name: &str, channel: Channel) -> Result<Marked> {
         self.mark(name, "put on a channel", |entry| entry.set_channel(channel))
+    }
+
+    /// One of the five marks above by its [`Mark`] (task 010: the command line and the window call this).
+    pub fn apply_mark(&self, name: &str, mark: &Mark) -> Result<Marked> {
+        match mark {
+            Mark::Pin(version) => self.pin(name, version.as_deref()),
+            Mark::Unpin => self.unpin(name),
+            Mark::Ignore => self.ignore(name),
+            Mark::Unignore => self.unignore(name),
+            Mark::Channel(channel) => self.set_channel(name, *channel),
+        }
     }
 
     /// Rolls a managed addon back to its previous version (task 022): the entry's `previous_version` and

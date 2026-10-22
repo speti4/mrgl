@@ -23,6 +23,7 @@ use crate::list_file::EntrySource;
 use crate::scan;
 use crate::sources::{Channel, Pick, RequestBudget, Source, SourceSpec, Target};
 use crate::state::Entry;
+use crate::voice::Kind;
 
 /// Where one managed addon stands against its source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -273,6 +274,104 @@ impl UpdateCheck {
     }
 }
 
+/// What a summary of [`UpdateCheck::summary`] sums up: a check that installs nothing (the command line's
+/// `--dry-run`, the window's "check for updates") or an update run with the count it installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummaryOf {
+    /// `mrgl update --dry-run`: what an update would do, nothing written.
+    DryRun,
+    /// The window's check (task 010): what the sources answer, nothing written.
+    Check,
+    /// An update run that installed `updated` addons and left `left` of them for a cancel (the window).
+    Update { updated: usize, left: usize },
+}
+
+impl UpdateCheck {
+    /// The summary of a check or an update run in the voice's terms (task 010: the command line and the
+    /// window share it): what was updated (or, without an install, what is available), then every other
+    /// state's count, the zeros left out: `2 addons updated, 12 up to date, 1 pinned, 1 ignored`. A warning
+    /// when something needs a look (a guess, a source gone, a failure, the rate limit, an update that did
+    /// not install), a success when something was updated or found, nothing to do otherwise.
+    pub fn summary(&self, of: SummaryOf, folder_name: &str) -> (Kind, String) {
+        if self.addons.is_empty() {
+            return (
+                Kind::Nothing,
+                format!("no managed addons in {folder_name}, nothing to update"),
+            );
+        }
+        let available = self.count(UpdateState::UpdateAvailable);
+        let mut parts: Vec<String> = Vec::new();
+        let not_updated = match of {
+            SummaryOf::DryRun | SummaryOf::Check => {
+                match available {
+                    0 => {}
+                    1 => parts.push("1 update available".to_string()),
+                    count => parts.push(format!("{count} updates available")),
+                }
+                0
+            }
+            SummaryOf::Update { updated, left } => {
+                let failed = available.saturating_sub(updated).saturating_sub(left);
+                if updated > 0 {
+                    parts.push(format!("{} updated", count_addons(updated)));
+                }
+                if failed > 0 {
+                    parts.push(format!("{failed} failed"));
+                }
+                if left > 0 {
+                    parts.push(format!("{left} not updated (cancelled)"));
+                }
+                failed + left
+            }
+        };
+        for state in UpdateState::ALL
+            .into_iter()
+            .filter(|state| *state != UpdateState::UpdateAvailable)
+        {
+            let count = self.count(state);
+            if count > 0 {
+                parts.push(format!("{count} {}", state.label()));
+            }
+        }
+        let attention = [
+            UpdateState::GuessOnly,
+            UpdateState::SourceGone,
+            UpdateState::Failed,
+            UpdateState::RateLimited,
+        ]
+        .into_iter()
+        .any(|state| self.count(state) > 0)
+            || not_updated > 0;
+        let found = match of {
+            SummaryOf::DryRun | SummaryOf::Check => available > 0,
+            SummaryOf::Update { updated, .. } => updated > 0,
+        };
+        let kind = if attention {
+            Kind::Warning
+        } else if found {
+            Kind::Success
+        } else {
+            Kind::Nothing
+        };
+        let parts = parts.join(", ");
+        let text = match of {
+            SummaryOf::DryRun => format!("dry run: {parts}; nothing written"),
+            SummaryOf::Check => format!("checked {folder_name}: {parts}"),
+            SummaryOf::Update { updated, .. } if updated > 0 => parts,
+            SummaryOf::Update { .. } => format!("nothing updated: {parts}"),
+        };
+        (kind, text)
+    }
+}
+
+/// `1 addon`, `2 addons`.
+fn count_addons(count: usize) -> String {
+    match count {
+        1 => "1 addon".to_string(),
+        count => format!("{count} addons"),
+    }
+}
+
 /// Checks the managed addons of the engine's flavor against their sources, or the one addon `only` names
 /// (by name, else by one of its folders), reporting each through `progress`. An addon whose folders were
 /// deleted by hand is left out with a warning; a name the sidecar does not know is an error that says
@@ -283,6 +382,19 @@ pub fn check<S: Source + ?Sized>(
     source: &S,
     only: Option<&str>,
     progress: &mut dyn FnMut(CheckProgress<'_>),
+) -> Result<UpdateCheck> {
+    check_until(engine, source, only, progress, &|| false)
+}
+
+/// [`check`] with a way out (task 010: the window's cancel): before each addon the check asks `cancelled`,
+/// and once it says yes the check ends there, with the addons checked so far and nothing more. The caller
+/// knows it cancelled, and `addons` holds fewer addons than a full check. Nothing is written either way.
+pub fn check_until<S: Source + ?Sized>(
+    engine: &Engine,
+    source: &S,
+    only: Option<&str>,
+    progress: &mut dyn FnMut(CheckProgress<'_>),
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<UpdateCheck> {
     let loaded = engine.load_state()?;
     let mut state = loaded.state;
@@ -325,6 +437,9 @@ pub fn check<S: Source + ?Sized>(
     let mut addons = Vec::with_capacity(total);
     let mut stopped: Option<BudgetStop> = None;
     for (position, (name, entry)) in entries.iter().enumerate() {
+        if cancelled() {
+            break;
+        }
         let index = position + 1;
         let asks = asks_source(entry);
         if asks
@@ -681,6 +796,67 @@ mod tests {
             )),
             "{}",
             stop.line()
+        );
+    }
+
+    #[test]
+    fn the_summary_counts_a_check_a_run_and_a_cancel() {
+        let check = UpdateCheck {
+            addons: vec![
+                addon(UpdateState::UpdateAvailable, Some("1.1.0"), None),
+                addon(UpdateState::UpdateAvailable, Some("1.1.0"), None),
+                addon(UpdateState::UpdateAvailable, Some("1.1.0"), None),
+                addon(UpdateState::UpToDate, Some("1.0.0"), None),
+                addon(UpdateState::Pinned, Some("1.1.0"), None),
+            ],
+            warnings: Vec::new(),
+            stopped: None,
+        };
+        let summary = |of| check.summary(of, "_forever_");
+        assert_eq!(
+            summary(SummaryOf::DryRun),
+            (
+                Kind::Success,
+                "dry run: 3 updates available, 1 up to date, 1 pinned; nothing written".to_string()
+            )
+        );
+        assert_eq!(
+            summary(SummaryOf::Check),
+            (
+                Kind::Success,
+                "checked _forever_: 3 updates available, 1 up to date, 1 pinned".to_string()
+            )
+        );
+        assert_eq!(
+            summary(SummaryOf::Update {
+                updated: 3,
+                left: 0
+            }),
+            (
+                Kind::Success,
+                "3 addons updated, 1 up to date, 1 pinned".to_string()
+            )
+        );
+        assert_eq!(
+            summary(SummaryOf::Update {
+                updated: 1,
+                left: 1
+            }),
+            (
+                Kind::Warning,
+                "1 addon updated, 1 failed, 1 not updated (cancelled), 1 up to date, 1 pinned"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            summary(SummaryOf::Update {
+                updated: 0,
+                left: 3
+            }),
+            (
+                Kind::Warning,
+                "nothing updated: 3 not updated (cancelled), 1 up to date, 1 pinned".to_string()
+            )
         );
     }
 
