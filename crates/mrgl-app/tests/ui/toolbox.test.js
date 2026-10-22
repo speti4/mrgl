@@ -276,3 +276,92 @@ test("a chip toggles its addon and drops it, and waits only for the write going"
     [false, Toolbox.BUSY, false, Toolbox.BUSY]
   );
 });
+
+// The adopt card (task 109): a report as `toolbox::adopt_report` answers it.
+function adoptReport(extra) {
+  return Object.assign(
+    {
+      flavor: "wow",
+      folder: "_retail_",
+      curse_client: false,
+      marker: null,
+      rows: [
+        {
+          name: "MrglElsewhere",
+          folders: ["MrglElsewhere", "MrglElsewhere_Options"],
+          version: "0.1",
+          sources: [],
+          pages: [],
+          class: "without-curseforge",
+          adopt_as: "wowi:1006",
+          needs: [],
+          line: "MrglElsewhere 0.1 (2 folders: MrglElsewhere, MrglElsewhere_Options): adopt as wowi:1006",
+          verdict: "adopt as wowi:1006",
+          details: ["wowi:1006 from X-WoWI-ID: retail build unknown (WoWInterface lists no compatibility for the project)"],
+        },
+        {
+          name: "MrglSite",
+          folders: ["MrglSite"],
+          version: null,
+          sources: [],
+          pages: ["https://www.example.invalid/mrgl-site"],
+          class: "no-source",
+          adopt_as: null,
+          needs: [],
+          line: "MrglSite (no version): no known source",
+          verdict: "no known source",
+          details: ["page https://www.example.invalid/mrgl-site from X-Website, not a source mrgl reads"],
+        },
+      ],
+      left_out: [],
+      counts: { addons: 2, without_curseforge: 1, only_curseforge: 0, no_build: 0, no_source: 1, adoptable_now: 1 },
+      summary: say("success", "2 unmanaged addons in _retail_: …; adopt --apply adopts 1 of them"),
+    },
+    extra || {}
+  );
+}
+
+test("the adopt rows carry the core's lines, the folders of a group and the words of the class", () => {
+  assert.deepEqual(Toolbox.adoptRows(null), []);
+  const rows = Toolbox.adoptRows(adoptReport());
+  assert.deepEqual(
+    rows.map((row) => [row.name, row.folders, row.version, row.label, row.adoptable, row.verdict]),
+    [
+      ["MrglElsewhere", "MrglElsewhere, MrglElsewhere_Options", "0.1", "without CurseForge", true, "adopt as wowi:1006"],
+      ["MrglSite", "", "—", "no known source", false, "no known source"],
+    ]
+  );
+  assert.deepEqual(rows[1].details, ["page https://www.example.invalid/mrgl-site from X-Website, not a source mrgl reads"]);
+  assert.equal(rows[0].line, adoptReport().rows[0].line);
+  assert.deepEqual(
+    ["without-curseforge", "only-curseforge", "no-build", "no-source"].map(Toolbox.classLabel),
+    ["without CurseForge", "only with CurseForge", "no build for the flavor", "no known source"]
+  );
+});
+
+test("the sources are asked on demand and the adopt button waits for a report, a write and an update", () => {
+  assert.deepEqual(
+    [Toolbox.askButton(null, false).label, Toolbox.askButton(adoptReport(), false).label, Toolbox.askButton(null, true).enabled],
+    ["Ask the sources", "Ask again", false]
+  );
+  const ready = Toolbox.adoptButton(adoptReport(), false, false, false);
+  assert.deepEqual([ready.enabled, ready.label, ready.confirm], [true, "Adopt 1 addon", false]);
+  assert.match(ready.title, /^write a sidecar entry for each .*: the next update installs each from its source$/);
+  const why = (button) => [button.enabled, button.title];
+  assert.deepEqual(why(Toolbox.adoptButton(null, false, false, false)), [false, "ask the sources first"]);
+  assert.deepEqual(why(Toolbox.adoptButton(adoptReport(), false, false, true)), [false, "the sources are being asked"]);
+  assert.deepEqual(why(Toolbox.adoptButton(adoptReport(), true, false, false)), [false, Toolbox.BUSY]);
+  assert.deepEqual(
+    why(Toolbox.adoptButton(adoptReport(), false, true, false)),
+    [false, "an update is running; the adopt waits until it ends"]
+  );
+  const none = adoptReport({ counts: Object.assign({}, adoptReport().counts, { adoptable_now: 0 }) });
+  const nothing = Toolbox.adoptButton(none, false, false, false);
+  assert.deepEqual([nothing.enabled, nothing.label], [false, "Nothing to adopt"]);
+  const two = adoptReport({ counts: Object.assign({}, adoptReport().counts, { adoptable_now: 2 }) });
+  assert.equal(Toolbox.adoptButton(two, false, false, false).label, "Adopt 2 addons");
+  // In a folder the CurseForge app manages the dialog asks first.
+  const marked = Toolbox.adoptButton(adoptReport({ curse_client: true }), false, false, false);
+  assert.deepEqual([marked.enabled, marked.confirm], [true, true]);
+  assert.match(marked.title, /The CurseForge app manages this folder: you are asked first$/);
+});

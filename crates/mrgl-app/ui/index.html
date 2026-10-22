@@ -97,6 +97,24 @@
             </table>
             <p id="savedvars-empty" class="muted no-match" hidden></p>
           </section>
+          <section class="tool-card" aria-labelledby="adopt-title">
+            <header class="tool-head">
+              <h3 id="adopt-title">Adopt</h3>
+              <p id="adopt-note" class="note"></p>
+            </header>
+            <p id="adopt-marker" class="warnings" hidden></p>
+            <div class="tool-form">
+              <button id="adopt-ask" type="button" class="secondary">Ask the sources</button>
+              <button id="adopt-apply" type="button" class="primary">Nothing to adopt</button>
+            </div>
+            <table id="adopt-table" class="adopt-table" hidden>
+              <thead>
+                <tr><th scope="col">Addon</th><th scope="col">Version</th><th scope="col">Sources</th><th scope="col">Adopt</th></tr>
+              </thead>
+              <tbody id="adopt-rows"></tbody>
+            </table>
+            <ul id="adopt-done" class="set-changes" aria-label="What the last adopt wrote" hidden></ul>
+          </section>
         </div>
       </section>
     </main>
@@ -109,6 +127,17 @@
     </footer>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
+
+    <dialog id="adopt-confirm" class="confirm" aria-labelledby="adopt-confirm-title">
+      <form method="dialog">
+        <h3 id="adopt-confirm-title">Adopt alongside the CurseForge app?</h3>
+        <p id="adopt-confirm-marker" class="note"></p>
+        <div class="confirm-actions">
+          <button type="submit" value="cancel" class="secondary">Cancel</button>
+          <button type="submit" value="alongside" class="primary">Adopt alongside the CurseForge app</button>
+        </div>
+      </form>
+    </dialog>
 
     <template id="row-template">
       <li class="row">

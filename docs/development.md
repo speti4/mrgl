@@ -156,7 +156,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `tests/cli.rs` reads it back from the built exe with the core's PE reader (`pe::read_file_version`).
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`: the IPC commands in
   `commands.rs`, the flavor list in `list.rs`, task 009; the update check, the updates and the row marks in
-  `actions.rs`, task 010; a flavor's addon sets and SavedVariables in `toolbox.rs`, task 074), the static UI
+  `actions.rs`, task 010; a flavor's addon sets and SavedVariables in `toolbox.rs`, task 074, with the adopt
+  card of task 109), the static UI
   under `ui/`, the capability file and the icon; see
   [The UI](#the-ui).
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
@@ -697,7 +698,12 @@ A folder belongs to one manager. A flavor folder with the CurseForge app's `.cur
 that the CurseForge app may still update or flag those folders and that its marker stays
 (`adopt::alongside_warning`). mrgl never removes the marker. Every install path warns in such a folder too:
 `add` (a zip or a source, not the dry run of a source, which reads no folder), `import` and `update` add
-`adopt::curse_client_warning` to their warnings, on the screen and in the JSON.
+`adopt::curse_client_warning` to their warnings, on the screen and in the JSON, and so do the window's
+update actions (task 110: "Check for updates", "Update all" and a row's "Update", once per run, below).
+
+The window's toolbox has the report and the apply in its Adopt card (task 109, the commands `adopt` and
+`adopt_apply` under [The UI](#the-ui)): the same `adopt::report` and `adopt::apply` over the same sidecar,
+the same lines, and the marker guard with a confirmation dialog in place of `--alongside-curseforge`.
 
 ### The GitHub mapping
 
@@ -743,18 +749,25 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   at, the Forever note slot of task 011, and a row
   menu with "Update", pin or unpin, ignore or unignore and the channel, with a progress slot per row; tasks
   010 and 021), a legend, a status bar and the toast stack. Under the header, two tabs: "Addons" (the list
-  above) and "Toolbox" (task 074), the flavor's toolbox in two cards: "Addon sets" (the set picker with each
+  above) and "Toolbox" (task 074), the flavor's toolbox in three cards: "Addon sets" (the set picker with each
   set's enabled and disabled count, "Apply to" with every character or one character by name and realm, and
   by account too when two accounts have the realm and the name (task 085), the apply button, the undo button
   named after the set of the last apply with the line under it that says which `AddOns.txt` files it puts
   back and which it removes (task 085), the set's addons as chips, enabled first, a dashed chip for an addon
   with no folder, each chip a toggle between enabled and disabled in the set with a `×` that drops the addon
   (task 085: `sets.json` only), and what the last apply changed or the last undo put back, one line per
-  character) and "SavedVariables" (the listing's summary, an "orphans only" filter, the table of addon,
-  place, files, size and status, the largest first, and the cleanup button that names the orphans it moves).
+  character), "SavedVariables" (the listing's summary, an "orphans only" filter, the table of addon,
+  place, files, size and status, the largest first, and the cleanup button that names the orphans it moves)
+  and "Adopt" (task 109: "Ask the sources" reads the adopt report on demand, since it asks every source of
+  every unmanaged addon; then the report's summary, the CurseForge marker's warning line, a table row per
+  unmanaged addon with its folders, version, the core's line per source and page, and its verdict after a
+  pill of its class, and the button that adopts the addons the report can adopt, named with their count;
+  in a folder the CurseForge app manages a `<dialog>` shows the marker's line first, and only "Adopt
+  alongside the CurseForge app" sends the apply; the `adopted …` lines of the last apply under the table).
   A warning line over the cards names the running client; the buttons stay enabled, since the core's guard
   answers the apply, the undo and the cleanup (an edit is not refused). The toolbox is read when the tab
-  opens and again after every write. The theme
+  opens and again after every write; the adopt report when its button is pressed, and again by an apply.
+  The theme
   toggle and the serious switch sit at the bottom of the sidebar, with "Game folder…" and "Copy
   diagnostics" (task 009). The theme and the switch are kept by the shell in `config.json`, not in the web
   view's storage (task 034, below).
@@ -773,16 +786,20 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   progress)`, `Data.updateOne(flavorId, folder, progress)`, `Data.cancelUpdate()`, `Data.mark(flavorId,
   folder, action, value)`, the preferences, `Data.toolbox(flavorId)`, `Data.applySet(flavorId, set,
   target)`, `Data.undoSet(flavorId)`, `Data.editSet(flavorId, set, addon, action)`,
-  `Data.cleanSavedVariables(flavorId)`; a flavor as `flavor.rs` serializes it plus its friendly name, the
+  `Data.cleanSavedVariables(flavorId)`, `Data.adopt(flavorId)`, `Data.adoptApply(flavorId, alongside)`; a
+  flavor as `flavor.rs` serializes it plus its friendly name, the
   source of its build, whether its `Interface\AddOns` folder is there and its addons; an addon as `scan.rs`
   gives it plus the facts of the sidecar, the sources, the update check, the Forever notes, pin / ignore /
-  channel, the missing dependencies and the interface check; a progress event of a run; a toolbox answer).
+  channel, the missing dependencies and the interface check; a progress event of a run; a toolbox answer;
+  an adopt answer).
   For a look at the page without the core, open `crates/mrgl-app/ui/index.html` in a browser: without the
   Tauri global, `data.js` writes the mock's script tag instead, and the made-up rows show (retail with one row
   of each interface mark), with a made-up check, update, cancel and marks, and a made-up toolbox per flavor
   with one realm and name under two made-up accounts and a made-up undo and edit, whose client "runs" in
-  retail, so the refusal of the `WTF` writes shows there (the folder dialog and the clipboard need the
-  window). A browser blocks some scripts of a page opened
+  retail, so the refusal of the `WTF` writes shows there, a made-up adopt report per flavor (made-up
+  sources for its unmanaged rows, a row of every class, the marker's guard and dialog in the three flavors
+  the CurseForge app manages) and the marker's warning first in their update runs (the folder dialog and
+  the clipboard need the window). A browser blocks some scripts of a page opened
   from the disk; `python -I -m http.server --directory crates/mrgl-app/ui` serves the same files.
 - The pure modules, each with a test file of the same name under `tests/ui/`: `state.js` (an addon's one state
   from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels; the
@@ -801,15 +818,18 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   value and label only when the answer carries one, the set the picker shows, the set's addons in their
   order and each chip's toggle and drop, the state, label and title of the apply, undo and cleanup buttons,
   the line that says what the undo puts back, the SavedVariables rows with the "orphans only" filter, the
-  words of a status, and the lines of what an apply changed and an undo put back) and
+  words of a status, and the lines of what an apply changed and an undo put back; task 109: the adopt
+  card's rows, the words of a row's class, the ask button and the adopt button with its count, why it
+  waits and whether the dialog asks first) and
   `voice.js` (the two lines and where a message goes, see [nerglish.md](nerglish.md), "The window").
 
 The IPC commands (`src/commands.rs`, task 009) are thin wrappers over the core and over the plain functions
 of `src/list.rs`, `src/actions.rs` and `src/toolbox.rs`, which take the game root, the mrgl home folder, the
 engine and the source as arguments, so `tests/flavor_list.rs` checks the rows on a made-up game folder,
 `tests/update_actions.rs` the update runs and the marks on a made-up flavor with a stub source, and
-`tests/toolbox.rs` the toolbox on a made-up flavor with the `WTF` tree of the addon-sets fixture, without a
-window. Every message they return is
+`tests/toolbox.rs` the toolbox on a made-up flavor with the `WTF` tree of the addon-sets fixture, and
+`tests/adopt.rs` the adopt card over a copy of the adopt fixture with the source stubs of tasks 094 and 095,
+without a window. Every message they return is
 `{ kind, murloc, plain }`: the core's voice kind (`Kind::as_str`) picks the place in the window, and a
 serious voice sends the murloc line empty. Whatever reads the disk or the network runs on a blocking thread.
 
@@ -879,7 +899,10 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   folders (`NeedsLibrary needs the missing dependency LibMissing: install it or the addon does not load`)
   and an interface of the primary folder that is not for the build (`… of _forever_; the zip may be for
   another flavor`), each a warning of the answer; the row, read again, carries the dependency in its
-  `missing`. One run at a time: a second one is refused with a warning. A flavor without an AddOns folder
+  `missing`. In a flavor folder with the CurseForge app's `.curseclient` marker the first warning of the
+  answer is the core's `adopt::curse_client_warning` (task 110), once per run, as `mrgl update` warns
+  there; the window has no add or import of its own, so its update actions are its install paths. One
+  run at a time: a second one is refused with a warning. A flavor without an AddOns folder
   answers that the client has not been started for it yet. The window's "Check for updates" is the check
   alone; "Update all" and a row's "Update" run the check first, so they never install on an old answer.
 - `cancel_update`: asks the run going to stop. The cancel rule: the flag is read before each addon of the
@@ -890,7 +913,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
 - `mark` (task 010 over task 021): `pin` (at the given version, else the installed one), `unpin`, `ignore`,
   `unignore` or `channel` (`stable`, `prerelease`) on a managed addon by its folder, through
   `Engine::apply_mark` and the line of `Mark::line`, both shared with the command line; the answer is the
-  flavor as it is now and the line. Refused while an update runs, since both write the flavor's sidecar.
+  flavor as it is now and the line. Refused while an update runs, since both write the flavor's sidecar,
+  and while a toolbox write goes (task 109: an adopt writes the sidecar too).
 - `preferences` and `set_preferences` (task 034): the theme (`auto`, `light`, `dark`) and the serious
   switch as they apply, which source decided the switch (`environment` locks the window's switch: the
   window cannot override `MRGL_SERIOUS`), and what `config.json` stores (`theme`, `serious`, next to
@@ -948,7 +972,26 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   into the WTF folder to put them back`, or `no orphans …, nothing moved`). Refused with a warning while an
   update runs: an install swaps addon folders, and a folder away for a moment would read as an orphan; an
   update run waits for a toolbox write the same way. One toolbox write at a time (`toolbox::ToolboxRun`):
-  an apply, an undo, an edit or a cleanup; a second one is refused with a warning.
+  an apply, an undo, an edit, an adopt or a cleanup; a second one is refused with a warning.
+- `adopt` (task 109 over task 097, `toolbox::adopt_report`): the adopt report of a flavor, `adopt::report`
+  over its scan and its sidecar (the entries whose folders are gone dropped first, as `mrgl adopt` reads it)
+  through the router (`MRGL_HTTP_STUB` answers for it as on the command line) and the key lookup of
+  `keys::of_process`, so a missing key reads `needs <KEY NAME>`. It writes nothing, and runs while an update
+  or a toolbox write goes. The answer is `{ adopt, flavor, adopted, messages }`: `adopt` the report as the
+  card draws it (`flavor`, `folder`, `curse_client`, `marker` the warning of `Report::marker_line` or null,
+  `rows` with the core's row as `mrgl adopt --json` writes it plus its `line`, `verdict` and `details` (the
+  lines under it, without the indent), `left_out`, `counts`, and `summary`, `Report::summary`), and the
+  messages: the warnings of the scan, the sidecar and the left-out folders, then the summary.
+- `adopt_apply` (task 109 over task 098, `toolbox::adopt_apply`): `alongside` is the dialog's confirmation.
+  In a flavor folder with the `.curseclient` marker and without it, the answer is the refusal of
+  `adopt::marker_refusal` (an error) before any source is asked, and nothing is written; otherwise the
+  report again, `adopt::apply` into the sidecar, written once when an entry was added. The answer carries
+  the report as it is now (the adopted addons are managed, so they are no rows any more), `flavor` with its
+  rows as they are now, `adopted` (the `Adopted::line` of each entry) and the messages of `mrgl adopt
+  --apply`: `adopt::alongside_warning` in a marked folder, the warnings, a `<name> not adopted: <why>` per
+  skipped addon, and `Report::applied_summary`. Refused while an update runs (both write the sidecar) and
+  while another toolbox write goes; an update and a mark wait for it the same way. Without the mrgl home
+  folder both commands answer an error and read nothing.
 
 The application icon is a murloc head of our own drawing (task 012; fan art within D-005, no Blizzard
 artwork, no game file): geometry in `scripts\make-icon.py`, rendered with Pillow and committed. `icon.ico`
@@ -1337,7 +1380,8 @@ names both; the options TOC has no header), `MrglCurseOnly` (a CurseForge id alo
 on `github.com/Example/Nightly` and `## Version: @project-version@`), `MrglNoForever` (`X-Website` on
 `github.com/Example/MainlineOnly`, no Forever asset), `MrglPage` (`X-Website` on another host), `MrglNoHint`
 (nothing) and `Questie` with `QuestieDB` (no header: the mapping's folders). The tests copy `releases/` and
-`sources/` into one temporary folder for the stub; the end-to-end tests copy the game folder too.
+`sources/` into one temporary folder for the stub; the end-to-end tests and the window's adopt card
+(`crates/mrgl-app/tests/adopt.rs`, task 109) copy the game folder too.
 
 The Forever starter list (`lists/forever-starter.json`, task 028) has a stub of its own,
 `starter-list/`: one release per entry's repository in the shape that repository's latest release had at

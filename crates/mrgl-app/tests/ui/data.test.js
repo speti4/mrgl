@@ -136,3 +136,17 @@ test("the toolbox calls go to their commands, every character as a null target",
     ["clean_saved_variables", { flavor: "wowf" }],
   ]);
 });
+
+test("the adopt calls go to their commands, the confirmation as a boolean (task 109)", async () => {
+  const answer = { adopt: null, flavor: null, adopted: [], messages: [] };
+  const { calls, invoke } = fake({ adopt: answer, adopt_apply: answer });
+  const Data = create(invoke);
+  assert.equal(await Data.adopt("wow"), answer);
+  assert.equal(await Data.adoptApply("wow", true), answer);
+  assert.equal(await Data.adoptApply("wowf"), answer);
+  assert.deepEqual(calls, [
+    ["adopt", { flavor: "wow" }],
+    ["adopt_apply", { flavor: "wow", alongside: true }],
+    ["adopt_apply", { flavor: "wowf", alongside: false }],
+  ]);
+});

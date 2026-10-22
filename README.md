@@ -106,7 +106,7 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 ```powershell
 cargo build --release
 target\release\mrgl.exe --version
-target\release\mrgl-app.exe                                                 # the window: every flavor's addons, their updates and states, its toolbox (sets with undo and edit, SavedVariables)
+target\release\mrgl-app.exe                                                 # the window: every flavor's addons, their updates and states, its toolbox (sets with undo and edit, SavedVariables, adopt)
 target\release\mrgl.exe list --flavor forever                               # what is installed, managed by mrgl or not
 target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # remember a game folder installed elsewhere
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever            # install the release's Forever asset
@@ -198,7 +198,14 @@ the source's build in the clean way, as for any addon mrgl installed. An addon o
 left as it is until mrgl has a CurseForge source, and one that needs a key you have not set waits for the
 key. A folder belongs to one manager: in a flavor folder the CurseForge app manages (its `.curseclient`
 marker), `--apply` refuses unless you add `--alongside-curseforge`, and even then the CurseForge app may
-still update those folders; mrgl never removes its marker, and `add`, `import` and `update` warn there too.
+still update those folders; mrgl never removes its marker, and `add`, `import` and `update` warn there too,
+as the window's update actions do.
+
+The window's Toolbox tab has the same report in its Adopt card: "Ask the sources" lists every addon mrgl did
+not install with its folders, its sources and what adopt makes of it, and the counts, and one button adopts
+the addons the report can adopt, with the same lines as the command line. In a folder the CurseForge app
+manages a dialog asks first, and its "Adopt alongside the CurseForge app" is the window's
+`--alongside-curseforge`; the warning follows the adopt.
 
 On a standard install no flag is needed: mrgl finds the game folder through the registry (the launcher's
 key, or the game's Uninstall entry) or under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a

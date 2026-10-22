@@ -984,3 +984,58 @@ fn an_update_another_run_made_since_the_check_is_installed_already() {
         .expect("the row");
     assert_eq!(row.version.as_deref(), Some("1.1.0"));
 }
+
+/// Task 110: the core's warning of an install path in a folder the CurseForge app manages (task 098).
+const CURSE_CLIENT_WARNING: &str = "the CurseForge app manages _forever_ too (its .curseclient marker is there): it may update or replace what mrgl installs; a folder belongs to one manager";
+
+/// The three plans of the window's update actions: the check, "update all" and a row's update.
+fn every_plan() -> [Plan; 3] {
+    [Plan::Check, Plan::All, Plan::One("SeveralFolders".into())]
+}
+
+#[test]
+fn a_folder_the_curseforge_app_manages_warns_once_per_run() {
+    let game = Game::new("curse-client");
+    let marker = game.flavor_folder().join(".curseclient");
+    std::fs::write(&marker, "").expect("the marker");
+    for plan in every_plan() {
+        let (answer, events) = run_with(&game, &Stub::new(), plan.clone(), None);
+        let warned: Vec<(&str, &str)> = answer
+            .messages
+            .iter()
+            .filter(|message| message.plain == CURSE_CLIENT_WARNING)
+            .map(|message| (message.kind, message.murloc.as_str()))
+            .collect();
+        assert_eq!(warned, [("warning", "")], "once, a warning: {plan:?}");
+        assert_eq!(
+            answer.messages[0].plain, CURSE_CLIENT_WARNING,
+            "the first of the answer's messages: {plan:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.message.plain != CURSE_CLIENT_WARNING),
+            "no progress event repeats it: {plan:?}"
+        );
+    }
+    // "Update all" installed as ever, and the marker stays where the CurseForge app put it.
+    assert_eq!(game.toc_version("OneFolder"), "1.1.0");
+    assert_eq!(game.toc_version("SeveralFolders"), "2.1.0");
+    assert!(marker.is_file());
+}
+
+#[test]
+fn a_folder_without_the_curseforge_marker_has_no_such_warning() {
+    let game = Game::new("no-curse-client");
+    for plan in every_plan() {
+        let (answer, _) = run_with(&game, &Stub::new(), plan.clone(), None);
+        assert!(
+            answer
+                .messages
+                .iter()
+                .all(|message| !message.plain.contains(".curseclient")),
+            "{plan:?}: {:?}",
+            answer.messages
+        );
+    }
+}
