@@ -56,7 +56,7 @@ BOM in a fixture survives every checkout.
 - `interface/` — a fourth made-up game folder for the interface states (task 076): a `.build.info` row for
   `wow` at `12.1.5.70448` (interface 120105) and a `_retail_` flavor with `Current` (`120105, 50504`),
   `Behind` (`120100`, one interface number behind the build: out of date) and `Elsewhere` (`110207`, another
-  expansion: an interface mismatch).
+  expansion: an interface mismatch). The window's flavor list test reads it in place (task 081).
 - `client-exe/` — a second made-up game folder for the build version fallback (task 019): its `.build.info`
   has a row for `wow` only, and the flavor folders hold client exe stubs written by `make-stubs.py` next to
   them (deterministic; `python -I crates/mrgl-core/tests/fixtures/client-exe/make-stubs.py` rewrites the

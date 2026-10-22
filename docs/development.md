@@ -476,7 +476,9 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   window opens on Forever), the chosen flavor's header (name, folder, build, the CurseForge marker, the search
   field, "Check for updates" and "Update all", with "Cancel" in its place while a run goes; task 010), the
   addon list (one row per addon: name and folder, version and the version an update brings with the note under
-  it, the source badge, the state pill with the step a run is at, the Forever note slot of task 011, and a row
+  it, the source badge, the state pill with the interface mark under it (task 081: `interface mismatch` or
+  `out of date`, as `scan` and `list` mark the line, the warning's line in its title) and the step a run is
+  at, the Forever note slot of task 011, and a row
   menu with "Update", pin or unpin, ignore or unignore and the channel, with a progress slot per row; tasks
   010 and 021), a legend, a status bar and the toast stack. Under the header, two tabs: "Addons" (the list
   above) and "Toolbox" (task 074), the flavor's toolbox in two cards: "Addon sets" (the set picker with each
@@ -492,8 +494,9 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   view's storage (task 034, below).
 - `style.css` holds every color as a token on `:root`: the light set, the dark set under
   `prefers-color-scheme: dark` (unless the toggle says light) and under `data-theme="dark"` (the toggle), one
-  token per state (managed, update available, linked, guess only, unmanaged) and per source badge (github,
-  wago, wowi, curseforge, zip, linked; a dashed badge is a source known only from a TOC hint).
+  token per state (managed, update available, linked, guess only, unmanaged), per interface mark
+  (interface mismatch, out of date; task 081) and per source badge (github, wago, wowi, curseforge, zip,
+  linked; a dashed badge is a source known only from a TOC hint).
 - `main.js` is the view: it reads `window.Data`, draws what it gets and never composes a murloc line. It does
   not know whether the rows are made up.
 - `data.js` is the window's data module (task 009): the contract behind `window.Data`, each call one Tauri
@@ -506,14 +509,16 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   target)`, `Data.cleanSavedVariables(flavorId)`; a flavor as `flavor.rs` serializes it plus its friendly name, the
   source of its build, whether its `Interface\AddOns` folder is there and its addons; an addon as `scan.rs`
   gives it plus the facts of the sidecar, the sources, the update check, the Forever notes, pin / ignore /
-  channel and the missing dependencies; a progress event of a run; a toolbox answer). For a look at the page
-  without the core, open `crates/mrgl-app/ui/index.html` in a browser: without the Tauri global, `data.js`
-  writes the mock's script tag instead, and the made-up rows show, with a made-up check, update, cancel and
+  channel, the missing dependencies and the interface check; a progress event of a run; a toolbox answer).
+  For a look at the page without the core, open `crates/mrgl-app/ui/index.html` in a browser: without the
+  Tauri global, `data.js` writes the mock's script tag instead, and the made-up rows show (retail with one row
+  of each interface mark), with a made-up check, update, cancel and
   marks, and a made-up toolbox per flavor whose client "runs" in retail, so the refusal of both writes shows
   there (the folder dialog and the clipboard need the window). A browser blocks some scripts of a page opened
   from the disk; `python -I -m http.server --directory crates/mrgl-app/ui` serves the same files.
 - The pure modules, each with a test file of the same name under `tests/ui/`: `state.js` (an addon's one state
-  from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels),
+  from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels; the
+  interface mark of a row's `interface_check`, task 081),
   `search.js` (every word of the query in the name, folder, source kind or source id), `preferences.js`
   (the window's preferences from an answer of the shell: the theme, the switch, the switch locked when
   `MRGL_SERIOUS` decides it, and the one-time carry-over of a value the sketch kept in `localStorage`),
@@ -541,7 +546,11 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   discovery; a discovered root is used and not remembered), its flavor folders and their rows, and a banner.
   A row joins the scan (folder, the TOC's title without color escapes, a junction), the flavor's state
   sidecar (managed, the installed version, the source, pinned, ignored), a TOC hint for an unmanaged addon
-  (Wago, then WoWInterface, then CurseForge, drawn as a guess), the dependency check (`missing`), and on
+  (Wago, then WoWInterface, then CurseForge, drawn as a guess), the dependency check (`missing`), the
+  interface check of the TOC the flavor loads against its build (`interface_check`, task 081: `null` when
+  current or when nothing can be compared, else `state` `mismatch` or `out-of-date` from
+  `interface::check_addon` and `interface::out_of_date_addon`, `label` the mark `scan` and `list` append to
+  the line, `interface mismatch` or `out of date`, and `line` the warning's plain line), and on
   every row of the Forever flavor its Forever status (`build`, `note`, `verified`, `source`, `stale`). The
   list never goes online (task 010): a row's `check` (`state`, `label`, `latest`, `order`, `detail` and the
   check's data `line`) and its `update` are the answer of `update::check`, with its version order (task 068), run
@@ -852,7 +861,7 @@ third game folder for the dependency check (`dependencies/`, task
 an embedded optional one, and a library folder inside an addon that a `nolib` entry in a test's sidecar
 keeps the check from looking into), a fourth game folder for the interface states (`interface/`, task 076:
 a `_retail_` flavor with a current TOC, one an interface number behind the build and one of another
-expansion), and a
+expansion; the window's flavor list reads it in place too, task 081), and a
 development folder for the junction links (`dev/`: two addons with a TOC and a folder without one, task
 005; the tests copy it into a temporary folder and make their junctions there), and a single addon folder
 for the same links (`single-addon/SoloAddon/`: a TOC with the Forever suffix only and an embedded library

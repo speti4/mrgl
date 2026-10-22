@@ -37,6 +37,9 @@ pub struct InterfaceMismatch {
 }
 
 impl InterfaceMismatch {
+    /// The mark of the addon's line in `scan` and `list`, and of its row in the window (task 081).
+    pub const LABEL: &'static str = "interface mismatch";
+
     /// The interface numbers as the TOC lists them, comma-separated: `110207` or `11509,50504`.
     pub fn interface_list(&self) -> String {
         self.interfaces
@@ -85,6 +88,10 @@ pub struct InterfaceOutOfDate {
 }
 
 impl InterfaceOutOfDate {
+    /// The mark of the addon's line in `scan` and `list`, and of its row in the window (task 081): the
+    /// client's own words.
+    pub const LABEL: &'static str = "out of date";
+
     /// The plain line: `Behind: interface 120100 is out of date for the build 12.1.5.70448 (120105)`.
     pub fn line(&self) -> String {
         format!(

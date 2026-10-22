@@ -1,7 +1,9 @@
 //! The flavor list the window draws (task 009): every flavor folder under the game root, each with its
 //! addon rows in the shape of the data contract in `ui/mock-data.js`. A row carries the facts the core has
-//! on the addon (the scan, the state sidecar, the dependency check, the Forever notes) and the view derives
-//! the row's one state from them (`ui/state.js`); nothing here names a state.
+//! on the addon (the scan, the state sidecar, the dependency check, the interface check, the Forever notes)
+//! and the view derives the row's one state from them (`ui/state.js`); nothing here names that state. The
+//! interface check's state is the core's own: the mark `scan` and `list` append to the addon's line, which
+//! the view draws next to the row's state (task 081).
 //!
 //! Everything is offline: the "update available" fact is the answer of the update check (`update::check`,
 //! tasks 006 and 068, with its version order) run against the GitHub source through [`Offline`], an [`Http`]
@@ -18,9 +20,10 @@ use std::path::{Path, PathBuf};
 
 use mrgl_core::dependencies::{self, AddonDependencies};
 use mrgl_core::discover::{GameRoot, RootOrigin};
-use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
+use mrgl_core::flavor::{self, BuildVersion, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus};
 use mrgl_core::install::Engine;
+use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use mrgl_core::last_check::LastCheck;
 use mrgl_core::link;
 use mrgl_core::scan::{self, Addon, Scan};
@@ -117,6 +120,57 @@ pub struct Row {
     /// The required dependencies no addon folder of their own answers (task 029), a library embedded in
     /// the addon's folder included: the client does not count it (task 076).
     pub missing: Vec<String>,
+    /// The interface check of the TOC the flavor loads against its build (task 081): an interface of
+    /// another expansion (015) or an older one of the build's own (076), as `scan` and `list` mark the
+    /// addon's line; `None` when it is current or nothing can be compared.
+    pub interface_check: Option<InterfaceFact>,
+}
+
+/// The interface state of a row (task 081), the mark `scan` and `list` append to the addon's line.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum InterfaceState {
+    /// No interface number of the build's major version: `interface mismatch` (task 015).
+    Mismatch,
+    /// Only numbers of the build's major below the build's own: the client's `out of date` (task 076).
+    OutOfDate,
+}
+
+/// What the interface check says of a row: the state, its mark (`interface mismatch` or `out of date`) and
+/// the warning's plain line for the row's title (`Behind: interface 120100 is out of date for the build
+/// 12.1.5.70448 (120105)`).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct InterfaceFact {
+    pub state: InterfaceState,
+    pub label: &'static str,
+    pub line: String,
+}
+
+impl InterfaceFact {
+    /// The interface fact of a scanned addon under a build, from `interface::check_addon` and
+    /// `interface::out_of_date_addon`; an addon is one or the other, never both.
+    pub fn of(addon: &Addon, build: Option<BuildVersion>) -> Option<InterfaceFact> {
+        if let Some(mismatch) = interface::check_addon(addon, build) {
+            return Some(InterfaceFact::mismatch(&mismatch));
+        }
+        interface::out_of_date_addon(addon, build).map(|stale| InterfaceFact::out_of_date(&stale))
+    }
+
+    pub fn mismatch(mismatch: &InterfaceMismatch) -> InterfaceFact {
+        InterfaceFact {
+            state: InterfaceState::Mismatch,
+            label: InterfaceMismatch::LABEL,
+            line: mismatch.line(),
+        }
+    }
+
+    pub fn out_of_date(stale: &InterfaceOutOfDate) -> InterfaceFact {
+        InterfaceFact {
+            state: InterfaceState::OutOfDate,
+            label: InterfaceOutOfDate::LABEL,
+            line: stale.line(),
+        }
+    }
 }
 
 /// A source badge: the kind the view colors it by and the id its tooltip names.
@@ -353,7 +407,7 @@ fn read_state(id: &FlavorId, home: Option<&Path>, warnings: &mut Vec<String>) ->
 }
 
 /// The rows of a scan, in its order, against the sidecar, the update check's addons by their lower-case
-/// name, and the cached releases (the Forever build).
+/// name, the cached releases (the Forever build) and the scan's build (the interface check).
 pub fn rows<H: Http>(
     scan: &Scan,
     state: &State,
@@ -385,18 +439,20 @@ pub fn rows<H: Http>(
                     .clone(),
                 None => unknown_forever(),
             });
-            row(addon, entry, check, forever, &checks)
+            row(addon, entry, check, forever, &checks, scan.flavor.version)
         })
         .collect()
 }
 
-/// One row from the scan's addon, its sidecar entry and the facts looked up for the entry.
+/// One row from the scan's addon, its sidecar entry, the facts looked up for the entry and the flavor's
+/// build.
 fn row(
     addon: &Addon,
     entry: Option<&Entry>,
     check: Option<&AddonUpdate>,
     forever: Option<ForeverStatus>,
     checks: &[AddonDependencies],
+    build: Option<BuildVersion>,
 ) -> Row {
     let toc = addon
         .chosen_toc()
@@ -450,6 +506,7 @@ fn row(
         ignored: entry.is_some_and(Entry::ignored),
         forever,
         missing,
+        interface_check: InterfaceFact::of(addon, build),
     }
 }
 

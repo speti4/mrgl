@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use mrgl_app_lib::commands;
-use mrgl_app_lib::list::{self, FlavorView, Row};
+use mrgl_app_lib::list::{self, FlavorView, InterfaceState, Row};
 use mrgl_core::discover::{GameRoot, RootOrigin};
 use mrgl_core::flavor::FlavorId;
 use mrgl_core::home;
@@ -489,8 +489,21 @@ fn a_row_and_a_flavor_serialize_with_the_keys_of_the_contract() {
     };
     // The contract of ui/mock-data.js (ROW_KEYS and FLAVOR_KEYS of tests/ui/mock-data.test.js).
     let mut row_keys = vec![
-        "folder", "name", "version", "linked", "source", "managed", "guessed", "update", "check",
-        "channel", "pinned", "ignored", "forever", "missing",
+        "folder",
+        "name",
+        "version",
+        "linked",
+        "source",
+        "managed",
+        "guessed",
+        "update",
+        "check",
+        "channel",
+        "pinned",
+        "ignored",
+        "forever",
+        "missing",
+        "interface_check",
     ];
     row_keys.sort_unstable();
     let mut flavor_keys = vec![
@@ -519,6 +532,109 @@ fn a_row_and_a_flavor_serialize_with_the_keys_of_the_contract() {
     for key in ["build", "note", "verified", "source", "stale"] {
         assert!(forever.get(key).is_some(), "forever.{key}: {forever}");
     }
+    for flavor in value["flavors"].as_array().expect("flavors") {
+        assert!(
+            flavor["addons"]
+                .as_array()
+                .expect("addons")
+                .iter()
+                .all(|row| row["interface_check"].is_null()),
+            "every TOC of the made-up game names its build's interface: {}",
+            flavor["id"]
+        );
+    }
+}
+
+#[test]
+fn the_rows_carry_the_interface_states_scan_and_list_mark() {
+    // The game folder of task 076: `_retail_` at 12.1.5.70448 (interface 120105) with `Current` (120105,
+    // 50504), `Behind` (120100) and `Elsewhere` (110207). It is read in place; the home folder is a
+    // temporary one, so nothing is written next to the fixture.
+    let fixture_root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/interface");
+    let fixture = Fixture::new("interface");
+    let home = fixture.home();
+    let answer = list::load(
+        Some(GameRoot {
+            path: fixture_root.clone(),
+            origin: RootOrigin::Remembered,
+        }),
+        Vec::new(),
+        Some(&home),
+        Voice::new(false),
+    );
+    assert_eq!(answer.message.kind, "banner", "{:?}", answer.message);
+    let retail = flavor(&answer.flavors, "wow");
+    assert_eq!(retail.version.as_deref(), Some("12.1.5.70448"));
+    let folders: Vec<&str> = retail
+        .addons
+        .iter()
+        .map(|row| row.folder.as_str())
+        .collect();
+    assert_eq!(folders, ["Behind", "Current", "Elsewhere"]);
+
+    assert_eq!(
+        row(retail, "Current").interface_check,
+        None,
+        "one number of the build's own interface: current"
+    );
+
+    let behind = row(retail, "Behind")
+        .interface_check
+        .as_ref()
+        .expect("Behind is out of date");
+    assert_eq!(behind.state, InterfaceState::OutOfDate);
+    assert_eq!(behind.label, "out of date", "the mark of `scan` and `list`");
+    assert_eq!(
+        behind.line,
+        "Behind: interface 120100 is out of date for the build 12.1.5.70448 (120105)"
+    );
+
+    let elsewhere = row(retail, "Elsewhere")
+        .interface_check
+        .as_ref()
+        .expect("Elsewhere is for another expansion");
+    assert_eq!(elsewhere.state, InterfaceState::Mismatch);
+    assert_eq!(elsewhere.label, "interface mismatch");
+    assert_eq!(
+        elsewhere.line,
+        "Elsewhere: interface 110207 is not for the build 12.1.5.70448"
+    );
+
+    let value = serde_json::to_value(retail).expect("serializes");
+    let marks: Vec<&serde_json::Value> = value["addons"]
+        .as_array()
+        .expect("addons")
+        .iter()
+        .map(|row| &row["interface_check"])
+        .collect();
+    assert!(marks[1].is_null());
+    assert_eq!(
+        marks[0],
+        &serde_json::json!({
+            "state": "out-of-date",
+            "label": "out of date",
+            "line": "Behind: interface 120100 is out of date for the build 12.1.5.70448 (120105)",
+        })
+    );
+    assert_eq!(marks[2]["state"], "mismatch");
+    assert_eq!(marks[2]["label"], "interface mismatch");
+    let mut entries: Vec<String> = std::fs::read_dir(fixture_root.join("_retail_"))
+        .expect("the fixture flavor")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    entries.sort();
+    assert_eq!(
+        entries,
+        [".flavor.info", "Interface"],
+        "nothing written next to the fixture"
+    );
 }
 
 #[test]

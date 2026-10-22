@@ -323,6 +323,14 @@
     pill.classList.add(State.classOf(state));
     pill.textContent = State.labelOf(state);
 
+    // The interface mark (task 081): `interface mismatch` or `out of date`, as `scan` and `list` mark the
+    // addon's line, with the warning's plain line in its title.
+    const mark = row.querySelector(".interface-mark");
+    const interfaceMark = State.interfaceMark(addon);
+    mark.className = interfaceMark ? `interface-mark pill ${interfaceMark.className}` : "interface-mark";
+    mark.textContent = interfaceMark ? interfaceMark.label : "";
+    mark.title = interfaceMark ? interfaceMark.title : "";
+
     const forever = row.querySelector(".forever");
     forever.className = "forever";
     if (addon.forever) {
@@ -382,6 +390,15 @@
       const dot = document.createElement("span");
       dot.className = "dot";
       item.append(dot, document.createTextNode(State.labelOf(state)));
+      legend.append(item);
+    }
+    // The interface marks (task 081) after the states: a row has one state and at most one mark.
+    for (const state of State.INTERFACE_STATES) {
+      const item = document.createElement("span");
+      item.className = `legend-item interface-${state}`;
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      item.append(dot, document.createTextNode(State.interfaceLabelOf(state)));
       legend.append(item);
     }
   }

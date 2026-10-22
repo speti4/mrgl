@@ -69,9 +69,13 @@
 //     pinned: string | null, ignored,           021
 //     forever: { build, note, kind, verified, source, stale } | null,  011, on every row of Forever only:
 //                                               build yes | no | unknown, a curated note or null
-//     missing: [string] }                       029: the required dependencies no addon folder answers (076: an embedded one too)
+//     missing: [string],                        029: the required dependencies no addon folder answers (076: an embedded one too)
+//     interface_check: { state, label, line } | null }  081: the interface check of the TOC the flavor
+//                                               loads, state mismatch | out-of-date, label the mark `scan`
+//                                               and `list` append to the line, line the warning's plain line
 //
-// The view derives the row's one state from these flags (`state.js`); the data never names a state.
+// The view derives the row's one state from these flags (`state.js`); the data never names that state. The
+// interface state is the core's, drawn as a mark next to it.
 //
 // A toolbox answer (task 074, `src/toolbox.rs`): the toolbox as it is now (null when the flavor cannot be
 // read), what an apply changed per character, the zip a cleanup wrote, and the messages, the summary last:
@@ -176,6 +180,7 @@
         ignored: false,
         forever: null,
         missing: [],
+        interface_check: null,
       },
       extra
     );
@@ -198,6 +203,19 @@
         ? { version: row.check.latest, release: `v${row.check.latest}`, prerelease: row.channel === "prerelease" }
         : null;
   }
+
+  // The interface check of a row (task 081), in the core's words (`interface.rs`): a TOC for another
+  // expansion, or an interface of the build's own expansion below the build's.
+  const mismatch = (folder, interfaces, build) => ({
+    state: "mismatch",
+    label: "interface mismatch",
+    line: `${folder}: interface ${interfaces} is not for the build ${build}`,
+  });
+  const outOfDate = (folder, highest, build, interface_) => ({
+    state: "out-of-date",
+    label: "out of date",
+    line: `${folder}: interface ${highest} is out of date for the build ${build} (${interface_})`,
+  });
 
   const github = (id) => ({ kind: "github", id });
   const wago = (id) => ({ kind: "wago", id });
@@ -227,8 +245,8 @@
         addon("Plater", "Plater Nameplates", "Plater-v665-Retail", { source: wago("kRNLep6o"), managed: true }),
         addon("WeakAuras", "WeakAuras", "5.19.11", { source: github("WeakAuras/WeakAuras2"), managed: true, latest: "5.19.12" }),
         addon("WeakAuras_Options", "WeakAuras Options", "5.19.11", { source: github("WeakAuras/WeakAuras2"), managed: true }),
-        addon("MyUnitFrames", "My Unit Frames", "0.4.0", { source: zip("MyUnitFrames-0.4.0.zip"), managed: true }),
-        addon("OldMinimap", "Old Minimap", "1.0", {}),
+        addon("MyUnitFrames", "My Unit Frames", "0.4.0", { source: zip("MyUnitFrames-0.4.0.zip"), managed: true, interface_check: outOfDate("MyUnitFrames", 120100, "12.1.5.70448", 120105) }),
+        addon("OldMinimap", "Old Minimap", "1.0", { interface_check: mismatch("OldMinimap", "110207", "12.1.5.70448") }),
       ],
     },
     {
