@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 17 backlog (0 ready · 0 blocked · 2 waiting · 15 ideas) · 0 in progress · 54 done · 3 dropped · 5 decisions
+**State:** 15 backlog (0 ready · 0 blocked · 2 waiting · 13 ideas) · 0 in progress · 56 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -53,8 +53,6 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
-| 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
 | 078 | [The window's cached view: the Forever build signal walks the releases like the …](backlog/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | S | 2026-10-22 |
 | 079 | [Window and exe polish after the first release: the checks after an update, the …](backlog/079-window-and-exe-polish-after-the-first-release.md) | S | 2026-10-22 |
 
@@ -112,7 +110,7 @@ _none_
 | 064 | [The dependency check counts the client's own Blizzard_* addons as present](done/064-blizzard-addons-are-not-missing-dependencies.md) | 2026-10-22 |
 | 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
 
-_44 more in `done/`._
+_46 more in `done/`._
 
 ### Decisions
 
