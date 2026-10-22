@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 13 backlog (0 ready · 0 blocked · 2 waiting · 11 ideas) · 2 in progress · 56 done · 3 dropped · 5 decisions
+**State:** 6 backlog (0 ready · 0 blocked · 2 waiting · 4 ideas) · 0 in progress · 65 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -40,23 +40,6 @@ _none_
 
 ### Ideas
 
-#### M1 Core + CLI
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 075 | [The CLI's output survives a closed pipe](backlog/075-cli-output-survives-a-closed-pipe.md) | S | 2026-10-22 |
-| 076 | [The dependency and interface checks say what the client says: an embedded-only …](backlog/076-the-checks-say-what-the-client-says.md) | S | 2026-10-22 |
-| 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](backlog/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | S | 2026-10-22 |
-| 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](backlog/080-housekeeping-after-wave-5.md) | S | 2026-10-22 |
-
-#### M3 Toolbox
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 062 | [link takes a single addon folder as well as a development folder](backlog/062-link-takes-a-single-addon-folder.md) | S | 2026-10-21 |
-| 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](backlog/073-addon-sets-undo-edit-and-account.md) | M | 2026-10-22 |
-| 074 | [The window's toolbox: a set switch and a SavedVariables view](backlog/074-window-toolbox-sets-and-savedvariables.md) | M | 2026-10-22 |
-
 #### M4 Sources
 
 | # | Task | Size | Created |
@@ -78,12 +61,7 @@ _none_
 
 ### In progress
 
-#### M2 Window MVP
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 078 | [The window's cached view: the Forever build signal walks the releases like the …](wip/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | 2026-10-22 | `none` |
-| 079 | [Window and exe polish after the first release: the checks after an update, the …](wip/079-window-and-exe-polish-after-the-first-release.md) | 2026-10-22 | `none` |
+_none_
 
 ### Closed – do not reopen
 
@@ -97,18 +75,18 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](done/080-housekeeping-after-wave-5.md) | 2026-10-22 |
+| 079 | [Window and exe polish after the first release: the checks after an update, the …](done/079-window-and-exe-polish-after-the-first-release.md) | 2026-10-22 |
+| 078 | [The window's cached view: the Forever build signal walks the releases like the …](done/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | 2026-10-22 |
+| 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](done/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | 2026-10-22 |
+| 076 | [The dependency and interface checks say what the client says: an embedded-only …](done/076-the-checks-say-what-the-client-says.md) | 2026-10-22 |
+| 075 | [The CLI's output survives a closed pipe](done/075-cli-output-survives-a-closed-pipe.md) | 2026-10-22 |
+| 074 | [The window's toolbox: a set switch and a SavedVariables view](done/074-window-toolbox-sets-and-savedvariables.md) | 2026-10-22 |
+| 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](done/073-addon-sets-undo-edit-and-account.md) | 2026-10-22 |
 | 072 | [GitHub cache housekeeping: stale per-tag release.json files and the old single …](done/072-github-cache-housekeeping.md) | 2026-10-22 |
 | 071 | [Fold the duplicates: one WTF walker, one size formatter, no dead error variant](done/071-fold-the-duplicated-helpers.md) | 2026-10-22 |
-| 070 | [The Forever notes schema check allows one day of slack on verified](done/070-forever-notes-date-check-allows-a-day-of-slack.md) | 2026-10-22 |
-| 069 | [The doctor report redacts a profile path written with forward slashes](done/069-doctor-redacts-forward-slash-profile-paths.md) | 2026-10-22 |
-| 068 | [The update check: version order, progress, and a request budget without a token](done/068-update-check-version-order-progress-and-request-budget.md) | 2026-10-22 |
-| 067 | [The link guard also covers the folders a new version drops](done/067-link-guard-covers-dropped-folders.md) | 2026-10-22 |
-| 066 | [The GitHub source looks past the newest release for the flavor's asset and for …](done/066-github-source-looks-past-the-newest-release.md) | 2026-10-22 |
-| 065 | [The install engine names a multi-folder addon after the zip or the repository, …](done/065-derive-name-prefers-the-zip-or-repository-folder.md) | 2026-10-22 |
-| 064 | [The dependency check counts the client's own Blizzard_* addons as present](done/064-blizzard-addons-are-not-missing-dependencies.md) | 2026-10-22 |
-| 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
 
-_46 more in `done/`._
+_55 more in `done/`._
 
 ### Decisions
 
