@@ -74,3 +74,4 @@ The repository, the task standard and the empty workspace: no app yet.
 - CI compiles the non-Windows paths of the core ([061](https://github.com/speti4/mrgl/blob/main/tasks/done/061-ci-compiles-the-non-windows-paths.md))
 - The stand-in client of the tests is a copy of a signed system executable, not of the test binary ([063](https://github.com/speti4/mrgl/blob/main/tasks/done/063-stand-in-client-from-a-signed-system-exe.md))
 - Fold the duplicates: one `WTF` walker, one size formatter, no dead error variant ([071](https://github.com/speti4/mrgl/blob/main/tasks/done/071-fold-the-duplicated-helpers.md))
+- GitHub cache housekeeping: stale per-tag `release.json` files and the old single file ([072](https://github.com/speti4/mrgl/blob/main/tasks/done/072-github-cache-housekeeping.md))

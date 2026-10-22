@@ -777,6 +777,106 @@ fn a_second_resolve_of_a_tag_reads_release_json_from_the_cache() {
     let _ = std::fs::remove_dir_all(&cache);
 }
 
+// --- task 072: the per-tag cache drops the tags the release list no longer holds ---
+
+/// The files of a repository's cache folder and of its `release-json` folder, by name, with their content.
+fn cache_files(repo_cache: &Path) -> std::collections::BTreeMap<String, String> {
+    let mut files = std::collections::BTreeMap::new();
+    for dir in [repo_cache.to_path_buf(), repo_cache.join("release-json")] {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            if entry.file_type().is_ok_and(|kind| kind.is_file()) {
+                let name = entry.path().strip_prefix(repo_cache).unwrap().to_owned();
+                files.insert(
+                    name.to_string_lossy().replace('\\', "/"),
+                    std::fs::read_to_string(entry.path()).unwrap_or_default(),
+                );
+            }
+        }
+    }
+    files
+}
+
+/// A cache of `Questie/Questie` as an older mrgl left it: the single `release-json.json` of task 011, the
+/// files of two tags the fixture list no longer holds, one of `v1.2.2`, which it holds, and a file that is
+/// not a tag's.
+fn plant_old_cache(repo_cache: &Path) {
+    let per_tag = repo_cache.join("release-json");
+    std::fs::create_dir_all(&per_tag).unwrap();
+    std::fs::write(
+        repo_cache.join("release-json.json"),
+        r#"{"release":"v1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(per_tag.join("tag-v1.0.0.json"), "gone").unwrap();
+    std::fs::write(per_tag.join("tag-v0.9.0-beta.json"), "gone too").unwrap();
+    std::fs::write(per_tag.join("tag-v1.2.2.json"), "listed").unwrap();
+    std::fs::write(per_tag.join("notes.txt"), "not a tag's").unwrap();
+}
+
+#[test]
+fn a_resolve_drops_the_cached_release_json_of_tags_the_list_no_longer_holds() {
+    let cache = temp_cache("prune");
+    let repo_cache = cache.join("questie").join("questie");
+    let spec = spec("github:Questie/Questie");
+    let target = target(FlavorId::Forever, None);
+    plant_old_cache(&repo_cache);
+
+    // A fresh list (200): the stale tags and the old single file go, the listed tags stay.
+    let github = GitHub::new(FolderHttp::new(fixtures()), None, Some(cache.clone()));
+    github.resolve(&spec, &target).expect("a fresh resolve");
+    let files = cache_files(&repo_cache);
+    assert_eq!(
+        files.keys().collect::<Vec<_>>(),
+        [
+            "release-json/notes.txt",
+            "release-json/tag-v1.2.2.json",
+            "release-json/tag-v1.2.3.json",
+            "releases.json"
+        ],
+        "{files:?}"
+    );
+    assert_eq!(files["release-json/tag-v1.2.2.json"], "listed", "untouched");
+
+    // A list the API confirms unchanged (304) cleans up the same way.
+    plant_old_cache(&repo_cache);
+    let before = cache_files(&repo_cache)["release-json/tag-v1.2.3.json"].clone();
+    github.resolve(&spec, &target).expect("a confirmed resolve");
+    let requests = github.http().requests();
+    assert_eq!(requests.len(), 3, "the list twice and release.json once");
+    assert!(requests[2].header_value("If-None-Match").is_some());
+    let files = cache_files(&repo_cache);
+    assert_eq!(files.len(), 4, "{files:?}");
+    assert!(!files.contains_key("release-json.json"));
+    assert!(!files.contains_key("release-json/tag-v1.0.0.json"));
+    assert_eq!(
+        files["release-json/tag-v1.2.3.json"], before,
+        "the current tag's file stays"
+    );
+    assert_eq!(files["release-json/tag-v1.2.2.json"], "listed");
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+#[test]
+fn an_offline_resolve_removes_nothing_from_the_cache() {
+    let cache = temp_cache("prune-offline");
+    let repo_cache = cache.join("questie").join("questie");
+    let spec = spec("github:Questie/Questie");
+    let target = target(FlavorId::Forever, None);
+    GitHub::new(FolderHttp::new(fixtures()), None, Some(cache.clone()))
+        .resolve(&spec, &target)
+        .expect("online");
+    plant_old_cache(&repo_cache);
+    let before = cache_files(&repo_cache);
+    assert_eq!(before.len(), 7, "{before:?}");
+
+    let pick = offline(&cache)
+        .resolve(&spec, &target)
+        .expect("from the cache");
+    assert!(pick.stale.is_some(), "a stale pick");
+    assert_eq!(cache_files(&repo_cache), before, "every file as it was");
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
 // --- task 046: the asset download's 404 names the asset, the size is checked ---
 
 #[test]

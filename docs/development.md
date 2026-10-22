@@ -653,7 +653,10 @@ makes the command line answer every request from that folder instead (the URL's 
 sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
 request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
-`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline. Every
+`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline.
+Whenever the API answers with the list, a 200 or a 304, the `tag-*.json` files of tags the list no longer
+holds are removed, and so is a `release-json.json` next to `releases.json`, the single file of task 011 that
+nothing reads any more (task 072); the list read offline removes nothing. Every
 fixture repository under `releases/` is classified for the Forever build in `tests/github_source.rs`, so a
 new fixture names its expected build there.
 

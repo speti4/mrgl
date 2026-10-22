@@ -24,7 +24,8 @@
 //! The same release says whether the addon publishes a Forever build at all ([`forever_build`], task 011):
 //! the pick carries it, and every release's `release.json` is cached per tag next to the list (task 042), so
 //! a repeated resolve of the same release downloads it once and `list` can answer from the cache alone
-//! ([`GitHub::cached_forever_build`]), offline.
+//! ([`GitHub::cached_forever_build`]), offline. Once the API has answered with the list, fresh or
+//! confirmed unchanged, the files of tags it no longer holds are dropped (task 072).
 //!
 //! When the API cannot be reached (no network, a timeout) and the release list is cached, the resolve
 //! answers from the cache, the cached `release.json` of the release included, and the pick carries
@@ -56,6 +57,9 @@ pub const CACHE_FILE: &str = "releases.json";
 /// The folder of the cached `release.json` files of a repository, one `tag-<tag>.json` per release, next to
 /// [`CACHE_FILE`] (tasks 011, 042).
 pub const RELEASE_JSON_CACHE_DIR: &str = "release-json";
+/// The single cached `release.json` of task 011, next to [`CACHE_FILE`], which nothing reads since the
+/// per-tag files of task 042: removed when found (task 072).
+const OLD_RELEASE_JSON_CACHE_FILE: &str = "release-json.json";
 /// How many releases one page lists; the current one is near the top.
 const PER_PAGE: u32 = 30;
 /// How many pages of the release list a resolve reads at most while none of them holds a stable release
@@ -427,7 +431,40 @@ impl<H: Http> GitHub<H> {
     /// tag made file-safe (the file names the tag again, so two tags that read the same here never mix).
     fn release_json_cache_path(&self, owner: &str, repo: &str, tag: &str) -> Option<PathBuf> {
         self.cache_path(owner, repo, RELEASE_JSON_CACHE_DIR)
-            .map(|dir| dir.join(format!("tag-{}.json", state::file_safe(tag))))
+            .map(|dir| dir.join(release_json_cache_name(tag)))
+    }
+
+    /// Drops what a repository's cache no longer needs once the API has answered with its release list
+    /// (task 072): every `tag-*.json` of a tag the list does not hold, and the old single
+    /// `release-json.json`. Best effort, as every cache write: a file that cannot be removed stays until the
+    /// next answer, and the list read offline (task 041) never comes here.
+    fn prune_release_json_cache(&self, owner: &str, repo: &str, releases: &serde_json::Value) {
+        if let Some(old) = self.cache_path(owner, repo, OLD_RELEASE_JSON_CACHE_FILE) {
+            let _ = std::fs::remove_file(old);
+        }
+        let Some(entries) = self
+            .cache_path(owner, repo, RELEASE_JSON_CACHE_DIR)
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+        else {
+            return;
+        };
+        let current: Vec<String> = releases
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|release| release.get("tag_name")?.as_str())
+            .map(release_json_cache_name)
+            .collect();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("tag-")
+                && name.ends_with(".json")
+                && !current.contains(&name)
+                && entry.file_type().is_ok_and(|kind| kind.is_file())
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
 
     /// The cached `release.json` of a release, when the cache holds the one of this tag and this asset.
@@ -562,7 +599,9 @@ impl<H: Http> GitHub<H> {
                     };
                     // The cache is a convenience: a folder that cannot be written costs a request per
                     // run, never the command.
-                    let _ = write_cache(path, &cached);
+                    if write_cache(path, &cached).is_ok() {
+                        self.prune_release_json_cache(owner, repo, &releases);
+                    }
                 }
                 releases
             }
@@ -571,7 +610,9 @@ impl<H: Http> GitHub<H> {
                     // Confirmed: the offline resolve dates the cache from here (task 041).
                     if let Some(path) = &cache_file {
                         cached.checked_at = Some(state::now_rfc3339());
-                        let _ = write_cache(path, &cached);
+                        if write_cache(path, &cached).is_ok() {
+                            self.prune_release_json_cache(owner, repo, &cached.releases);
+                        }
                     }
                     cached.releases
                 }
@@ -706,6 +747,11 @@ fn next_page(response: &Response) -> Option<String> {
         });
         (next && url.starts_with(&format!("{API_URL}/"))).then(|| url.to_string())
     })
+}
+
+/// The file name of a release's cached `release.json`: `tag-<tag>.json`, the tag made file-safe.
+fn release_json_cache_name(tag: &str) -> String {
+    format!("tag-{}.json", state::file_safe(tag))
 }
 
 /// Writes a cache file through a temporary file and a rename, so a reader (another run at the same time)
