@@ -192,22 +192,24 @@
   }
 
   // The core's line for a spec of a source this build does not have (task 092, `sources/router.rs`): the
-  // spec in its canonical spelling and the source's name. The sketch's build has the GitHub source alone.
+  // spec in its canonical spelling and the source's name. Task 107: the sketch's build has the sources of
+  // the core's router, GitHub, WoWInterface (094) and Wago (095, its key set), and no CurseForge source.
   const SPEC_PREFIX = { github: "github", wago: "wago", wowi: "wowi", curseforge: "curse" };
   const SOURCE_NAME = { github: "GitHub", wago: "Wago", wowi: "WoWInterface", curseforge: "CurseForge" };
+  const BUILD_SOURCES = ["github", "wowi", "wago"];
   function notConfigured(source) {
     const spec = `${SPEC_PREFIX[source.kind]}:${source.id}`;
     return `source not configured: ${spec} (this build has no ${SOURCE_NAME[source.kind]} source)`;
   }
 
-  // What the made-up check answers for a managed row: GitHub rows from the made-up current release, a
-  // source the sketch's build does not have not asked, in the core's words.
+  // What the made-up check answers for a managed row: a row of a source of the build from the made-up
+  // current release, a source the sketch's build does not have not asked, in the core's words.
   function checkOf(row) {
     if (!row.managed) return null;
     if (row.linked) return checkFact(row, "not-checked", null, "a linked development folder");
     if (row.ignored) return checkFact(row, "ignored", null, null);
     if (row.source.kind === "zip") return checkFact(row, "not-checked", null, "a zip in hand; a newer zip goes in with mrgl add <zip>");
-    if (row.source.kind !== "github") return checkFact(row, "not-checked", null, notConfigured(row.source));
+    if (!BUILD_SOURCES.includes(row.source.kind)) return checkFact(row, "not-checked", null, notConfigured(row.source));
     const latest = row.latest || row.version;
     if (row.pinned) return checkFact(row, "pinned", latest, null);
     if (row.newer) return checkFact(row, "installed-newer", latest, null);
@@ -315,8 +317,8 @@
       warnings: [],
       addons: [
         addon("Questie", "Questie", "11.2.3", { source: github("Questie/Questie"), managed: true, latest: "11.3.0-beta", channel: "prerelease" }),
-        addon("AtlasLootClassic", "AtlasLoot Classic", "v4.2.0", { source: wowi("24976"), managed: true }),
-        addon("Leatrix_Plus", "Leatrix Plus", "5.5.26", { source: curseforge("289009"), guessed: true }),
+        addon("AtlasLootClassic", "AtlasLoot Classic", "v4.2.0", { source: wowi("24976"), managed: true, latest: "v4.2.1" }),
+        addon("Leatrix_Plus", "Leatrix Plus", "5.5.26", { source: curseforge("289009"), managed: true }),
         addon("NovaWorldBuffs", "Nova World Buffs", "2.74", { source: github("mt-paul/NovaWorldBuffs"), managed: true, pinned: "2.74", latest: "2.75" }),
         addon("TomTom", "TomTom", "v5.5.4-mists", { source: wago("4N2mZ3KL"), managed: true }),
         addon("ClassicCastbars", "ClassicCastbars", "v3.1.2", { source: github("wardz/ClassicCastbars"), managed: true, ignored: true }),

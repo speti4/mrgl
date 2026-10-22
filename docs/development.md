@@ -804,7 +804,10 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   an adopt answer).
   For a look at the page without the core, open `crates/mrgl-app/ui/index.html` in a browser: without the
   Tauri global, `data.js` writes the mock's script tag instead, and the made-up rows show (retail with one row
-  of each interface mark), with a made-up check, update, cancel and marks, and a made-up toolbox per flavor
+  of each interface mark), with a made-up check (task 107: the sketch's build asks GitHub, WoWInterface and
+  Wago, its key set, and a managed CurseForge row is not checked, with the core's line `source not
+  configured: curse:<id> (this build has no CurseForge source)`), update, cancel and marks, and a made-up
+  toolbox per flavor
   with one realm and name under two made-up accounts and a made-up undo and edit, whose client "runs" in
   retail, so the refusal of the `WTF` writes shows there, a made-up adopt report per flavor (made-up
   sources for its unmanaged rows, a row of every class, the marker's guard and dialog in the three flavors
@@ -818,7 +821,9 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   (the window's preferences from an answer of the shell: the theme, the switch, the switch locked when
   `MRGL_SERIOUS` decides it, and the one-time carry-over of a value the sketch kept in `localStorage`),
   `theme.js` (auto, light, dark), `flavors.js` (the navigation order and the friendly names), `actions.js`
-  (task 010: a row menu's items and why one is disabled, the progress slot each event of a run moves, a
+  (task 010: a row menu's items and why one is disabled, for a row the check did not ask the check's own
+  detail, the core's `source not configured: <spec> (<what is missing>)` line, task 107; the progress slot
+  each event of a run moves, a
   check's answer laid over its row, the note under a row's version, whose pin reads the check's `order` as
   the command line's pinned line does: `pinned at 1.1.0-beta, newer than the release`, or `pinned at 2.0.0,
   2.1.0 is out`; task 077; the check states the note names, `NOTED`: `installed-newer`, `guess-only`,
