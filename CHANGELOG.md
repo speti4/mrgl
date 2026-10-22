@@ -46,6 +46,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - Adopt, the report: what source each unmanaged addon of a folder has ([097](https://github.com/speti4/mrgl/blob/main/tasks/done/097-adopt-the-report-of-the-sources-of-an-addons-folder.md))
 - Adopt `--apply`: sidecar entries without a reinstall, and the `.curseclient` guard ([098](https://github.com/speti4/mrgl/blob/main/tasks/done/098-adopt-apply-writes-sidecar-entries-without-a-reinstall.md))
 - The update check stops per source at a rate limit, not as a whole ([101](https://github.com/speti4/mrgl/blob/main/tasks/done/101-the-update-check-stops-per-source-at-a-rate-limit.md))
+- A WoWInterface file waiting for approval is a state of its own in the update check ([104](https://github.com/speti4/mrgl/blob/main/tasks/done/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md))
 - The Wago update check asks for its addons in bulk, one request per game version ([106](https://github.com/speti4/mrgl/blob/main/tasks/done/106-the-wago-update-check-asks-in-bulk.md))
 
 ### Project housekeeping
