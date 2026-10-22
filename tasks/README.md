@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 14 backlog (0 ready · 0 blocked · 4 waiting · 10 ideas) · 0 in progress · 83 done · 5 dropped · 6 decisions
+**State:** 12 backlog (0 ready · 0 blocked · 3 waiting · 9 ideas) · 2 in progress · 80 done · 5 dropped · 5 decisions
 
 ### Ready
 
@@ -39,32 +39,25 @@ _none_
 | 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
 | 096 | [The CurseForge source with the user's key](backlog/096-the-curseforge-source-with-the-users-key.md) | the CurseForge API key of task 007, for the manual round and the game version type ids | M | 2026-10-22 |
 
-#### M5 Trust
-
-| # | Task | Waits for | Size | Created |
-|---|---|---|---|---|
-| 031 | [Self-update of the portable zip with signature verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | the signed exes of 103 (D-006), whose certificate subject the check pins | M | 2026-10-21 |
-
 ### Ideas
 
 #### M1 Core + CLI
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 108 | [update --all over two entries of one source whose first install takes the secon…](backlog/108-update-all-over-two-entries-of-one-source-whose-first-install-takes-the-second-folder.md) | S | 2026-10-22 |
+| 100 | [The install path picks the named entry among two sidecar entries of one source](backlog/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md) | S | 2026-10-22 |
 
 #### M2 Window MVP
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 107 | [The window's row menu and the offline sketch follow the sources of this build](backlog/107-the-windows-row-menu-and-offline-sketch-follow-the-sources-of-this-build.md) | S | 2026-10-22 |
+| 099 | [The window's update reports a second entry of the same source that has the pick…](backlog/099-the-windows-update-reports-a-second-entry-of-the-same-source.md) | S | 2026-10-22 |
+| 102 | [The window's offline sketch says "source not configured" as the core does](backlog/102-the-ui-mock-says-source-not-configured-as-the-core-does.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 097 | [Adopt, the report: what source each unmanaged addon of a folder has](backlog/097-adopt-the-report-of-the-sources-of-an-addons-folder.md) | M | 2026-10-22 |
-| 098 | [Adopt --apply: sidecar entries without a reinstall, and the .curseclient guard](backlog/098-adopt-apply-writes-sidecar-entries-without-a-reinstall.md) | M | 2026-10-22 |
 | 101 | [The update check stops per source at a rate limit, not as a whole](backlog/101-the-update-check-stops-per-source-at-a-rate-limit.md) | S | 2026-10-22 |
 | 104 | [A WoWInterface file waiting for approval is a state of its own in the update ch…](backlog/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md) | S | 2026-10-22 |
 | 105 | [A Wago page address resolves to its wago:<id> through the keyless slugs list](backlog/105-a-wago-page-address-resolves-to-its-id.md) | S | 2026-10-22 |
@@ -74,7 +67,7 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
+| 031 | [Self-update of the portable zip with attestation verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | M | 2026-10-21 |
 
 #### M6 macOS preview
 
@@ -84,7 +77,12 @@ _none_
 
 ### In progress
 
-_none_
+#### M4 Sources
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 097 | [Adopt, the report: what source each unmanaged addon of a folder has](wip/097-adopt-the-report-of-the-sources-of-an-addons-folder.md) | 2026-10-22 | `none` |
+| 098 | [Adopt --apply: sidecar entries without a reinstall, and the .curseclient guard](wip/098-adopt-apply-writes-sidecar-entries-without-a-reinstall.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
@@ -100,9 +98,6 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
-| 102 | [The window's offline sketch says "source not configured" as the core does](done/102-the-ui-mock-says-source-not-configured-as-the-core-does.md) | 2026-10-22 |
-| 100 | [The install path picks the named entry among two sidecar entries of one source](done/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md) | 2026-10-22 |
-| 099 | [The window's update reports a second entry of the same source that has the pick…](done/099-the-windows-update-reports-a-second-entry-of-the-same-source.md) | 2026-10-22 |
 | 095 | [The Wago source](done/095-the-wago-source.md) | 2026-10-22 |
 | 094 | [The WoWInterface source](done/094-the-wowinterface-source.md) | 2026-10-22 |
 | 093 | [API keys: one place to set, read and name them](done/093-api-keys-one-place-to-set-read-and-name-them.md) | 2026-10-22 |
@@ -110,14 +105,16 @@ _none_
 | 091 | [The remaining toolbox lines move into the core: the set list note, the not-inst…](done/091-the-remaining-toolbox-lines-move-into-the-core.md) | 2026-10-22 |
 | 090 | [import runs the dependency check after an install, as add and update do](done/090-import-runs-the-dependency-check-after-an-install.md) | 2026-10-22 |
 | 089 | [update <name> says what happened when another entry of the same source already …](done/089-update-one-reports-a-second-entry-of-the-same-source.md) | 2026-10-22 |
+| 088 | [The doctor names a staging folder kept for its previous\ folders](done/088-doctor-names-a-staging-folder-kept-for-its-previous-folders.md) | 2026-10-22 |
+| 087 | [The command line's update check writes the last-check file the window reads](done/087-cli-update-check-writes-the-last-check-file.md) | 2026-10-22 |
+| 086 | [One summary line of set apply and savedvars in the core, shared by the command …](done/086-one-set-and-savedvars-summary-in-the-core.md) | 2026-10-22 |
 
-_73 more in `done/`._
+_70 more in `done/`._
 
 ### Decisions
 
 | # | Decision | Status | Date |
 |---|---|---|---|
-| D-006 | [Self-update trusts the Authenticode signature and the checksum; the Sigstore attestation stays a gh check for humans](decisions/D-006-self-update-trusts-authenticode-and-the-checksum.md) | decided | 2026-10-22 |
 | D-005 | [Nerglish voice: the murloc language is the tool's voice, not an easter egg](decisions/D-005-nerglish-voice.md) | decided | 2026-10-21 |
 | D-004 | [Public from the first commit; the full CI matrix on every push, macOS only from M6](decisions/D-004-public-from-the-first-commit.md) | decided | 2026-10-21 |
 | D-003 | [The state is a sidecar under %LOCALAPPDATA%\mrgl\ per flavor; the AddOns folder is the truth](decisions/D-003-state-sidecar-under-localappdata.md) | decided | 2026-10-21 |
