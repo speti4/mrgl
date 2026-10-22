@@ -54,7 +54,9 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
   checking as it goes, and without a GitHub token it stops before the 60 requests an hour run out, with the
   time the limit resets, instead of failing addon after addon. The window does the same per flavor: "Check
   for updates", "Update all" with a progress bar per addon and a cancel that lets the addon in flight
-  finish, and on each row its update, pin, ignore and release channel.
+  finish, and on each row its update, pin, ignore and release channel; what its last check found that
+  needs the network to know again (a source gone, a failed check, the addons left before the rate limit)
+  stays on the rows across a mark and a restart until the next check.
 - **A known-good set on another machine.** `mrgl export` writes the managed addons into a list file and
   `mrgl import` installs it elsewhere, at the current releases, or with `--exact` at the versions the list
   names; a version the source no longer offers is reported and skipped.
@@ -156,7 +158,8 @@ addon.
 
 On Forever, `add --dry-run` and `list` show a Forever note for each addon. `forever build: yes`, `no` or
 `unknown` says whether the addon's source publishes a Forever build at all: its `release.json` names one,
-names other flavors only, or nothing says. A curated note, when there is one, says why an addon with a
+names other flavors only, or nothing says. `list` looks at the release an install would take: the newest one
+of the addon's channel with a Forever zip, past a newer release built for other flavors only. A curated note, when there is one, says why an addon with a
 Forever build still only half works there (Forever hides combat values from addons), with the date it was
 verified and its source; a note older than 90 days is marked stale. `list` stays offline and reads what the
 last `add` of the same source fetched, so before that the build is `unknown`. The notes live in

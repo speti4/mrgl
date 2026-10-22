@@ -13,7 +13,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use mrgl_core::install::{Engine, Mark, PickInstalled, PickStep, SourceInstalled};
+use mrgl_core::last_check::LastCheck;
 use mrgl_core::sources::{Channel, Source};
+use mrgl_core::state::{FlavorHome, State};
 use mrgl_core::update::{self, AddonUpdate, CheckProgress, SummaryOf};
 use mrgl_core::voice::{Kind, Voice};
 use serde::Serialize;
@@ -256,6 +258,23 @@ pub fn run<S: Source + ?Sized>(
         .iter()
         .filter_map(|addon| addon.pick.as_ref()?.stale_warning())
         .for_each(&mut warn);
+
+    // Task 078: what the check found that the cache cannot tell again is kept for the next list, the
+    // next mark's redraw and the next start, until the next check of the addon replaces it.
+    if let Some(home) = home {
+        let flavor_home = FlavorHome::at(home, &engine.flavor.id);
+        let state = engine
+            .load_state()
+            .map(|loaded| loaded.state)
+            .unwrap_or_else(|_| State::new(&engine.flavor.id));
+        let mut last = LastCheck::read(&flavor_home, &engine.flavor.id);
+        last.record(&state, &check.addons);
+        if let Err(error) = last.write(&flavor_home) {
+            warn(format!(
+                "the answers of this check are not kept for the next start: {error}"
+            ));
+        }
+    }
 
     let checked = check.addons.len();
     if cancelled() {

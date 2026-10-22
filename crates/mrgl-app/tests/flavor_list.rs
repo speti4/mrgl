@@ -361,6 +361,111 @@ fn every_forever_row_carries_its_forever_status() {
     assert_eq!(loose.version, None);
 }
 
+/// The repository of task 066 under a stub folder of the fixture's own: its newest stable release is built
+/// for classic only, the one before it has the Forever zip, above both a draft and a beta.
+fn write_classic_only_newest_release(fixture: &Fixture) -> PathBuf {
+    let entry = |tag: &str, prerelease: bool, draft: bool, assets: &[&str]| {
+        let assets: Vec<serde_json::Value> = assets
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name,
+                    "browser_download_url": format!("https://github.test/{tag}/{name}"),
+                })
+            })
+            .collect();
+        serde_json::json!({ "tag_name": tag, "prerelease": prerelease, "draft": draft, "assets": assets })
+    };
+    let list = serde_json::json!([
+        entry("v4.0.0", false, true, &["A-v4.0.0-forever.zip"]),
+        entry("v3.0.0-beta", true, false, &["A-v3.0.0-beta-forever.zip"]),
+        entry(
+            "v2.0.0",
+            false,
+            false,
+            &["A-v2.0.0-classic.zip", "release.json"]
+        ),
+        entry(
+            "v1.9.0",
+            false,
+            false,
+            &["A-v1.9.0-forever.zip", "release.json"]
+        ),
+        entry("v1.8.0", false, false, &["A-v1.8.0-forever.zip"]),
+    ]);
+    fixture.write(
+        "stub/api.github.com/repos/o/r/releases.json",
+        &list.to_string(),
+    );
+    fixture.write(
+        "stub/github.test/v2.0.0/release.json",
+        r#"{"releases":[{"filename":"A-v2.0.0-classic.zip","metadata":[{"flavor":"classic","interface":11507}]}]}"#,
+    );
+    fixture.write(
+        "stub/github.test/v1.9.0/release.json",
+        r#"{"releases":[{"filename":"A-v1.9.0-forever.zip","metadata":[{"flavor":"forever","interface":16001}]}]}"#,
+    );
+    fixture.dir.join("stub")
+}
+
+#[test]
+fn the_forever_build_offline_is_the_one_of_the_release_the_resolve_takes() {
+    // Task 078: a repository whose newest release has no Forever zip shows the Forever build of the
+    // release before it, the one the resolve installs, and no update past it.
+    let fixture = Fixture::game_named("walk");
+    let home = fixture.home();
+    let stub = write_classic_only_newest_release(&fixture);
+    fixture.addon(
+        "_forever_",
+        "Walker",
+        "## Interface: 16001\n## Version: 1.8.0\n",
+    );
+    let flavor_home = FlavorHome::at(&home, &FlavorId::Forever);
+    let mut forever = flavor_home
+        .read_state(&FlavorId::Forever)
+        .expect("sidecar")
+        .state;
+    forever
+        .addons
+        .insert("Walker".into(), entry("github:o/r", "1.8.0", &["Walker"]));
+    flavor_home.write_state(&forever).expect("forever sidecar");
+    // The cache a check or an install leaves: the list and the release.json of each release it read.
+    let source = GitHub::new(
+        FolderHttp::new(stub),
+        None,
+        Some(home.join(github::CACHE_SUBDIR)),
+    );
+    let spec = SourceSpec::parse("github:o/r").expect("spec");
+    let pick = mrgl_core::sources::Source::resolve(
+        &source,
+        &spec,
+        &mrgl_core::sources::Target::new(FlavorId::Forever),
+    )
+    .expect("the release before the newest");
+    assert_eq!(pick.release, "v1.9.0");
+
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&home),
+        Voice::new(false),
+    );
+    let walker = row(flavor(&answer.flavors, "wowf"), "Walker");
+    assert_eq!(
+        walker.forever.as_ref().expect("a status").build.as_str(),
+        "yes",
+        "v2.0.0 is built for classic only, v1.9.0 has the Forever zip"
+    );
+    let update = walker
+        .update
+        .as_ref()
+        .expect("the update the resolve installs");
+    assert_eq!(
+        (update.version.as_str(), update.release.as_str()),
+        ("1.9.0", "v1.9.0")
+    );
+}
+
 #[test]
 fn a_row_and_a_flavor_serialize_with_the_keys_of_the_contract() {
     let fixture = Fixture::game_named("keys");

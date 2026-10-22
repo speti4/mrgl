@@ -15,7 +15,7 @@
 
 use std::cmp::Ordering;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::install::{Engine, SourceRequest, Wanted};
@@ -26,7 +26,7 @@ use crate::state::Entry;
 use crate::voice::Kind;
 
 /// Where one managed addon stands against its source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateState {
     /// The source's current release is the installed version.

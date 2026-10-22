@@ -7,7 +7,9 @@
 //! tasks 006 and 068, with its version order) run against the GitHub source through [`Offline`], an [`Http`]
 //! that fails every request as the network does, so the source answers from its own cache by its offline
 //! rule (task 041) and never opens a socket (task 010). The window's own check asks the sources and lays
-//! its answer over this one ([`flavor_view`]'s `online`). The functions take the game root and the mrgl
+//! its answer over this one ([`flavor_view`]'s `online`), and what it found that the cache cannot tell
+//! again (a source gone, a failed check, the budget stop) is kept in the flavor's `last-check.json` and
+//! laid over every later list until the next check replaces it (task 078, `mrgl_core::last_check`). The functions take the game root and the mrgl
 //! home folder as arguments, so the tests run them on fixture folders without a window and without touching
 //! the process's environment.
 
@@ -19,6 +21,7 @@ use mrgl_core::discover::{GameRoot, RootOrigin};
 use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus};
 use mrgl_core::install::Engine;
+use mrgl_core::last_check::LastCheck;
 use mrgl_core::link;
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::{self, GitHub};
@@ -257,8 +260,9 @@ pub fn count_noun(count: usize, noun: &str) -> String {
 }
 
 /// One flavor with its rows; a folder that cannot be scanned is a flavor without rows and a warning. The
-/// rows' check facts are the update check's offline answer, with `online` (the addons of a check that
-/// asked the sources) laid over it by name.
+/// rows' check facts are the update check's offline answer, with the answers the last online check kept
+/// (a source gone, a failed check, the budget stop; task 078) laid over it by name, and `online` (the
+/// addons of the check that just asked the sources) over both.
 pub fn flavor_view(flavor: Flavor, home: Option<&Path>, online: &[AddonUpdate]) -> FlavorView {
     let mut warnings = flavor.warnings.clone();
     let id = flavor.id.clone();
@@ -296,6 +300,10 @@ pub fn flavor_view(flavor: Flavor, home: Option<&Path>, online: &[AddonUpdate]) 
     let mut checked: BTreeMap<String, AddonUpdate> = BTreeMap::new();
     if let Some(home) = home {
         for addon in offline_check(&flavor, home, &github) {
+            checked.insert(addon.name.to_ascii_lowercase(), addon);
+        }
+        // The last online check's answers the cache cannot give again (task 078).
+        for addon in LastCheck::read(&FlavorHome::at(home, &id), &id).answers(&state) {
             checked.insert(addon.name.to_ascii_lowercase(), addon);
         }
     }
@@ -490,7 +498,7 @@ fn hinted_badge(toc: &mrgl_core::toc::Toc) -> Option<Badge> {
 /// cache (GitHub only) and the curated note of its source spec.
 fn forever_status<H: Http>(github: &GitHub<H>, entry: &Entry) -> ForeverStatus {
     let build = match SourceSpec::parse(&entry.source) {
-        Ok(spec) => github.cached_forever_build(&spec),
+        Ok(spec) => github.cached_forever_build(&spec, entry.channel()),
         Err(_) => ForeverBuild::Unknown,
     };
     ForeverStatus::for_source(&entry.source, build)

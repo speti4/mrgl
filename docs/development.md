@@ -56,7 +56,12 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `nolib` build, whose warning says so instead, and an entry without it is unknown, embedded possible), the
   Forever notes (`forever`, task 011: the build signal `yes`, `no` or `unknown` that
   `sources::github::forever_build` derives from a release, and the curated `data/forever-notes.json`
-  compiled in with `include_str!`, with the stale rule), the diagnostic report (`doctor`, task 024: the
+  compiled in with `include_str!`, with the stale rule; from the cache alone,
+  `GitHub::cached_forever_build` takes the release a Forever resolve on the addon's channel would take,
+  `sources::github::forever_build_on`: the channel's releases newest first down to the first with a
+  Forever asset, as the resolve walks them since task 066, `unknown` when the walk meets a release whose
+  `release.json` is not cached, and the newest release's own signal when none has one, task 078), the
+  last online check's kept answers (`last_check`, task 078, below), the diagnostic report (`doctor`, task 024: the
   facts a bug report needs, with the profile folder as `~`, see [The doctor](#the-doctor)), the addon
   list (`list_file`, task 015: the export from the sidecar and the import through the source and the engine,
   below), the interface check (`interface`, task 015, below) and the voice table (`voice`, D-005). Synthetic
@@ -523,7 +528,16 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   the source answers from the release list and `release.json` that the last check or install cached (its
   offline rule, task 041), counts no request against the rate limit and never stamps the cache as
   confirmed. `update` is set for `update-available` only, so a newer installed version, a pin or a guess is no
-  update; an addon whose answer needs the network (nothing cached) has no `check`. A row also carries its
+  update; an addon whose answer needs the network (nothing cached) has no `check`. What the cache cannot
+  tell again is the last online check's (task 078): a check of the window keeps every addon's answer of
+  `source-gone`, `failed` or `rate-limited` in `last-check.json` under the flavor's folder of the mrgl home
+  (`mrgl_core::last_check`), and every list lays those answers over the offline ones, so a redraw after a
+  mark and a restart show them, until the next check of the addon replaces its answer (dropped for any
+  other state). The file is a cache: a missing, unreadable or foreign one is no answer. An answer holds
+  while the sidecar entry keeps the source and the version it was given for, so an update or a reinstall
+  (by the command line too) drops it; an ignored addon shows its ignore instead. The Forever `build` is
+  `GitHub::cached_forever_build` on the addon's channel: the release the resolve would take, not the
+  channel's newest one (task 078). A row also carries its
   `channel` (`null` when unmanaged), and a flavor `addons_folder`, false when the client was never started
   for it.
 - `choose_root`: the folder dialog (`tauri-plugin-dialog`, called from Rust); a game folder, or a flavor
@@ -545,7 +559,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   repeated in the answer), `updating`, `downloading`, `installing`, `updated` or `failed` (an error), the
   folder the addon's first one, the message in the voice. The answer is `{ flavor, messages }`: the flavor as
   it is now (its rows read again, with the check's answer laid over them except for the addons this run
-  updated) and the warnings, then the summary, `UpdateCheck::summary` of the core, which the command line
+  updated; the answers the cache cannot give again are kept in `last-check.json` for the next list, task
+  078, and a file that cannot be written is a warning) and the warnings, then the summary, `UpdateCheck::summary` of the core, which the command line
   shares (`checked _forever_: 1 update available, 2 up to date`, `2 addons updated, 1 failed, 1 up to
   date`). One run at a time: a second one is refused with a warning. A flavor without an AddOns folder
   answers that the client has not been started for it yet. The window's "Check for updates" is the check
@@ -894,8 +909,10 @@ The command line and the window keep `config.json` under the mrgl home folder (`
 folder, written by `mrgl root` and the window's chooser; `theme` and `serious`, the window's preferences of
 task 034, the second also the third source of the voice's serious switch),
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
-sidecar `state.json`, the addon sets `sets.json` (task 014) and the last set apply's undo record
-`set-undo\` (task 073),
+sidecar `state.json`, the addon sets `sets.json` (task 014), the last set apply's undo record
+`set-undo\` (task 073), the window's last online check answers
+`last-check.json` (task 078; a cache, deleting it only drops a source gone or a failed check until the next
+check),
 the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves; emptied after every install) and `cache\<addon>\<version>.zip` (the current and the previous
 version's zip for `mrgl rollback`; never required, deleting it only disables the rollback), and the `WTF`

@@ -1017,7 +1017,7 @@ fn forever_statuses(
             continue;
         };
         let build = match SourceSpec::parse(&entry.source) {
-            Ok(spec) => github.cached_forever_build(&spec),
+            Ok(spec) => github.cached_forever_build(&spec, entry.channel()),
             Err(_) => ForeverBuild::Unknown,
         };
         statuses.insert(
