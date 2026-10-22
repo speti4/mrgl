@@ -14,15 +14,11 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 10 backlog (1 ready · 0 blocked · 2 waiting · 7 ideas) · 1 in progress · 54 done · 3 dropped · 5 decisions
+**State:** 11 backlog (0 ready · 0 blocked · 2 waiting · 9 ideas) · 1 in progress · 53 done · 3 dropped · 5 decisions
 
 ### Ready
 
-#### M1 Core + CLI
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 045 | [Pre-launch manual round on the real install: the commands no fixture covers](backlog/045-pre-launch-manual-round-on-the-real-install.md) | S | 2026-10-21 |
+_none_
 
 ### Needs decision
 
@@ -43,6 +39,13 @@ _none_
 | 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
 
 ### Ideas
+
+#### M2 Window MVP
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
+| 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
 
@@ -73,11 +76,11 @@ _none_
 
 ### In progress
 
-#### M2 Window MVP
+#### M1 Core + CLI
 
 | # | Task | Started | Plan |
 |---|---|---|---|
-| 012 | [The murloc icon and the first portable zip release](wip/012-murloc-icon-and-first-portable-zip-release.md) | 2026-10-22 | `none` |
+| 045 | [Pre-launch manual round on the real install: the commands no fixture covers](wip/045-pre-launch-manual-round-on-the-real-install.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
@@ -102,7 +105,7 @@ _none_
 | 064 | [The dependency check counts the client's own Blizzard_* addons as present](done/064-blizzard-addons-are-not-missing-dependencies.md) | 2026-10-22 |
 | 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
 
-_44 more in `done/`._
+_43 more in `done/`._
 
 ### Decisions
 
