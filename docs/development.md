@@ -1143,7 +1143,11 @@ of the Windows build, with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llv
 since branch coverage is nightly-only. The test files, the build scripts and the `cfg(not(windows))` twins (which
 the `non-windows` job compiles and nothing runs) are not counted. The whole suite runs once more under
 instrumentation; the exe the command line's end-to-end tests spawn writes its own profile, so its lines count
-like any other. Two pins, each the one place its number is written, read by the job and by the commands of
+like any other, and the core's lines the command line alone reaches count only in a workspace run, never in a
+run of the core crate by itself. A process that ends through `std::process::exit` writes no profile (the C
+runtime's exit handlers, one of which writes it, do not run), so the command line's quiet exit on a closed pipe
+writes it first under `cfg(coverage)`, the cfg cargo-llvm-cov sets on every measured build; clap's own
+usage-error exits write none, which is why the argument parsers have unit tests. Two pins, each the one place its number is written, read by the job and by the commands of
 CONTRIBUTING.md, "Checks before a commit": `scripts/coverage-toolchain.txt` (the nightly by date) and
 `scripts/cargo-llvm-cov-version.txt`. Dependabot sees neither; a bump is a hand edit in a `chore: bump the
 coverage nightly to <date>` pull request that re-measures (a nightly can change the branch count without a
