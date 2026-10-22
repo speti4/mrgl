@@ -24,7 +24,7 @@ use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::{self, GitHub};
 use mrgl_core::sources::{Channel, Http, Pick, Request, Response, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State};
-use mrgl_core::update::{self, AddonUpdate, UpdateState};
+use mrgl_core::update::{self, AddonUpdate, UpdateState, VersionOrder};
 use mrgl_core::voice::{Kind, Voice};
 use serde::Serialize;
 
@@ -124,12 +124,14 @@ pub struct Badge {
 }
 
 /// What the update check says of one addon (task 010), as a row shows it: the state, its words, the
-/// current release, the reason, and the check's data line for a tooltip.
+/// current release, how the installed version stands to it (task 077: a pinned row's note reads it), the
+/// reason, and the check's data line for a tooltip.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CheckFact {
     pub state: UpdateState,
     pub label: &'static str,
     pub latest: Option<String>,
+    pub order: Option<VersionOrder>,
     pub detail: Option<String>,
     pub line: String,
 }
@@ -140,6 +142,7 @@ impl CheckFact {
             state: addon.state,
             label: addon.state.label(),
             latest: addon.latest.clone(),
+            order: addon.order,
             detail: addon.detail.clone(),
             line: addon.line(),
         }

@@ -466,11 +466,15 @@ impl Engine {
     /// linked addon or a junction mrgl did not make is refused (tasks 005 and 067,
     /// [`Engine::refuse_links`]): here, so no path that stages and commits can skip it, and a dropped
     /// folder is never moved aside into the staging folder and deleted with it.
+    /// The entry replaced is the one of the staged name, else the one that records the same addon under
+    /// another name (task 077, [`renamed_entry`]): its pin, ignored mark, channel and previous version
+    /// carry over to the new name, and its cached zips move to the new name's cache folder.
     pub fn commit(&self, mut staged: Staged, state: &mut State) -> Result<Installed> {
+        let new_folders = staged.folders();
         let previous = state
             .entry(&staged.name)
+            .or_else(|| renamed_entry(state, &staged.name, &new_folders))
             .map(|(name, entry)| (name.to_string(), entry.clone()));
-        let new_folders = staged.folders();
         let stale: Vec<String> = previous
             .iter()
             .flat_map(|(_, entry)| entry.folders.iter())
@@ -542,12 +546,25 @@ impl Engine {
             previous.as_ref().map(|(_, entry)| entry),
             &mut warnings,
         );
+        let renamed = previous
+            .as_ref()
+            .map(|(old_name, _)| old_name.clone())
+            .filter(|old_name| !old_name.eq_ignore_ascii_case(&staged.name));
         if let Some((old_name, _)) = &previous {
             state.addons.remove(old_name);
+        }
+        if let Some(old_name) = &renamed {
+            warnings.push(format!(
+                "{old_name} is managed as {} now, with its marks and its previous version",
+                staged.name
+            ));
         }
         take_over_folders(state, &staged.name, &new_folders, &mut warnings);
         state.addons.insert(staged.name.clone(), entry);
         self.home.write_state(state)?;
+        if let Some(old_name) = &renamed {
+            self.carry_cache(old_name, &staged.name, &mut warnings);
+        }
         self.cache_zip(&staged, previous_version.as_deref(), &mut warnings);
         Ok(Installed {
             name: staged.name.clone(),
@@ -896,6 +913,33 @@ impl Engine {
         Ok(marked)
     }
 
+    /// Moves the zips an addon's cache folder keeps under its old name into the folder of its new name
+    /// (task 077), so the rollback finds the previous version's zip after a reinstall under a new name; a
+    /// zip the new folder has already stays where it is. Best effort: a failure is a warning, the install
+    /// stands, and the old folder goes once it is empty.
+    fn carry_cache(&self, old_name: &str, new_name: &str, warnings: &mut Vec<String>) {
+        let from = self.home.addon_cache_dir(old_name);
+        let Ok(entries) = std::fs::read_dir(&from) else {
+            return;
+        };
+        let to = self.home.addon_cache_dir(new_name);
+        for entry in entries.flatten() {
+            let target = to.join(entry.file_name());
+            if target.exists() {
+                continue;
+            }
+            let moved =
+                std::fs::create_dir_all(&to).and_then(|()| std::fs::rename(entry.path(), &target));
+            if let Err(error) = moved {
+                warnings.push(format!(
+                    "the cached zip of {old_name} could not move to {}: {error}",
+                    target.display()
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir(&from);
+    }
+
     /// Copies the zip into `cache\<addon>\<version>.zip` and prunes the folder to this version and the
     /// previous one. Best effort: a failure is a warning, the install stands.
     fn cache_zip(
@@ -997,6 +1041,22 @@ fn keep_marks(
         ));
     }
     entry
+}
+
+/// The entry that records the addon a commit stages under another name (task 077): a zip in hand is named
+/// by the rule of task 065 now, while the sidecar may know the same folders under the name an older rule
+/// gave. It is the entry that records the folder the staged name names while its own name is a folder of
+/// the staged addon, both ASCII case-insensitive: each name points at the other's folders, so a library
+/// folder one addon ships and another addon records is never taken for the addon. A folder belongs to one
+/// entry at most, so at most one entry answers.
+fn renamed_entry<'a>(
+    state: &'a State,
+    name: &str,
+    folders: &[String],
+) -> Option<(&'a str, &'a Entry)> {
+    let (old_name, entry) = state.entry_for_folder(name)?;
+    (!old_name.eq_ignore_ascii_case(name) && contains_folder(folders, old_name))
+        .then_some((old_name, entry))
 }
 
 /// The sidecar entry of an addon from a source: the entry whose source is that spec (ASCII

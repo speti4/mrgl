@@ -5384,6 +5384,95 @@ fn update_one_addon_takes_the_same_path_and_names_an_unknown_one() {
     }
 }
 
+// --- task 077: a pinned addon newer than the current release is read against the version order ---
+
+#[test]
+fn update_reports_a_pin_newer_than_the_current_release_without_is_out() {
+    // `Held` is pinned at the prerelease of `Example/Prerelease` on the stable channel (the release list's
+    // order), `Kept` at a version the list no longer has (the lenient order), `Behind` below the release.
+    let game = managed_game(
+        "update-pinned-newer",
+        &[
+            (
+                "Behind",
+                "github:Example/Notes",
+                "2.0.0",
+                r#", "pinned": "2.0.0""#,
+            ),
+            (
+                "Held",
+                "github:Example/Prerelease",
+                "1.1.0-beta",
+                r#", "pinned": "1.1.0-beta""#,
+            ),
+            (
+                "Kept",
+                "github:Example/Prerelease",
+                "1.5.0",
+                r#", "pinned": "1.5.0""#,
+            ),
+        ],
+    );
+    let before = game_snapshot(&game);
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.starts_with("checking "))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "Behind  2.0.0  pinned at 2.0.0, 2.1.0 is out, left alone",
+            "Held  1.1.0-beta  pinned at 1.1.0-beta, newer than the current release 1.0.0, left alone",
+            "Kept  1.5.0  pinned at 1.5.0, newer than the current release 1.0.0 (1.5.0 is no longer listed), left alone",
+            "dry run: 3 pinned; nothing written",
+        ],
+        "{text}"
+    );
+    assert!(!text.contains("1.0.0 is out"), "{text}");
+    assert_eq!(game_snapshot(&game), before, "a dry run writes nothing");
+
+    let output = game
+        .mrgl()
+        .args([
+            "--json",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let facts: Vec<(&str, &str, &str, &str)> = value["addons"]
+        .as_array()
+        .expect("the addons")
+        .iter()
+        .map(|addon| {
+            (
+                addon["name"].as_str().expect("a name"),
+                addon["state"].as_str().expect("a state"),
+                addon["latest"].as_str().expect("the current release"),
+                addon["order"].as_str().expect("the order"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        facts,
+        [
+            ("Behind", "pinned", "2.1.0", "older"),
+            ("Held", "pinned", "1.0.0", "newer"),
+            ("Kept", "pinned", "1.0.0", "newer"),
+        ]
+    );
+    assert_eq!(value["addons"][2]["detail"], "1.5.0 is no longer listed");
+}
+
 // --- task 068: the update check stops before GitHub's rate limit without a token ---
 
 #[test]

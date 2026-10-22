@@ -168,12 +168,31 @@ a linked addon or a junction mrgl did not make. The command line reports every i
 (the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
 interface checks).
 
+The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
+request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
+`BigWigs_Core` and `BigWigs_Options`); else the folder named after the zip's stem without its version and
+flavor suffix (`DBM-Core` for `DBM-Core-12.0.11-classic.zip`), else after the repository of a `github:`
+source, both ASCII case-insensitive (task 065); else the first folder by name. A source install of an addon
+the sidecar has from that source keeps the name it is recorded under. The commit replaces the entry of the
+staged name, else the entry that records the same addon under another name (task 077, `renamed_entry`): the
+entry that records the folder the staged name names while its own name is a folder of the staged addon, so a
+zip in hand recorded as `DBM-Brawlers` before task 065 and staged as `DBM-Core` now is the same addon, while
+an entry that only records one folder the zip also ships keeps its name and loses that folder. The new entry
+keeps the replaced one's pin, ignored mark and channel and takes its version as the previous one (its
+previous version when the version is the same), the zips of its cache folder move to the new name's, so
+`rollback` finds the previous version's zip, and the install says so in one warning (`DBM-Brawlers is managed
+as DBM-Core now, with its marks and its previous version`).
+
 The update check (task 006) is `update::check` in the core: every managed addon of the sidecar (or the one
 a name or a folder names) against its source's current release on the addon's own channel, one
 `UpdateState` each, read-only. `up-to-date`: the release's version is the installed one. `update-available`:
 another version, picked from metadata. `guess-only`: another version whose asset for the flavor is a guess
 by its name; it is reported, not installed, and `mrgl add <source>` installs it anyway. `pinned`: checked
-and reported with the current release, left alone. `ignored`: skipped without a request. `source-gone`: no
+and reported with the current release, left alone; its line reads the installed version against the release
+by the version order below (task 077): `pinned at 2.0.0, 2.1.0 is out, left alone` when the installed version
+is older (or the order cannot tell), `pinned at 1.1.0-beta, newer than the current release 1.0.0, left
+alone` when it is newer (with the `is no longer listed` reason as `installed-newer` has it), `pinned at
+1.0.0, up to date` when it is the same. `ignored`: skipped without a request. `source-gone`: no
 release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
 hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
 limit, a server error). `installed-newer` (task 068): the installed version is newer than the current
@@ -207,7 +226,8 @@ terminal or with `--json` the command stops and says what `--yes` does, exit 1),
 one install path with the pick the check made (`AddonUpdate::request`, no second resolve) and end with the
 summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
 `1 update available` and writes nothing). `--json` is one `update` document: every addon with `state`,
-`latest`, `pick`, `updated` and the installed `addon` block, the `counts` per state, `stopped` (the
+`latest`, `order` (the installed version against `latest`: `older`, `same`, `newer`, or `null` when there is
+no `latest` or the order cannot tell; task 077), `pick`, `updated` and the installed `addon` block, the `counts` per state, `stopped` (the
 `BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
 update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
 the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.
@@ -421,7 +441,9 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   `MRGL_SERIOUS` decides it, and the one-time carry-over of a value the sketch kept in `localStorage`),
   `theme.js` (auto, light, dark), `flavors.js` (the navigation order and the friendly names), `actions.js`
   (task 010: a row menu's items and why one is disabled, the progress slot each event of a run moves, a
-  check's answer laid over its row, the note under a row's version) and `voice.js` (the two lines and where a
+  check's answer laid over its row, the note under a row's version, whose pin reads the check's `order` as
+  the command line's pinned line does: `pinned at 1.1.0-beta, newer than the release`, or `pinned at 2.0.0,
+  2.1.0 is out`; task 077) and `voice.js` (the two lines and where a
   message goes, see [nerglish.md](nerglish.md), "The window").
 
 The IPC commands (`src/commands.rs`, task 009) are thin wrappers over the core and over the plain functions
@@ -439,8 +461,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   sidecar (managed, the installed version, the source, pinned, ignored), a TOC hint for an unmanaged addon
   (Wago, then WoWInterface, then CurseForge, drawn as a guess), the dependency check (`missing`), and on
   every row of the Forever flavor its Forever status (`build`, `note`, `verified`, `source`, `stale`). The
-  list never goes online (task 010): a row's `check` (`state`, `label`, `latest`, `detail` and the check's
-  data `line`) and its `update` are the answer of `update::check`, with its version order (task 068), run
+  list never goes online (task 010): a row's `check` (`state`, `label`, `latest`, `order`, `detail` and the
+  check's data `line`) and its `update` are the answer of `update::check`, with its version order (task 068), run
   against the GitHub source through an `Http` that fails every request as an unreachable network does, so
   the source answers from the release list and `release.json` that the last check or install cached (its
   offline rule, task 041), counts no request against the rate limit and never stamps the cache as

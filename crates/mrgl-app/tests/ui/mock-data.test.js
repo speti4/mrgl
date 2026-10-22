@@ -101,6 +101,10 @@ test("the other flavors answer with the other kinds", async () => {
   assert.equal(summary.kind, "warning");
   assert.match(summary.plain, /^nothing updated: 1 failed, /);
   assert.match(summary.plain, /1 newer than the release/);
+  // Task 077: a pin above the current release reads as newer, in the data line and in the row's note.
+  const held = era.answer.flavor.addons.find((row) => row.pinned);
+  assert.deepEqual([held.check.state, held.check.order], ["pinned", "newer"]);
+  assert.equal(held.check.line, "AtlasLoot Classic  v5.0.0-beta  pinned at v5.0.0-beta, newer than the current release v4.9.0, left alone");
 
   const classic = await runOf((progress) => Data.checkUpdates("wow_classic", progress));
   assert.ok(classic.events.every((event) => event.phase === "checking" || event.phase === "checked"));

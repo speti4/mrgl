@@ -112,3 +112,13 @@ test("the note names the marks and a check state that needs a word", () => {
   const held = Object.assign({}, managed, { pinned: "1.2.2", check: { state: "pinned", label: "pinned", latest: "1.2.3" } });
   assert.equal(Actions.noteOf(held), "pinned at 1.2.2, 1.2.3 is out", "the release a pin leaves alone");
 });
+
+test("a pinned row's note follows the check's version order", () => {
+  const pinned = (version, latest, order) =>
+    Actions.noteOf(Object.assign({}, managed, { version, pinned: version, check: { state: "pinned", label: "pinned", latest, order } }));
+  assert.equal(pinned("1.1.0-beta", "1.0.0", "newer"), "pinned at 1.1.0-beta, newer than the release", "no release is out after it");
+  assert.equal(pinned("1.0.0", "1.1.0", "older"), "pinned at 1.0.0, 1.1.0 is out");
+  assert.equal(pinned("v1.0.0", "1.0.0", "same"), "pinned at v1.0.0", "the same version by the order");
+  assert.equal(pinned("1.0.0", "1.1.0", null), "pinned at 1.0.0, 1.1.0 is out", "no order: another version is out");
+  assert.equal(pinned("1.0.0", "1.0.0", null), "pinned at 1.0.0");
+});

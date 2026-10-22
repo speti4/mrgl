@@ -56,8 +56,9 @@
 //     source: { kind, id } | null,              github | wago | wowi | curseforge | zip | linked
 //     managed, guessed,                         a sidecar entry; a source known only from a TOC hint
 //     update: { version, release, prerelease } | null,  the update the check found
-//     check: { state, label, latest, detail, line } | null,  the check's answer: offline from the cache,
-//                                               or the window's last check; state as `UpdateState` says it
+//     check: { state, label, latest, order, detail, line } | null,  the check's answer: offline from the
+//                                               cache, or the window's last check; state as `UpdateState`
+//                                               says it, order older | same | newer | null (077)
 //     channel: stable | prerelease | null,      021, null for an unmanaged addon
 //     pinned: string | null, ignored,           021
 //     forever: { build, note, kind, verified, source, stale } | null,  011, on every row of Forever only:
@@ -104,15 +105,20 @@
     "rate-limited": "not checked (rate limit)",
   };
 
-  // A check's answer for a row, with the data line the check writes.
+  // A check's answer for a row, with the data line the check writes; the order of the installed version
+  // against the made-up release is the row's `newer` mark, else the same or an older one.
   function checkFact(row, state, latest, detail) {
     const versions = state === "update-available" ? `${row.version} -> ${latest}` : row.version;
+    const order = !latest ? null : latest === row.version ? "same" : row.newer ? "newer" : "older";
     let text = LABELS[state];
-    if (state === "pinned") text = `pinned at ${row.pinned}, ${latest && latest !== row.version ? `${latest} is out, left alone` : "up to date"}`;
+    if (state === "pinned") {
+      const against = { newer: `newer than the current release ${latest}, left alone`, older: `${latest} is out, left alone`, same: "up to date" };
+      text = `pinned at ${row.pinned}, ${against[order]}`;
+    }
     if (state === "installed-newer") text = `newer than the current release ${latest}, left alone`;
     if (state === "ignored") text = "ignored, not checked";
     if (detail && ["not-checked", "source-gone", "failed", "rate-limited"].includes(state)) text = `${text}: ${detail}`;
-    return { state, label: LABELS[state], latest: latest || null, detail: detail || null, line: `${row.name}  ${versions}  ${text}` };
+    return { state, label: LABELS[state], latest: latest || null, order, detail: detail || null, line: `${row.name}  ${versions}  ${text}` };
   }
 
   // What the made-up check answers for a managed row: GitHub rows from the made-up current release, the
@@ -237,6 +243,7 @@
       addons: [
         addon("Questie", "Questie", "11.2.3", { source: github("Questie/Questie"), managed: true, latest: "11.2.0", newer: true }),
         addon("pfQuest", "pfQuest", "6.4.1", { source: github("shagu/pfQuest"), managed: true, latest: "6.5.0" }),
+        addon("AtlasLootClassic", "AtlasLoot Classic", "v5.0.0-beta", { source: github("Hoizame/AtlasLootClassic"), managed: true, pinned: "v5.0.0-beta", latest: "v4.9.0", newer: true }),
         addon("Bartender4", "Bartender4", "4.15.7", { source: curseforge("4525"), guessed: true }),
         addon("RaidLogger", "Raid Logger", "0.9", { missing: ["LibRaidLog"] }),
       ],

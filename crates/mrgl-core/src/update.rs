@@ -85,6 +85,29 @@ impl UpdateState {
     }
 }
 
+/// How an installed version stands to the source's current release by the version order of task 068 (the
+/// release list's order where it lists both, else [`lenient_order`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VersionOrder {
+    /// The installed version is older: the current release is an update.
+    Older,
+    /// The same version.
+    Same,
+    /// The installed version is newer (a deleted release, a channel switch, a pin at a prerelease).
+    Newer,
+}
+
+impl VersionOrder {
+    fn of(order: Ordering) -> VersionOrder {
+        match order {
+            Ordering::Less => VersionOrder::Older,
+            Ordering::Equal => VersionOrder::Same,
+            Ordering::Greater => VersionOrder::Newer,
+        }
+    }
+}
+
 /// One managed addon and where it stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AddonUpdate {
@@ -101,6 +124,9 @@ pub struct AddonUpdate {
     pub state: UpdateState,
     /// The version of the source's current release on the addon's channel, when the source answered.
     pub latest: Option<String>,
+    /// How the installed version stands to `latest` (task 077): `None` without a `latest`, or when neither
+    /// the release list nor the lenient order can tell. A pinned addon's line reads it.
+    pub order: Option<VersionOrder>,
     /// The plain reason where the state needs one: the pick's reason for a guess, the error for a source
     /// gone or a failed check, why an addon is not checked, why an installed version is newer when the
     /// release list says.
@@ -138,25 +164,27 @@ impl AddonUpdate {
         };
         let detail = self.detail.as_deref().unwrap_or_default();
         let text = match self.state {
+            // Task 077: the pin is read against the version order, so an installed version newer than the
+            // current release is not reported as one the release is out after.
             UpdateState::Pinned => {
                 let pinned = self.pinned.as_deref().unwrap_or_default();
-                match &self.latest {
-                    Some(latest) if *latest != self.version => {
+                match (&self.latest, self.order) {
+                    (Some(latest), Some(VersionOrder::Newer)) => {
+                        format!("pinned at {pinned}, {}", self.newer_than(latest))
+                    }
+                    (Some(_), Some(VersionOrder::Same)) => {
+                        format!("pinned at {pinned}, up to date")
+                    }
+                    (Some(latest), _) if *latest != self.version => {
                         format!("pinned at {pinned}, {latest} is out, left alone")
                     }
-                    Some(_) => format!("pinned at {pinned}, up to date"),
-                    None => format!("pinned at {pinned}, not checked: {detail}"),
+                    (Some(_), _) => format!("pinned at {pinned}, up to date"),
+                    (None, _) => format!("pinned at {pinned}, not checked: {detail}"),
                 }
             }
             UpdateState::Ignored => "ignored, not checked".to_string(),
             UpdateState::InstalledNewer => {
-                let latest = self.latest.as_deref().unwrap_or_default();
-                match &self.detail {
-                    Some(detail) => {
-                        format!("newer than the current release {latest} ({detail}), left alone")
-                    }
-                    None => format!("newer than the current release {latest}, left alone"),
-                }
+                self.newer_than(self.latest.as_deref().unwrap_or_default())
             }
             UpdateState::GuessOnly => format!(
                 "guess only: {detail}; `mrgl add {}` installs it anyway",
@@ -171,6 +199,17 @@ impl AddonUpdate {
             UpdateState::UpToDate | UpdateState::UpdateAvailable => self.state.label().to_string(),
         };
         format!("{}  {versions}  {text}", self.name)
+    }
+
+    /// The words of an installed version newer than the current release, with the reason when the release
+    /// list says one.
+    fn newer_than(&self, latest: &str) -> String {
+        match &self.detail {
+            Some(detail) => {
+                format!("newer than the current release {latest} ({detail}), left alone")
+            }
+            None => format!("newer than the current release {latest}, left alone"),
+        }
     }
 }
 
@@ -506,6 +545,7 @@ fn unchecked(name: &str, entry: &Entry, state: UpdateState) -> AddonUpdate {
         pinned: entry.pinned.clone(),
         state,
         latest: None,
+        order: None,
         detail: None,
         pick: None,
     }
@@ -546,15 +586,14 @@ fn check_entry<S: Source + ?Sized>(
             } else {
                 installed_order(source, &spec, &entry.version, &pick.version)
             };
+            addon.order = order.map(|(order, _)| VersionOrder::of(order));
+            if let Some((Ordering::Greater, true)) = order {
+                addon.detail = Some(format!("{} is no longer listed", entry.version));
+            }
             addon.state = match order {
                 _ if entry.pinned.is_some() => UpdateState::Pinned,
                 Some((Ordering::Equal, _)) => UpdateState::UpToDate,
-                Some((Ordering::Greater, delisted)) => {
-                    if delisted {
-                        addon.detail = Some(format!("{} is no longer listed", entry.version));
-                    }
-                    UpdateState::InstalledNewer
-                }
+                Some((Ordering::Greater, _)) => UpdateState::InstalledNewer,
                 _ if pick.guess => {
                     addon.detail = Some(pick.reason.clone());
                     UpdateState::GuessOnly
@@ -698,6 +737,7 @@ mod tests {
             pinned: (state == UpdateState::Pinned).then(|| "1.0.0".to_string()),
             state,
             latest: latest.map(str::to_string),
+            order: None,
             detail: detail.map(str::to_string),
             pick: None,
         }
@@ -748,6 +788,43 @@ mod tests {
                 "Thing  1.0.0  check failed: cannot reach y",
                 "Thing  1.0.0  not checked (rate limit): the check stopped before GitHub's rate limit",
             ]
+        );
+    }
+
+    #[test]
+    fn the_pinned_line_follows_the_version_order() {
+        let pinned = |latest: &str, order: Option<VersionOrder>, detail: Option<&str>| {
+            AddonUpdate {
+                version: "1.1.0-beta".to_string(),
+                pinned: Some("1.1.0-beta".to_string()),
+                order,
+                ..addon(UpdateState::Pinned, Some(latest), detail)
+            }
+            .line()
+        };
+        assert_eq!(
+            [
+                pinned("1.0.0", Some(VersionOrder::Newer), None),
+                pinned(
+                    "1.0.0",
+                    Some(VersionOrder::Newer),
+                    Some("1.1.0-beta is no longer listed")
+                ),
+                pinned("1.1.0", Some(VersionOrder::Older), None),
+                pinned("v1.1.0-beta", Some(VersionOrder::Same), None),
+                pinned("1.2.0", None, None),
+            ],
+            [
+                "Thing  1.1.0-beta  pinned at 1.1.0-beta, newer than the current release 1.0.0, left alone",
+                "Thing  1.1.0-beta  pinned at 1.1.0-beta, newer than the current release 1.0.0 (1.1.0-beta is no longer listed), left alone",
+                "Thing  1.1.0-beta  pinned at 1.1.0-beta, 1.1.0 is out, left alone",
+                "Thing  1.1.0-beta  pinned at 1.1.0-beta, up to date",
+                "Thing  1.1.0-beta  pinned at 1.1.0-beta, 1.2.0 is out, left alone",
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(VersionOrder::Newer).expect("serializes"),
+            "newer"
         );
     }
 

@@ -94,15 +94,23 @@
   // The check states a row names under its version: what needs a look or explains a missing arrow.
   const NOTED = ["installed-newer", "guess-only", "source-gone", "failed", "rate-limited"];
 
+  // A pinned row's note, as the check's data line reads the pin (task 077): the release it leaves alone
+  // when the installed version is older, the words of a newer one when it is newer (the check's version
+  // order), nothing more when they are the same; with no order known, another version counts as out.
+  function pinNote(addon) {
+    const pinned = `pinned at ${addon.pinned}`;
+    const check = addon.check && addon.check.state === "pinned" ? addon.check : null;
+    if (!check || !check.latest) return pinned;
+    if (check.order === "newer") return `${pinned}, newer than the release`;
+    if (check.order === "same") return pinned;
+    return check.latest !== addon.version ? `${pinned}, ${check.latest} is out` : pinned;
+  }
+
   // The note under a row's version: the pin, the ignore, the prerelease channel and the check's word.
   function noteOf(addon) {
     if (!addon) return "";
     const note = [];
-    if (addon.pinned) {
-      // A pinned addon's check names the release it leaves alone.
-      const latest = addon.check && addon.check.state === "pinned" ? addon.check.latest : null;
-      note.push(latest && latest !== addon.version ? `pinned at ${addon.pinned}, ${latest} is out` : `pinned at ${addon.pinned}`);
-    }
+    if (addon.pinned) note.push(pinNote(addon));
     if (addon.ignored) note.push("ignored");
     if (addon.channel === "prerelease") note.push("prereleases");
     if (addon.check && NOTED.includes(addon.check.state)) note.push(addon.check.label);

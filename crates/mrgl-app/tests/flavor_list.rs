@@ -15,6 +15,7 @@ use mrgl_core::home;
 use mrgl_core::sources::github::{self, GitHub};
 use mrgl_core::sources::{Channel, FolderHttp, SourceSpec};
 use mrgl_core::state::{Entry, FlavorHome, State};
+use mrgl_core::update::VersionOrder;
 use mrgl_core::voice::Voice;
 
 const BUILD_INFO: &str = "Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|Version!STRING:0|Tags!STRING:0|Product!STRING:0\n\
@@ -606,6 +607,15 @@ fn the_rows_take_the_offline_checks_answer_in_its_version_order() {
         "Switched".into(),
         entry("github:Example/Prerelease", "1.1.0-beta", &["Switched"]),
     );
+    // Task 077: the same prerelease, pinned: the pin is read against the same order, so no release is out.
+    fixture.addon(
+        "_forever_",
+        "Held",
+        "## Interface: 16001\n## Version: 1.1.0-beta\n",
+    );
+    let mut held = entry("github:Example/Prerelease", "1.1.0-beta", &["Held"]);
+    held.pin(None);
+    forever.addons.insert("Held".into(), held);
     flavor_home.write_state(&forever).expect("forever sidecar");
     let source = fixture_source(&home);
     let spec = SourceSpec::parse("github:Example/Prerelease").expect("spec");
@@ -641,6 +651,20 @@ fn the_rows_take_the_offline_checks_answer_in_its_version_order() {
     assert_eq!(
         switched.channel.map(|channel| channel.as_str()),
         Some("stable")
+    );
+    let held = row(forever, "Held");
+    let check = held.check.as_ref().expect("the offline check of a pin");
+    assert_eq!(
+        (check.label, check.latest.as_deref(), check.order),
+        ("pinned", Some("1.0.0"), Some(VersionOrder::Newer))
+    );
+    assert_eq!(
+        check.line,
+        "Held  1.1.0-beta  pinned at 1.1.0-beta, newer than the current release 1.0.0, left alone"
+    );
+    assert_eq!(
+        serde_json::to_value(check).expect("serializes")["order"],
+        "newer"
     );
     let questie = row(forever, "Questie");
     assert_eq!(
