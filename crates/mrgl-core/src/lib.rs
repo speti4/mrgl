@@ -13,7 +13,8 @@
 //! compiled in, task 011), [`doctor`] is the diagnostic report a bug report carries, [`list_file`] is the
 //! addon list `export` writes and `import` installs from and [`interface`] checks a TOC's `## Interface`
 //! against the flavor's build (task 015), [`update`] is the update check of the managed addons
-//! against their sources (task 006), [`last_check`] keeps what the window's last online check found that
+//! against their sources (task 006), [`keys`] names, reads and stores the sources' API keys and says
+//! where each comes from, never what it is (task 093), [`last_check`] keeps what the window's last online check found that
 //! the cache cannot tell again (task 078), [`voice`] is the murloc table every message goes through (D-005)
 //! and [`zip_entry`] is the one check every zip entry passes before the install engine or a restore writes
 //! it.
@@ -35,6 +36,7 @@ pub mod forever;
 pub mod home;
 pub mod install;
 pub mod interface;
+pub mod keys;
 pub mod last_check;
 pub mod link;
 pub mod list_file;

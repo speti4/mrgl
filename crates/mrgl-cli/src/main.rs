@@ -35,6 +35,7 @@ use mrgl_core::install::{
     PickInstalled, PickStep, SourceInstalled, SourceRequest,
 };
 use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
+use mrgl_core::keys;
 use mrgl_core::last_check;
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
@@ -312,6 +313,34 @@ enum Command {
         #[command(subcommand)]
         action: SetAction,
     },
+    /// The API keys of the sources (github, wago, curse): store one in the Windows Credential Manager from
+    /// the standard input, remove it, or list where each comes from. A key is never an argument and never
+    /// printed; MRGL_GITHUB_TOKEN, MRGL_WAGO_KEY and MRGL_CURSEFORGE_KEY in the environment come first.
+    Key {
+        #[command(subcommand)]
+        action: KeyAction,
+    },
+}
+
+/// What `mrgl key` does (task 093).
+#[derive(Subcommand, Debug)]
+enum KeyAction {
+    /// Store a source's key as mrgl:<source> in the Windows Credential Manager, read from the standard
+    /// input (pipe it in: `Get-Clipboard | mrgl key set wago`; in a terminal, paste it and press Enter).
+    Set {
+        /// The source: github, wago or curse.
+        source: String,
+        /// Anything after the source: refused without being echoed, a key is never an argument.
+        #[arg(hide = true, num_args = 0.., allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+    /// Remove a source's key from the Windows Credential Manager.
+    Clear {
+        /// The source: github, wago or curse.
+        source: String,
+    },
+    /// Every key by name and where it comes from: the environment, the credential store, or not set.
+    List,
 }
 
 /// A `--max-unpacked` size (task 039): `3G`, `500M`, a number of bytes ([`zip_entry::parse_size`]).
@@ -596,8 +625,137 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
             yes,
         } => update_command(reporter, name.as_deref(), flavor.as_deref(), dry_run, yes)?,
         Command::Set { action } => set_command(reporter, action)?,
+        Command::Key { action } => key_command(reporter, action)?,
     }
     Ok(())
+}
+
+/// `mrgl key set|clear <source>` and `mrgl key list` (task 093): a key from the standard input into the
+/// key store (the Windows Credential Manager, `mrgl:<source>`), out of it, or every key by name with where
+/// it comes from. The value is never an argument and never printed, in the text, the JSON or an error.
+fn key_command(reporter: &Reporter, action: KeyAction) -> Result<(), String> {
+    let store = keys::store_of_process();
+    let env = |name: &str| std::env::var_os(name);
+    let in_env =
+        |name: &str| env(name).is_some_and(|value| !value.to_string_lossy().trim().is_empty());
+    match action {
+        KeyAction::List => {
+            let states = keys::list(&env, &*store);
+            let available = store.available().err().map(|error| error.to_string());
+            let set = states.iter().filter(|state| state.origin.is_set()).count();
+            if reporter.json {
+                reporter.document(serde_json::json!({
+                    "kind": "keys",
+                    "api_keys": &states,
+                    "store": store.name(),
+                    "store_unavailable": available,
+                }));
+                return Ok(());
+            }
+            for state in &states {
+                reporter.line(state.text());
+            }
+            if let Some(reason) = &available {
+                reporter.say(Kind::Warning, reason);
+            }
+            let kind = if set == 0 {
+                Kind::Nothing
+            } else {
+                Kind::Success
+            };
+            reporter.say(
+                kind,
+                format!("{set} of {} keys set, none shown", states.len()),
+            );
+            Ok(())
+        }
+        KeyAction::Set { source, rest } => {
+            if !rest.is_empty() {
+                return Err(format!(
+                    "a key is never an argument, the shell's history would keep it: pipe it in (Get-Clipboard | mrgl key set {source}); nothing stored"
+                ));
+            }
+            let kind = keys::keyed_source(&source).map_err(|error| error.to_string())?;
+            let name = keys::name_of(kind).unwrap_or_default();
+            let target = keys::target_name(kind);
+            store.available().map_err(|error| error.to_string())?;
+            let stdin = std::io::stdin();
+            let terminal = stdin.is_terminal();
+            if terminal && !reporter.json {
+                reporter.say(
+                    Kind::Progress,
+                    format!(
+                        "paste the {name} and press Enter; it goes to {}",
+                        store.name()
+                    ),
+                );
+            }
+            let value =
+                keys::read_key(&mut stdin.lock(), terminal).map_err(|error| error.to_string())?;
+            keys::set(&*store, kind, &value).map_err(|error| error.to_string())?;
+            let warnings: Vec<String> = in_env(name)
+                .then(|| format!("{name} is set in the environment too, which comes first"))
+                .into_iter()
+                .collect();
+            if reporter.json {
+                reporter.document(serde_json::json!({
+                    "kind": "key",
+                    "action": "set",
+                    "source": kind,
+                    "name": name,
+                    "target": target,
+                    "changed": true,
+                    "warnings": warnings,
+                }));
+                return Ok(());
+            }
+            for warning in &warnings {
+                reporter.say(Kind::Warning, warning);
+            }
+            reporter.say(
+                Kind::Success,
+                format!("{name} stored in {} as {target}", store.name()),
+            );
+            Ok(())
+        }
+        KeyAction::Clear { source } => {
+            let kind = keys::keyed_source(&source).map_err(|error| error.to_string())?;
+            let name = keys::name_of(kind).unwrap_or_default();
+            let target = keys::target_name(kind);
+            let removed = keys::clear(&*store, kind).map_err(|error| error.to_string())?;
+            let warnings: Vec<String> = in_env(name)
+                .then(|| format!("{name} is still set in the environment"))
+                .into_iter()
+                .collect();
+            if reporter.json {
+                reporter.document(serde_json::json!({
+                    "kind": "key",
+                    "action": "clear",
+                    "source": kind,
+                    "name": name,
+                    "target": target,
+                    "changed": removed,
+                    "warnings": warnings,
+                }));
+                return Ok(());
+            }
+            for warning in &warnings {
+                reporter.say(Kind::Warning, warning);
+            }
+            if removed {
+                reporter.say(
+                    Kind::Success,
+                    format!("{name} removed from {} ({target})", store.name()),
+                );
+            } else {
+                reporter.say(
+                    Kind::Nothing,
+                    format!("no {name} in {} ({target}), nothing removed", store.name()),
+                );
+            }
+            Ok(())
+        }
+    }
 }
 
 /// The flavor folder a `--flavor` spec names: a friendly name or an id under the game root, or a folder.

@@ -34,7 +34,8 @@ impl Sources {
 
     /// The sources of this process over one client ([`http_from_env`]: the folder stub when
     /// `MRGL_HTTP_STUB` names one, else the network), each with its key and its cache under the mrgl home
-    /// folder: GitHub with `MRGL_GITHUB_TOKEN` ([`GitHub::from_env`]).
+    /// folder: GitHub with its token from `MRGL_GITHUB_TOKEN` or the key store ([`GitHub::from_env`],
+    /// [`crate::keys`]).
     pub fn from_env() -> Sources {
         let http: Arc<dyn Http> = Arc::from(http_from_env());
         Sources::none().with(SourceKind::GitHub, GitHub::from_env(http))

@@ -1,5 +1,6 @@
 //! The GitHub release source (task 003). The releases come from the REST API
-//! (`GET /repos/{owner}/{repo}/releases`, an optional token from `MRGL_GITHUB_TOKEN` against the rate limit),
+//! (`GET /repos/{owner}/{repo}/releases`, an optional token against the rate limit: `MRGL_GITHUB_TOKEN`
+//! or the key store's `mrgl:github`, read through [`crate::keys`], task 093),
 //! the current release is the newest one that is neither a draft nor a prerelease (on an addon's
 //! `prerelease` channel the newest one that is not a draft, task 021), and its asset for the flavor is
 //! picked from the release's `release.json`, the file the BigWigs packager uploads next to the
@@ -47,10 +48,11 @@ use crate::forever::ForeverBuild;
 use crate::sources::{
     self, Channel, Http, Pick, Request, Response, Source, SourceSpec, Stale, Target, notes_line,
 };
-use crate::{home, state};
+use crate::{home, keys, state};
 
 /// The environment variable with a personal access token; without one the API allows 60 requests an hour.
-pub const TOKEN_ENV: &str = "MRGL_GITHUB_TOKEN";
+/// The key store holds it too ([`crate::keys`], task 093).
+pub const TOKEN_ENV: &str = keys::GITHUB_TOKEN;
 /// The REST API.
 pub const API_URL: &str = "https://api.github.com";
 /// The metadata file the packager uploads with the zips.
@@ -438,10 +440,10 @@ impl<H: Http> GitHub<H> {
         }
     }
 
-    /// The source of this process: the token from `MRGL_GITHUB_TOKEN`, the cache under the mrgl home
-    /// folder (no cache when there is no home folder).
+    /// The source of this process: the token from `MRGL_GITHUB_TOKEN` or the key store (task 093,
+    /// [`keys::of_process`]), the cache under the mrgl home folder (no cache when there is no home folder).
     pub fn from_env(http: H) -> GitHub<H> {
-        let token = std::env::var(TOKEN_ENV).ok();
+        let token = keys::of_process(crate::sources::SourceKind::GitHub).map(keys::Key::into_value);
         let cache_dir = home::home_dir().ok().map(|home| home.join(CACHE_SUBDIR));
         GitHub::new(http, token, cache_dir)
     }
@@ -544,11 +546,15 @@ impl<H: Http> GitHub<H> {
         })
     }
 
+    /// A request to the API, with the token when there is one and the URL is on the API host
+    /// ([`keys::may_send`], task 093).
     fn api_request(&self, url: String) -> Request {
         let mut request = Request::get(url)
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28");
-        if let Some(token) = &self.token {
+        if let Some(token) = &self.token
+            && keys::may_send(crate::sources::SourceKind::GitHub, &request.url)
+        {
             request = request.header("Authorization", format!("Bearer {token}"));
         }
         request

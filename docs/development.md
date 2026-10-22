@@ -79,7 +79,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   Forever asset, as the resolve walks them since task 066, `unknown` when the walk meets a release whose
   `release.json` is not cached, and the newest release's own signal when none has one, task 078), the
   last online check's kept answers (`last_check`, task 078, below), the diagnostic report (`doctor`, task 024: the
-  facts a bug report needs, with the profile folder as `~`, see [The doctor](#the-doctor)), the addon
+  facts a bug report needs, with the profile folder as `~`, see [The doctor](#the-doctor)), the API keys
+  (`keys`, task 093, see [The API keys](#the-api-keys)), the addon
   list (`list_file`, task 015: the export from the sidecar and the import through the source and the engine,
   below), the interface check (`interface`, task 015, below) and the voice table (`voice`, D-005). Synthetic
   fixtures are under `tests/fixtures/`.
@@ -505,8 +506,10 @@ The lines, with the JSON field in brackets:
   `reset`, `reason`): one `GET https://api.github.com/rate_limit` (GitHub does not count it), with the token
   when one is set; the limit is 60 requests an hour without a token and 5000 with one, the reset time is UTC.
   `unknown (<reason>)` when offline, on another status than 200, or for an answer without the numbers.
-- `api keys: MRGL_GITHUB_TOKEN set` or `not set` (`api_keys`: `name`, `present`): which keys are set, by
-  name; an empty variable is not set. The CurseForge key joins with its source (M4).
+- `api keys: MRGL_GITHUB_TOKEN set (environment), MRGL_WAGO_KEY set (credential store),
+  MRGL_CURSEFORGE_KEY not set` (`api_keys`: `name`, `present`, `origin`: `environment`, `credential_store`
+  or `not_set`): every key of the sources by name and where it comes from (task 093, [The API
+  keys](#the-api-keys)); an empty variable is not set, and a value is never read into the report.
 - `flavor: <folder> (<id>)` (`flavors[]`: `folder`, `id`, `found`): one block per flavor folder of the root,
   or the one `--flavor` names; the id is the folder's `.flavor.info` value. `folder missing` when the asked
   flavor has no folder under the root: the block then says what the home folder remembers of it.
@@ -554,6 +557,38 @@ HTTP stub and a fixed WebView2 and Windows answer; the end-to-end tests stub the
 value of the variable is no runtime and an unknown Windows, so `off` reads no registry), answer the rate
 limit from `releases/api.github.com/rate_limit.json` and assert that neither a key's value nor a `\Users\`
 path is in the output.
+
+## The API keys
+
+The sources' keys are the user's own (D-002: mrgl ships none), and `mrgl_core::keys` is the one place that
+names, reads and stores them (task 093). The names are `MRGL_GITHUB_TOKEN`, `MRGL_WAGO_KEY` and
+`MRGL_CURSEFORGE_KEY`; WoWInterface takes none. A key is looked up in the environment first (a variable that
+is empty or only spaces is not set), then in the key store: the Windows Credential Manager's generic
+credential `mrgl:<source>` (`mrgl:github`, `mrgl:wago`, `mrgl:curse`; user name `mrgl`, the key as its
+UTF-8 blob, `CRED_PERSIST_LOCAL_MACHINE`: this user on this machine), through `windows-sys`'s
+`Win32_Security_Credentials` (`CredReadW`, `CredWriteW`, `CredDeleteW`, `CredFree`), visible and removable
+under Control Panel, Credential Manager, Windows Credentials. Outside Windows the store is not available:
+reads find nothing and a write is refused (a key store there is M6). `MRGL_KEY_STORE=off` turns the store
+off for a run the same way.
+
+`mrgl key set <source>` (`github`, `wago`, `curse`, a source's name, or the variable) reads the key from the
+standard input, all of it from a pipe (`Get-Clipboard | mrgl key set wago`) or one line from a terminal,
+trimmed, and refuses nothing, more than one word or line, or more than 2560 bytes (the Credential Manager's
+limit); a key after the source on the command line is refused without being echoed, since the shell's
+history would keep it. `mrgl key clear <source>` removes the entry (`nothing removed` when there was none),
+and both warn when the variable is set too, since it comes first. `mrgl key list` names every key and its
+origin, `set (environment)`, `set (credential store)` or `not set`, then a warning when the store is not
+available and the count; `--json` is `kind: "keys"` with `api_keys[]` (`source`, `name`, `origin`),
+`store` and `store_unavailable`, and `set` and `clear` answer `kind: "key"` with `action`, `source`,
+`name`, `target`, `changed` and `warnings`. The doctor's `api keys:` line is the same listing.
+
+A key's value lives in a `keys::Key`, whose `Debug` hides it, and no error, listing or JSON carries it. It
+goes to its source's hosts only, over HTTPS (`keys::may_send`): the GitHub token to `api.github.com`
+(never with an asset download), the Wago key to `addons.wago.io`, the CurseForge key to
+`api.curseforge.com` and `edge.forgecdn.net`. The unit tests run every store path against
+`keys::MemoryStore`; the end-to-end tests set `MRGL_KEY_STORE=off` and remove the three variables, so no
+test reads or writes the real Credential Manager, and they assert that a key given in the environment
+appears in no output of `key`, `doctor` or `add`, text, JSON or error line.
 
 ## The UI
 
@@ -1014,8 +1049,9 @@ file name (`<>:"/\|?*`) written as `_`; without such a file the query is ignored
 before it, so two answers of one path that differ only in the query (two flavors of one addon) come from
 two files. A POST is answered from the same files as a GET of its URL, and the stub keeps its body with
 the request for the test to read (`FolderHttp::requests`).
-`MRGL_GITHUB_TOKEN` holds a personal access token for the GitHub API (60 requests an hour without one); it is
-sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
+`MRGL_GITHUB_TOKEN` (or the key store's `mrgl:github`, [The API keys](#the-api-keys)) holds a personal
+access token for the GitHub API (60 requests an hour without one); it is sent to `api.github.com` only,
+never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
 request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
 `release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline.

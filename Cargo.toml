@@ -53,9 +53,12 @@ tauri-plugin-opener = "2"
 # the zip timestamps (task 013) is two more calls from the same bindings, so no date crate either. The dev
 # addon junctions (task 005) are one `DeviceIoControl` with `FSCTL_SET_REPARSE_POINT` (`Win32_System_IO`,
 # `Win32_System_Ioctl`), so no junction crate either. An expandable registry value of the discovery (task
-# 043) is one `ExpandEnvironmentStringsW` (`Win32_System_Environment`).
+# 043) is one `ExpandEnvironmentStringsW` (`Win32_System_Environment`). The API keys (task 093) are
+# generic credentials of the Windows Credential Manager, `CredReadW`, `CredWriteW`, `CredDeleteW` and
+# `CredFree` (`Win32_Security_Credentials`), so no keyring crate either.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Environment",

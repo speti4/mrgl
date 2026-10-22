@@ -134,6 +134,8 @@ target\release\mrgl.exe set undo --flavor forever                          # the
 target\release\mrgl.exe set disable raid BagSorter --flavor forever        # edit a stored set (enable, disable, drop one addon)
 target\release\mrgl.exe set list --flavor forever                          # the sets so far (show and remove take a name)
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
+Get-Clipboard | target\release\mrgl.exe key set github                     # your own API key into the Windows Credential Manager
+target\release\mrgl.exe key list                                           # which keys are set and where from, never their values
 target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
 target\release\mrgl.exe import forever-addons.json --flavor forever --dry-run   # what installing that list would do
 target\release\mrgl.exe import forever-addons.json --flavor forever --exact     # the versions the list names, not the current ones
@@ -217,6 +219,14 @@ A dependency counts as there when an addon folder of that name is installed or w
 own `Blizzard_` addons. A library the addon carries only inside its own folder does not count: the game
 says `Dependency missing` and does not load the addon, so mrgl names it missing too and says why. `--json`
 has the details per addon under `dependencies`.
+
+The sources' API keys are your own: `MRGL_GITHUB_TOKEN` (a GitHub personal access token lifts the limit of
+60 requests an hour), `MRGL_WAGO_KEY` and `MRGL_CURSEFORGE_KEY` for the sources that need one. mrgl reads a key
+from the environment variable of that name first, then from the Windows Credential Manager, where
+`mrgl key set <github|wago|curse>` stores it as `mrgl:<source>` from the standard input (pipe it in, never as
+an argument, so the shell's history does not keep it) and `mrgl key clear <source>` removes it. `mrgl key
+list` and `mrgl doctor` name each key and where it comes from, never its value, and a key is sent to its
+own source's servers only.
 
 Something not working? `mrgl doctor` prints what a bug report needs: the game folder and how it was found,
 each flavor's build, AddOns folder, sidecar, cache, running client and any staging folder kept with the addon
