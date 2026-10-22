@@ -2,6 +2,10 @@
 //! with its TOC files ([`crate::toc`]), the one the flavor loads, its source hints (`X-Curse-Project-ID`,
 //! `X-Wago-ID`, `X-WoWI-ID`) and whether it is a junction. The scan never writes. Whether the state
 //! sidecar knows an addon is task 004's layer on top of this.
+//!
+//! The client's own addons (`Blizzard_…`) are never in an AddOns folder: [`CLIENT_ADDON_PREFIX`] and
+//! [`is_client_addon`] are the one rule the dependency check (a required `Blizzard_` name is met) and the
+//! SavedVariables (a `Blizzard_` file is never an orphan) share (task 080).
 
 use std::path::{Path, PathBuf};
 
@@ -10,6 +14,17 @@ use serde::Serialize;
 use crate::error::{Error, Result};
 use crate::flavor::{self, Flavor};
 use crate::toc::{self, Toc, TocName, TocSuffix};
+
+/// The name prefix of the client's own addons (`Blizzard_Communities`, `Blizzard_AuctionHouseUI`), which no
+/// AddOns folder holds, compared ASCII case-insensitively ([`is_client_addon`]).
+pub const CLIENT_ADDON_PREFIX: &str = "Blizzard_";
+
+/// Whether a name (an addon folder, a required dependency, a SavedVariables file's addon) is one of the
+/// client's own addons: it starts with [`CLIENT_ADDON_PREFIX`], ASCII case-insensitive.
+pub fn is_client_addon(name: &str) -> bool {
+    name.get(..CLIENT_ADDON_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CLIENT_ADDON_PREFIX))
+}
 
 /// One `.toc` file of an addon folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

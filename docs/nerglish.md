@@ -11,8 +11,36 @@ humans who do not speak murloc.
 
 ```text
 Mrglglglgl!
-2 addons updated, 12 up to date
+1 addon updated, 1 up to date
 ```
+
+A command that works through several addons says each step as it goes, every step a message of its own; the
+line of an addon's result (`Plain  1.0.0  up to date`) is a data line and stays plain (below). A whole
+`update --all --yes`, as the command line prints it:
+
+```text
+Mrrrgl… mrgl mrgl.
+checking the managed addons of _forever_ against their sources
+Mrrrgl… mrgl mrgl.
+checking Plain against github:Example/Prerelease (1 of 2)
+Plain  1.0.0  up to date
+Mrrrgl… mrgl mrgl.
+checking Questie against github:Questie/Questie (2 of 2)
+Questie  1.2.2 -> 1.2.3  update available
+Mrrrgl… mrgl mrgl.
+updating Questie from 1.2.2 to 1.2.3
+Mrrrgl… mrgl mrgl.
+downloading Questie-v1.2.3-forever.zip
+Mrrrgl… mrgl mrgl.
+installing Questie-v1.2.3-forever.zip into _forever_
+Mrglglglgl!
+updated Questie from 1.2.2 to 1.2.3 (1 folder: Questie) in _forever_
+Mrglglglgl!
+1 addon updated, 1 up to date
+```
+
+The window's status bar shows the same lines one after the other, its `updating` line with the addon's place
+in the run (`updating Questie from 1.2.2 to 1.2.3 (1 of 1)`).
 
 Errors too:
 
@@ -29,8 +57,9 @@ who skips the murloc line loses nothing.
 - `--json` output, on every command: machines read it, so it is plain JSON with no murloc anywhere.
 - `--help` and the usage errors: `clap` writes them, and a reader looking up a flag is not in the mood.
 - Log lines and anything written to a file.
-- The data lines of a listing (`scan`, `list`: one addon per line; `doctor`: one fact per line, a block to
-  paste into a bug report). The summary after them is the message and carries the two lines.
+- The data lines of a listing (`scan`, `list`: one addon per line; `update`: one addon's result per line;
+  `doctor`: one fact per line, a block to paste into a bug report). The summary after them is the message
+  and carries the two lines.
 - `--serious` on any command, or the environment variable `MRGL_SERIOUS=1`: the murloc line is dropped and only
   the plain line prints. The flag wins over the variable when both are set, and the variable (`0` keeps the
   murloc) wins over the window's serious switch, which `config.json` keeps (task 034).

@@ -8,14 +8,28 @@ your game client.
 [![Latest release](https://img.shields.io/github/v/release/speti4/mrgl)](https://github.com/speti4/mrgl/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/speti4/mrgl)](LICENSE)
 
-Planned output (M1):
+A run of `update --all` over two managed addons, one of them behind its release:
 
 ```text
-> mrgl update --all --flavor forever
+> mrgl update --all --flavor forever --yes
 Mrrrgl… mrgl mrgl.
-checking 14 addons in _forever_ against their sources
+checking the managed addons of _forever_ against their sources
+Mrrrgl… mrgl mrgl.
+checking Plain against github:Example/Prerelease (1 of 2)
+Plain  1.0.0  up to date
+Mrrrgl… mrgl mrgl.
+checking Questie against github:Questie/Questie (2 of 2)
+Questie  1.2.2 -> 1.2.3  update available
+Mrrrgl… mrgl mrgl.
+updating Questie from 1.2.2 to 1.2.3
+Mrrrgl… mrgl mrgl.
+downloading Questie-v1.2.3-forever.zip
+Mrrrgl… mrgl mrgl.
+installing Questie-v1.2.3-forever.zip into _forever_
 Mrglglglgl!
-2 addons updated, 12 up to date
+updated Questie from 1.2.2 to 1.2.3 (1 folder: Questie) in _forever_
+Mrglglglgl!
+1 addon updated, 1 up to date
 ```
 
 ## What it will do

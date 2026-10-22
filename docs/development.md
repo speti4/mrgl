@@ -6,7 +6,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
 ## Layout
 
 - `crates/mrgl-core` — the library: flavor detection (`flavor`), the AddOns scan and TOC parsing (`scan`,
-  `toc`), the sources (`sources`: the `Source` trait, the `Pick` it hands to the install engine, the `Http`
+  `toc`; `scan` also holds `CLIENT_ADDON_PREFIX` and `is_client_addon`, the one `Blizzard_` rule that the
+  dependency check and the SavedVariables share, task 080), the sources (`sources`: the `Source` trait, the `Pick` it hands to the install engine, the `Http`
   trait with the real `ureq` client and the folder-backed stub; `sources::github` reads the releases API,
   the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
   home folder, task 003; the pick carries `notes`, the release body's first line with text once its
@@ -42,7 +43,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a lookup trait with a stub), the
   dependency check (`dependencies`, task 029: every required name of the TOC the flavor loads, `## Dependencies`,
   `## RequiredDeps` and the other `## Dep…` lines, ASCII case-insensitive, is *met* when an addon folder of
-  that name is in the scan or the name is one of the client's own `Blizzard_` addons, and *missing*
+  that name is in the scan or the name is one of the client's own `Blizzard_` addons
+  (`scan::is_client_addon`), and *missing*
   otherwise; a missing name that a folder inside the addon's own folder answers, at most three levels down,
   as a build without `nolib` carries it, is also listed as *embedded*, and stays missing (task 076: the
   client does not count a library embedded in the addon's own folder, so the addon shows `Dependency
@@ -61,7 +63,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   entry with their sizes, the largest first, and the orphan rule: a file is an orphan when no folder of its
   name, compared without regard to case, is an addon the scan finds under `Interface\AddOns` (a folder with a
   TOC named after it, or one the scan cannot read); a disabled addon keeps its folder and is never one, a
-  `Blizzard_` file is the client's own, and with no AddOns folder at all nothing is marked. The cleanup,
+  `Blizzard_` file is the client's own (`scan::is_client_addon`), and with no AddOns folder at all nothing
+  is marked. The cleanup,
   the third `WTF` write of D-002 and D-003, runs the 023 guard first, writes the orphans and their `.bak`
   files with the backup's zip writer, entry names relative to `WTF`, and removes each file only once its
   entry, read back from the finished zip, matches it byte for byte; `backup::restore_wtf` refuses that zip.

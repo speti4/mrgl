@@ -3,7 +3,8 @@
 //! against a scan, ASCII case-insensitive as the client matches folder names:
 //!
 //! - **met**: a folder of that name is in the scan, an addon of its own, or the name starts with
-//!   [`CLIENT_PREFIX`] (`Blizzard_`), an addon the client itself ships, which no AddOns folder holds;
+//!   [`crate::scan::CLIENT_ADDON_PREFIX`] (`Blizzard_`), an addon the client itself ships, which no
+//!   AddOns folder holds ([`is_client_addon`], the rule `savedvars` shares);
 //! - **missing**: no addon folder of its own answers it. The client does not count a library embedded in
 //!   the addon's own folder (task 076: a required name answered only by `Libs\LibStub` shows `Dependency
 //!   missing` in the client and the addon does not load), so such a name is missing too, and the warning
@@ -22,16 +23,12 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::scan::{Addon, Scan};
+use crate::scan::{Addon, Scan, is_client_addon};
 use crate::state::State;
 
 /// How many folder levels below an addon folder the check looks for an embedded library: `Libs\LibStub`
 /// is two, `Libs\Ace3\AceAddon-3.0` three.
 pub const EMBED_DEPTH: usize = 3;
-
-/// The name prefix of the client's own addons (`Blizzard_Communities`, `Blizzard_AuctionHouseUI`), ASCII
-/// case-insensitive: a required dependency of that name is met by the client, whatever the scan holds.
-pub const CLIENT_PREFIX: &str = "Blizzard_";
 
 /// The dependencies of one addon folder, as the check found them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -159,13 +156,6 @@ fn check_addon(
         }
     }
     result
-}
-
-/// Whether a name is one of the client's own addons: it starts with [`CLIENT_PREFIX`], ASCII
-/// case-insensitive.
-pub fn is_client_addon(name: &str) -> bool {
-    name.get(..CLIENT_PREFIX.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CLIENT_PREFIX))
 }
 
 fn contains(names: &[String], name: &str) -> bool {
