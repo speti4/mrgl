@@ -15,10 +15,18 @@
 //! The report reads and never writes (the sources may write their own caches). Its counts measure the
 //! roadmap's M4 goal: how many addons can be adopted without CurseForge, how many only with it, how many
 //! have no known source (and how many have sources with no build for the flavor). The source `--apply`
-//! would write is the first, in the order above, that this run can ask and that answers `yes`, else the
+//! writes is the first, in the order above, that this run can ask and that answers `yes`, else the
 //! first that answers `unknown`; a CurseForge-only addon is never adopted before its source can be asked.
+//!
+//! `--apply` (task 098, [`apply`]) writes one sidecar entry per such addon: the spec, the TOC's version
+//! (`unknown` without one), the folder group and the hashes of its files as they are, with no download and
+//! no folder change, so the next update installs the source's build over it. A flavor folder with the
+//! CurseForge app's `.curseclient` marker is refused without `--alongside-curseforge` ([`marker_refusal`]),
+//! and every install path warns there ([`curse_client_warning`]); the marker is never touched.
 
 use std::collections::BTreeMap;
+use std::io;
+use std::path::Path;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -26,9 +34,9 @@ use serde::{Deserialize, Serialize};
 use crate::flavor::Flavor;
 use crate::install;
 use crate::keys;
-use crate::scan::{Addon, Scan};
-use crate::sources::{BuildOffer, Offered, Source, SourceKind, SourceSpec, Target};
-use crate::state::State;
+use crate::scan::{self, Addon, Scan};
+use crate::sources::{BuildOffer, Channel, Offered, Source, SourceKind, SourceSpec, Target};
+use crate::state::{self, Entry, State};
 use crate::toc;
 use crate::voice::{Kind, count_noun};
 
@@ -245,8 +253,14 @@ impl Adoptable {
                 self.folders.join(", ")
             ));
         }
+        line.push_str(&format!(": {}", self.verdict(flavor_name)));
+        line
+    }
+
+    /// What adopt makes of the addon: `adopt as <spec>`, what the run lacks, or why it has no source.
+    pub fn verdict(&self, flavor_name: &str) -> String {
         let needs = (!self.needs.is_empty()).then(|| format!("needs {}", self.needs.join(" or ")));
-        let verdict = match (&self.adopt_as, self.class) {
+        match (&self.adopt_as, self.class) {
             (Some(spec), _) => format!("adopt as {spec}"),
             (None, Class::WithoutCurseforge) => {
                 needs.unwrap_or_else(|| "no source this run can write".to_string())
@@ -257,9 +271,7 @@ impl Adoptable {
             },
             (None, Class::NoBuild) => format!("no {flavor_name} build at its sources"),
             (None, Class::NoSource) => "no known source".to_string(),
-        };
-        line.push_str(&format!(": {verdict}"));
-        line
+        }
     }
 
     /// The addon's lines under it: one per source, then one per page that names no source.
@@ -308,9 +320,36 @@ impl Report {
         flavor_name(&self.flavor)
     }
 
-    /// The summary line and its kind: the three counts of the M4 goal, and the fourth when an addon's
-    /// sources have no build for the flavor.
+    /// The summary line of the report alone and its kind: [`Report::counts_line`] and how many addons
+    /// `--apply` would adopt in this run.
     pub fn summary(&self) -> (Kind, String) {
+        let (kind, mut line) = self.counts_line();
+        if self.counts.adoptable_now > 0 {
+            line.push_str(&format!(
+                "; adopt --apply adopts {} of them",
+                self.counts.adoptable_now
+            ));
+        }
+        (kind, line)
+    }
+
+    /// The summary line of an `--apply` run (task 098): [`Report::counts_line`] and what was written.
+    pub fn applied_summary(&self, applied: &Applied) -> (Kind, String) {
+        let (_, mut line) = self.counts_line();
+        if applied.adopted.is_empty() {
+            line.push_str("; nothing adopted, the sidecar is unchanged");
+            return (Kind::Nothing, line);
+        }
+        line.push_str(&format!(
+            "; adopted {} into the sidecar, no download and no folder changed: the next update installs each from its source",
+            count_noun(applied.adopted.len(), "addon")
+        ));
+        (Kind::Success, line)
+    }
+
+    /// The counts line and its kind: the three counts of the M4 goal, and the fourth when an addon's
+    /// sources have no build for the flavor.
+    pub fn counts_line(&self) -> (Kind, String) {
         let folder = self.flavor.folder_name();
         let counts = &self.counts;
         if counts.addons == 0 {
@@ -340,7 +379,7 @@ impl Report {
     pub fn marker_line(&self) -> Option<String> {
         self.curse_client.then(|| {
             format!(
-                "the CurseForge app manages {} (its .curseclient marker is there): a folder belongs to one manager",
+                "the CurseForge app manages {} (its .curseclient marker is there): a folder belongs to one manager, so adopt --apply writes nothing there without --alongside-curseforge",
                 self.flavor.folder_name()
             )
         })
@@ -353,6 +392,187 @@ impl Report {
             .map(|folder| format!("{folder} is a junction or link mrgl did not make: left out"))
             .collect()
     }
+}
+
+/// One addon `--apply` wrote into the sidecar (task 098).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Adopted {
+    pub name: String,
+    /// The source spec of the entry.
+    pub source: String,
+    /// The TOC's version, or `unknown`.
+    pub version: String,
+    pub folders: Vec<String>,
+    /// How many files the entry records with their hashes.
+    pub files: usize,
+}
+
+impl Adopted {
+    /// The addon's line: `adopted <name> <version> as <spec> (<n> folders: …)`.
+    pub fn line(&self) -> String {
+        format!(
+            "adopted {} {} as {} ({}: {})",
+            self.name,
+            self.version,
+            self.source,
+            count_noun(self.folders.len(), "folder"),
+            self.folders.join(", ")
+        )
+    }
+}
+
+/// An addon with a source that `--apply` did not write, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NotAdopted {
+    pub name: String,
+    pub reason: String,
+}
+
+impl NotAdopted {
+    /// The warning line: `<name> not adopted: <reason>`.
+    pub fn line(&self) -> String {
+        format!("{} not adopted: {}", self.name, self.reason)
+    }
+}
+
+/// What `--apply` did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Applied {
+    pub adopted: Vec<Adopted>,
+    pub skipped: Vec<NotAdopted>,
+}
+
+/// The entries of `--apply` (task 098), put into a state the caller then writes: one per row the report
+/// adopts as a source, with that spec, the TOC's `## Version` (`unknown` when it has none), the folder
+/// group and the SHA-256 of every file in it as it is now (`<Folder>/<path>`, a link inside not followed),
+/// no pin, no mark, the stable channel. No download and no folder change: the next update finds the
+/// version differ from the source's and installs the source's build over the folders, as for any update.
+/// A row with a source the run cannot write (a missing key, CurseForge only) is skipped with its reason; a
+/// row without a source is no line. A name or a folder the state knows already is skipped too, so a second
+/// run over the same report and state changes nothing.
+pub fn apply(report: &Report, state: &mut State) -> Applied {
+    let addons_dir = scan::addons_dir(&report.flavor.folder);
+    let flavor_name = report.flavor_name();
+    let mut applied = Applied::default();
+    for row in &report.addons {
+        let skip = |reason: String| NotAdopted {
+            name: row.name.clone(),
+            reason,
+        };
+        let Some(spec) = &row.adopt_as else {
+            if matches!(row.class, Class::WithoutCurseforge | Class::OnlyCurseforge) {
+                applied.skipped.push(skip(row.verdict(flavor_name)));
+            }
+            continue;
+        };
+        if let Some((known, _)) = state.entry(&row.name) {
+            applied
+                .skipped
+                .push(skip(format!("a managed addon is named {known} already")));
+            continue;
+        }
+        if let Some((owner, _)) = row
+            .folders
+            .iter()
+            .find_map(|folder| state.entry_for_folder(folder))
+        {
+            applied
+                .skipped
+                .push(skip(format!("{owner} manages one of its folders already")));
+            continue;
+        }
+        let files = match hash_folders(&addons_dir, &row.folders) {
+            Ok(files) => files,
+            Err(error) => {
+                applied
+                    .skipped
+                    .push(skip(format!("its files could not be read: {error}")));
+                continue;
+            }
+        };
+        let version = row
+            .version
+            .clone()
+            .filter(|version| !version.trim().is_empty())
+            .unwrap_or_else(|| "unknown".to_string());
+        applied.adopted.push(Adopted {
+            name: row.name.clone(),
+            source: spec.clone(),
+            version: version.clone(),
+            folders: row.folders.clone(),
+            files: files.len(),
+        });
+        state.addons.insert(
+            row.name.clone(),
+            Entry {
+                source: spec.clone(),
+                version,
+                previous_version: None,
+                folders: row.folders.clone(),
+                files,
+                installed_at: state::now_rfc3339(),
+                nolib: None,
+                pinned: None,
+                ignored: false,
+                channel: Channel::Stable,
+            },
+        );
+    }
+    applied
+}
+
+/// Every file of the folders under an AddOns folder as `<Folder>/<path>` with `/` separators and its
+/// SHA-256, as the install engine records them; a link inside a folder is not followed.
+fn hash_folders(addons_dir: &Path, folders: &[String]) -> io::Result<BTreeMap<String, String>> {
+    fn walk(dir: &Path, prefix: &str, files: &mut BTreeMap<String, String>) -> io::Result<()> {
+        let mut entries: Vec<std::fs::DirEntry> =
+            std::fs::read_dir(dir)?.collect::<io::Result<_>>()?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let kind = entry.file_type()?;
+            let relative = format!("{prefix}/{name}");
+            if kind.is_dir() {
+                walk(&entry.path(), &relative, files)?;
+            } else if kind.is_file() {
+                files.insert(relative, install::sha256_of(&entry.path())?);
+            }
+        }
+        Ok(())
+    }
+    let mut files = BTreeMap::new();
+    for folder in folders {
+        walk(&addons_dir.join(folder), folder, &mut files)?;
+    }
+    Ok(files)
+}
+
+/// The refusal of `--apply` in a folder the CurseForge app manages, without `--alongside-curseforge`
+/// (task 098).
+pub fn marker_refusal(flavor: &Flavor) -> String {
+    format!(
+        "the CurseForge app manages {} (its .curseclient marker is there) and a folder belongs to one manager: adopt --apply wrote nothing; --alongside-curseforge adopts its addons anyway, and the CurseForge app may still update those folders",
+        flavor.folder_name()
+    )
+}
+
+/// The warning of `--apply --alongside-curseforge` in a folder the CurseForge app manages (task 098).
+pub fn alongside_warning(flavor: &Flavor) -> String {
+    format!(
+        "adopting alongside the CurseForge app in {}: it may still update or flag the adopted folders, and its .curseclient marker stays where it is",
+        flavor.folder_name()
+    )
+}
+
+/// The warning of an install path (`add`, `import`, `update`) in a folder the CurseForge app manages
+/// (task 098); `None` without its marker.
+pub fn curse_client_warning(flavor: &Flavor) -> Option<String> {
+    flavor.curse_client.then(|| {
+        format!(
+            "the CurseForge app manages {} too (its .curseclient marker is there): it may update or replace what mrgl installs; a folder belongs to one manager",
+            flavor.folder_name()
+        )
+    })
 }
 
 /// The flavor as a line names it: the friendly name, else the id.

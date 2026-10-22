@@ -124,7 +124,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   and `import <file> --flavor <flavor> [--exact] [--dry-run]` (tasks 015 and 057), `pin <name> [version]`,
   `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
-  `rollback <name>` (task 022), `adopt --flavor <flavor>` (task 097, see [Adopt](#adopt)),
+  `rollback <name>` (task 022), `adopt --flavor <flavor> [--apply [--alongside-curseforge]]` (tasks 097
+  and 098, see [Adopt](#adopt)),
   `set save|apply|list|show|remove` (task 014; `--character` on `save` and
   `apply`, task 027; `set undo`, `set enable|disable|drop <set> <addon>` and `--account`, task 073;
   below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
@@ -649,11 +650,38 @@ missing, or `needs <KEY NAME>` alone when the source could not be asked, and a p
 `  page <url> from X-Website, not a source mrgl reads`. Then a warning when the flavor folder has the
 CurseForge app's `.curseclient` marker, and the summary: `<n> unmanaged addons in <folder>: <a> can be
 adopted without CurseForge, <b> only with CurseForge, <c> with no known source`, with
-`, <d> with no <flavor> build at their sources` when there are such. `--json` is `kind: "adopt"` with
-`flavor`, `curse_client`, `addons[]` (`name`, `folders`, `version`, `sources[]` with `spec`, `source`, `from`,
-`build`, `why`, `needs`, `missing` and `taken_by`, `pages`, `class`, `adopt_as`, `needs`), `left_out`,
-`counts` (`addons`, `without_curseforge`, `only_curseforge`, `no_build`, `no_source`, `adoptable_now`) and
-`warnings`. The report reads the sidecar and writes nothing; the sources keep their own caches.
+`, <d> with no <flavor> build at their sources` when there are such and `; adopt --apply adopts <k> of them`
+when there are such. `--json` is `kind: "adopt"` with `flavor`, `curse_client`, `apply`, `addons[]` (`name`,
+`folders`, `version`, `sources[]` with `spec`, `source`, `from`, `build`, `why`, `needs`, `missing` and
+`taken_by`, `pages`, `class`, `adopt_as`, `needs`), `left_out`, `counts` (`addons`, `without_curseforge`,
+`only_curseforge`, `no_build`, `no_source`, `adoptable_now`), `adopted[]` and `skipped[]` (empty without
+`--apply`) and `warnings`. Without `--apply` the report reads the sidecar and writes nothing; the sources
+keep their own caches.
+
+`--apply` (task 098, `adopt::apply`) writes one sidecar entry per row that has a source to be adopted as: the
+spec, the TOC's `## Version` (`unknown` when it has none or an unsubstituted token), the folder group, the
+SHA-256 of every file in it as it is now (`<Folder>/<path>`, as the install engine records them; a link
+inside a folder is not followed), no previous version, no pin, no mark, the stable channel. Nothing is
+downloaded and no folder changes. The next `update` resolves the entry like any other: a source's version
+that differs from the TOC's (`unknown` always does) is an update, and installing it is the engine's one path
+(`Engine::install_from_source`): the source's build is swapped in over the group, and a folder of the group
+the build does not have is removed as a folder of the previous version. A source whose version equals the
+TOC's reads `up to date` and installs nothing. A row the run cannot write (a key it lacks, CurseForge only)
+is a warning, `<name> not adopted: <why>`, never an entry: a CurseForge-only addon waits for the CurseForge
+source (decided 2026-10-22), and a Wago addon for the key; a row without a source is no line. A name or a
+folder the sidecar knows already is skipped too, so the adopted folders are managed from then on and a
+second `--apply` writes nothing (the sidecar is written only when an entry was added). The lines are the
+report's, then `adopted <name> <version> as <spec> (<n> folders: …)` per entry, the warnings and the
+summary, the counts with `; adopted <n> addons into the sidecar, no download and no folder changed: the next
+update installs each from its source` or `; nothing adopted, the sidecar is unchanged`.
+
+A folder belongs to one manager. A flavor folder with the CurseForge app's `.curseclient` marker refuses
+`--apply` before any source is asked (`adopt::marker_refusal`, exit 1, nothing written) unless
+`--alongside-curseforge` (which needs `--apply`) says so; then the entries are written and a warning says
+that the CurseForge app may still update or flag those folders and that its marker stays
+(`adopt::alongside_warning`). mrgl never removes the marker. Every install path warns in such a folder too:
+`add` (a zip or a source, not the dry run of a source, which reads no folder), `import` and `update` add
+`adopt::curse_client_warning` to their warnings, on the screen and in the JSON.
 
 ### The GitHub mapping
 

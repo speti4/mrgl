@@ -113,6 +113,7 @@ target\release\mrgl.exe add wowi:<id> --flavor retail                       # a 
 target\release\mrgl.exe add wago:<id> --flavor forever                      # a Wago addon's release, with your MRGL_WAGO_KEY
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe adopt --flavor retail                               # where the addons mrgl did not install come from
+target\release\mrgl.exe adopt --flavor forever --apply                      # let mrgl manage them from now on, nothing downloaded
 target\release\mrgl.exe remove SomeAddon --flavor forever                   # remove an addon mrgl installed
 target\release\mrgl.exe link D:\dev\my-addons --flavor forever              # a junction per addon you develop
 target\release\mrgl.exe link D:\dev\MyAddon --flavor forever                # or one addon whose repo is its folder
@@ -180,8 +181,16 @@ a curated list of GitHub repositories ([`data/github-sources.json`](data/github-
 through pull requests). It asks each source whether it publishes a build for the flavor, keeps an addon's
 folders together (an addon and its options folder are one), and counts how many addons can be adopted
 without CurseForge, how many only with CurseForge and how many have no known source. A source whose key you
-have not set says so (`needs MRGL_CURSEFORGE_KEY`), and a folder the CurseForge app manages is named. It
-writes nothing.
+have not set says so (`needs MRGL_CURSEFORGE_KEY`), and a folder the CurseForge app manages is named. On its
+own it writes nothing.
+
+`adopt --apply` hands those addons to mrgl: it records each one's source, its version and its files in the
+state under `%LOCALAPPDATA%\mrgl\`, downloads nothing and changes no folder, so the next `update` brings
+the source's build in the clean way, as for any addon mrgl installed. An addon only CurseForge publishes is
+left as it is until mrgl has a CurseForge source, and one that needs a key you have not set waits for the
+key. A folder belongs to one manager: in a flavor folder the CurseForge app manages (its `.curseclient`
+marker), `--apply` refuses unless you add `--alongside-curseforge`, and even then the CurseForge app may
+still update those folders; mrgl never removes its marker, and `add`, `import` and `update` warn there too.
 
 On a standard install no flag is needed: mrgl finds the game folder through the registry (the launcher's
 key, or the game's Uninstall entry) or under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a

@@ -16,7 +16,9 @@
 //! 025; every source-backed install takes the one install path of the engine (task 055); `update` (the
 //! update check and `update --all`) is task 006; `set` (the addon sets) is task 014, its
 //! `--character` and `--realm` task 027, `set undo`, `set enable|disable|drop` and `--account` task 073;
-//! `adopt` (where the unmanaged addons of a flavor come from) is task 097.
+//! `adopt` (where the unmanaged addons of a flavor come from) is task 097, its `--apply` (their sidecar
+//! entries, the `.curseclient` guard and the warning of `add`, `import` and `update` in a folder the
+//! CurseForge app manages) task 098.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, IsTerminal};
@@ -318,12 +320,21 @@ enum Command {
     /// Report where the unmanaged addons of a flavor come from: per addon (its folders together) the sources
     /// its TOCs name (X-Wago-ID, X-WoWI-ID, X-Curse-Project-ID, X-Website on github.com), then the curated
     /// GitHub mapping, each asked whether it publishes a build for the flavor, and how many addons can be
-    /// adopted without CurseForge, only with it, or have no known source. Writes nothing; a source without
-    /// its key reads "needs <KEY NAME>".
+    /// adopted without CurseForge, only with it, or have no known source; a source without its key reads
+    /// "needs <KEY NAME>". With --apply, mrgl manages them from then on: a folder belongs to one manager.
     Adopt {
         /// The flavor id or folder.
         #[arg(long)]
         flavor: Option<String>,
+        /// Write a sidecar entry for every addon with a source this run can ask (its source, its TOC
+        /// version, its folders and their file hashes): no download and no folder changed, the next update
+        /// installs each from its source. A CurseForge-only addon waits for its source.
+        #[arg(long)]
+        apply: bool,
+        /// Adopt in a folder the CurseForge app manages (its .curseclient marker), which --apply refuses
+        /// otherwise; the app may still update those folders, and its marker stays.
+        #[arg(long, requires = "apply")]
+        alongside_curseforge: bool,
     },
     /// The API keys of the sources (github, wago, curse): store one in the Windows Credential Manager from
     /// the standard input, remove it, or list where each comes from. A key is never an argument and never
@@ -638,7 +649,11 @@ fn run(command: Command, reporter: &Reporter) -> Result<(), String> {
         } => update_command(reporter, name.as_deref(), flavor.as_deref(), dry_run, yes)?,
         Command::Set { action } => set_command(reporter, action)?,
         Command::Key { action } => key_command(reporter, action)?,
-        Command::Adopt { flavor } => adopt_command(reporter, flavor.as_deref())?,
+        Command::Adopt {
+            flavor,
+            apply,
+            alongside_curseforge,
+        } => adopt_command(reporter, flavor.as_deref(), apply, alongside_curseforge)?,
     }
     Ok(())
 }
@@ -771,14 +786,26 @@ fn key_command(reporter: &Reporter, action: KeyAction) -> Result<(), String> {
     }
 }
 
-/// `mrgl adopt --flavor <flavor>` (task 097): the source of every unmanaged addon of the flavor, through
-/// the router and the compiled-in GitHub mapping ([`adopt::report`]): a line per addon and one per source
-/// under it, the `.curseclient` marker and the warnings, and the summary of the counts; `--json` is the
-/// `adopt` document. Reads the sidecar, writes nothing (the sources keep their own caches).
-fn adopt_command(reporter: &Reporter, spec: Option<&str>) -> Result<(), String> {
+/// `mrgl adopt --flavor <flavor> [--apply [--alongside-curseforge]]` (tasks 097, 098): the source of every
+/// unmanaged addon of the flavor, through the router and the compiled-in GitHub mapping
+/// ([`adopt::report`]): a line per addon and one per source under it, the `.curseclient` marker and the
+/// warnings, and the summary of the counts; `--json` is the `adopt` document. Without `--apply` it reads the
+/// sidecar and writes nothing (the sources keep their own caches); with it, [`adopt::apply`] puts an entry
+/// per adoptable addon into the sidecar, which is written once when one was adopted. A flavor folder with the
+/// CurseForge app's marker refuses `--apply` before anything is asked unless `--alongside-curseforge` says
+/// so, which is then a warning; the marker is never touched.
+fn adopt_command(
+    reporter: &Reporter,
+    spec: Option<&str>,
+    apply: bool,
+    alongside_curseforge: bool,
+) -> Result<(), String> {
     let mut warnings = Vec::new();
     let folder = flavor_folder(spec, None, &mut warnings)?;
     let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
+    if apply && scan.flavor.curse_client && !alongside_curseforge {
+        return Err(adopt::marker_refusal(&scan.flavor));
+    }
     warnings.extend(scan.flavor.warnings.iter().cloned());
     warnings.extend(scan.warnings.iter().cloned());
     let engine = Engine::new(scan.flavor.clone()).map_err(|error| error.to_string())?;
@@ -791,15 +818,37 @@ fn adopt_command(reporter: &Reporter, spec: Option<&str>) -> Result<(), String> 
         keys::of_process(kind).is_some()
     });
     warnings.extend(report.left_out_lines());
+    let applied = if apply {
+        let applied = adopt::apply(&report, &mut state);
+        if !applied.adopted.is_empty() {
+            engine
+                .home
+                .write_state(&state)
+                .map_err(|error| error.to_string())?;
+        }
+        Some(applied)
+    } else {
+        None
+    };
+    // The marker (task 098): the report names it; an apply alongside the CurseForge app warns instead.
+    let marker = if apply && report.curse_client {
+        Some(adopt::alongside_warning(&report.flavor))
+    } else {
+        report.marker_line()
+    };
     if reporter.json {
+        let applied = applied.clone().unwrap_or_default();
         reporter.document(serde_json::json!({
             "kind": "adopt",
             "flavor": &report.flavor,
             "curse_client": report.curse_client,
+            "apply": apply,
             "addons": &report.addons,
             "left_out": &report.left_out,
             "counts": &report.counts,
-            "warnings": warnings,
+            "adopted": &applied.adopted,
+            "skipped": &applied.skipped,
+            "warnings": marker.into_iter().chain(warnings).collect::<Vec<_>>(),
         }));
         return Ok(());
     }
@@ -810,13 +859,26 @@ fn adopt_command(reporter: &Reporter, spec: Option<&str>) -> Result<(), String> 
             reporter.line(line);
         }
     }
-    if let Some(line) = report.marker_line() {
+    if let Some(applied) = &applied {
+        for adopted in &applied.adopted {
+            reporter.line(adopted.line());
+        }
+    }
+    if let Some(line) = marker {
         reporter.say(Kind::Warning, line);
     }
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
     }
-    let (kind, summary) = report.summary();
+    let (kind, summary) = match &applied {
+        Some(applied) => {
+            for skipped in &applied.skipped {
+                reporter.say(Kind::Warning, skipped.line());
+            }
+            report.applied_summary(applied)
+        }
+        None => report.summary(),
+    };
     reporter.say(kind, summary);
     Ok(())
 }
@@ -1458,6 +1520,7 @@ fn add_command(
     let mut warnings = Vec::new();
     if !dry_run {
         let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
+        warnings.extend(adopt::curse_client_warning(&engine.flavor));
         let folder_name = engine.flavor.folder_name();
         let SourceInstalled { pick, outcome } = engine
             .install_from_source(
@@ -1869,6 +1932,7 @@ fn add_zip(
 ) -> Result<(), String> {
     let mut warnings = Vec::new();
     let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
+    warnings.extend(adopt::curse_client_warning(&engine.flavor));
     let zip =
         std::path::absolute(source).map_err(|error| format!("resolving {source}: {error}"))?;
     let zip_name = zip
@@ -2585,6 +2649,7 @@ fn import_command(
 ) -> Result<(), String> {
     let mut warnings = Vec::new();
     let engine = engine_for(flavor, &mut warnings)?;
+    warnings.extend(adopt::curse_client_warning(&engine.flavor));
     let path = std::path::absolute(file)
         .map_err(|error| format!("resolving {}: {error}", file.display()))?;
     let list = ListFile::read(&path).map_err(|error| error.to_string())?;
@@ -2797,6 +2862,7 @@ fn update_command(
 ) -> Result<(), String> {
     let mut warnings = Vec::new();
     let engine = engine_for(flavor, &mut warnings)?;
+    warnings.extend(adopt::curse_client_warning(&engine.flavor));
     let folder_name = engine.flavor.folder_name();
     if !reporter.json {
         let what = name.map_or("the managed addons".to_string(), |name| name.to_string());
