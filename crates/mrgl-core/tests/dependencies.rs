@@ -96,6 +96,7 @@ fn the_sidecars_nolib_flag_skips_the_folder_inside_and_names_the_nolib_build() {
             pinned: None,
             ignored: false,
             channel: mrgl_core::sources::Channel::Stable,
+            forever_build: None,
         },
     );
     let checks = dependencies::check(&scan, Some(&state));

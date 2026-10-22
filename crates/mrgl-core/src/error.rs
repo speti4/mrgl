@@ -334,6 +334,19 @@ pub enum Error {
     )]
     ReleasePending { spec: String, host: &'static str },
 
+    /// A CurseForge project whose author allows no download outside CurseForge's own site and app (task
+    /// 096: `allowModDistribution: false`, a file whose `downloadUrl` is `null`): the line names its page,
+    /// where the user downloads the zip, and the command that installs a zip in hand with the source
+    /// recorded. `name` is the project's name with a space before it in parentheses, or empty.
+    #[error(
+        "the author of {spec}{name} allows no download outside CurseForge: download the zip from {page} and install it with `mrgl add <file.zip> --as {spec}`"
+    )]
+    DistributionOff {
+        spec: String,
+        name: String,
+        page: String,
+    },
+
     /// The source has no release of the version asked for (task 057, `import --exact`): it was deleted, or
     /// it was never published under that tag.
     #[error("no release {version} in {spec}")]

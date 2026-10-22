@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::flavor::FlavorId;
+use crate::forever::ForeverBuild;
 use crate::home;
 use crate::scan::Scan;
 use crate::sources::Channel;
@@ -137,6 +138,14 @@ pub struct Entry {
     /// The release channel the addon follows (task 021); absent means [`Channel::Stable`].
     #[serde(default, skip_serializing_if = "Channel::is_stable")]
     pub channel: Channel,
+    /// Whether the source published a Forever build when the addon was installed, as its pick said (task
+    /// 096): recorded for a source whose answers are never cached (CurseForge, whose terms forbid a cache
+    /// of its API data), so `list` and the window can say it offline
+    /// ([`crate::sources::entry_forever_build`]). `None`, and absent in the file, for the other sources,
+    /// which keep their own cache, for a zip in hand, an adopted entry, a pick that could not say, and an
+    /// entry written before the field existed. Additive: the schema stays [`SCHEMA`] (D-003).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forever_build: Option<ForeverBuild>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -448,6 +457,7 @@ mod tests {
             pinned: None,
             ignored: false,
             channel: Channel::Stable,
+            forever_build: None,
         }
     }
 

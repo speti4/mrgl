@@ -438,6 +438,7 @@ pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
                 pinned: None,
                 ignored: false,
                 channel: crate::sources::Channel::Stable,
+                forever_build: None,
             },
         );
         linked.push(LinkedAddon {

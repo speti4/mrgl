@@ -114,6 +114,7 @@ target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # 
 target\release\mrgl.exe add wowi:<id> --flavor retail                       # a WoWInterface project's file, no key needed
 target\release\mrgl.exe add wago:<id> --flavor forever                      # a Wago addon's release, with your MRGL_WAGO_KEY
 target\release\mrgl.exe add https://addons.wago.io/addons/<slug> --flavor forever  # the same by its Wago page, recorded as wago:<id>
+target\release\mrgl.exe add curse:<id> --flavor retail                      # a CurseForge project's file, with your MRGL_CURSEFORGE_KEY
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe adopt --flavor retail                               # where the addons mrgl did not install come from
 target\release\mrgl.exe adopt --flavor forever --apply                      # let mrgl manage them from now on, nothing downloaded
@@ -164,9 +165,9 @@ A Wago page names the addon by its slug: mrgl looks the slug up in Wago's public
 version and installs and records the addon as `wago:<id>` (a slug that list lacks says which game version
 it was looked up in). A CurseForge addon page names a slug only the keyed API knows, so mrgl refuses it and
 says where the id is (the `X-Curse-Project-ID` line of the addon's TOC, or the project id on the page).
-This build has the GitHub, the WoWInterface and the Wago sources: `add` with a spec of
-another source, or of Wago without your key, says `source not configured` and what is missing, an imported
-list reports such an entry the same way, and the update check leaves it not checked.
+This build has all four sources: `add` with a spec of Wago or CurseForge without your key says `source not
+configured` and which key is missing, an imported list reports such an entry the same way, and the update
+check leaves it not checked.
 
 A WoWInterface project has one file, and WoWInterface names no flavor for it: mrgl reads the project's
 compatibility list (the game versions its author ticked) and takes the file for the flavor whose game the
@@ -183,6 +184,19 @@ and alpha ones, sends the key to `addons.wago.io` only, asks for every Wago addo
 when it checks for updates, and stops asking Wago in an update check before the rate limit Wago's answers
 name, while the other sources are still asked. A 401 says the key is missing or not accepted.
 
+The CurseForge API needs your own key too (`MRGL_CURSEFORGE_KEY`, or `mrgl key set curse`; mrgl ships none,
+and every other source works without it). mrgl asks CurseForge for the project's files of the flavor's own
+game version (Forever included), takes the newest release or, on an addon's `prerelease` channel, the newest
+release, beta or alpha file, and sends the key to `api.curseforge.com` and `edge.forgecdn.net` only (the
+download needs it too). CurseForge's terms allow no cache of its answers, so mrgl keeps none: the Forever
+note `list` shows for a CurseForge addon is what CurseForge said when it was installed. Some authors allow no
+download outside CurseForge; for such an addon `add` names its page, and the zip you download there goes in
+with its source recorded, so the update check still asks CurseForge for it:
+
+```powershell
+target\release\mrgl.exe add MyAddon-2.0.0.zip --as curse:<id> --flavor forever
+```
+
 `mrgl adopt` looks at the addons mrgl did not install and says where each one comes from: the Wago,
 WoWInterface and CurseForge ids and the GitHub website its TOC names, or, for an addon whose TOC names none,
 a curated list of GitHub repositories ([`data/github-sources.json`](data/github-sources.json), which grows
@@ -194,11 +208,11 @@ own it writes nothing.
 
 `adopt --apply` hands those addons to mrgl: it records each one's source, its version and its files in the
 state under `%LOCALAPPDATA%\mrgl\`, downloads nothing and changes no folder, so the next `update` brings
-the source's build in the clean way, as for any addon mrgl installed. An addon only CurseForge publishes is
-left as it is until mrgl has a CurseForge source, and one that needs a key you have not set waits for the
-key. A folder belongs to one manager: in a flavor folder the CurseForge app manages (its `.curseclient`
-marker), `--apply` refuses unless you add `--alongside-curseforge`, and even then the CurseForge app may
-still update those folders; mrgl never removes its marker, and `add`, `import` and `update` warn there too,
+the source's build in the clean way, as for any addon mrgl installed. An addon only CurseForge publishes
+waits for your CurseForge key, as one that needs any key you have not set waits for it. A folder belongs to
+one manager: in a flavor folder the CurseForge app manages (its `.curseclient` marker), `--apply` refuses
+unless you add `--alongside-curseforge`, and even then the CurseForge app may still update those folders;
+mrgl never removes its marker, and `add`, `import` and `update` warn there too,
 as the window's update actions do.
 
 The window's Toolbox tab has the same report in its Adopt card: "Ask the sources" lists every addon mrgl did
@@ -293,11 +307,11 @@ folder of the same name already there is skipped, never replaced; an install nev
 addon, and `unlink` removes exactly the junctions `link` made, never a folder and never a file of yours.
 
 An exported list carries each managed addon's source and version; `import` installs the current release of
-every entry the flavor does not have yet whose source this build has (`github:`, `wowi:`, `wago:`), reports an entry of a
-source not configured with what is missing, and leaves the others alone (a zip in hand stays on the
-machine it came from, a linked folder is linked again). `list` and an install warn when an addon's
-`## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor;
-`scan` and `list` mark an addon `out of date` when its interface is from the flavor's expansion but older
+every entry the flavor does not have yet whose source this run can ask (`github:`, `wowi:`, and `wago:` and
+`curse:` with their keys), reports an entry of a source not configured with what is missing, and leaves the
+others alone (a zip in hand stays on the machine it came from, a linked folder is linked again). `list` and
+an install warn when an addon's `## Interface` names no interface of the flavor's build, the first sign of a
+zip for another flavor; `scan` and `list` mark an addon `out of date` when its interface is from the flavor's expansion but older
 than the installed build, as the game's own addon list does after a patch, and an install or an update says
 so for the addon it just installed. The window marks its rows the same way, `interface mismatch` or
 `out of date` under the row's state.

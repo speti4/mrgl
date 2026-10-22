@@ -10,6 +10,7 @@ use std::sync::Arc;
 use mrgl_core::adopt::{self, Adoptable, Class, Hint, Report};
 use mrgl_core::install;
 use mrgl_core::scan;
+use mrgl_core::sources::curseforge::CurseForge;
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::wago::Wago;
 use mrgl_core::sources::wowinterface::WowInterface;
@@ -191,6 +192,47 @@ fn the_wago_key_makes_the_wago_addon_adoptable() {
     // The Wago answer for the flavor comes from the keyless slug list, never from the keyed API.
     let serialized = serde_json::to_string(&report).expect("serializes");
     assert!(!serialized.contains("made-up-test-key"));
+}
+
+#[test]
+fn the_curseforge_key_makes_the_curseforge_addon_adoptable() {
+    // Task 096: with the made-up CurseForge key the source can be asked, its project's files name the
+    // Forever type and the file's modules name the folders.
+    let stub = Stub::new("curse-keyed");
+    let key = "made-up-curseforge-key-for-tests";
+    let http: Arc<dyn Http> = Arc::new(FolderHttp::new(stub.base.join("stub")));
+    let sources = stub.sources(None).with(
+        SourceKind::CurseForge,
+        CurseForge::new(http, Some(key.into())),
+    );
+    let report = report_with_keys("_forever_", &sources, &[SourceKind::CurseForge]);
+    let curse_only = row(&report, "MrglCurseOnly");
+    assert_eq!(curse_only.adopt_as.as_deref(), Some("curse:4242"));
+    assert_eq!(curse_only.class, Class::OnlyCurseforge);
+    assert_eq!(
+        std::iter::once(curse_only.line("forever"))
+            .chain(curse_only.detail_lines("forever"))
+            .collect::<Vec<_>>(),
+        [
+            "MrglCurseOnly 0.4.2: adopt as curse:4242",
+            "  curse:4242 from X-Curse-Project-ID: forever build yes (CurseForge lists the release 1.0.0 for forever)",
+        ]
+    );
+    let mixed = row(&report, "MrglNoList");
+    assert_eq!(
+        mixed.detail_lines("forever")[2],
+        "  curse:4243 from X-Curse-Project-ID: forever build no (CurseForge lists no file for forever)"
+    );
+    assert_eq!(report.counts.adoptable_now, 6);
+    let serialized = serde_json::to_string(&report).expect("serializes");
+    assert!(!serialized.contains(key));
+}
+
+/// [`report`] with the keys a run has, by source.
+fn report_with_keys(flavor: &str, sources: &Sources, keyed: &[SourceKind]) -> Report {
+    let scan = scan::scan(&fixtures().join("adopt").join(flavor)).expect("the fixture scans");
+    let state = State::new(&scan.flavor.id);
+    adopt::report(&scan, &state, sources, &|kind| keyed.contains(&kind))
 }
 
 #[test]

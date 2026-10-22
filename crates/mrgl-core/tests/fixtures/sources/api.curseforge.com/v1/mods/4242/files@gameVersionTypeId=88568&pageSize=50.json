@@ -1,0 +1,81 @@
+{
+ "data": [
+  {
+   "id": 7003,
+   "gameId": 1,
+   "modId": 4242,
+   "isAvailable": true,
+   "displayName": "1.1.0-beta",
+   "fileName": "MrglCurseOnly-1.1.0-beta.zip",
+   "releaseType": 2,
+   "fileStatus": 4,
+   "hashes": [],
+   "fileDate": "2026-10-10T10:00:00.000Z",
+   "fileLength": 600,
+   "downloadCount": 0,
+   "downloadUrl": "https://edge.forgecdn.net/files/7003/3/MrglCurseOnly-1.1.0-beta.zip",
+   "gameVersions": [
+    "1.60.1"
+   ],
+   "sortableGameVersions": [
+    {
+     "gameVersionName": "1.60.1",
+     "gameVersion": "1.60.1",
+     "gameVersionTypeId": 88568
+    }
+   ],
+   "modules": [
+    {
+     "name": "MrglCurseOnly",
+     "fingerprint": 1000
+    }
+   ]
+  },
+  {
+   "id": 7001,
+   "gameId": 1,
+   "modId": 4242,
+   "isAvailable": true,
+   "displayName": "1.0.0",
+   "fileName": "MrglCurseOnly-1.0.0.zip",
+   "releaseType": 1,
+   "fileStatus": 4,
+   "hashes": [
+    {
+     "value": "0000000000000000000000000000000000000000",
+     "algo": 1
+    },
+    {
+     "value": "dd94b8c56a4dd517c5293ed6bf882263",
+     "algo": 2
+    }
+   ],
+   "fileDate": "2026-10-01T10:00:00.000Z",
+   "fileLength": 559,
+   "downloadCount": 0,
+   "downloadUrl": "https://edge.forgecdn.net/files/7001/1/MrglCurseOnly-1.0.0.zip",
+   "gameVersions": [
+    "1.60.1"
+   ],
+   "sortableGameVersions": [
+    {
+     "gameVersionName": "1.60.1",
+     "gameVersion": "1.60.1",
+     "gameVersionTypeId": 88568
+    }
+   ],
+   "modules": [
+    {
+     "name": "MrglCurseOnly",
+     "fingerprint": 1000
+    }
+   ]
+  }
+ ],
+ "pagination": {
+  "index": 0,
+  "pageSize": 50,
+  "resultCount": 2,
+  "totalCount": 2
+ }
+}

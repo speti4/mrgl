@@ -11,6 +11,7 @@ use mrgl_app_lib::commands;
 use mrgl_app_lib::list::{self, FlavorView, InterfaceState, Row};
 use mrgl_core::discover::{GameRoot, RootOrigin};
 use mrgl_core::flavor::FlavorId;
+use mrgl_core::forever::ForeverBuild;
 use mrgl_core::home;
 use mrgl_core::sources::github::{self, GitHub};
 use mrgl_core::sources::{Channel, FolderHttp, SourceSpec};
@@ -181,6 +182,7 @@ fn entry(source: &str, version: &str, folders: &[&str]) -> Entry {
         pinned: None,
         ignored: false,
         channel: Channel::Stable,
+        forever_build: None,
     }
 }
 
@@ -1006,10 +1008,10 @@ fn the_rows_read_the_last_check_file_the_command_line_writes() {
     );
 }
 
-// --- task 092: the rows of a source this build does not have ---
+// --- task 092: the rows of every source; task 096: a CurseForge row offline ---
 
 #[test]
-fn a_row_of_a_source_this_build_lacks_has_its_badge_and_says_what_is_missing() {
+fn a_curseforge_row_has_its_badge_and_offline_no_answer_but_its_recorded_forever_signal() {
     let fixture = Fixture::game_named("not-configured");
     let home = fixture.home();
     let flavor_home = FlavorHome::at(&home, &FlavorId::Forever);
@@ -1031,16 +1033,30 @@ fn a_row_of_a_source_this_build_lacks_has_its_badge_and_says_what_is_missing() {
     assert!(loose.managed && !loose.guessed);
     let source = loose.source.as_ref().expect("the entry's source");
     assert_eq!((source.kind, source.id.as_str()), ("curseforge", "42"));
-    let check = loose.check.as_ref().expect("the offline check's answer");
-    assert_eq!(check.state, mrgl_core::update::UpdateState::NotChecked);
-    assert_eq!(
-        check.detail.as_deref(),
-        Some("source not configured: curse:42 (this build has no CurseForge source)")
-    );
+    // Task 096: CurseForge keeps no cache, so the offline view asks it nothing and knows no answer.
+    assert!(loose.check.is_none(), "{:?}", loose.check);
     assert_eq!(
         loose.forever.as_ref().expect("a status").build.as_str(),
         "unknown",
         "never inferred"
+    );
+    // The Forever signal the sidecar recorded at install is what the row shows.
+    forever
+        .addons
+        .get_mut("Loose")
+        .expect("the entry")
+        .forever_build = Some(ForeverBuild::Yes);
+    flavor_home.write_state(&forever).expect("forever sidecar");
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&home),
+        Voice::new(false),
+    );
+    let loose = row(flavor(&answer.flavors, "wowf"), "Loose");
+    assert_eq!(
+        loose.forever.as_ref().expect("a status").build.as_str(),
+        "yes"
     );
     for (spec, kind, id) in [
         ("wago:aB1cD2eF", "wago", "aB1cD2eF"),

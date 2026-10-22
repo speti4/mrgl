@@ -515,6 +515,7 @@ pub fn apply(report: &Report, state: &mut State) -> Applied {
                 pinned: None,
                 ignored: false,
                 channel: Channel::Stable,
+                forever_build: None,
             },
         );
     }

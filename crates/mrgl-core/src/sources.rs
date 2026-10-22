@@ -11,6 +11,7 @@
 //! and this run can use, and answers for every spec by handing it to its source, or with
 //! [`Error::SourceNotConfigured`] naming what is missing.
 
+pub mod curseforge;
 pub mod github;
 pub mod router;
 pub mod wago;
@@ -534,7 +535,7 @@ pub fn version_of_tag(tag: &str) -> &str {
 
 /// Why a source says what it says of the Forever build (tasks 011, 094), for the `forever build:` line: the
 /// GitHub source reads `release.json`, WoWInterface its compatibility list, Wago its releases per game
-/// version (task 095).
+/// version (task 095), CurseForge the game version types of its files (task 096).
 pub fn forever_why(kind: SourceKind, build: ForeverBuild) -> &'static str {
     match (kind, build) {
         (SourceKind::WowInterface, ForeverBuild::Yes) => {
@@ -544,6 +545,9 @@ pub fn forever_why(kind: SourceKind, build: ForeverBuild) -> &'static str {
         (SourceKind::Wago, ForeverBuild::Yes) => "Wago lists a release for forever",
         (SourceKind::Wago, ForeverBuild::No) => "Wago lists no release for forever",
         (SourceKind::Wago, ForeverBuild::Unknown) => "Wago could not say",
+        (SourceKind::CurseForge, ForeverBuild::Yes) => "CurseForge lists a file for forever",
+        (SourceKind::CurseForge, ForeverBuild::No) => "CurseForge lists no file for forever",
+        (SourceKind::CurseForge, ForeverBuild::Unknown) => "CurseForge could not say",
         (_, ForeverBuild::Yes) => "release.json names forever",
         (_, ForeverBuild::No) => "release.json names no forever flavor",
         (_, ForeverBuild::Unknown) => "no release.json says",
@@ -662,6 +666,24 @@ pub trait Source {
     }
 }
 
+/// The Forever signal `list` and the window show for a managed addon (tasks 011, 092, 096), offline: its
+/// source's own answer from its cache ([`Source::cached_forever_build`]), and when that is `unknown`, the
+/// signal the sidecar recorded at install ([`crate::state::Entry::forever_build`]: CurseForge, whose
+/// answers are never cached); `unknown` for an entry whose source is no spec.
+pub fn entry_forever_build<S: Source + ?Sized>(
+    sources: &S,
+    entry: &crate::state::Entry,
+) -> ForeverBuild {
+    let cached = match SourceSpec::parse(&entry.source) {
+        Ok(spec) => sources.cached_forever_build(&spec, entry.channel()),
+        Err(_) => return ForeverBuild::Unknown,
+    };
+    match cached {
+        ForeverBuild::Unknown => entry.forever_build.unwrap_or_default(),
+        known => known,
+    }
+}
+
 /// Whether a source publishes a build for a flavor ([`Source::offers`], task 097).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -767,6 +789,10 @@ pub struct Request {
     pub headers: Vec<(String, String)>,
     /// The body of a POST; `None` for a GET.
     pub body: Option<Vec<u8>>,
+    /// Whether the client follows a redirect itself (the default). A source whose key goes in a header of
+    /// its own turns it off ([`Request::no_redirects`], task 096: CurseForge's `x-api-key`), gets the
+    /// redirect as the answer and follows it with the key only to its own hosts ([`crate::keys::may_send`]).
+    pub follow_redirects: bool,
 }
 
 impl Request {
@@ -775,6 +801,7 @@ impl Request {
             url: url.into(),
             headers: Vec::new(),
             body: None,
+            follow_redirects: true,
         }
     }
 
@@ -784,11 +811,18 @@ impl Request {
             url: url.into(),
             headers: Vec::new(),
             body: Some(body.into()),
+            follow_redirects: true,
         }
     }
 
     pub fn header(mut self, name: &str, value: impl Into<String>) -> Request {
         self.headers.push((name.to_string(), value.into()));
+        self
+    }
+
+    /// The same request with the client's own redirects off: a 3xx comes back as the answer (task 096).
+    pub fn no_redirects(mut self) -> Request {
+        self.follow_redirects = false;
         self
     }
 
@@ -840,7 +874,8 @@ pub trait Http {
 
 /// The real client: `ureq` over rustls, with mrgl's user agent, a connect and a response timeout, and the
 /// HTTP status always returned rather than raised. Redirects are followed (an asset download hops to the
-/// object store) and an `Authorization` header never follows one.
+/// object store) and an `Authorization` header never follows one; a request with its redirects off
+/// ([`Request::no_redirects`]) gets the redirect itself as the answer.
 pub struct UreqHttp {
     agent: ureq::Agent,
 }
@@ -907,6 +942,9 @@ fn ureq_response(
 impl Http for UreqHttp {
     fn get(&self, request: &Request) -> Result<Response> {
         let mut call = self.agent.get(&request.url);
+        if !request.follow_redirects {
+            call = call.config().max_redirects(0).build();
+        }
         for (name, value) in &request.headers {
             call = call.header(name, value);
         }
@@ -915,6 +953,9 @@ impl Http for UreqHttp {
 
     fn post(&self, request: &Request) -> Result<Response> {
         let mut call = self.agent.post(&request.url);
+        if !request.follow_redirects {
+            call = call.config().max_redirects(0).build();
+        }
         for (name, value) in &request.headers {
             call = call.header(name, value);
         }
@@ -1260,6 +1301,14 @@ impl MapHttp {
             .lock()
             .map(|requests| requests.clone())
             .unwrap_or_default()
+    }
+
+    /// Adds a header to the answer of a URL given before.
+    pub(crate) fn with_header(mut self, url: &str, name: &str, value: &str) -> MapHttp {
+        if let Some(answer) = self.answers.get_mut(url) {
+            answer.headers.push((name.to_string(), value.to_string()));
+        }
+        self
     }
 }
 

@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::error::{Error, Result};
 use crate::forever::ForeverBuild;
+use crate::sources::curseforge::CurseForge;
 use crate::sources::github::{self, GitHub};
 use crate::sources::wago::{self, Wago};
 use crate::sources::wowinterface::{self, WowInterface};
@@ -38,18 +39,24 @@ impl Sources {
     /// `MRGL_HTTP_STUB` names one, else the network), each with its key and its cache under the mrgl home
     /// folder: GitHub with its token from `MRGL_GITHUB_TOKEN` or the key store ([`GitHub::from_env`],
     /// [`crate::keys`]), WoWInterface without a key (task 094), Wago with `MRGL_WAGO_KEY` or the key store
-    /// (task 095; without it a `wago:` spec says the key is missing).
+    /// (task 095; without it a `wago:` spec says the key is missing), CurseForge with `MRGL_CURSEFORGE_KEY`
+    /// or the key store and no cache at all (task 096; without the key a `curse:` spec says it is missing).
     pub fn from_env() -> Sources {
         let http: Arc<dyn Http> = Arc::from(http_from_env());
         Sources::none()
             .with(SourceKind::GitHub, GitHub::from_env(Arc::clone(&http)))
             .with(SourceKind::Wago, Wago::from_env(Arc::clone(&http)))
-            .with(SourceKind::WowInterface, WowInterface::from_env(http))
+            .with(
+                SourceKind::WowInterface,
+                WowInterface::from_env(Arc::clone(&http)),
+            )
+            .with(SourceKind::CurseForge, CurseForge::from_env(http))
     }
 
     /// The sources over a client of the caller's, with their caches under a home folder (`None`: no cache)
     /// and no key: the window's offline view (task 078) passes a client that fails every request, so each
-    /// source answers from its own cache by its offline rule; a test passes the folder stub.
+    /// source answers from its own cache by its offline rule; a test passes the folder stub. CurseForge
+    /// keeps no cache (task 096): its offline view asks nothing and answers no resolve.
     pub fn cached(http: Arc<dyn Http>, home: Option<&Path>) -> Sources {
         Sources::none()
             .with(
@@ -69,8 +76,12 @@ impl Sources {
             )
             .with(
                 SourceKind::WowInterface,
-                WowInterface::new(http, home.map(|home| home.join(wowinterface::CACHE_SUBDIR))),
+                WowInterface::new(
+                    Arc::clone(&http),
+                    home.map(|home| home.join(wowinterface::CACHE_SUBDIR)),
+                ),
             )
+            .with(SourceKind::CurseForge, CurseForge::cached(http))
     }
 
     /// The same sources with one slot filled, or replaced: the source that answers every spec of `kind`.
@@ -401,9 +412,15 @@ mod tests {
         assert!(sources.has(SourceKind::GitHub));
         assert!(sources.has(SourceKind::WowInterface), "task 094");
         assert!(sources.has(SourceKind::Wago), "task 095");
-        assert!(!sources.has(SourceKind::CurseForge));
+        assert!(sources.has(SourceKind::CurseForge), "task 096");
         // The offline view asks no key of Wago: it answers from the cache alone.
         assert_eq!(sources.missing(&spec("wago:abc")), None);
+        // CurseForge keeps no cache: its offline view asks nothing and answers no resolve.
+        assert_eq!(sources.missing(&spec("curse:42")), None);
+        assert!(matches!(
+            sources.resolve(&spec("curse:42"), &Target::new(FlavorId::Forever)),
+            Err(Error::SourceNotConfigured { .. })
+        ));
         let error = sources
             .resolve(&spec("github:o/r"), &Target::new(FlavorId::Forever))
             .unwrap_err();

@@ -247,6 +247,7 @@ mod tests {
                 pinned: None,
                 ignored: false,
                 channel: crate::sources::Channel::Stable,
+                forever_build: None,
             },
         );
         state

@@ -45,9 +45,10 @@ use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
 use crate::dependencies::{self, AddonDependencies};
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
+use crate::forever::ForeverBuild;
 use crate::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use crate::scan;
-use crate::sources::{Channel, Pick, Source, SourceSpec, Target};
+use crate::sources::{Channel, Pick, Source, SourceKind, SourceSpec, Target};
 use crate::staging::{self, RunDir};
 use crate::state::{self, Entry, FlavorHome, LoadedState, State};
 use crate::toc::{self, TocName};
@@ -103,6 +104,10 @@ pub struct Staged {
     pub source: String,
     /// The `nolib` flag to record ([`Metadata::nolib`]).
     pub nolib: Option<bool>,
+    /// The Forever signal to record ([`Entry::forever_build`], task 096): set by
+    /// [`Engine::install_from_source`] for a pick of a source whose answers are never cached
+    /// ([`recorded_forever_build`]); `None` from [`Engine::stage`].
+    pub forever_build: Option<ForeverBuild>,
     /// The warnings of the sweep before this stage (task 084): a leftover folder under `staging\` that
     /// could not be removed. The commit carries them into [`Installed::warnings`].
     pub sweep_warnings: Vec<String>,
@@ -646,6 +651,7 @@ impl Engine {
             version: String::new(),
             source: metadata.source.clone(),
             nolib: metadata.nolib,
+            forever_build: None,
             sweep_warnings,
             keep: false,
             run,
@@ -758,6 +764,7 @@ impl Engine {
             pinned: None,
             ignored: false,
             channel: Channel::Stable,
+            forever_build: staged.forever_build,
         };
         let entry = keep_marks(
             entry,
@@ -903,7 +910,8 @@ impl Engine {
             name: managed.map(|(name, _)| name).or(request.name.clone()),
             nolib: Some(pick.nolib),
         };
-        let staged = self.stage(&zip, &metadata)?;
+        let mut staged = self.stage(&zip, &metadata)?;
+        staged.forever_build = recorded_forever_build(&pick);
         let installed = self.commit(staged, &mut state)?;
         let outcome =
             PickInstalled::Installed(with_run_warnings(installed, loaded.warning, dropped));
@@ -1214,6 +1222,16 @@ impl Engine {
     }
 }
 
+/// The Forever signal the sidecar records for a pick (task 096): the pick's own for a source whose answers
+/// are never cached (CurseForge: its terms allow no cache of the API's data, so `list` has nothing else to
+/// read offline), when the pick could tell; `None` for the other sources, whose caches answer `list`
+/// ([`crate::sources::Source::cached_forever_build`]) and stay fresher than the install.
+pub fn recorded_forever_build(pick: &Pick) -> Option<ForeverBuild> {
+    let kind = SourceSpec::parse(&pick.source).ok()?.kind();
+    (kind == SourceKind::CurseForge && pick.forever_build != ForeverBuild::Unknown)
+        .then_some(pick.forever_build)
+}
+
 /// The swap itself: every new folder in, every stale folder out, journaled as `(from, to)` moves so a
 /// failure can be reverted in reverse order. The error names the folder and the I/O reason.
 fn swap_all(
@@ -1245,7 +1263,8 @@ fn swap_all(
 }
 
 /// A reinstall keeps the pin, the ignored mark and the channel of the entry it replaces (task 021): they
-/// are the user's word about the addon, not about one version. A pin at another version than the one just
+/// are the user's word about the addon, not about one version; and the recorded Forever signal of the same
+/// source when the new install records none (task 096). A pin at another version than the one just
 /// installed stays, with a warning that names it.
 fn keep_marks(
     mut entry: Entry,
@@ -1259,6 +1278,11 @@ fn keep_marks(
     entry.pinned = previous.pinned.clone();
     entry.ignored = previous.ignored;
     entry.channel = previous.channel;
+    // The recorded Forever signal (task 096) speaks of the project, not of one file: a reinstall from the
+    // same source that says nothing of it (a rollback, a zip in hand with `--as`) keeps it.
+    if entry.forever_build.is_none() && entry.source.eq_ignore_ascii_case(&previous.source) {
+        entry.forever_build = previous.forever_build;
+    }
     if let Some(pinned) = entry.pinned.as_deref()
         && pinned != entry.version
     {
@@ -1921,6 +1945,7 @@ mod tests {
             pinned: None,
             ignored: false,
             channel: Channel::Stable,
+            forever_build: None,
         }
     }
 

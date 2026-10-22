@@ -11,6 +11,10 @@
 //! ignore, the channel) keeps it, and an ignored addon's row shows the ignore instead, since the check
 //! skips it.
 //!
+//! A `curse:` entry's answer keeps no current release (task 096): the CurseForge API's terms allow no saving
+//! of its data, so the file holds the state and the reason of such an answer and never a version CurseForge
+//! named.
+//!
 //! Two writers, one rule ([`record_check`]): the window's check and update (task 078) and the command
 //! line's `mrgl update` (task 087), so what one of them found shows in the window either way.
 
@@ -21,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::flavor::FlavorId;
+use crate::sources::{SourceKind, SourceSpec};
 use crate::state::{self, FlavorHome, State};
 use crate::update::{AddonUpdate, UpdateState};
 
@@ -110,7 +115,7 @@ impl LastCheck {
                         source: addon.source.clone(),
                         version: addon.version.clone(),
                         state: addon.state,
-                        latest: addon.latest.clone(),
+                        latest: kept_latest(addon),
                         detail: addon.detail.clone(),
                         checked_at: checked_at.clone(),
                     },
@@ -167,6 +172,17 @@ pub fn record_check(
     last.write(home)
 }
 
+/// The current release a kept answer keeps: none for a `curse:` entry (task 096), whose API's terms allow no
+/// saving of its data, so the file holds no version CurseForge named; the source's own word for every other.
+/// The state and the reason stay: they are the check's own words, a status and an error line.
+fn kept_latest(addon: &AddonUpdate) -> Option<String> {
+    let curse = matches!(
+        SourceSpec::parse(&addon.source),
+        Ok(spec) if spec.kind() == SourceKind::CurseForge
+    );
+    if curse { None } else { addon.latest.clone() }
+}
+
 /// Whether a kept answer still speaks of the addon the sidecar has: the same source and version.
 fn applies(state: &State, name: &str, kept: &KeptAnswer) -> bool {
     state
@@ -208,6 +224,7 @@ mod tests {
             pinned: None,
             ignored: false,
             channel: Channel::Stable,
+            forever_build: None,
         }
     }
 
@@ -286,6 +303,28 @@ mod tests {
         std::fs::write(LastCheck::path(&home), "{ not json").unwrap();
         assert!(LastCheck::read(&home, &FlavorId::Forever).addons.is_empty());
         let _ = std::fs::remove_dir_all(&home_dir);
+    }
+
+    #[test]
+    fn a_curse_entrys_answer_keeps_no_version() {
+        // Task 096: no data of the CurseForge API is saved, so a kept `curse:` answer names no release.
+        let mut state = State::new(&FlavorId::Forever);
+        state.addons.insert("A".into(), entry("curse:42", "1.0"));
+        state.addons.insert("B".into(), entry("github:o/r", "2.0"));
+        let mut curse = checked("A", "1.0", UpdateState::Failed);
+        curse.source = "curse:42".to_string();
+        curse.latest = Some("1.1".to_string());
+        let mut github = checked("B", "2.0", UpdateState::Failed);
+        github.latest = Some("2.1".to_string());
+        let mut last = LastCheck::new(&FlavorId::Forever);
+        last.record(&state, &[curse, github]);
+        assert_eq!(last.addons["A"].latest, None);
+        assert_eq!(last.addons["A"].state, UpdateState::Failed);
+        assert_eq!(
+            last.addons["A"].detail.as_deref(),
+            Some("the repository is gone (404)")
+        );
+        assert_eq!(last.addons["B"].latest.as_deref(), Some("2.1"));
     }
 
     #[test]
