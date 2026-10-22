@@ -18,12 +18,13 @@
 //! Adopt writes the state sidecar only, never a `WTF` file, so it is not behind the running-client guard,
 //! as `mrgl adopt --apply` is not; its lines are `adopt.rs`'s, the command line's, and so is the guard of
 //! a folder the CurseForge app manages: the window's confirmation dialog stands for
-//! `--alongside-curseforge`.
+//! `--alongside-curseforge`. The summary, the marker line and the refusal name the window's Adopt button
+//! and its confirmation instead of the command line's flags (`AdoptBy::Window`, task 112).
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use mrgl_core::adopt::{self, Adoptable, Counts, Report};
+use mrgl_core::adopt::{self, AdoptBy, Adoptable, Counts, Report};
 use mrgl_core::backup;
 use mrgl_core::client;
 use mrgl_core::flavor::{self, Flavor};
@@ -809,7 +810,7 @@ fn adopt_view(report: &Report, voice: Voice) -> AdoptView {
         folder: report.flavor.folder_name(),
         curse_client: report.curse_client,
         marker: report
-            .marker_line()
+            .marker_line(AdoptBy::Window)
             .map(|line| Message::new(voice, Kind::Warning, line)),
         rows: report
             .addons
@@ -827,7 +828,7 @@ fn adopt_view(report: &Report, voice: Voice) -> AdoptView {
             .collect(),
         left_out: report.left_out.clone(),
         counts: report.counts,
-        summary: said(voice, report.summary()),
+        summary: said(voice, report.summary(AdoptBy::Window)),
     }
 }
 
@@ -932,7 +933,10 @@ pub fn adopt_apply(
         ));
     };
     if flavor.curse_client && !alongside {
-        return AdoptAnswer::refused(say(Kind::Error, adopt::marker_refusal(&flavor)));
+        return AdoptAnswer::refused(say(
+            Kind::Error,
+            adopt::marker_refusal(&flavor, AdoptBy::Window),
+        ));
     }
     let Adopting {
         scan,

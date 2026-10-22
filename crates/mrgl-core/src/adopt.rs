@@ -23,6 +23,10 @@
 //! no folder change, so the next update installs the source's build over it. A flavor folder with the
 //! CurseForge app's `.curseclient` marker is refused without `--alongside-curseforge` ([`marker_refusal`]),
 //! and every install path warns there ([`curse_client_warning`]); the marker is never touched.
+//!
+//! The summary, the marker line and the refusal name what adopts in the caller's words ([`AdoptBy`], task
+//! 112): the command line's `adopt --apply` and `--alongside-curseforge`, or the window's Adopt button and
+//! the confirmation of its dialog.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -301,6 +305,35 @@ pub struct Counts {
     pub adoptable_now: usize,
 }
 
+/// What adopts, as the summary, the marker line and the refusal name it (task 112, as
+/// `savedvars::CleanupBy` names the way to clean up): the command line's flags, or the window's button and
+/// the confirmation of its dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdoptBy {
+    /// `mrgl adopt`: `adopt --apply`, and `--alongside-curseforge` in a folder the CurseForge app manages.
+    Command,
+    /// The window's toolbox: the Adopt button, and the confirmation of its dialog in such a folder.
+    Window,
+}
+
+impl AdoptBy {
+    /// What writes the entries.
+    const fn apply(self) -> &'static str {
+        match self {
+            AdoptBy::Command => "adopt --apply",
+            AdoptBy::Window => "the Adopt button",
+        }
+    }
+
+    /// What lets it write them in a folder the CurseForge app manages.
+    const fn alongside(self) -> &'static str {
+        match self {
+            AdoptBy::Command => "--alongside-curseforge",
+            AdoptBy::Window => "the confirmation to adopt alongside the CurseForge app",
+        }
+    }
+}
+
 /// The adopt report of one flavor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Report {
@@ -321,12 +354,13 @@ impl Report {
     }
 
     /// The summary line of the report alone and its kind: [`Report::counts_line`] and how many addons
-    /// `--apply` would adopt in this run.
-    pub fn summary(&self) -> (Kind, String) {
+    /// `--apply` (or the window's Adopt button, [`AdoptBy`]) would adopt in this run.
+    pub fn summary(&self, by: AdoptBy) -> (Kind, String) {
         let (kind, mut line) = self.counts_line();
         if self.counts.adoptable_now > 0 {
             line.push_str(&format!(
-                "; adopt --apply adopts {} of them",
+                "; {} adopts {} of them",
+                by.apply(),
                 self.counts.adoptable_now
             ));
         }
@@ -375,12 +409,15 @@ impl Report {
         (Kind::Success, line)
     }
 
-    /// The warning line of a flavor the CurseForge app manages; `None` without its marker.
-    pub fn marker_line(&self) -> Option<String> {
+    /// The warning line of a flavor the CurseForge app manages, naming what adopts ([`AdoptBy`]); `None`
+    /// without its marker.
+    pub fn marker_line(&self, by: AdoptBy) -> Option<String> {
         self.curse_client.then(|| {
             format!(
-                "the CurseForge app manages {} (its .curseclient marker is there): a folder belongs to one manager, so adopt --apply writes nothing there without --alongside-curseforge",
-                self.flavor.folder_name()
+                "the CurseForge app manages {} (its .curseclient marker is there): a folder belongs to one manager, so {} writes nothing there without {}",
+                self.flavor.folder_name(),
+                by.apply(),
+                by.alongside()
             )
         })
     }
@@ -548,11 +585,13 @@ fn hash_folders(addons_dir: &Path, folders: &[String]) -> io::Result<BTreeMap<St
 }
 
 /// The refusal of `--apply` in a folder the CurseForge app manages, without `--alongside-curseforge`
-/// (task 098).
-pub fn marker_refusal(flavor: &Flavor) -> String {
+/// (task 098), naming what adopts ([`AdoptBy`]).
+pub fn marker_refusal(flavor: &Flavor, by: AdoptBy) -> String {
     format!(
-        "the CurseForge app manages {} (its .curseclient marker is there) and a folder belongs to one manager: adopt --apply wrote nothing; --alongside-curseforge adopts its addons anyway, and the CurseForge app may still update those folders",
-        flavor.folder_name()
+        "the CurseForge app manages {} (its .curseclient marker is there) and a folder belongs to one manager: {} wrote nothing; {} adopts its addons anyway, and the CurseForge app may still update those folders",
+        flavor.folder_name(),
+        by.apply(),
+        by.alongside()
     )
 }
 

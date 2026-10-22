@@ -805,7 +805,7 @@ fn adopt_command(
     let folder = flavor_folder(spec, None, &mut warnings)?;
     let scan = scan::scan(&folder).map_err(|error| error.to_string())?;
     if apply && scan.flavor.curse_client && !alongside_curseforge {
-        return Err(adopt::marker_refusal(&scan.flavor));
+        return Err(adopt::marker_refusal(&scan.flavor, adopt::AdoptBy::Command));
     }
     warnings.extend(scan.flavor.warnings.iter().cloned());
     warnings.extend(scan.warnings.iter().cloned());
@@ -835,7 +835,7 @@ fn adopt_command(
     let marker = if apply && report.curse_client {
         Some(adopt::alongside_warning(&report.flavor))
     } else {
-        report.marker_line()
+        report.marker_line(adopt::AdoptBy::Command)
     };
     if reporter.json {
         let applied = applied.clone().unwrap_or_default();
@@ -878,7 +878,7 @@ fn adopt_command(
             }
             report.applied_summary(applied)
         }
-        None => report.summary(),
+        None => report.summary(adopt::AdoptBy::Command),
     };
     reporter.say(kind, summary);
     Ok(())

@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mrgl_core::adopt::{self, Adoptable, Class, Hint, Report};
+use mrgl_core::adopt::{self, AdoptBy, Adoptable, Class, Hint, Report};
 use mrgl_core::install;
 use mrgl_core::scan;
 use mrgl_core::sources::github::GitHub;
@@ -144,10 +144,15 @@ fn every_header_shape_reports_its_sources_without_a_key() {
         (10, 6, 1, 2, 1, 5)
     );
     assert_eq!(
-        report.summary().1,
+        report.summary(AdoptBy::Command).1,
         "10 unmanaged addons in _forever_: 6 can be adopted without CurseForge, 1 only with CurseForge, 2 with no known source, 1 with no forever build at their sources; adopt --apply adopts 5 of them"
     );
-    assert!(!report.curse_client && report.marker_line().is_none());
+    // The window's words (task 112): its Adopt button, no flag.
+    assert_eq!(
+        report.summary(AdoptBy::Window).1,
+        "10 unmanaged addons in _forever_: 6 can be adopted without CurseForge, 1 only with CurseForge, 2 with no known source, 1 with no forever build at their sources; the Adopt button adopts 5 of them"
+    );
+    assert!(!report.curse_client && report.marker_line(AdoptBy::Command).is_none());
 
     // The typed answers behind the lines.
     let curse_only = row(&report, "MrglCurseOnly");
@@ -199,9 +204,15 @@ fn a_folder_the_curseforge_app_manages_is_reported() {
     let report = report("_retail_", &stub.sources(None), false);
     assert!(report.curse_client);
     assert_eq!(
-        report.marker_line().as_deref(),
+        report.marker_line(AdoptBy::Command).as_deref(),
         Some(
             "the CurseForge app manages _retail_ (its .curseclient marker is there): a folder belongs to one manager, so adopt --apply writes nothing there without --alongside-curseforge"
+        )
+    );
+    assert_eq!(
+        report.marker_line(AdoptBy::Window).as_deref(),
+        Some(
+            "the CurseForge app manages _retail_ (its .curseclient marker is there): a folder belongs to one manager, so the Adopt button writes nothing there without the confirmation to adopt alongside the CurseForge app"
         )
     );
     assert_eq!(
@@ -357,8 +368,12 @@ fn apply_without_the_wago_key_skips_the_wago_addon_with_the_key_it_needs() {
 fn the_curseforge_marker_has_its_refusal_and_its_warnings() {
     let scan = scan::scan(&fixtures().join("adopt/_retail_")).expect("the fixture scans");
     assert_eq!(
-        adopt::marker_refusal(&scan.flavor),
+        adopt::marker_refusal(&scan.flavor, AdoptBy::Command),
         "the CurseForge app manages _retail_ (its .curseclient marker is there) and a folder belongs to one manager: adopt --apply wrote nothing; --alongside-curseforge adopts its addons anyway, and the CurseForge app may still update those folders"
+    );
+    assert_eq!(
+        adopt::marker_refusal(&scan.flavor, AdoptBy::Window),
+        "the CurseForge app manages _retail_ (its .curseclient marker is there) and a folder belongs to one manager: the Adopt button wrote nothing; the confirmation to adopt alongside the CurseForge app adopts its addons anyway, and the CurseForge app may still update those folders"
     );
     assert_eq!(
         adopt::alongside_warning(&scan.flavor),
