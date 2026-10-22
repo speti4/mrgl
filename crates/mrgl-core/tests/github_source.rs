@@ -133,7 +133,7 @@ fn a_release_json_without_metadata_leaves_the_names() {
         .to_string();
     assert_eq!(
         forever,
-        "no asset for flavor forever in github:Example/NoMetadata v2.0.0 (release.json names no flavor; assets: NoMetadata-2.0.0.zip, NoMetadata-2.0.0-classic.zip, release.json)"
+        "no asset for flavor forever in github:Example/NoMetadata v2.0.0 (release.json names no flavor; assets: NoMetadata-2.0.0.zip, NoMetadata-2.0.0-classic.zip, release.json; looked at 1 release)"
     );
 }
 
@@ -163,7 +163,7 @@ fn no_release_json_at_all_is_a_pick_by_name() {
         .to_string();
     assert_eq!(
         mists,
-        "no asset for flavor classic in github:Example/NoReleaseJson 3.0.0 (no release.json; assets: Thing-3.0.0.zip, Thing-3.0.0-forever.zip, Thing-3.0.0-cata.zip)"
+        "no asset for flavor classic in github:Example/NoReleaseJson 3.0.0 (no release.json; assets: Thing-3.0.0.zip, Thing-3.0.0-forever.zip, Thing-3.0.0-cata.zip; looked at 1 release)"
     );
 }
 
@@ -256,7 +256,7 @@ fn a_release_for_other_flavors_only_names_them() {
         .to_string();
     assert_eq!(
         error,
-        "no asset for flavor forever in github:Example/MainlineOnly v4.0.0 (release.json names mainline, standard; assets: Only-v4.0.0.zip, release.json)"
+        "no asset for flavor forever in github:Example/MainlineOnly v4.0.0 (release.json names mainline, standard; assets: Only-v4.0.0.zip, release.json; looked at 1 release)"
     );
     let retail = github
         .resolve(&spec, &target(FlavorId::Retail, None))
@@ -1009,4 +1009,225 @@ fn a_conditional_answer_refreshes_the_cache_date() {
     );
     assert!(cached["etag"].is_string(), "{cached}");
     let _ = std::fs::remove_dir_all(&cache);
+}
+
+// --- task 066: the newest release with an asset for the flavor, and a named version past the first page ---
+
+/// A release of the stub lists: its tag, whether it is a prerelease or a draft, and its asset names, each
+/// downloadable from `https://github.test/<tag>/<name>`.
+fn release_entry(tag: &str, prerelease: bool, draft: bool, assets: &[&str]) -> serde_json::Value {
+    let assets: Vec<serde_json::Value> = assets
+        .iter()
+        .map(|name| {
+            serde_json::json!({
+                "name": name,
+                "browser_download_url": format!("https://github.test/{tag}/{name}"),
+            })
+        })
+        .collect();
+    serde_json::json!({ "tag_name": tag, "prerelease": prerelease, "draft": draft, "assets": assets })
+}
+
+/// A repository whose newest stable release is built for classic only: above it a draft and a beta with
+/// Forever zips, below it the Forever release the stable channel takes, and an older one by name.
+fn stub_with_a_classic_only_release(name: &str) -> PathBuf {
+    let list = serde_json::json!([
+        release_entry("v4.0.0", false, true, &["A-v4.0.0-forever.zip"]),
+        release_entry("v3.0.0-beta", true, false, &["A-v3.0.0-beta-forever.zip"]),
+        release_entry(
+            "v2.0.0",
+            false,
+            false,
+            &["A-v2.0.0-classic.zip", "release.json"]
+        ),
+        release_entry(
+            "v1.9.0",
+            false,
+            false,
+            &["A-v1.9.0-forever.zip", "release.json"]
+        ),
+        release_entry("v1.8.0", false, false, &["A-v1.8.0-forever.zip"]),
+    ])
+    .to_string();
+    stub_with(
+        name,
+        &[
+            ("api.github.com/repos/o/r/releases.json", &list),
+            (
+                "github.test/v2.0.0/release.json",
+                r#"{"releases":[{"filename":"A-v2.0.0-classic.zip","metadata":[{"flavor":"classic","interface":11507}]}]}"#,
+            ),
+            (
+                "github.test/v1.9.0/release.json",
+                r#"{"releases":[{"filename":"A-v1.9.0-forever.zip","metadata":[{"flavor":"forever","interface":16001}]}]}"#,
+            ),
+        ],
+    )
+}
+
+#[test]
+fn a_newest_release_without_a_forever_asset_is_passed_for_the_one_before() {
+    let stub = stub_with_a_classic_only_release("behind");
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    let spec = spec("github:o/r");
+    let pick = github
+        .resolve(&spec, &target(FlavorId::Forever, None))
+        .expect("the release before");
+    assert_eq!(pick.release, "v1.9.0", "not the draft, not the beta");
+    assert_eq!(pick.asset, "A-v1.9.0-forever.zip");
+    assert_eq!(pick.interface, Some(16001));
+    assert!(!pick.guess && !pick.prerelease);
+    assert_eq!(
+        pick.forever_build,
+        ForeverBuild::Yes,
+        "the picked release's"
+    );
+    assert_eq!(
+        pick.reason,
+        "release.json names forever (interface 16001); the newest release with a forever asset, 1 newer release without one"
+    );
+    assert_eq!(
+        asked(&github),
+        [
+            "https://api.github.com/repos/o/r/releases?per_page=30",
+            "https://github.test/v2.0.0/release.json",
+            "https://github.test/v1.9.0/release.json",
+        ],
+        "down to the first release with a pick, and no further"
+    );
+
+    // The newest release has the classic zip: no walk, no note.
+    let era = github
+        .resolve(&spec, &target(FlavorId::ClassicEra, None))
+        .expect("classic");
+    assert_eq!(era.release, "v2.0.0");
+    assert_eq!(era.reason, "release.json names classic (interface 11507)");
+
+    // The prerelease channel's newest release has a Forever zip already.
+    let beta = github
+        .resolve(
+            &spec,
+            &target(FlavorId::Forever, None).with_channel(Channel::Prerelease),
+        )
+        .expect("the beta");
+    assert_eq!(beta.release, "v3.0.0-beta");
+
+    // No release has an asset for the flavor: the newest one's detail, with the count.
+    let error = github
+        .resolve(&spec, &target(FlavorId::Classic, Some("4.4.2.1")))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with("no asset for flavor ") && error.contains("v2.0.0 (release.json names classic; assets: A-v2.0.0-classic.zip, release.json; looked at 3 releases, none has one)"),
+        "{error}"
+    );
+    let _ = std::fs::remove_dir_all(&stub);
+}
+
+/// A page of 30 stable releases with Forever zips, `v<major>.0.<n>` from 29 down to 0.
+fn full_page(major: u32) -> String {
+    let releases: Vec<serde_json::Value> = (0..30)
+        .rev()
+        .map(|n| {
+            let tag = format!("v{major}.0.{n}");
+            release_entry(&tag, false, false, &[&format!("A-{tag}-forever.zip")])
+        })
+        .collect();
+    serde_json::Value::Array(releases).to_string()
+}
+
+#[test]
+fn a_named_version_past_the_first_page_is_looked_for_on_the_next() {
+    let older = serde_json::json!([release_entry(
+        "v1.0.0",
+        false,
+        false,
+        &["A-v1.0.0-forever.zip"]
+    )])
+    .to_string();
+    let first = full_page(2);
+    let stub = stub_with(
+        "named-version",
+        &[
+            ("api.github.com/repos/o/r/releases.json", &first),
+            ("api.github.com/repos/o/r/releases.page-2.json", &older),
+        ],
+    );
+    let list_url = "https://api.github.com/repos/o/r/releases?per_page=30";
+    let forever = target(FlavorId::Forever, None);
+    let spec = spec("github:o/r");
+
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    let pick = github
+        .resolve_version(&spec, &forever, "1.0.0")
+        .expect("the release on page two");
+    assert_eq!(pick.release, "v1.0.0");
+    assert_eq!(pick.asset, "A-v1.0.0-forever.zip");
+    assert_eq!(
+        asked(&github),
+        [list_url.to_string(), format!("{list_url}&page=2")]
+    );
+
+    // On the first page: no further page.
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    let pick = github
+        .resolve_version(&spec, &forever, "v2.0.3")
+        .expect("on page one");
+    assert_eq!(pick.release, "v2.0.3");
+    assert_eq!(asked(&github), [list_url.to_string()]);
+
+    // Nowhere: the short page two is the last one, then not offered.
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    let error = github
+        .resolve_version(&spec, &forever, "0.1.0")
+        .unwrap_err();
+    assert_eq!(error.to_string(), "no release 0.1.0 in github:o/r");
+    assert_eq!(asked(&github).len(), 2);
+
+    // The current release is still the newest of page one, and asks for no further page.
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    let current = github.resolve(&spec, &forever).expect("current");
+    assert_eq!(current.release, "v2.0.29");
+    assert_eq!(asked(&github), [list_url.to_string()]);
+    let _ = std::fs::remove_dir_all(&stub);
+}
+
+#[test]
+fn the_walk_for_a_named_version_stops_at_the_page_bound() {
+    let pages: Vec<(String, String)> = (1..=MAX_PAGES + 1)
+        .map(|n| {
+            let path = if n == 1 {
+                "api.github.com/repos/o/r/releases.json".to_string()
+            } else {
+                format!("api.github.com/repos/o/r/releases.page-{n}.json")
+            };
+            // Page n holds the versions of major 10 - n: page 6 has 4.0.x, past the bound.
+            (path, full_page(10 - n as u32))
+        })
+        .collect();
+    let borrowed: Vec<(&str, &str)> = pages
+        .iter()
+        .map(|(path, content)| (path.as_str(), content.as_str()))
+        .collect();
+    let stub = stub_with("named-version-bound", &borrowed);
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    let spec = spec("github:o/r");
+    let forever = target(FlavorId::Forever, None);
+    let pick = github
+        .resolve_version(&spec, &forever, "5.0.7")
+        .expect("on the last page of the bound");
+    assert_eq!(pick.release, "v5.0.7");
+    assert_eq!(asked(&github).len(), MAX_PAGES);
+
+    let github = GitHub::new(FolderHttp::new(&stub), None, None);
+    let error = github
+        .resolve_version(&spec, &forever, "4.0.7")
+        .unwrap_err();
+    assert_eq!(error.to_string(), "no release 4.0.7 in github:o/r");
+    assert_eq!(
+        asked(&github).len(),
+        MAX_PAGES,
+        "the page past the bound is never asked"
+    );
+    let _ = std::fs::remove_dir_all(&stub);
 }

@@ -1996,7 +1996,7 @@ fn add_failures_are_plain_lines_with_exit_code_one() {
                 "forever",
                 "--dry-run",
             ],
-            "no asset for flavor forever in github:Example/MainlineOnly v4.0.0 (release.json names mainline, standard; assets: Only-v4.0.0.zip, release.json)",
+            "no asset for flavor forever in github:Example/MainlineOnly v4.0.0 (release.json names mainline, standard; assets: Only-v4.0.0.zip, release.json; looked at 1 release)",
         ),
     ];
     for (args, plain) in cases {
@@ -5387,6 +5387,133 @@ fn import_without_exact_still_takes_the_current_release() {
         stdout(&output)
     );
     assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.2.3");
+}
+
+// --- task 066: the newest release with a Forever asset, and a listed version on page two ---
+
+/// A copy of the fixture answers with two more repositories, each with the fixture `Questie` zip behind
+/// its Forever asset: `Example/Behind`, whose newest release has a classic zip only, and `Example/Paged`,
+/// whose first page holds 30 releases of 2.0.x and whose second page holds v1.0.0.
+fn stub_with_older_forever_releases(base: &Path) -> PathBuf {
+    let stub = base.join("stub-066");
+    let _ = std::fs::remove_dir_all(&stub);
+    copy_tree(&releases(), &stub);
+    let questie = releases()
+        .join("github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-forever.zip");
+    let release = |repo: &str, tag: &str, assets: &[&str]| {
+        let assets: Vec<serde_json::Value> = assets
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name,
+                    "browser_download_url":
+                        format!("https://github.com/Example/{repo}/releases/download/{tag}/{name}"),
+                })
+            })
+            .collect();
+        serde_json::json!({ "tag_name": tag, "draft": false, "prerelease": false, "assets": assets })
+    };
+    let write = |path: &str, text: String| {
+        let path = stub.join(path);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("the folder");
+        std::fs::write(path, text).expect("the answer");
+    };
+    let serve = |repo: &str, tag: &str, asset: &str| {
+        let folder = stub.join(format!("github.com/Example/{repo}/releases/download/{tag}"));
+        std::fs::create_dir_all(&folder).expect("the release folder");
+        std::fs::copy(&questie, folder.join(asset)).expect("the asset");
+    };
+
+    write(
+        "api.github.com/repos/Example/Behind/releases.json",
+        serde_json::json!([
+            release("Behind", "v2.0.0", &["Behind-v2.0.0-classic.zip"]),
+            release("Behind", "v1.9.0", &["Behind-v1.9.0-forever.zip"]),
+        ])
+        .to_string(),
+    );
+    serve("Behind", "v1.9.0", "Behind-v1.9.0-forever.zip");
+
+    let first: Vec<serde_json::Value> = (0..30)
+        .rev()
+        .map(|n| {
+            let tag = format!("v2.0.{n}");
+            release("Paged", &tag, &[&format!("Paged-{tag}-forever.zip")])
+        })
+        .collect();
+    write(
+        "api.github.com/repos/Example/Paged/releases.json",
+        serde_json::Value::Array(first).to_string(),
+    );
+    write(
+        "api.github.com/repos/Example/Paged/releases.page-2.json",
+        serde_json::json!([release("Paged", "v1.0.0", &["Paged-v1.0.0-forever.zip"])]).to_string(),
+    );
+    serve("Paged", "v1.0.0", "Paged-v1.0.0-forever.zip");
+    stub
+}
+
+#[test]
+fn add_takes_the_newest_release_with_a_forever_asset() {
+    let game = Game::new("add-behind");
+    let stub = stub_with_older_forever_releases(game.root.parent().expect("the base"));
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args([
+            "--serious",
+            "add",
+            "github:Example/Behind",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.contains("github:Example/Behind v1.9.0 (Behind-v1.9.0-forever.zip")
+            && text
+                .contains("the newest release with a forever asset, 1 newer release without one"),
+        "{text}"
+    );
+    assert_eq!(
+        sidecar(&game)["addons"]["Questie"]["source"],
+        "github:Example/Behind"
+    );
+    assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.9.0");
+}
+
+#[test]
+fn import_exact_installs_a_listed_version_from_page_two() {
+    let game = Game::new("import-exact-paged");
+    let stub = stub_with_older_forever_releases(game.root.parent().expect("the base"));
+    let list = write_list(
+        &game,
+        "paged.json",
+        &[("Questie", "github:Example/Paged", "1.0.0")],
+    );
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever", "--exact"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line == "Questie  installed 1.0.0 from github:Example/Paged"),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "imported 1 addon of paged.json into _forever_: 1 installed"
+    );
+    assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.0.0");
+    assert!(game.addon("Questie").join("Questie.toc").is_file());
 }
 
 // --- tasks 006 and 057 over task 041: a pick from the cached release list is a warning on update and import ---

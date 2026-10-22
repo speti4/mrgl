@@ -17,6 +17,10 @@
 //! first page of 30 releases without a stable one (a repository that publishes nightly prereleases) is
 //! followed by the next pages the `Link` header names, up to [`MAX_PAGES`] (task 042).
 //!
+//! When the current release has no asset for the flavor (a release built for classic only), the resolve
+//! walks the channel's releases ([`releases_on`]) down to the newest one that has (task 066); a version
+//! asked for by name that the list lacks is looked for on the pages after it, within the same bound.
+//!
 //! The same release says whether the addon publishes a Forever build at all ([`forever_build`], task 011):
 //! the pick carries it, and every release's `release.json` is cached per tag next to the list (task 042), so
 //! a repeated resolve of the same release downloads it once and `list` can answer from the cache alone
@@ -150,13 +154,25 @@ pub fn current_release(releases: &[Release]) -> Option<&Release> {
 /// draft nor a prerelease, a prerelease only when there is nothing else; on the prerelease one the newest
 /// release that is not a draft, prerelease or not. The API lists the newest first.
 pub fn current_release_on(releases: &[Release], channel: Channel) -> Option<&Release> {
-    let mut published = releases.iter().filter(|release| !release.draft);
+    releases_on(releases, channel).into_iter().next()
+}
+
+/// Every release a channel may take, newest first, the current one ([`current_release_on`]) first: on the
+/// stable channel the releases that are neither a draft nor a prerelease, every release that is not a draft
+/// when there is none of them; on the prerelease channel every release that is not a draft. The resolve
+/// walks them down to the first one with an asset for the flavor (task 066).
+pub fn releases_on(releases: &[Release], channel: Channel) -> Vec<&Release> {
+    let published: Vec<&Release> = releases.iter().filter(|release| !release.draft).collect();
     match channel {
-        Channel::Prerelease => published.next(),
-        Channel::Stable => published
-            .clone()
-            .find(|release| !release.prerelease)
-            .or_else(|| published.next()),
+        Channel::Prerelease => published,
+        Channel::Stable => {
+            let stable: Vec<&Release> = published
+                .iter()
+                .copied()
+                .filter(|release| !release.prerelease)
+                .collect();
+            if stable.is_empty() { published } else { stable }
+        }
     }
 }
 
@@ -761,6 +777,48 @@ fn rate_limit_reset(response: &Response) -> Option<i64> {
 }
 
 impl<H: Http> GitHub<H> {
+    /// Reads the pages of the release list after the ones `releases` holds, `page=<n>` of the API, until
+    /// `found` answers for a page, a page is short (the last one), or [`MAX_PAGES`] are held (task 066).
+    /// A list that is not a whole number of pages is complete already, and nothing is asked. The pages are
+    /// not cached: only a version asked for by name reads them.
+    fn further_pages(
+        &self,
+        owner: &str,
+        repo: &str,
+        releases: &mut Vec<Release>,
+        found: impl Fn(&[Release]) -> bool,
+    ) -> Result<()> {
+        let per_page = PER_PAGE as usize;
+        if !releases.len().is_multiple_of(per_page) {
+            return Ok(());
+        }
+        let mut pages = releases.len() / per_page;
+        while pages < MAX_PAGES {
+            let url = format!(
+                "{API_URL}/repos/{owner}/{repo}/releases?per_page={PER_PAGE}&page={}",
+                pages + 1
+            );
+            let response = self.http.get(&self.api_request(url.clone()))?;
+            if response.status != 200 {
+                return Err(status_error(response.status, &url, &response));
+            }
+            let page: Vec<Release> =
+                serde_json::from_slice(&response.body).map_err(|reason| Error::SourceDocument {
+                    what: "release list",
+                    spec: format!("github:{owner}/{repo}"),
+                    reason: reason.to_string(),
+                })?;
+            let last = page.len() < per_page;
+            let hit = found(&page);
+            releases.extend(page);
+            pages += 1;
+            if hit || last {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     /// The pick of one release for a target: the asset its `release.json` names, else one by its name
     /// (a guess), or why there is none. The resolve of the current release and the one of a version
     /// (task 057) share it; `stale` says the release list came from the cache, offline (task 041).
@@ -838,21 +896,75 @@ impl<H: Http> GitHub<H> {
 }
 
 impl<H: Http> Source for GitHub<H> {
+    /// The newest release of the target's channel that has an asset for the flavor (task 066): the
+    /// releases of [`releases_on`] in the list's order, down to the first with a pick; a release without
+    /// an asset for the flavor is passed, any other error stands. When none has one, the newest release's
+    /// error says how many releases were looked at.
     fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
         let SourceSpec::GitHub { owner, repo } = spec;
         let (releases, stale) = self.release_list(owner, repo)?;
-        let release =
-            current_release_on(&releases, target.channel).ok_or_else(|| Error::NoRelease {
+        let candidates = releases_on(&releases, target.channel);
+        if candidates.is_empty() {
+            return Err(Error::NoRelease {
                 spec: spec.to_string(),
-            })?;
-        self.pick_of(spec, release, target, stale)
+            });
+        }
+        let mut newest_error = None;
+        for (newer, release) in candidates.iter().enumerate() {
+            match self.pick_of(spec, release, target, stale.clone()) {
+                Ok(mut pick) => {
+                    if newer > 0 {
+                        let releases = if newer == 1 { "release" } else { "releases" };
+                        pick.reason = format!(
+                            "{}; the newest release with a {} asset, {newer} newer {releases} without one",
+                            pick.reason,
+                            target.flavor_name()
+                        );
+                    }
+                    return Ok(pick);
+                }
+                Err(error @ Error::NoAssetForFlavor { .. }) => {
+                    newest_error.get_or_insert(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(match newest_error {
+            Some(Error::NoAssetForFlavor {
+                spec,
+                release,
+                flavor,
+                detail,
+            }) => {
+                let looked_at = match candidates.len() {
+                    1 => "looked at 1 release".to_string(),
+                    count => format!("looked at {count} releases, none has one"),
+                };
+                Error::NoAssetForFlavor {
+                    spec,
+                    release,
+                    flavor,
+                    detail: format!("{detail}; {looked_at}"),
+                }
+            }
+            Some(error) => error,
+            None => Error::NoRelease {
+                spec: spec.to_string(),
+            },
+        })
     }
 
-    /// The release tagged with the version, from the same release list with every page it walks
-    /// ([`release_of_version`]); from the cache when offline, like the current one (task 041).
+    /// The release tagged with the version, from the same release list ([`release_of_version`]); from the
+    /// cache when offline, like the current one (task 041). A version the list lacks is looked for on the
+    /// pages after it, up to [`MAX_PAGES`] in all, before it reads as not offered (task 066).
     fn resolve_version(&self, spec: &SourceSpec, target: &Target, version: &str) -> Result<Pick> {
         let SourceSpec::GitHub { owner, repo } = spec;
-        let (releases, stale) = self.release_list(owner, repo)?;
+        let (mut releases, stale) = self.release_list(owner, repo)?;
+        if release_of_version(&releases, version).is_none() && stale.is_none() {
+            self.further_pages(owner, repo, &mut releases, |page| {
+                release_of_version(page, version).is_some()
+            })?;
+        }
         let release =
             release_of_version(&releases, version).ok_or_else(|| Error::VersionNotOffered {
                 spec: spec.to_string(),
@@ -1348,7 +1460,10 @@ mod tests {
             ),
             "{error}"
         );
-        assert!(error.ends_with("; assets: release.json, A.zip)"), "{error}");
+        assert!(
+            error.ends_with("; assets: release.json, A.zip; looked at 1 release)"),
+            "{error}"
+        );
     }
 
     #[test]

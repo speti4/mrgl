@@ -13,7 +13,10 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   Markdown markers are stripped, cut at `NOTES_MAX_CHARS` (120) with an ellipsis by `sources::notes_line`,
   and `page`, the release's page, both left out when absent, task 030; the `Target` carries the addon's
   channel, and on `prerelease` the newest release that is not a draft is current, a prerelease or not,
-  task 021; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
+  task 021; the resolve walks the channel's releases from the current one down to the first with an asset
+  for the flavor, the newest release that has one, and says so in the pick's reason when it passed newer
+  ones, and the no-asset error names the newest release and how many releases were looked at, task 066;
+  later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
@@ -138,10 +141,12 @@ the GitHub source takes the release of the same list whose tag is the version, w
 `v`, never a draft, on any channel (`sources::github::release_of_version`), and picks its asset for the
 flavor as for the current one. An entry whose version the source no longer offers is reported (`<name>
 skipped, version <v> not offered: no release <v> in <source>`, outcome `version-not-offered` in the JSON,
-`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup sees the
-releases the release list holds: the first page, and the pages after it only while none holds a stable
-release (task 042), so a version older than the first page reads as not offered. The JSON document carries
-`exact`.
+`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup reads the
+releases the release list holds (the first page, and the pages after it while none holds a stable release,
+task 042) and, when the version is not among them, the pages after those, `page=<n>` of the API, until the
+version turns up, a page is short (the last one) or five pages are held in all (`MAX_PAGES`, task 066);
+only then does it read as not offered. These further pages are not cached, and offline the cached list is
+all there is. The JSON document carries `exact`.
 
 The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:`, `import`
 and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
@@ -647,7 +652,10 @@ The release list walks its pages (task 042): when the first page of 30 holds no 
 that publishes a nightly prerelease every day), the source follows the `Link` header's `rel="next"` page,
 on `api.github.com` only, with the token, until a page holds a stable release or five pages are read
 (`sources::github::MAX_PAGES`); past the bound the newest prerelease is current, as for a repository without
-a stable release. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
+a stable release. The resolve then walks the releases its channel may take, newest first, down to the first
+with an asset for the flavor (task 066): a repository whose newest release is built for other flavors only
+resolves to the release before it, never a draft and never a prerelease on the stable channel while a
+stable release exists. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
 conditional request. A release's `release.json` is read from `release-json/tag-<tag>.json` when the file
 names the same tag and the same asset URL and size, so a repeated resolve of an unchanged release costs that
 one request and no download. A 429, or a 403 with `x-ratelimit-remaining: 0`, is the rate limit: its line
