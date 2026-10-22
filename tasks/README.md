@@ -44,8 +44,8 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 075 | [The CLI's output survives a closed pipe](backlog/075-cli-output-survives-a-closed-pipe.md) | S | 2026-10-22 |
-| 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](backlog/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | S | 2026-10-22 |
+| 076 | [The dependency and interface checks say what the client says: an embedded-only …](backlog/076-the-checks-say-what-the-client-says.md) | S | 2026-10-22 |
+| 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](backlog/080-housekeeping-after-wave-5.md) | S | 2026-10-22 |
 
 #### M2 Window MVP
 
@@ -87,8 +87,8 @@ _none_
 
 | # | Task | Started | Plan |
 |---|---|---|---|
-| 076 | [The dependency and interface checks say what the client says: an embedded-only …](wip/076-the-checks-say-what-the-client-says.md) | 2026-10-22 | `none` |
-| 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](wip/080-housekeeping-after-wave-5.md) | 2026-10-22 | `none` |
+| 075 | [The CLI's output survives a closed pipe](wip/075-cli-output-survives-a-closed-pipe.md) | 2026-10-22 | `none` |
+| 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](wip/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
