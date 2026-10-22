@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 15 backlog (1 ready · 0 blocked · 2 waiting · 12 ideas) · 0 in progress · 39 done · 3 dropped · 5 decisions
+**State:** 13 backlog (1 ready · 0 blocked · 2 waiting · 10 ideas) · 0 in progress · 41 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -58,8 +58,6 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 014 | [Addon sets with enable and disable](backlog/014-addon-sets-with-enable-and-disable.md) | M | 2026-10-21 |
-| 027 | [Per-character addon sets](backlog/027-per-character-addon-sets.md) | S | 2026-10-21 |
 | 062 | [link takes a single addon folder as well as a development folder](backlog/062-link-takes-a-single-addon-folder.md) | S | 2026-10-21 |
 
 #### M4 Sources
@@ -108,7 +106,7 @@ _none_
 | 041 | [Offline resolve from the cached release list, with a warning](done/041-offline-resolve-from-the-cached-release-list.md) | 2026-10-22 |
 | 039 | [A bound on the unpacked size of a zip](done/039-bound-on-the-unpacked-size-of-a-zip.md) | 2026-10-22 |
 
-_29 more in `done/`._
+_31 more in `done/`._
 
 ### Decisions
 
