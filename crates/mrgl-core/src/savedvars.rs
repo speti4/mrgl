@@ -318,8 +318,8 @@ fn collect(
         }
         Ok(metadata) if metadata.is_dir() => {}
         Ok(_) => return Ok(()),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()), // coverage: os
-        Err(source) => return Err(io_error("reading WTF", dir, source)),          // coverage: os
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(io_error("reading WTF", dir, source)), // coverage: os
     }
     let entries = fs::read_dir(dir).map_err(|source| io_error("reading WTF", dir, source))?;
     let mut pairs: BTreeMap<String, Pair> = BTreeMap::new();
@@ -852,6 +852,24 @@ mod tests {
         let character = wtf.join("Account").join("ACC").join("Realm").join("Char");
         fs::create_dir_all(&character).expect("the character");
         fs::write(character.join(SAVED_VARIABLES_DIR), b"a file, not a folder").expect("a file");
+        let listing = list_at(&wtf, None, Vec::new()).expect("a listing");
+        let names: Vec<&str> = listing
+            .files
+            .iter()
+            .map(|file| file.addon.as_str())
+            .collect();
+        assert_eq!(names, ["Real"]);
+        assert!(listing.warnings.is_empty(), "{:?}", listing.warnings);
+    }
+
+    #[test]
+    fn a_character_without_a_saved_variables_folder_is_passed_over_without_a_warning() {
+        let temp = Temp::new("no-folder");
+        let wtf = temp.path().join("WTF");
+        let account = saved_variables(&wtf, "ACC", None);
+        fs::write(account.join("Real.lua"), b"x").expect("a file");
+        let character = wtf.join("Account").join("ACC").join("Realm").join("Char");
+        fs::create_dir_all(&character).expect("the character, with no SavedVariables folder");
         let listing = list_at(&wtf, None, Vec::new()).expect("a listing");
         let names: Vec<&str> = listing
             .files

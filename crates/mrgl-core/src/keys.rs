@@ -34,7 +34,7 @@ pub const CURSEFORGE_KEY: &str = "MRGL_CURSEFORGE_KEY";
 /// The sources that take a key, in the order every listing names them; WoWInterface needs none.
 pub const KEYED: [SourceKind; 3] = [SourceKind::GitHub, SourceKind::Wago, SourceKind::CurseForge];
 /// The variable that turns the key store off for a run when it says `off`, and replaces it with a
-/// [`FolderStore`] when it names a folder.
+/// [`FolderStore`] when it says `folder:<path>`.
 pub const STORE_ENV: &str = "MRGL_KEY_STORE";
 /// The prefix of a key's entry in the store, before the source's prefix: `mrgl:wago`.
 pub const TARGET_PREFIX: &str = "mrgl:";
@@ -205,19 +205,27 @@ pub fn store_of_process() -> Box<dyn KeyStore> {
     store_from_env(std::env::var_os(STORE_ENV).as_deref())
 }
 
-/// The key store `MRGL_KEY_STORE` names: unset or empty is the Windows Credential Manager, `off` is no
-/// store, and anything else is the folder of a [`FolderStore`].
+/// The key store `MRGL_KEY_STORE` names: `off` is no store, `folder:<path>` is a [`FolderStore`] under that
+/// folder (the tests' store, the mirror of `MRGL_HTTP_STUB`), and anything else, unset and empty included, is
+/// the Windows Credential Manager, so a value meant as "on" changes nothing.
 pub fn store_from_env(value: Option<&OsStr>) -> Box<dyn KeyStore> {
     match value.filter(|value| !value.is_empty()) {
-        None => Box::new(CredentialStore),
         Some(value) if value.eq_ignore_ascii_case("off") => Box::new(NoStore {
             reason: "MRGL_KEY_STORE=off",
         }),
-        Some(folder) => Box::new(FolderStore {
-            folder: PathBuf::from(folder),
-        }),
+        Some(value) if value.to_string_lossy().starts_with(FOLDER_STORE_PREFIX) => {
+            Box::new(FolderStore {
+                folder: PathBuf::from(
+                    value.to_string_lossy()[FOLDER_STORE_PREFIX.len()..].to_string(),
+                ),
+            })
+        }
+        _ => Box::new(CredentialStore),
     }
 }
+
+/// The prefix of a `MRGL_KEY_STORE` value that names a folder store.
+pub const FOLDER_STORE_PREFIX: &str = "folder:";
 
 /// A source's key: its environment variable when set and not empty, else the store's entry; `None` for
 /// a source without a key, or when neither has one. A store that cannot be read reads as no key there.
@@ -976,7 +984,7 @@ mod tests {
             CREDENTIAL_MANAGER
         );
         let folder = TempFolder::new("named");
-        let store = store_from_env(Some(folder.0.as_os_str()));
+        let store = store_from_env(Some(OsStr::new(&format!("folder:{}", folder.0.display()))));
         assert_eq!(store.name(), FOLDER_STORE);
         assert!(store.available().is_ok());
         assert_eq!(store.read(SourceKind::Wago).unwrap(), None, "no folder yet");

@@ -129,14 +129,20 @@ pub fn parse_addon(
     raw: &serde_json::Value,
     game_version: &str,
 ) -> std::result::Result<WagoAddon, String> {
-    let addon = match raw.get("data") {
-        Some(data) if data.is_object() => data,
-        _ => raw,
-    };
+    let addon = object_of(raw);
     if !addon.is_object() {
         return Err("expected an object".to_string());
     }
     Ok(read_addon(addon, game_version))
+}
+
+/// The object an answer describes: the one under `data` when there is one, else the answer itself; the
+/// single-addon answer nests it, the bulk answer's entries may.
+fn object_of(raw: &serde_json::Value) -> &serde_json::Value {
+    match raw.get("data") {
+        Some(data) if data.is_object() => data,
+        _ => raw,
+    }
 }
 
 /// The addon an object of the external API describes ([`parse_addon`] once it has the object; the bulk
@@ -553,7 +559,7 @@ impl<H: Http> Wago<H> {
         let mut answered = Vec::new();
         for (id, raw) in parse_recents(&raw, ids) {
             // Every entry of the bulk answer is an object: it reads as an addon's answer does.
-            let addon = read_addon(&raw, game_version);
+            let addon = read_addon(object_of(&raw), game_version);
             self.store(&id, game_version, raw);
             self.held
                 .lock()
