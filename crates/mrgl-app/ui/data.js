@@ -8,8 +8,16 @@
 //   Data.chooseRoot()                -> Promise<{ flavors, message }>  `choose_root`: the folder dialog;
 //                                       both null when it was cancelled
 //   Data.diagnostics()               -> Promise<{ text, copied, failed }>  `diagnostics`: the doctor's text
-//   Data.resolve(flavorId, folder)   -> Promise<{ pick, message }>  `resolve`: the source's Pick (task 010)
-//   Data.updateAll(flavorId, report) -> Promise<void>               `update_all`, `report(message)` per step
+//   Data.resolve(flavorId, folder)   -> Promise<{ pick, message }>  `resolve`: the source's Pick
+//   Data.checkUpdates(flavorId, progress)        -> Promise<{ flavor, messages }>  `check_updates` (010)
+//   Data.updateAll(flavorId, progress)           -> Promise<{ flavor, messages }>  `update_all` (010)
+//   Data.updateOne(flavorId, folder, progress)   -> Promise<{ flavor, messages }>  `update_one` (010)
+//                                       `progress(event)` per event of the run, as it happens, through a
+//                                       Tauri channel; the answer is the flavor as it is now and the
+//                                       messages, the summary last
+//   Data.cancelUpdate()              -> Promise<message>            `cancel_update`: before the next addon
+//   Data.mark(flavorId, folder, action, value) -> Promise<{ flavor, messages }>  `mark`: pin | unpin |
+//                                       ignore | unignore | channel, `value` the version or the channel
 //   Data.preferences()               -> Promise<{ theme, serious, serious_source, stored }>  `preferences`
 //   Data.setPreferences(changes)     -> Promise<the same>           `set_preferences`: `{ theme?, serious? }`
 //                                       into `config.json` (task 034); rejects with a message
@@ -25,32 +33,44 @@
   const module_ = factory();
   const tauri = root.__TAURI__;
   if (tauri && tauri.core && typeof tauri.core.invoke === "function") {
-    root.Data = module_.create(tauri.core.invoke);
+    root.Data = module_.create(tauri.core.invoke, tauri.core.Channel);
   } else if (root.document) {
     root.document.write('<script src="mock-data.js"></script>');
   }
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  // The module over an `invoke(command, args)` that returns a promise: Tauri's in the window, a fake in the
-  // tests.
-  function create(invoke) {
+  // The module over an `invoke(command, args)` that returns a promise and a `Channel` class whose
+  // instances take an `onmessage`: Tauri's in the window, fakes in the tests.
+  function create(invoke, Channel) {
+    // A run's progress channel: each event the command sends reaches `progress`.
+    function channel(progress) {
+      const events = new Channel();
+      events.onmessage = (event) => {
+        if (typeof progress === "function") progress(event);
+      };
+      return events;
+    }
+
     return {
       version: () => invoke("app_version"),
       flavors: () => invoke("flavors"),
       chooseRoot: () => invoke("choose_root"),
       diagnostics: () => invoke("diagnostics"),
       resolve: (flavorId, folder) => invoke("resolve", { flavor: flavorId, folder }),
+      checkUpdates: (flavorId, progress) => invoke("check_updates", { flavor: flavorId, progress: channel(progress) }),
+      updateAll: (flavorId, progress) => invoke("update_all", { flavor: flavorId, progress: channel(progress) }),
+      updateOne: (flavorId, folder, progress) =>
+        invoke("update_one", { flavor: flavorId, folder, progress: channel(progress) }),
+      cancelUpdate: () => invoke("cancel_update"),
+      mark: (flavorId, folder, action, value) =>
+        invoke("mark", { flavor: flavorId, folder, action, value: value === undefined ? null : value }),
       preferences: () => invoke("preferences"),
       setPreferences: (changes) =>
         invoke("set_preferences", {
           theme: changes && changes.theme !== undefined ? changes.theme : null,
           serious: changes && changes.serious !== undefined ? changes.serious : null,
         }),
-      async updateAll(flavorId, report) {
-        const messages = await invoke("update_all", { flavor: flavorId });
-        for (const message of messages || []) report(message);
-      },
     };
   }
 

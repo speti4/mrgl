@@ -14,15 +14,11 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 12 backlog (1 ready · 0 blocked · 2 waiting · 9 ideas) · 0 in progress · 53 done · 3 dropped · 5 decisions
+**State:** 15 backlog (0 ready · 0 blocked · 2 waiting · 13 ideas) · 0 in progress · 56 done · 3 dropped · 5 decisions
 
 ### Ready
 
-#### M1 Core + CLI
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 045 | [Pre-launch manual round on the real install: the commands no fixture covers](backlog/045-pre-launch-manual-round-on-the-real-install.md) | S | 2026-10-21 |
+_none_
 
 ### Needs decision
 
@@ -44,12 +40,21 @@ _none_
 
 ### Ideas
 
+#### M1 Core + CLI
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 075 | [The CLI's output survives a closed pipe](backlog/075-cli-output-survives-a-closed-pipe.md) | S | 2026-10-22 |
+| 076 | [The dependency and interface checks say what the client says: an embedded-only …](backlog/076-the-checks-say-what-the-client-says.md) | S | 2026-10-22 |
+| 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](backlog/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | S | 2026-10-22 |
+| 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](backlog/080-housekeeping-after-wave-5.md) | S | 2026-10-22 |
+
 #### M2 Window MVP
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
-| 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
+| 078 | [The window's cached view: the Forever build signal walks the releases like the …](backlog/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | S | 2026-10-22 |
+| 079 | [Window and exe polish after the first release: the checks after an update, the …](backlog/079-window-and-exe-polish-after-the-first-release.md) | S | 2026-10-22 |
 
 #### M3 Toolbox
 
@@ -105,7 +110,7 @@ _none_
 | 064 | [The dependency check counts the client's own Blizzard_* addons as present](done/064-blizzard-addons-are-not-missing-dependencies.md) | 2026-10-22 |
 | 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
 
-_43 more in `done/`._
+_46 more in `done/`._
 
 ### Decisions
 

@@ -38,7 +38,9 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
   channel switch: never downgraded); `mrgl update --all` installs the updates after one confirmation
   (`--yes` for scripts), leaves a pinned addon alone and skips an ignored one. It says which addon it is
   checking as it goes, and without a GitHub token it stops before the 60 requests an hour run out, with the
-  time the limit resets, instead of failing addon after addon.
+  time the limit resets, instead of failing addon after addon. The window does the same per flavor: "Check
+  for updates", "Update all" with a progress bar per addon and a cancel that lets the addon in flight
+  finish, and on each row its update, pin, ignore and release channel.
 - **A known-good set on another machine.** `mrgl export` writes the managed addons into a list file and
   `mrgl import` installs it elsewhere, at the current releases, or with `--exact` at the versions the list
   names; a version the source no longer offers is reported and skipped.
@@ -51,8 +53,25 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
   repo keeps a Forever starter list, the usual addons whose GitHub releases carry a Forever build, at
   [`lists/forever-starter.json`](lists/forever-starter.json); one command installs it from a copy of the
   file: `mrgl import lists/forever-starter.json --flavor forever` (add `--dry-run` to see the picks first).
+  The release zip carries the list at the same path, so the command works from the unpacked zip as well.
 - **A murloc voice.** Every message is a murloc line and a plain English line; `--serious` (or
   `MRGL_SERIOUS=1`) keeps only the English, and JSON output is always plain ([docs/nerglish.md](docs/nerglish.md)).
+
+## Install
+
+Download `mrgl-<version>.zip` and `SHA256SUMS.txt` from the
+[latest release](https://github.com/speti4/mrgl/releases/latest), check the zip and unpack it into a folder
+of your choice. Nothing is installed: the folder holds `mrgl.exe` (the command line), `mrgl-app.exe` (the
+window), `THIRD-PARTY-LICENSES.html` and `lists\forever-starter.json`, and WebView2 is part of Windows 11. The
+exes are not signed yet, so SmartScreen may ask once before the first start.
+
+```powershell
+(Get-FileHash mrgl-0.1.0.zip -Algorithm SHA256).Hash      # the value in SHA256SUMS.txt, in capitals
+gh attestation verify mrgl-0.1.0.zip --repo speti4/mrgl   # built by this repository's release workflow
+Expand-Archive mrgl-0.1.0.zip mrgl; cd mrgl
+.\mrgl-app.exe                                            # the window
+.\mrgl.exe import lists\forever-starter.json --flavor forever --dry-run   # the starter list's picks
+```
 
 ## Build from source
 
@@ -63,7 +82,7 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 ```powershell
 cargo build --release
 target\release\mrgl.exe --version
-target\release\mrgl-app.exe                                                 # the window: every flavor's addons and their states
+target\release\mrgl-app.exe                                                 # the window: every flavor's addons, their updates and states
 target\release\mrgl.exe list --flavor forever                               # what is installed, managed by mrgl or not
 target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # remember a game folder installed elsewhere
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever            # install the release's Forever asset
@@ -186,8 +205,8 @@ machine it came from, a linked folder is linked again). `list` and an install wa
 
 ## Project status
 
-Pre-alpha: nothing is released or downloadable yet, and the commands answer with the task that will build
-them; build from source as above. The plan lives in [`tasks/`](tasks/README.md): the backlog, the work in
+Pre-alpha: 0.1.0 is the first release, a portable zip for testers ([Install](#install)), or build from
+source as above. The plan lives in [`tasks/`](tasks/README.md): the backlog, the work in
 flight and the history, one file per item. Windows 11 is the platform; a macOS preview is the last milestone.
 
 mrgl is for anyone who keeps more than one WoW flavor and wants the right build of each addon in each of them.

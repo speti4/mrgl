@@ -13,17 +13,13 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   Markdown markers are stripped, cut at `NOTES_MAX_CHARS` (120) with an ellipsis by `sources::notes_line`,
   and `page`, the release's page, both left out when absent, task 030; the `Target` carries the addon's
   channel, and on `prerelease` the newest release that is not a draft is current, a prerelease or not,
-  task 021; the resolve walks the channel's releases from the current one down to the first with an asset
-  for the flavor, the newest release that has one, and says so in the pick's reason when it passed newer
-  ones, and the no-asset error names the newest release and how many releases were looked at, task 066;
-  later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
+  task 021; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
   result, never a refusal, task 038; its commit, `Engine::commit`, refuses to install over a linked addon
   or a junction it did not make before the first folder moves, so every path that stages and commits does,
-  task 055, and the guard covers the staged folders and the previous version's folders the new one drops,
-  so a dropped folder that is now a junction is refused instead of moved aside and deleted, task 067; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
+  task 055; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
   below; the rollback, `Engine::rollback`, sends the entry's previous
   version and its zip from the cache through the same stage and swap with the entry's source, pins the
   addon there and leaves both zips in the cache, so a second rollback goes forward again, task 022), the
@@ -46,8 +42,7 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a lookup trait with a stub), the
   dependency check (`dependencies`, task 029: every required name of the TOC the flavor loads, `## Dependencies`,
   `## RequiredDeps` and the other `## Dep…` lines, ASCII case-insensitive, is *met* when an addon folder of
-  that name is in the scan or the name starts with `Blizzard_`, an addon the client ships (task 064),
-  *embedded* when a folder of that name sits inside the addon's own folder, at
+  that name is in the scan, *embedded* when a folder of that name sits inside the addon's own folder, at
   most three levels down, which a build without `nolib` carries, and *missing* otherwise; an optional
   dependency is never reported; the sidecar entry's `nolib` flag, recorded from the pick at install, turns
   the embedded lookup off for a `nolib` build, and an entry without it is unknown, embedded possible), the
@@ -67,13 +62,6 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the third `WTF` write of D-002 and D-003, runs the 023 guard first, writes the orphans and their `.bak`
   files with the backup's zip writer, entry names relative to `WTF`, and removes each file only once its
   entry, read back from the finished zip, matches it byte for byte; `backup::restore_wtf` refuses that zip.
-  `savedvars` and `sets` read `WTF` through one walk, `wtf::walk` (task 071), with the one set of its
-  folder names (`wtf::ACCOUNT_DIR`, `wtf::SAVED_VARIABLES_DIR`; `WTF` itself is `backup::WTF_DIR`): every
-  account folder, then every character folder of it, each level by name, the account's `SavedVariables`
-  never a realm, a missing folder empty, and a link or a junction a warning that is never followed
-  (`savedvars` lists it among its warnings, `sets` passes it over). The core's one size formatter is
-  `zip_entry::size_text` (`512 B`, `34.2 KB`, `1.5 MB`, in steps of 1024, up to `PB`): the zip bound's
-  messages, the CLI's listings and the doctor's report all write sizes with it (task 071).
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002; `list` reads the flavor's
   sidecar through the install engine and marks every addon managed or unmanaged with `state::classify`,
   task 037, while `scan` stays the raw folder view), `add github:<owner>/<repo>
@@ -97,10 +85,14 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `savedvars --flavor <flavor> [--clean]` (task 025) prints a data line per SavedVariables entry (size,
   addon, `account-wide` or `realm / character`, never the account folder's name, which `--json` carries,
   `orphan` or `client`) and a summary, `--clean` moves the orphans; `--json` is the `savedvars` or the
-  `savedvars-clean` document.
+  `savedvars-clean` document. Its `build.rs` (task 012) gives `mrgl.exe` the window's icon as a Windows
+  resource, with the standard library alone: it rewrites `crates/mrgl-app/icons/icon.ico` as a compiled
+  resource file (`.res`, one `RT_ICON` per image and the `RT_GROUP_ICON` that lists them) and passes it to
+  the MSVC linker, which takes a `.res` as an input file; other targets skip it.
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`: the IPC commands in
-  `commands.rs`, the flavor list in `list.rs`, task 009), the static UI under `ui/`, the capability file and
-  the icon; see [The UI](#the-ui).
+  `commands.rs`, the flavor list in `list.rs`, task 009; the update check, the updates and the row marks in
+  `actions.rs`, task 010), the static UI under `ui/`, the capability file and the icon; see
+  [The UI](#the-ui).
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
   [Forever notes](#forever-notes)).
 - `lists/` — shareable addon lists in the format `mrgl export` writes (`list_file`, task 015), read by
@@ -149,12 +141,10 @@ the GitHub source takes the release of the same list whose tag is the version, w
 `v`, never a draft, on any channel (`sources::github::release_of_version`), and picks its asset for the
 flavor as for the current one. An entry whose version the source no longer offers is reported (`<name>
 skipped, version <v> not offered: no release <v> in <source>`, outcome `version-not-offered` in the JSON,
-`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup reads the
-releases the release list holds (the first page, and the pages after it while none holds a stable release,
-task 042) and, when the version is not among them, the pages after those, `page=<n>` of the API, until the
-version turns up, a page is short (the last one) or five pages are held in all (`MAX_PAGES`, task 066);
-only then does it read as not offered. These further pages are not cached, and offline the cached list is
-all there is. The JSON document carries `exact`.
+`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup sees the
+releases the release list holds: the first page, and the pages after it only while none holds a stable
+release (task 042), so a version older than the first page reads as not offered. The JSON document carries
+`exact`.
 
 The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:`, `import`
 and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
@@ -170,13 +160,6 @@ a dry run, and `Engine::install_pick` the same path for a pick in hand. The link
 a linked addon or a junction mrgl did not make. The command line reports every install with one summary
 (the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
 interface checks).
-
-The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
-request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
-`BigWigs_Core` and `BigWigs_Options`); else the folder named after the zip's stem without its version and
-flavor suffix (`DBM-Core` for `DBM-Core-12.0.11-classic.zip`), else after the repository of a `github:`
-source, both ASCII case-insensitive (task 065); else the first folder by name. A source install of an addon
-the sidecar has from that source keeps the name it is recorded under.
 
 The update check (task 006) is `update::check` in the core: every managed addon of the sidecar (or the one
 a name or a folder names) against its source's current release on the addon's own channel, one
@@ -310,11 +293,9 @@ two-line summary through the voice (a success when nothing needs a look, a warni
 (`mrgl_core::doctor`: `report_of_process` builds it, `Report::lines` and `Report::text` are the block), so the
 window's "copy diagnostics" action (task 009) copies the same text. It reads and never repairs: the AddOns
 probe is its one write. A fact it cannot read is a value (`unknown`, `missing`), never an error, and only an
-unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, else `HOME`,
-in its long and its 8.3 short form) is shown with that folder as `~`: matched in any case and with `\` or `/`
-(or a mix) as the separator, and only when a separator or the end of the path follows, so a folder that only
-starts with the profile's name (`someone2` next to the profile `someone`) stays as it is (task 069). An API
-key is named, never read out, so a pasted report carries no home folder path and no secret.
+unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, in its long
+and its 8.3 short form) is shown with that folder as `~`, and an API key is named, never read out, so a pasted
+report carries no home folder path and no secret.
 
 The lines, with the JSON field in brackets:
 
@@ -394,9 +375,11 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
 - `index.html` is the one page: a sidebar with the flavor navigation (the four flavors by their friendly
   names, in the order retail, classic, era, forever, each with its addon count and its count of updates; the
   window opens on Forever), the chosen flavor's header (name, folder, build, the CurseForge marker, the search
-  field, "Update all"), the addon list (one row per addon: name and folder, version and the version an update
-  brings, the source badge, the state pill, the Forever note slot of task 011, and a row menu for the actions
-  of tasks 010 and 021, with a progress slot per row), a legend, a status bar and the toast stack. The theme
+  field, "Check for updates" and "Update all", with "Cancel" in its place while a run goes; task 010), the
+  addon list (one row per addon: name and folder, version and the version an update brings with the note under
+  it, the source badge, the state pill with the step a run is at, the Forever note slot of task 011, and a row
+  menu with "Update", pin or unpin, ignore or unignore and the channel, with a progress slot per row; tasks
+  010 and 021), a legend, a status bar and the toast stack. The theme
   toggle and the serious switch sit at the bottom of the sidebar, with "Game folder…" and "Copy
   diagnostics" (task 009). The theme and the switch are kept by the shell in `config.json`, not in the web
   view's storage (task 034, below).
@@ -410,23 +393,30 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   command of `src/commands.rs` (below). `index.html` loads it and nothing else for the data.
 - `mock-data.js` is the data module of the sketch, made-up rows in the shape the core answers with; its header
   comment is the contract (`Data.version()`, `Data.flavors()`, `Data.chooseRoot()`, `Data.diagnostics()`,
-  `Data.resolve(flavorId, folder)`, `Data.updateAll(flavorId, report)`; a flavor as `flavor.rs` serializes
-  it plus its friendly name, the source of its build and its addons; an addon as `scan.rs` gives it plus the
-  facts of the sidecar, the sources, the cached release list, the Forever notes, pin / ignore and the
-  missing dependencies). For a look at the page without the core, open `crates/mrgl-app/ui/index.html` in a
-  browser: without the Tauri global, `data.js` writes the mock's script tag instead, and the made-up rows
-  show (the folder dialog and the clipboard need the window).
+  `Data.resolve(flavorId, folder)`, `Data.checkUpdates(flavorId, progress)`, `Data.updateAll(flavorId,
+  progress)`, `Data.updateOne(flavorId, folder, progress)`, `Data.cancelUpdate()`, `Data.mark(flavorId,
+  folder, action, value)`, the preferences; a flavor as `flavor.rs` serializes it plus its friendly name, the
+  source of its build, whether its `Interface\AddOns` folder is there and its addons; an addon as `scan.rs`
+  gives it plus the facts of the sidecar, the sources, the update check, the Forever notes, pin / ignore /
+  channel and the missing dependencies; a progress event of a run). For a look at the page without the core,
+  open `crates/mrgl-app/ui/index.html` in a browser: without the Tauri global, `data.js` writes the mock's
+  script tag instead, and the made-up rows show, with a made-up check, update, cancel and marks (the folder
+  dialog and the clipboard need the window).
 - The pure modules, each with a test file of the same name under `tests/ui/`: `state.js` (an addon's one state
   from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels),
   `search.js` (every word of the query in the name, folder, source kind or source id), `preferences.js`
   (the window's preferences from an answer of the shell: the theme, the switch, the switch locked when
   `MRGL_SERIOUS` decides it, and the one-time carry-over of a value the sketch kept in `localStorage`),
-  `theme.js` (auto, light, dark), `flavors.js` (the navigation order and the friendly names) and `voice.js` (the two lines and
-  where a message goes, see [nerglish.md](nerglish.md), "The window").
+  `theme.js` (auto, light, dark), `flavors.js` (the navigation order and the friendly names), `actions.js`
+  (task 010: a row menu's items and why one is disabled, the progress slot each event of a run moves, a
+  check's answer laid over its row, the note under a row's version) and `voice.js` (the two lines and where a
+  message goes, see [nerglish.md](nerglish.md), "The window").
 
 The IPC commands (`src/commands.rs`, task 009) are thin wrappers over the core and over the plain functions
-of `src/list.rs`, which take the game root and the mrgl home folder as arguments, so `tests/flavor_list.rs`
-checks the rows on a made-up game folder without a window. Every message they return is
+of `src/list.rs` and `src/actions.rs`, which take the game root, the mrgl home folder, the engine and the
+source as arguments, so `tests/flavor_list.rs` checks the rows on a made-up game folder and
+`tests/update_actions.rs` the update runs and the marks on a made-up flavor with a stub source, without a
+window. Every message they return is
 `{ kind, murloc, plain }`: the core's voice kind (`Kind::as_str`) picks the place in the window, and a
 serious voice sends the murloc line empty. Whatever reads the disk or the network runs on a blocking thread.
 
@@ -437,9 +427,15 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   sidecar (managed, the installed version, the source, pinned, ignored), a TOC hint for an unmanaged addon
   (Wago, then WoWInterface, then CurseForge, drawn as a guess), the dependency check (`missing`), and on
   every row of the Forever flavor its Forever status (`build`, `note`, `verified`, `source`, `stale`). The
-  list never goes online: "update available" is the GitHub source's cached release list (the one `add`
-  leaves), read through an `Http` that answers every request with "not modified", whose current release on
-  the entry's channel is not the installed version; without a cached list no update is known.
+  list never goes online (task 010): a row's `check` (`state`, `label`, `latest`, `detail` and the check's
+  data `line`) and its `update` are the answer of `update::check`, with its version order (task 068), run
+  against the GitHub source through an `Http` that fails every request as an unreachable network does, so
+  the source answers from the release list and `release.json` that the last check or install cached (its
+  offline rule, task 041), counts no request against the rate limit and never stamps the cache as
+  confirmed. `update` is set for `update-available` only, so a newer installed version, a pin or a guess is no
+  update; an addon whose answer needs the network (nothing cached) has no `check`. A row also carries its
+  `channel` (`null` when unmanaged), and a flavor `addons_folder`, false when the client was never started
+  for it.
 - `choose_root`: the folder dialog (`tauri-plugin-dialog`, called from Rust); a game folder, or a flavor
   folder whose parent is one, is remembered in `config.json` as `mrgl root <folder>` does and answered with
   its flavors; a cancelled dialog answers nothing.
@@ -448,9 +444,31 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   the view writes it with `navigator.clipboard` (a selection copy as the fallback), so no clipboard plugin
   joins.
 - `resolve`: a managed addon through its source, for the flavor's build and on its channel: the source's
-  own `Pick`, the handover to the update actions of task 010.
-- `update_all`: answers that the update actions are task 010, in the voice (a plain warning line: the core
-  has no error for a command not built yet).
+  own `Pick`.
+- `check_updates`, `update_all` and `update_one` (task 010, `actions::run`): the update check of a flavor's
+  managed addons (or of the one a row's folder names) through `update::check_until`, which asks the sources
+  (`MRGL_HTTP_STUB` answers for them as on the command line), then, for `update_all` and `update_one`, every
+  `update-available` addon through the one install path (`Engine::install_from_source` with the check's own
+  pick, task 055). Each takes a Tauri channel (`tauri::ipc::Channel`) and sends one event per step as it
+  happens: `{ phase, folder, index, total, check, message }`, the phase `checking`, `checked` (with the
+  addon's `check`), `stopped` (the request budget's stop line of task 068, a warning, sent once and not
+  repeated in the answer), `updating`, `downloading`, `installing`, `updated` or `failed` (an error), the
+  folder the addon's first one, the message in the voice. The answer is `{ flavor, messages }`: the flavor as
+  it is now (its rows read again, with the check's answer laid over them except for the addons this run
+  updated) and the warnings, then the summary, `UpdateCheck::summary` of the core, which the command line
+  shares (`checked _forever_: 1 update available, 2 up to date`, `2 addons updated, 1 failed, 1 up to
+  date`). One run at a time: a second one is refused with a warning. A flavor without an AddOns folder
+  answers that the client has not been started for it yet. The window's "Check for updates" is the check
+  alone; "Update all" and a row's "Update" run the check first, so they never install on an old answer.
+- `cancel_update`: asks the run going to stop. The cancel rule: the flag is read before each addon of the
+  check and before each install, never during one; an install that has started runs to its end through the
+  engine's stage, swap and revert (task 004), so a cancel never leaves an addon half-written. A cancelled run
+  answers what it did (`1 addon updated, 2 not updated (cancelled), …`, or `update cancelled after checking
+  3 of 12 addons in _forever_; nothing updated`).
+- `mark` (task 010 over task 021): `pin` (at the given version, else the installed one), `unpin`, `ignore`,
+  `unignore` or `channel` (`stable`, `prerelease`) on a managed addon by its folder, through
+  `Engine::apply_mark` and the line of `Mark::line`, both shared with the command line; the answer is the
+  flavor as it is now and the line. Refused while an update runs, since both write the flavor's sidecar.
 - `preferences` and `set_preferences` (task 034): the theme (`auto`, `light`, `dark`) and the serious
   switch as they apply, which source decided the switch (`environment` locks the window's switch: the
   window cannot override `MRGL_SERIOUS`), and what `config.json` stores (`theme`, `serious`, next to
@@ -459,10 +477,18 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   web view draws what the file says. Each writer of `config.json` sets only its own keys and keeps the
   others, so `mrgl root` keeps the preferences and the window keeps the root.
 
-The application icon is generated once by `scripts\make-icon.py` (Pillow; run it as
-`uv run --with pillow python -I scripts\make-icon.py`) and committed: `icon.ico` for the
-Windows exe and `icon.png` for the window icon on the other targets. It is a glyph of our own, never Blizzard
-artwork.
+The application icon is a murloc head of our own drawing (task 012; fan art within D-005, no Blizzard
+artwork, no game file): geometry in `scripts\make-icon.py`, rendered with Pillow and committed. `icon.ico`
+holds every size the Windows shell asks for (16, 20, 24, 32, 40, 48, 64, 96, 128 and 256 px, each drawn on its
+own, with a thicker outline and fewer details below 32 px so the face reads at 16), `icon.png` (512 px) is the
+window icon on the other targets. Its colors are the theme tokens of `style.css`, so one drawing serves the
+light and the dark theme. `tauri-build` embeds the `.ico` in `mrgl-app.exe` (the title bar and the taskbar take
+it from there), the CLI's `build.rs` embeds the same file in `mrgl.exe`, and both build scripts rerun when it
+changes. To change the drawing, edit the script and regenerate both files:
+
+```powershell
+uv run --with pillow python -I scripts\make-icon.py   # crates\mrgl-app\icons\icon.ico and icon.png
+```
 
 ## CI and releases
 
@@ -537,7 +563,10 @@ does not move with the pin.
 ### The release
 
 `scripts\release.ps1` builds the release profile (fat LTO, stripped) and packs `target\release\mrgl.exe`,
-`target\release\mrgl-app.exe` and `THIRD-PARTY-LICENSES.html` into `dist\mrgl-<version>.zip`. The version is
+`target\release\mrgl-app.exe`, `THIRD-PARTY-LICENSES.html` and the Forever starter list into
+`dist\mrgl-<version>.zip`. The list sits at `lists\forever-starter.json` in the zip, its path in the repo, so
+`mrgl import lists\forever-starter.json --flavor forever` works from the unpacked zip without the repo (task
+012); both exes carry the murloc icon ([The UI](#the-ui)). The version is
 the workspace `Cargo.toml` one, the only place it is written: `tauri-build` stamps it into the app exe's
 properties and both exes print it. Next to the zip it writes `SHA256SUMS.txt` (the zip's SHA-256 in the
 `sha256sum -c` format) and `release-notes-<version>.md`. The license page comes from
@@ -645,8 +674,7 @@ a folder per URL the source asks, the release lists as the API writes them and `
 shape the BigWigs packager writes, `forever` next to other flavors, one without metadata, one repository
 without `release.json`, one with no release, one with a draft and a prerelease above the stable release),
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
-one addon folder in three versions, several folders in one archive, several whose core is not the first by
-name and no folder extended by the others (`boss-core-5.0.0.zip`, task 065), a TOC at the zip's root, a wrapper
+one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
 folder, a TOC with an interface for another build, a path that tries to escape the staging folder, an addon
 with an embedded and a missing required dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
@@ -655,8 +683,7 @@ up from the first line, task 013), a second `WTF` tree for the addon sets (`addo
 two characters on two realms of one account, one `AddOns.txt` with CRLF endings, the other with LF, a line
 the client never wrote and no last line break, and the account's `SavedVariables` that is no realm), a
 third game folder for the dependency check (`dependencies/`, task
-029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency and one
-on a client addon, `Blizzard_Something`, task 064, and a
+029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency, and a
 library folder inside an addon that a `nolib` entry in a test's sidecar turns into a missing one), and a
 development folder for the junction links (`dev/`: two addons with a TOC and a folder without one, task
 005; the tests copy it into a temporary folder and make their junctions there). A real addon zip, a real
@@ -680,10 +707,7 @@ makes the command line answer every request from that folder instead (the URL's 
 sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
 request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
-`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline.
-Whenever the API answers with the list, a 200 or a 304, the `tag-*.json` files of tags the list no longer
-holds are removed, and so is a `release-json.json` next to `releases.json`, the single file of task 011 that
-nothing reads any more (task 072); the list read offline removes nothing. Every
+`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline. Every
 fixture repository under `releases/` is classified for the Forever build in `tests/github_source.rs`, so a
 new fixture names its expected build there.
 
@@ -691,10 +715,7 @@ The release list walks its pages (task 042): when the first page of 30 holds no 
 that publishes a nightly prerelease every day), the source follows the `Link` header's `rel="next"` page,
 on `api.github.com` only, with the token, until a page holds a stable release or five pages are read
 (`sources::github::MAX_PAGES`); past the bound the newest prerelease is current, as for a repository without
-a stable release. The resolve then walks the releases its channel may take, newest first, down to the first
-with an asset for the flavor (task 066): a repository whose newest release is built for other flavors only
-resolves to the release before it, never a draft and never a prerelease on the stable channel while a
-stable release exists. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
+a stable release. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
 conditional request. A release's `release.json` is read from `release-json/tag-<tag>.json` when the file
 names the same tag and the same asset URL and size, so a repeated resolve of an unchanged release costs that
 one request and no download. A 429, or a 403 with `x-ratelimit-remaining: 0`, is the rate limit: its line
@@ -827,11 +848,8 @@ canonical source spec. To add a note, add an entry under `addons` with the restr
 one-line reason (lower case, no trailing full stop: what does not work), the day it was checked against the
 source and the source's URL, then run `cargo test`. The schema check (`forever::tests`) rejects an unknown
 field or kind, a key that is not a canonical spec, a reason over one line, a date that is no real day or lies
-in the future, and a source that is not an `https://` URL. The `verified` date is the day of the check where
-you are: the schema check compares it with today in UTC and allows one day of slack
-(`forever::VERIFIED_SLACK_DAYS`, task 070), so a note dated by the local day east of UTC passes between local
-and UTC midnight, while a date two days ahead fails. A note whose `verified` date is more than 90 days old
-(`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
+in the future, and a source that is not an `https://` URL. A note whose `verified` date is more than 90 days
+old (`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
 checks the age in CI.
 
 Where a note comes from (task 058): a public source that a page under `docs/research/` cites, an addon author's

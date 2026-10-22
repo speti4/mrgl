@@ -10,12 +10,16 @@ use mrgl_core::discover::{self, GameRoot, RootOrigin};
 use mrgl_core::doctor;
 use mrgl_core::flavor;
 use mrgl_core::home;
+use mrgl_core::install::Engine;
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::http_from_env;
 use mrgl_core::voice::{self as core_voice, Kind, Voice};
 use serde::Serialize;
+use tauri::Manager;
+use tauri::ipc::Channel;
 use tauri_plugin_dialog::DialogExt;
 
+use crate::actions::{self, ActionAnswer, Plan, UpdateEvent, UpdateRun};
 use crate::list::{self, FlavorsAnswer, ResolveAnswer};
 
 /// A message as the UI shows it: the kind (it picks the place, `ui/voice.js`), the murloc line (empty when
@@ -405,15 +409,154 @@ pub fn set_preferences(
     ))
 }
 
-/// "Update all" of a flavor: the update actions are task 010; until then the answer says so, in the voice.
+/// The engine of a flavor of this process's game root, or the message that says why there is none.
+fn engine_of(flavor: &str) -> Result<Engine, Message> {
+    let refused = |plain: String| Message::new(voice(), Kind::Error, plain);
+    let root = discover::resolve_root_of_process(None)
+        .map_err(|error| refused(error.to_string()))?
+        .root;
+    let folder = root
+        .and_then(|root| list::flavor_folder(&root.path, flavor))
+        .ok_or_else(|| {
+            refused(format!(
+                "no flavor {flavor}: no game root, or no such flavor folder under it"
+            ))
+        })?;
+    let flavor = flavor::read_flavor(&folder).map_err(|error| refused(error.to_string()))?;
+    Engine::new(flavor).map_err(|error| refused(error.to_string()))
+}
+
+/// A run of the update actions (task 010) on a blocking thread: one at a time ([`UpdateRun`]), each
+/// progress event sent on the channel as it happens, the answer at the end.
+async fn update_run(
+    app: tauri::AppHandle,
+    flavor: String,
+    plan: Plan,
+    progress: Channel<UpdateEvent>,
+) -> ActionAnswer {
+    blocking(
+        move || {
+            let run = app.state::<UpdateRun>();
+            let Some(_guard) = run.start() else {
+                return ActionAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    actions::busy_line(),
+                ));
+            };
+            let engine = match engine_of(&flavor) {
+                Ok(engine) => engine,
+                Err(message) => return ActionAnswer::refused(message),
+            };
+            let github = GitHub::from_env(http_from_env());
+            actions::run(
+                &engine,
+                &github,
+                &plan,
+                &|| run.cancelled(),
+                home_dir().as_deref(),
+                voice(),
+                &mut |event| {
+                    // A closed web view takes no more events; the run goes on to its end.
+                    let _ = progress.send(event);
+                },
+            )
+        },
+        ActionAnswer::refused,
+    )
+    .await
+}
+
+/// "Check for updates" of a flavor (task 010): every managed addon against its source, nothing installed.
 #[tauri::command]
-pub fn update_all(flavor: String) -> Vec<Message> {
-    let _ = flavor;
-    vec![Message::new(
-        voice(),
-        Kind::Warning,
-        "update all in the window is not implemented yet (task 010)",
-    )]
+pub async fn check_updates(
+    app: tauri::AppHandle,
+    flavor: String,
+    progress: Channel<UpdateEvent>,
+) -> ActionAnswer {
+    update_run(app, flavor, Plan::Check, progress).await
+}
+
+/// "Update all" of a flavor (task 010): the check, then every update it found.
+#[tauri::command]
+pub async fn update_all(
+    app: tauri::AppHandle,
+    flavor: String,
+    progress: Channel<UpdateEvent>,
+) -> ActionAnswer {
+    update_run(app, flavor, Plan::All, progress).await
+}
+
+/// A row's "Update" (task 010): the check of that addon, then its update when it has one.
+#[tauri::command]
+pub async fn update_one(
+    app: tauri::AppHandle,
+    flavor: String,
+    folder: String,
+    progress: Channel<UpdateEvent>,
+) -> ActionAnswer {
+    update_run(app, flavor, Plan::One(folder), progress).await
+}
+
+/// Cancels the running update before its next addon; the addon in flight finishes first.
+#[tauri::command]
+pub fn cancel_update(run: tauri::State<'_, UpdateRun>) -> Message {
+    cancel_message(run.cancel(), voice())
+}
+
+/// The answer of a cancel: whether a run was there to stop.
+pub fn cancel_message(running: bool, voice: Voice) -> Message {
+    if running {
+        Message::new(
+            voice,
+            Kind::Progress,
+            "cancelling: the addon in flight finishes, no other one starts",
+        )
+    } else {
+        Message::new(
+            voice,
+            Kind::Nothing,
+            "no update is running, nothing to cancel",
+        )
+    }
+}
+
+/// A row menu's mark (task 010 over task 021): `pin`, `unpin`, `ignore`, `unignore` or `channel`, with
+/// the version to pin at (none: the installed one) or the channel as `value`. Refused while an update
+/// runs, since both write the flavor's sidecar.
+#[tauri::command]
+pub async fn mark(
+    app: tauri::AppHandle,
+    flavor: String,
+    folder: String,
+    action: String,
+    value: Option<String>,
+) -> ActionAnswer {
+    blocking(
+        move || {
+            if app.state::<UpdateRun>().is_running() {
+                return ActionAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    "an update is running; pin, ignore and the channel wait until it ends",
+                ));
+            }
+            let mark = match actions::mark_of(&action, value.as_deref()) {
+                Ok(mark) => mark,
+                Err(plain) => {
+                    return ActionAnswer::refused(Message::new(voice(), Kind::Error, plain));
+                }
+            };
+            match engine_of(&flavor) {
+                Ok(engine) => {
+                    actions::mark(&engine, &folder, &mark, home_dir().as_deref(), voice())
+                }
+                Err(message) => ActionAnswer::refused(message),
+            }
+        },
+        ActionAnswer::refused,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -470,14 +613,24 @@ mod tests {
     }
 
     #[test]
-    fn update_all_answers_with_its_task() {
-        let messages = update_all("wowf".to_string());
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].kind, "warning");
-        assert!(
-            messages[0].plain.contains("task 010"),
-            "{}",
-            messages[0].plain
+    fn a_cancel_says_whether_a_run_was_there() {
+        let run = UpdateRun::default();
+        assert!(!run.cancel(), "nothing runs");
+        let message = cancel_message(run.cancel(), Voice::new(true));
+        assert_eq!(
+            (message.kind, message.plain.as_str()),
+            ("nothing", "no update is running, nothing to cancel")
         );
+        let guard = run.start().expect("the first run starts");
+        assert!(run.start().is_none(), "one run at a time");
+        assert!(run.cancel() && run.cancelled());
+        let message = cancel_message(true, Voice::new(true));
+        assert_eq!(message.kind, "progress");
+        drop(guard);
+        assert!(
+            !run.is_running() && !run.cancelled(),
+            "the end of a run clears the cancel"
+        );
+        assert!(run.start().is_some(), "the next run starts");
     }
 }

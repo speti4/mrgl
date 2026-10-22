@@ -7,7 +7,14 @@ not the list. The summary under a heading is written by hand and kept by the gen
 
 ## Unreleased
 
-The repository, the task standard and the empty workspace: no app yet.
+The first release, 0.1.0: one portable zip with the `mrgl` command line and the `mrgl-app` window, both with
+the murloc icon, nothing to install. The command line scans every flavor, installs and updates addons from
+GitHub releases flavor-correctly (a zip in hand too), pins, ignores, rolls back, links development folders,
+backs up and restores `WTF`, keeps addon sets, cleans up orphaned SavedVariables, exports and imports lists
+and prints a diagnostic report. The window lists every flavor's addons with their state and their Forever
+notes, checks for updates and updates all or one. The zip carries the Forever starter list:
+`mrgl import lists\forever-starter.json --flavor forever` installs it. Pre-alpha: unsigned exes, Windows 11
+only.
 
 <!-- The summary above is written by hand; the list below is generated from tasks/done/ by scripts/changelog.py. -->
 
@@ -26,6 +33,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - `add github:<owner>/<repo>` installs the pick through the engine ([040](https://github.com/speti4/mrgl/blob/main/tasks/done/040-add-github-installs-the-pick-through-the-engine.md))
 - Offline resolve from the cached release list, with a warning ([041](https://github.com/speti4/mrgl/blob/main/tasks/done/041-offline-resolve-from-the-cached-release-list.md))
 - GitHub source: pagination past 30 releases, the rate-limit reset time, `release.json` cached per tag ([042](https://github.com/speti4/mrgl/blob/main/tasks/done/042-github-source-pagination-rate-limit-and-per-tag-cache.md))
+- Pre-launch manual round on the real install: the commands no fixture covers ([045](https://github.com/speti4/mrgl/blob/main/tasks/done/045-pre-launch-manual-round-on-the-real-install.md))
 - The asset download's error path: a 404 names the asset, the size is checked ([046](https://github.com/speti4/mrgl/blob/main/tasks/done/046-asset-download-404-names-the-missing-asset.md))
 - The dependency check counts the client's own `Blizzard_*` addons as present ([064](https://github.com/speti4/mrgl/blob/main/tasks/done/064-blizzard-addons-are-not-missing-dependencies.md))
 - The install engine names a multi-folder addon after the zip or the repository, not the first folder ([065](https://github.com/speti4/mrgl/blob/main/tasks/done/065-derive-name-prefers-the-zip-or-repository-folder.md))
@@ -36,7 +44,9 @@ The repository, the task standard and the empty workspace: no app yet.
 ### M2 Window MVP
 
 - Tauri shell with the flavor list ([009](https://github.com/speti4/mrgl/blob/main/tasks/done/009-tauri-shell-with-the-flavor-list.md))
+- Update all and update one in the window, with progress and the voice ([010](https://github.com/speti4/mrgl/blob/main/tasks/done/010-update-all-and-update-one-in-the-window.md))
 - Forever notes dataset: dead, crippled or viable, from the research ([011](https://github.com/speti4/mrgl/blob/main/tasks/done/011-forever-notes-dataset.md))
+- The murloc icon and the first portable zip release ([012](https://github.com/speti4/mrgl/blob/main/tasks/done/012-murloc-icon-and-first-portable-zip-release.md))
 - Window design sketch: the list view, the states and the voice's place, before the shell is built ([017](https://github.com/speti4/mrgl/blob/main/tasks/done/017-window-design-sketch-before-the-shell.md))
 - Game root auto-discovery: the launcher's registry key and the common install folders ([020](https://github.com/speti4/mrgl/blob/main/tasks/done/020-game-root-auto-discovery.md))
 - Game-running detection: no `WTF` write while the client runs ([023](https://github.com/speti4/mrgl/blob/main/tasks/done/023-game-running-detection.md))

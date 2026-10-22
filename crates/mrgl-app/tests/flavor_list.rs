@@ -378,8 +378,8 @@ fn a_row_and_a_flavor_serialize_with_the_keys_of_the_contract() {
     };
     // The contract of ui/mock-data.js (ROW_KEYS and FLAVOR_KEYS of tests/ui/mock-data.test.js).
     let mut row_keys = vec![
-        "folder", "name", "version", "linked", "source", "managed", "guessed", "update", "pinned",
-        "ignored", "forever", "missing",
+        "folder", "name", "version", "linked", "source", "managed", "guessed", "update", "check",
+        "channel", "pinned", "ignored", "forever", "missing",
     ];
     row_keys.sort_unstable();
     let mut flavor_keys = vec![
@@ -391,6 +391,7 @@ fn a_row_and_a_flavor_serialize_with_the_keys_of_the_contract() {
         "version_source",
         "version_file",
         "curse_client",
+        "addons_folder",
         "warnings",
         "addons",
     ];
@@ -577,5 +578,109 @@ fn a_resolve_hands_over_the_sources_pick() {
     assert_eq!(
         unmanaged.message.plain,
         "Plain is not managed by mrgl in _retail_"
+    );
+}
+
+#[test]
+fn the_rows_take_the_offline_checks_answer_in_its_version_order() {
+    let fixture = Fixture::game_named("order");
+    let home = fixture.home();
+    // A Forever addon installed at a prerelease while it follows the stable channel: the cached list puts
+    // 1.1.0-beta above the current stable 1.0.0, so it is newer than the release, not an update (task 068).
+    fixture.addon(
+        "_forever_",
+        "Switched",
+        "## Interface: 16001\n## Version: 1.1.0-beta\n",
+    );
+    let flavor_home = FlavorHome::at(&home, &FlavorId::Forever);
+    let mut forever = flavor_home
+        .read_state(&FlavorId::Forever)
+        .expect("sidecar")
+        .state;
+    forever.addons.insert(
+        "Switched".into(),
+        entry("github:Example/Prerelease", "1.1.0-beta", &["Switched"]),
+    );
+    flavor_home.write_state(&forever).expect("forever sidecar");
+    let source = fixture_source(&home);
+    let spec = SourceSpec::parse("github:Example/Prerelease").expect("spec");
+    let releases = source
+        .releases("Example", "Prerelease")
+        .expect("the fixture list");
+    // The `release.json` of each release the fixture has one for (a draft's is not served).
+    for release in &releases {
+        let _ = source.release_json(&spec, release);
+    }
+    let cache = home.join("cache/github/Questie/Questie/releases.json");
+    let cached = std::fs::read(&cache).expect("the cached list");
+
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&home),
+        Voice::new(false),
+    );
+    let forever = flavor(&answer.flavors, "wowf");
+    let switched = row(forever, "Switched");
+    assert_eq!(
+        switched.update, None,
+        "a newer installed version is no update"
+    );
+    let check = switched.check.as_ref().expect("the offline check");
+    assert_eq!(check.label, "newer than the release");
+    assert_eq!(check.latest.as_deref(), Some("1.0.0"));
+    assert_eq!(
+        serde_json::to_value(check).expect("serializes")["state"],
+        "installed-newer"
+    );
+    assert_eq!(
+        switched.channel.map(|channel| channel.as_str()),
+        Some("stable")
+    );
+    let questie = row(forever, "Questie");
+    assert_eq!(
+        questie.check.as_ref().map(|check| check.label),
+        Some("up to date")
+    );
+    assert!(forever.addons_folder);
+
+    let retail = flavor(&answer.flavors, "wow");
+    let questie = row(retail, "Questie");
+    assert_eq!(
+        questie.check.as_ref().map(|check| check.label),
+        Some("update available")
+    );
+    assert_eq!(
+        row(retail, "Plain").check,
+        None,
+        "an unmanaged addon has no check"
+    );
+    assert_eq!(row(retail, "Plain").channel, None);
+
+    assert_eq!(
+        std::fs::read(&cache).expect("the cached list"),
+        cached,
+        "the list reads the cache and never stamps it as confirmed"
+    );
+}
+
+#[test]
+fn a_flavor_without_an_addons_folder_says_so() {
+    let fixture = Fixture::game_named("no-addons");
+    std::fs::remove_dir_all(fixture.root().join("_forever_/Interface")).expect("the folder");
+    let home = fixture.home();
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&home),
+        Voice::new(false),
+    );
+    let forever = flavor(&answer.flavors, "wowf");
+    assert!(!forever.addons_folder && forever.addons.is_empty());
+    assert!(flavor(&answer.flavors, "wow").addons_folder);
+    assert!(
+        list::no_addons_folder_line("_forever_").starts_with(
+            "no Interface\\AddOns folder in _forever_: the client has not been started"
+        )
     );
 }

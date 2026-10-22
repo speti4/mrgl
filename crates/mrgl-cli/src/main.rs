@@ -30,8 +30,8 @@ use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{
-    AlreadyInstalled, Engine, Installed, Marked, Metadata, PickInstalled, PickStep,
-    SourceInstalled, SourceRequest,
+    AlreadyInstalled, Engine, Installed, Mark, Metadata, PickInstalled, PickStep, SourceInstalled,
+    SourceRequest,
 };
 use mrgl_core::interface::{self, InterfaceMismatch};
 use mrgl_core::link;
@@ -42,7 +42,7 @@ use mrgl_core::sets::{self, AddonSet};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
-use mrgl_core::update::{self, CheckProgress, UpdateState};
+use mrgl_core::update::{self, CheckProgress, SummaryOf, UpdateState};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::zip_entry;
 use mrgl_core::{Error, VERSION};
@@ -1809,16 +1809,6 @@ fn count_addons(count: usize) -> String {
     }
 }
 
-/// One change of `mrgl pin`, `unpin`, `ignore`, `unignore` or `channel` (task 021).
-#[derive(Debug)]
-enum Mark {
-    Pin(Option<String>),
-    Unpin,
-    Ignore,
-    Unignore,
-    Channel(Channel),
-}
-
 /// `mrgl pin <name> [version]`, `unpin`, `ignore`, `unignore` and `channel <name> <channel>`, each with
 /// `--flavor`: one mark on a managed addon's sidecar entry. A mark that is set already writes nothing and
 /// says so; a name the sidecar does not know is an error. Nothing in the game folder changes.
@@ -1830,14 +1820,10 @@ fn mark_command(
 ) -> Result<(), String> {
     let mut warnings = Vec::new();
     let engine = engine_for(flavor, &mut warnings)?;
-    let (kind, marked) = match &mark {
-        Mark::Pin(version) => ("pin", engine.pin(name, version.as_deref())),
-        Mark::Unpin => ("unpin", engine.unpin(name)),
-        Mark::Ignore => ("ignore", engine.ignore(name)),
-        Mark::Unignore => ("unignore", engine.unignore(name)),
-        Mark::Channel(channel) => ("channel", engine.set_channel(name, *channel)),
-    };
-    let marked = marked.map_err(|error| error.to_string())?;
+    let kind = mark.as_str();
+    let marked = engine
+        .apply_mark(name, &mark)
+        .map_err(|error| error.to_string())?;
     warnings.extend(marked.warnings.iter().cloned());
     if reporter.json {
         reporter.document(serde_json::json!({
@@ -1858,42 +1844,9 @@ fn mark_command(
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
     }
-    let (kind, plain) = mark_line(&mark, &marked, &engine.flavor.folder_name());
+    let (kind, plain) = mark.line(&marked, &engine.flavor.folder_name());
     reporter.say(kind, plain);
     Ok(())
-}
-
-/// The message of a mark: a success when it changed the entry, nothing to do when it was so already.
-fn mark_line(mark: &Mark, marked: &Marked, folder_name: &str) -> (Kind, String) {
-    let name = &marked.name;
-    let pinned = marked.pinned.as_deref().unwrap_or_default();
-    let channel = marked.channel;
-    let plain = match (mark, marked.changed) {
-        (Mark::Pin(_), true) if pinned != marked.version => format!(
-            "pinned {name} at {pinned} in {folder_name} ({} is installed)",
-            marked.version
-        ),
-        (Mark::Pin(_), true) => format!("pinned {name} at {pinned} in {folder_name}"),
-        (Mark::Pin(_), false) => format!("{name} is already pinned at {pinned} in {folder_name}"),
-        (Mark::Unpin, true) => format!("unpinned {name} in {folder_name}"),
-        (Mark::Unpin, false) => format!("{name} is not pinned in {folder_name}"),
-        (Mark::Ignore, true) => format!("ignoring {name} in {folder_name}"),
-        (Mark::Ignore, false) => format!("{name} is already ignored in {folder_name}"),
-        (Mark::Unignore, true) => format!("{name} is no longer ignored in {folder_name}"),
-        (Mark::Unignore, false) => format!("{name} is not ignored in {folder_name}"),
-        (Mark::Channel(_), true) => {
-            format!("{name} follows the {channel} channel in {folder_name}")
-        }
-        (Mark::Channel(_), false) => {
-            format!("{name} is already on the {channel} channel in {folder_name}")
-        }
-    };
-    let kind = if marked.changed {
-        Kind::Success
-    } else {
-        Kind::Nothing
-    };
-    (kind, plain)
 }
 
 /// `mrgl rollback <name> --flavor <id>` (task 022): the previous version's zip from the cache through the
@@ -2602,7 +2555,12 @@ fn update_command(
         for warning in &warnings {
             reporter.say(Kind::Warning, warning);
         }
-        let (kind, summary) = update_summary(&check, dry_run, updated, &folder_name);
+        let of = if dry_run {
+            SummaryOf::DryRun
+        } else {
+            SummaryOf::Update { updated, left: 0 }
+        };
+        let (kind, summary) = check.summary(of, &folder_name);
         reporter.say(kind, summary);
     }
     if failed.is_empty() {
@@ -2613,74 +2571,6 @@ fn update_command(
         count_addons(failed.len()),
         failed.join(", ")
     ))
-}
-
-/// The summary of an update run: what was updated (or, on a dry run, what would be), then every other
-/// state's count, the zeros left out: `2 addons updated, 12 up to date, 1 pinned, 1 ignored`. A warning
-/// when something needs a look (a guess, a source gone, a failure), a success when something was
-/// updated or found, nothing to do otherwise.
-fn update_summary(
-    check: &update::UpdateCheck,
-    dry_run: bool,
-    updated: usize,
-    folder_name: &str,
-) -> (Kind, String) {
-    if check.addons.is_empty() {
-        return (
-            Kind::Nothing,
-            format!("no managed addons in {folder_name}, nothing to update"),
-        );
-    }
-    let available = check.count(UpdateState::UpdateAvailable);
-    let not_updated = available.saturating_sub(updated);
-    let mut parts: Vec<String> = Vec::new();
-    if dry_run {
-        match available {
-            0 => {}
-            1 => parts.push("1 update available".to_string()),
-            count => parts.push(format!("{count} updates available")),
-        }
-    } else {
-        if updated > 0 {
-            parts.push(format!("{} updated", count_addons(updated)));
-        }
-        if not_updated > 0 {
-            parts.push(format!("{not_updated} failed"));
-        }
-    }
-    for state in UpdateState::ALL
-        .into_iter()
-        .filter(|state| *state != UpdateState::UpdateAvailable)
-    {
-        let count = check.count(state);
-        if count > 0 {
-            parts.push(format!("{count} {}", state.label()));
-        }
-    }
-    let attention = [
-        UpdateState::GuessOnly,
-        UpdateState::SourceGone,
-        UpdateState::Failed,
-        UpdateState::RateLimited,
-    ]
-    .into_iter()
-    .any(|state| check.count(state) > 0)
-        || (!dry_run && not_updated > 0);
-    let kind = if attention {
-        Kind::Warning
-    } else if (dry_run && available > 0) || updated > 0 {
-        Kind::Success
-    } else {
-        Kind::Nothing
-    };
-    let text = if dry_run {
-        format!("dry run: {}; nothing written", parts.join(", "))
-    } else if updated > 0 {
-        parts.join(", ")
-    } else {
-        format!("nothing updated: {}", parts.join(", "))
-    };
-    (kind, text)
 }
 
 /// `mrgl doctor [--flavor <flavor>] [--root <folder>]`: the diagnostic report (task 024). The plain output

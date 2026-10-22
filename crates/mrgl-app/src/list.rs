@@ -3,11 +3,13 @@
 //! on the addon (the scan, the state sidecar, the dependency check, the Forever notes) and the view derives
 //! the row's one state from them (`ui/state.js`); nothing here names a state.
 //!
-//! Everything is offline: the "update available" fact compares the sidecar's version with the current
-//! release of the GitHub source's cached release list, read through [`CacheOnly`], an [`Http`] that answers
-//! every request with "not modified" so the source falls back on its own cache and never opens a socket.
-//! The functions take the game root and the mrgl home folder as arguments, so the tests run them on
-//! fixture folders without a window and without touching the process's environment.
+//! Everything is offline: the "update available" fact is the answer of the update check (`update::check`,
+//! tasks 006 and 068, with its version order) run against the GitHub source through [`Offline`], an [`Http`]
+//! that fails every request as the network does, so the source answers from its own cache by its offline
+//! rule (task 041) and never opens a socket (task 010). The window's own check asks the sources and lays
+//! its answer over this one ([`flavor_view`]'s `online`). The functions take the game root and the mrgl
+//! home folder as arguments, so the tests run them on fixture folders without a window and without touching
+//! the process's environment.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -16,28 +18,30 @@ use mrgl_core::dependencies::{self, AddonDependencies};
 use mrgl_core::discover::{GameRoot, RootOrigin};
 use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus};
+use mrgl_core::install::Engine;
 use mrgl_core::link;
 use mrgl_core::scan::{self, Addon, Scan};
 use mrgl_core::sources::github::{self, GitHub};
-use mrgl_core::sources::{Http, Pick, Request, Response, Source, SourceSpec, Target};
+use mrgl_core::sources::{Channel, Http, Pick, Request, Response, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State};
+use mrgl_core::update::{self, AddonUpdate, UpdateState};
 use mrgl_core::voice::{Kind, Voice};
 use serde::Serialize;
 
 use crate::commands::Message;
 
-/// An [`Http`] that never reaches the network: every request is answered with `304 Not Modified`, so
-/// [`GitHub::releases`] reads the release list from its cache, and a repository without one is an error
-/// the list reads as "no update known".
+/// An [`Http`] that never reaches the network: every request fails as an unreachable network does, so the
+/// GitHub source answers from its cached release list and `release.json` (task 041) without counting a
+/// request against the rate limit (task 068) and without stamping the cache as confirmed, and a repository
+/// it has no cache of is an error the list reads as "nothing known".
 #[derive(Debug, Clone, Copy, Default)]
-pub struct CacheOnly;
+pub struct Offline;
 
-impl Http for CacheOnly {
-    fn get(&self, _request: &Request) -> mrgl_core::error::Result<Response> {
-        Ok(Response {
-            status: 304,
-            headers: Vec::new(),
-            body: Vec::new(),
+impl Http for Offline {
+    fn get(&self, request: &Request) -> mrgl_core::error::Result<Response> {
+        Err(mrgl_core::Error::Network {
+            url: request.url.clone(),
+            reason: "the list reads the cache only".to_string(),
         })
     }
 }
@@ -70,6 +74,8 @@ pub struct FlavorView {
     pub version_file: Option<String>,
     /// The CurseForge app's `.curseclient` marker is in the folder.
     pub curse_client: bool,
+    /// The flavor has its `Interface\AddOns` folder; a client that was never started has none (task 010).
+    pub addons_folder: bool,
     /// What reading the flavor met: an unknown id, a build neither file has, a sidecar it could not read.
     pub warnings: Vec<String>,
     pub addons: Vec<Row>,
@@ -92,8 +98,13 @@ pub struct Row {
     pub managed: bool,
     /// The source is only a TOC hint (`## X-Wago-ID` and the like), not adopted yet.
     pub guessed: bool,
-    /// The current release of the cached release list, when it is not the installed version.
+    /// The update the check found (task 010): its version, when the check says `update-available`.
     pub update: Option<Update>,
+    /// What the update check says of the addon (task 010): offline from the source's cache, or the
+    /// window's last check; `None` for an unmanaged addon or when nothing is known.
+    pub check: Option<CheckFact>,
+    /// The release channel the addon follows (task 021); `None` for an unmanaged addon.
+    pub channel: Option<Channel>,
     /// The version the addon is pinned at (task 021).
     pub pinned: Option<String>,
     /// The addon is ignored by the update check (task 021).
@@ -111,7 +122,43 @@ pub struct Badge {
     pub id: String,
 }
 
-/// An update the cached release list knows of.
+/// What the update check says of one addon (task 010), as a row shows it: the state, its words, the
+/// current release, the reason, and the check's data line for a tooltip.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CheckFact {
+    pub state: UpdateState,
+    pub label: &'static str,
+    pub latest: Option<String>,
+    pub detail: Option<String>,
+    pub line: String,
+}
+
+impl CheckFact {
+    pub fn of(addon: &AddonUpdate) -> CheckFact {
+        CheckFact {
+            state: addon.state,
+            label: addon.state.label(),
+            latest: addon.latest.clone(),
+            detail: addon.detail.clone(),
+            line: addon.line(),
+        }
+    }
+}
+
+/// The update an addon of the check has: the pick's version and release when the state is
+/// `update-available`, nothing otherwise (a pinned, a newer installed or a guessed release is no update).
+pub fn update_of(addon: &AddonUpdate) -> Option<Update> {
+    if addon.state != UpdateState::UpdateAvailable {
+        return None;
+    }
+    addon.pick.as_ref().map(|pick| Update {
+        version: pick.version.clone(),
+        release: pick.release.clone(),
+        prerelease: pick.prerelease,
+    })
+}
+
+/// An update the check found.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Update {
     /// The release's version (the tag without its leading `v`), as the install records it.
@@ -155,7 +202,7 @@ pub fn load(
     };
     let views: Vec<FlavorView> = flavors
         .into_iter()
-        .map(|flavor| flavor_view(flavor, home))
+        .map(|flavor| flavor_view(flavor, home, &[]))
         .collect();
     let count: usize = views.iter().map(|view| view.addons.len()).sum();
     let mut plain = format!(
@@ -205,8 +252,10 @@ pub fn count_noun(count: usize, noun: &str) -> String {
     }
 }
 
-/// One flavor with its rows; a folder that cannot be scanned is a flavor without rows and a warning.
-pub fn flavor_view(flavor: Flavor, home: Option<&Path>) -> FlavorView {
+/// One flavor with its rows; a folder that cannot be scanned is a flavor without rows and a warning. The
+/// rows' check facts are the update check's offline answer, with `online` (the addons of a check that
+/// asked the sources) laid over it by name.
+pub fn flavor_view(flavor: Flavor, home: Option<&Path>, online: &[AddonUpdate]) -> FlavorView {
     let mut warnings = flavor.warnings.clone();
     let id = flavor.id.clone();
     let mut view = FlavorView {
@@ -221,6 +270,7 @@ pub fn flavor_view(flavor: Flavor, home: Option<&Path>) -> FlavorView {
             .as_ref()
             .map(|source| source.file_name().to_string()),
         curse_client: flavor.curse_client,
+        addons_folder: scan::addons_dir(&flavor.folder).is_dir(),
         warnings: Vec::new(),
         addons: Vec::new(),
     };
@@ -235,13 +285,41 @@ pub fn flavor_view(flavor: Flavor, home: Option<&Path>) -> FlavorView {
     warnings.extend(scan.warnings.iter().cloned());
     let state = read_state(&id, home, &mut warnings);
     let github = GitHub::new(
-        CacheOnly,
+        Offline,
         None,
         home.map(|home| home.join(github::CACHE_SUBDIR)),
     );
-    view.addons = rows(&scan, &state, &github);
+    let mut checked: BTreeMap<String, AddonUpdate> = BTreeMap::new();
+    if let Some(home) = home {
+        for addon in offline_check(&flavor, home, &github) {
+            checked.insert(addon.name.to_ascii_lowercase(), addon);
+        }
+    }
+    for addon in online {
+        checked.insert(addon.name.to_ascii_lowercase(), addon.clone());
+    }
+    view.addons = rows(&scan, &state, &github, &checked);
     view.warnings = warnings;
     view
+}
+
+/// The update check of a flavor against the source's cache alone ([`Offline`]): what the last check or
+/// install left there, in the check's own order. An addon whose answer needed the network (no cache, or a
+/// pin without a cached release) is left out: nothing is known of it.
+fn offline_check(flavor: &Flavor, home: &Path, github: &GitHub<Offline>) -> Vec<AddonUpdate> {
+    let engine = Engine::with_home(flavor.clone(), home);
+    let Ok(check) = update::check(&engine, github, None, &mut |_| {}) else {
+        return Vec::new();
+    };
+    check
+        .addons
+        .into_iter()
+        .filter(|addon| match addon.state {
+            UpdateState::Failed | UpdateState::RateLimited => false,
+            UpdateState::Pinned => addon.latest.is_some(),
+            _ => true,
+        })
+        .collect()
 }
 
 /// The flavor's sidecar: a missing or corrupt one is a fresh state (the scan is the truth, task 037), one
@@ -262,11 +340,16 @@ fn read_state(id: &FlavorId, home: Option<&Path>, warnings: &mut Vec<String>) ->
     }
 }
 
-/// The rows of a scan, in its order, against the sidecar and the cached releases.
-pub fn rows<H: Http>(scan: &Scan, state: &State, github: &GitHub<H>) -> Vec<Row> {
+/// The rows of a scan, in its order, against the sidecar, the update check's addons by their lower-case
+/// name, and the cached releases (the Forever build).
+pub fn rows<H: Http>(
+    scan: &Scan,
+    state: &State,
+    github: &GitHub<H>,
+    checked: &BTreeMap<String, AddonUpdate>,
+) -> Vec<Row> {
     let checks = dependencies::check(scan, Some(state));
     let forever_flavor = scan.flavor.id == FlavorId::Forever;
-    let mut updates: BTreeMap<String, Option<Update>> = BTreeMap::new();
     let mut forever: BTreeMap<String, ForeverStatus> = BTreeMap::new();
     scan.addons
         .iter()
@@ -279,11 +362,8 @@ pub fn rows<H: Http>(scan: &Scan, state: &State, github: &GitHub<H>) -> Vec<Row>
                     .first()
                     .is_some_and(|first| first.eq_ignore_ascii_case(&addon.folder))
             });
-            let update = match managed {
-                Some((name, entry)) if primary => updates
-                    .entry(name.to_ascii_lowercase())
-                    .or_insert_with(|| cached_update(github, entry))
-                    .clone(),
+            let check = match managed {
+                Some((name, _)) if primary => checked.get(&name.to_ascii_lowercase()),
                 _ => None,
             };
             let forever = forever_flavor.then(|| match managed {
@@ -293,7 +373,7 @@ pub fn rows<H: Http>(scan: &Scan, state: &State, github: &GitHub<H>) -> Vec<Row>
                     .clone(),
                 None => unknown_forever(),
             });
-            row(addon, entry, update, forever, &checks)
+            row(addon, entry, check, forever, &checks)
         })
         .collect()
 }
@@ -302,7 +382,7 @@ pub fn rows<H: Http>(scan: &Scan, state: &State, github: &GitHub<H>) -> Vec<Row>
 fn row(
     addon: &Addon,
     entry: Option<&Entry>,
-    update: Option<Update>,
+    check: Option<&AddonUpdate>,
     forever: Option<ForeverStatus>,
     checks: &[AddonDependencies],
 ) -> Row {
@@ -351,7 +431,9 @@ fn row(
         source,
         managed: entry.is_some(),
         guessed,
-        update,
+        update: check.and_then(update_of),
+        check: check.map(CheckFact::of),
+        channel: entry.map(Entry::channel),
         pinned: entry.and_then(Entry::pinned).map(str::to_string),
         ignored: entry.is_some_and(Entry::ignored),
         forever,
@@ -397,21 +479,6 @@ fn hinted_badge(toc: &mrgl_core::toc::Toc) -> Option<Badge> {
             kind,
             id: id.trim().to_string(),
         })
-    })
-}
-
-/// The update the cached release list knows of for a GitHub entry: its current release on the entry's
-/// channel, when that is not the installed version. Nothing for another source or without a cached list.
-pub fn cached_update<H: Http>(github: &GitHub<H>, entry: &Entry) -> Option<Update> {
-    let Ok(SourceSpec::GitHub { owner, repo }) = SourceSpec::parse(&entry.source) else {
-        return None;
-    };
-    let releases = github.releases(&owner, &repo).ok()?;
-    let release = github::current_release_on(&releases, entry.channel())?;
-    (release.version() != entry.version).then(|| Update {
-        version: release.version().to_string(),
-        release: release.tag_name.clone(),
-        prerelease: release.prerelease,
     })
 }
 
@@ -503,6 +570,14 @@ pub fn resolve<S: Source>(
         }
         Err(error_) => error(error_.to_string()),
     }
+}
+
+/// The line for a flavor without its `Interface\AddOns` folder (task 010): the client was never started
+/// for it, so there is nothing to check or update yet.
+pub fn no_addons_folder_line(folder_name: &str) -> String {
+    format!(
+        "no Interface\\AddOns folder in {folder_name}: the client has not been started for this flavor yet, so there is nothing to check or update; start it once and the folder is there"
+    )
 }
 
 /// The flavor folder of an id under a root: the known folder name, else the first flavor folder whose

@@ -1,5 +1,6 @@
-// The view (task 017): the flavor navigation, the addon list, the search, "update all", the voice's two
-// places and the theme; the game folder chooser and "copy diagnostics" (task 009). It reads `window.Data`
+// The view (task 017): the flavor navigation, the addon list, the search, the voice's two places and the
+// theme; the game folder chooser and "copy diagnostics" (task 009); the update check, "update all", a row's
+// update with its progress slot, the cancel and the row menu's marks (task 010). It reads `window.Data`
 // and draws what it gets; it does not know whether the rows are made up (`mock-data.js`) or the core's
 // answers (`data.js`), and it never composes a murloc line.
 (function () {
@@ -10,6 +11,7 @@
   const Search = window.Search;
   const Theme = window.Theme;
   const Flavors = window.Flavors;
+  const Actions = window.Actions;
   const Data = window.Data;
 
   const $ = (id) => document.getElementById(id);
@@ -147,10 +149,20 @@
   let flavors = [];
   let selectedId = null;
   let query = "";
-  let busy = false;
+  // The update run going, one at a time (task 010): its id, its flavor, the progress slots of its rows.
+  let run = null;
+  let runs = 0;
 
   function selected() {
     return flavors.find((flavor) => flavor.id === selectedId) || null;
+  }
+
+  // Puts a flavor of an answer in place of the one with its id.
+  function replaceFlavor(flavor) {
+    if (!flavor) return;
+    const index = flavors.findIndex((item) => item.id === flavor.id);
+    if (index >= 0) flavors[index] = flavor;
+    else flavors.push(flavor);
   }
 
   // ---- the flavor navigation
@@ -215,10 +227,21 @@
     warnings.hidden = !(flavor.warnings && flavor.warnings.length);
     warnings.textContent = (flavor.warnings || []).join("; ");
 
+    // The actions: the check and "update all", and the cancel in the place of "update all" while a run goes.
+    // A flavor whose client was never started has no AddOns folder and nothing to check.
     const updates = State.countUpdates(flavor.addons);
+    const noFolder = flavor.addons_folder === false;
     const button = $("update-all");
     button.textContent = updates > 0 ? `Update all (${updates})` : "Update all";
-    button.disabled = busy;
+    button.disabled = Boolean(run) || noFolder;
+    button.hidden = Boolean(run);
+    button.title = noFolder ? "the client has not been started for this flavor yet" : "check every addon, then install every update";
+    const check = $("check-updates");
+    check.disabled = Boolean(run) || noFolder;
+    check.title = noFolder ? button.title : "ask the sources about every addon; nothing is installed";
+    const cancel = $("cancel-update");
+    cancel.hidden = !run;
+    cancel.title = run ? `stop the run in ${run.flavorName} before its next addon; the addon in flight finishes` : "";
 
     // The Forever column (header and cells) shows only when a row of this flavor carries a note.
     $("flavor").classList.toggle("without-forever", !State.hasForeverNotes(flavor.addons));
@@ -235,7 +258,11 @@
     const noMatch = $("no-match");
     noMatch.hidden = rows.length > 0;
     noMatch.textContent =
-      flavor.addons.length === 0 ? `no addons in ${flavor.folder}` : `no addon matches "${query.trim()}" in ${flavor.name}`;
+      flavor.addons_folder === false
+        ? `no Interface\\AddOns folder in ${flavor.folder}: the client has not been started for this flavor yet`
+        : flavor.addons.length === 0
+          ? `no addons in ${flavor.folder}`
+          : `no addon matches "${query.trim()}" in ${flavor.name}`;
   }
 
   function renderRow(addon) {
@@ -244,7 +271,8 @@
     const state = State.stateOf(addon);
     row.classList.add(State.classOf(state));
     row.classList.toggle("ignored", Boolean(addon.ignored));
-    row.classList.toggle("busy", busy && Boolean(addon.update) && !addon.pinned && !addon.ignored);
+    const slot = run && run.flavorId === selectedId ? run.progress[addon.folder] : null;
+    row.classList.toggle("busy", Boolean(slot));
     row.dataset.folder = addon.folder;
 
     row.querySelector(".name").textContent = addon.name || addon.folder;
@@ -254,10 +282,9 @@
 
     row.querySelector(".version-now").textContent = addon.version || "—";
     row.querySelector(".version-next").textContent = addon.update ? `→ ${addon.update.version}` : "";
-    const note = [];
-    if (addon.pinned) note.push(`pinned at ${addon.pinned}`);
-    if (addon.ignored) note.push("ignored");
-    row.querySelector(".version-note").textContent = note.join(", ");
+    const note = row.querySelector(".version-note");
+    note.textContent = Actions.noteOf(addon);
+    note.title = addon.check ? addon.check.line : "";
 
     const badge = row.querySelector(".badge");
     badge.className = `badge ${State.sourceClass(addon.source)}`;
@@ -284,8 +311,39 @@
       forever.textContent = "";
     }
 
-    row.querySelector(".progress").hidden = !row.classList.contains("busy");
+    // The progress slot: a moving bar while the length is unknown, a filling one by the install's step.
+    const progress = row.querySelector(".progress");
+    progress.hidden = !slot;
+    row.querySelector(".step").textContent = slot ? slot.label : "";
+    if (slot) {
+      progress.classList.toggle("determinate", slot.value !== null);
+      progress.classList.toggle("failed", Boolean(slot.failed));
+      if (slot.value !== null) progress.style.setProperty("--progress", `${Math.round(slot.value * 100)}%`);
+    }
+
+    renderMenu(row.querySelector(".row-menu"), addon);
     return fragment;
+  }
+
+  // The row menu (task 010): the items `actions.js` gives, each one a call of the data module.
+  function renderMenu(details, addon) {
+    const menu = details.querySelector(".menu");
+    menu.replaceChildren();
+    for (const item of Actions.menuItems(addon, Boolean(run))) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = item.label;
+      button.title = item.title;
+      button.disabled = !item.enabled;
+      button.addEventListener("click", () => {
+        details.open = false;
+        const flavor = selected();
+        if (!flavor) return;
+        if (item.action === "update") startRun("one", flavor, addon.folder);
+        else markRow(flavor, addon, item);
+      });
+      menu.append(button);
+    }
   }
 
   function renderLegend() {
@@ -301,7 +359,7 @@
     }
   }
 
-  // ---- the actions: search and "update all"
+  // ---- the actions: search, the update check, "update all", a row's update, the cancel and the marks
 
   $("search").addEventListener("input", (event) => {
     query = event.target.value;
@@ -309,25 +367,85 @@
     if (flavor) renderRows(flavor);
   });
 
-  $("update-all").addEventListener("click", async () => {
-    const flavor = selected();
-    if (!flavor || busy) return;
-    busy = true;
+  // Says an answer's messages in order (the summary last) and draws the flavor it carries.
+  function applyActionAnswer(answer) {
+    if (answer && answer.flavor) replaceFlavor(answer.flavor);
+    for (const message of (answer && answer.messages) || []) say(message);
+  }
+
+  // One run of the update actions (task 010): `check`, `all`, or `one` for a row's folder. Each event of the
+  // run moves its row's progress slot, lays a check's answer over its row and says its line (progress in
+  // the status bar; the stop before the rate limit and a failed update also as a toast). An event that
+  // comes after the run's answer belongs to a finished run and is dropped.
+  async function startRun(kind, flavor, folder) {
+    if (run) return;
+    runs += 1;
+    const id = runs;
+    run = { id, flavorId: flavor.id, flavorName: flavor.name, progress: {} };
+    renderNav();
     renderFlavor();
+    const progress = (event) => {
+      if (!run || run.id !== id) return;
+      run.progress = Actions.applyProgress(run.progress, event);
+      if (event.check && event.folder) {
+        const target = flavors.find((item) => item.id === run.flavorId);
+        const index = target ? target.addons.findIndex((addon) => addon.folder === event.folder) : -1;
+        if (index >= 0) target.addons[index] = Actions.applyCheck(target.addons[index], event.check);
+      }
+      if (event.message) say(event.message);
+      if (selectedId === run.flavorId) renderFlavor();
+    };
     try {
-      await Data.updateAll(flavor.id, (message) => {
-        say(message);
-        renderNav();
-        renderFlavor();
-      });
+      const answer =
+        kind === "check"
+          ? await Data.checkUpdates(flavor.id, progress)
+          : kind === "one"
+            ? await Data.updateOne(flavor.id, folder, progress)
+            : await Data.updateAll(flavor.id, progress);
+      run = null;
+      applyActionAnswer(answer);
     } catch (error) {
-      say({ kind: "error", murloc: "", plain: `update all failed in ${flavor.name}: ${error}` });
+      say({ kind: "error", murloc: "", plain: `the update in ${flavor.name} failed: ${error}` });
     } finally {
-      busy = false;
+      run = null;
       renderNav();
       renderFlavor();
     }
+  }
+
+  $("check-updates").addEventListener("click", () => {
+    const flavor = selected();
+    if (flavor) startRun("check", flavor);
   });
+
+  $("update-all").addEventListener("click", () => {
+    const flavor = selected();
+    if (flavor) startRun("all", flavor);
+  });
+
+  $("cancel-update").addEventListener("click", async () => {
+    const button = $("cancel-update");
+    button.disabled = true;
+    try {
+      say(await Data.cancelUpdate());
+    } catch (error) {
+      say({ kind: "error", murloc: "", plain: `the cancel failed: ${error}` });
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  // A row menu's mark (pin, unpin, ignore, unignore, the channel): the answer is the flavor as it is now.
+  async function markRow(flavor, addon, item) {
+    try {
+      applyActionAnswer(await Data.mark(flavor.id, addon.folder, item.action, item.value));
+    } catch (error) {
+      say({ kind: "error", murloc: "", plain: `${item.action} ${addon.name} failed: ${error}` });
+    } finally {
+      renderNav();
+      renderFlavor();
+    }
+  }
 
   // ---- the game folder: the chooser, and the flavors of the folder it answers with
 

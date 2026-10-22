@@ -1,6 +1,6 @@
 "use strict";
 // The data module of the window: each call of the contract invokes its Tauri command with its arguments
-// and hands the answer through as it is; "update all" reports every message the command answers with.
+// and hands the answer through as it is; an update run's events come back through a channel (task 010).
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { create } = require("../../ui/data.js");
@@ -38,23 +38,56 @@ test("every call invokes its command and passes the answer through", async () =>
   ]);
 });
 
-test("update all reports each message in order", async () => {
-  const messages = [
-    { kind: "progress", murloc: "m", plain: "updating" },
-    { kind: "success", murloc: "m", plain: "done" },
-  ];
-  const { calls, invoke } = fake({ update_all: messages });
+// A stand-in for Tauri's `Channel`: the test plays the command's side and sends on it.
+class FakeChannel {
+  constructor() {
+    this.onmessage = null;
+  }
+  send(event) {
+    this.onmessage(event);
+  }
+}
+
+test("the update calls hand a channel to their command and the events reach the progress", async () => {
+  const answer = { flavor: null, messages: [{ kind: "success", murloc: "", plain: "1 addon updated" }] };
+  const calls = [];
+  const invoke = (command, args) => {
+    calls.push([command, args]);
+    if (args && args.progress) {
+      args.progress.send({ phase: "checking", folder: "Questie", message: { kind: "progress", murloc: "", plain: command } });
+    }
+    return Promise.resolve(answer);
+  };
+  const Data = create(invoke, FakeChannel);
   const heard = [];
-  await create(invoke).updateAll("wow", (message) => heard.push(message));
-  assert.deepEqual(heard, messages);
-  assert.deepEqual(calls, [["update_all", { flavor: "wow" }]]);
+  const progress = (event) => heard.push(event.message.plain);
+  assert.equal(await Data.checkUpdates("wowf", progress), answer);
+  assert.equal(await Data.updateAll("wowf", progress), answer);
+  assert.equal(await Data.updateOne("wowf", "Questie", progress), answer);
+  await Data.updateAll("wowf");
+  assert.deepEqual(heard, ["check_updates", "update_all", "update_one"], "no progress, no call");
+  assert.deepEqual(
+    calls.map(([command, args]) => [command, args.flavor, args.folder, args.progress instanceof FakeChannel]),
+    [
+      ["check_updates", "wowf", undefined, true],
+      ["update_all", "wowf", undefined, true],
+      ["update_one", "wowf", "Questie", true],
+      ["update_all", "wowf", undefined, true],
+    ]
+  );
 });
 
-test("an empty answer reports nothing", async () => {
-  const { invoke } = fake({ update_all: null });
-  const heard = [];
-  await create(invoke).updateAll("wow", (message) => heard.push(message));
-  assert.deepEqual(heard, []);
+test("cancel and the marks go to their commands, a missing value as null", async () => {
+  const { calls, invoke } = fake({ cancel_update: { kind: "progress", murloc: "", plain: "cancelling" }, mark: { flavor: null, messages: [] } });
+  const Data = create(invoke, FakeChannel);
+  assert.equal((await Data.cancelUpdate()).plain, "cancelling");
+  await Data.mark("wowf", "Questie", "pin");
+  await Data.mark("wowf", "Questie", "channel", "prerelease");
+  assert.deepEqual(calls, [
+    ["cancel_update"],
+    ["mark", { flavor: "wowf", folder: "Questie", action: "pin", value: null }],
+    ["mark", { flavor: "wowf", folder: "Questie", action: "channel", value: "prerelease" }],
+  ]);
 });
 
 test("the preferences go to their commands, a missing change as null", async () => {
