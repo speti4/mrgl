@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 14 backlog (0 ready · 0 blocked · 4 waiting · 10 ideas) · 0 in progress · 78 done · 5 dropped · 6 decisions
+**State:** 11 backlog (0 ready · 0 blocked · 3 waiting · 8 ideas) · 2 in progress · 78 done · 5 dropped · 5 decisions
 
 ### Ready
 
@@ -39,12 +39,6 @@ _none_
 | 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
 | 096 | [The CurseForge source with the user's key](backlog/096-the-curseforge-source-with-the-users-key.md) | the CurseForge API key of task 007, for the manual round and the game version type ids | M | 2026-10-22 |
 
-#### M5 Trust
-
-| # | Task | Waits for | Size | Created |
-|---|---|---|---|---|
-| 031 | [Self-update of the portable zip with signature verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | the signed exes of 103 (D-006), whose certificate subject the check pins | M | 2026-10-21 |
-
 ### Ideas
 
 #### M1 Core + CLI
@@ -64,8 +58,6 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 094 | [The WoWInterface source](backlog/094-the-wowinterface-source.md) | M | 2026-10-22 |
-| 095 | [The Wago source](backlog/095-the-wago-source.md) | M | 2026-10-22 |
 | 097 | [Adopt, the report: what source each unmanaged addon of a folder has](backlog/097-adopt-the-report-of-the-sources-of-an-addons-folder.md) | M | 2026-10-22 |
 | 098 | [Adopt --apply: sidecar entries without a reinstall, and the .curseclient guard](backlog/098-adopt-apply-writes-sidecar-entries-without-a-reinstall.md) | M | 2026-10-22 |
 | 101 | [The update check stops per source at a rate limit, not as a whole](backlog/101-the-update-check-stops-per-source-at-a-rate-limit.md) | S | 2026-10-22 |
@@ -74,7 +66,7 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
+| 031 | [Self-update of the portable zip with attestation verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | M | 2026-10-21 |
 
 #### M6 macOS preview
 
@@ -84,7 +76,12 @@ _none_
 
 ### In progress
 
-_none_
+#### M4 Sources
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 094 | [The WoWInterface source](wip/094-the-wowinterface-source.md) | 2026-10-22 | `none` |
+| 095 | [The Wago source](wip/095-the-wago-source.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
@@ -117,7 +114,6 @@ _68 more in `done/`._
 
 | # | Decision | Status | Date |
 |---|---|---|---|
-| D-006 | [Self-update trusts the Authenticode signature and the checksum; the Sigstore attestation stays a gh check for humans](decisions/D-006-self-update-trusts-authenticode-and-the-checksum.md) | decided | 2026-10-22 |
 | D-005 | [Nerglish voice: the murloc language is the tool's voice, not an easter egg](decisions/D-005-nerglish-voice.md) | decided | 2026-10-21 |
 | D-004 | [Public from the first commit; the full CI matrix on every push, macOS only from M6](decisions/D-004-public-from-the-first-commit.md) | decided | 2026-10-21 |
 | D-003 | [The state is a sidecar under %LOCALAPPDATA%\mrgl\ per flavor; the AddOns folder is the truth](decisions/D-003-state-sidecar-under-localappdata.md) | decided | 2026-10-21 |
