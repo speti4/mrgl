@@ -120,6 +120,21 @@ test("the other flavors answer with the other kinds", async () => {
   assert.equal(unknown.messages[0].kind, "error");
 });
 
+test("a row of a source the sketch's build lacks says source not configured, as the core does (task 102)", async () => {
+  const classic = await runOf((progress) => Data.checkUpdates("wow_classic", progress));
+  const checked = (folder) => classic.events.find((event) => event.phase === "checked" && event.folder === folder).check;
+  const wowi = checked("AtlasLootClassic");
+  assert.equal(wowi.state, "not-checked");
+  assert.equal(wowi.detail, "source not configured: wowi:24976 (this build has no WoWInterface source)");
+  assert.equal(
+    wowi.line,
+    "AtlasLoot Classic  v4.2.0  not checked: source not configured: wowi:24976 (this build has no WoWInterface source)"
+  );
+  assert.equal(checked("TomTom").detail, "source not configured: wago:4N2mZ3KL (this build has no Wago source)");
+  const rows = classic.answer.flavor.addons;
+  assert.ok(rows.every((row) => !row.check || !/does not handle/.test(row.check.line)), "no line of the old wording");
+});
+
 test("a cancel lets the addon in flight finish and starts no other", async () => {
   const { answer, events } = await runOf((progress) =>
     Data.updateAll("wow", (event) => {

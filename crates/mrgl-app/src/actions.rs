@@ -101,6 +101,10 @@ pub enum Phase {
     Installing,
     /// The addon is updated.
     Updated,
+    /// The one install path found the pick's version installed already and installed nothing (task 099):
+    /// under the addon's own entry (another run updated it since the check), or under another entry of the
+    /// same source, which the event's warning names; the addon stays as it is.
+    InstalledAlready,
     /// The addon's update failed; the engine left it as it was.
     Failed,
 }
@@ -297,7 +301,11 @@ pub fn run<S: Source + ?Sized>(
         return answer(&check.addons, messages);
     }
 
+    // The addons this run updated, the ones the install path found installed already (task 099), and the
+    // rows that read from the disk again: the updated ones and the ones found under their own entry.
     let mut updated: BTreeSet<String> = BTreeSet::new();
+    let mut installed_already: BTreeSet<String> = BTreeSet::new();
+    let mut reread: BTreeSet<String> = BTreeSet::new();
     let mut left = 0;
     if *plan != Plan::Check {
         let updates: Vec<&AddonUpdate> = check.updates().collect();
@@ -370,20 +378,23 @@ pub fn run<S: Source + ?Sized>(
                         ),
                     ));
                     updated.insert(addon.name.clone());
+                    reread.insert(addon.name.clone());
                 }
                 Ok(SourceInstalled {
                     outcome: PickInstalled::AlreadyInstalled(current),
                     ..
                 }) => {
-                    events(event(
-                        Phase::Updated,
-                        Kind::Progress,
-                        format!(
-                            "{} is at {} already in {folder_name}",
-                            current.name, current.entry.version
-                        ),
-                    ));
-                    updated.insert(addon.name.clone());
+                    // Task 099: the command line's answer (task 089), in the core's words: the
+                    // nothing-to-do line under the addon's own entry, a warning that names the other entry
+                    // of the same source otherwise; counted as installed already, not as updated.
+                    current.warnings.iter().cloned().for_each(&mut warn);
+                    let (kind, line) =
+                        current.update_line(&addon.name, &addon.version, &folder_name);
+                    events(event(Phase::InstalledAlready, kind, line));
+                    installed_already.insert(addon.name.clone());
+                    if current.is_entry_of(&addon.name) {
+                        reread.insert(addon.name.clone());
+                    }
                 }
                 Err(error) => events(event(
                     Phase::Failed,
@@ -399,7 +410,7 @@ pub fn run<S: Source + ?Sized>(
         Plan::All | Plan::One(_) => SummaryOf::Update {
             updated: updated.len(),
             left,
-            installed_already: 0,
+            installed_already: installed_already.len(),
         },
     };
     let (kind, plain) = check.summary(of, &folder_name);
@@ -408,12 +419,13 @@ pub fn run<S: Source + ?Sized>(
         .map(|line| say(Kind::Warning, line))
         .collect();
     messages.push(say(kind, plain));
-    // The rows take the check's answer, but an addon updated in this run reads from the disk and the
-    // cache again: it is the release it was updated to now.
+    // The rows take the check's answer, but an addon updated in this run (or found at the pick's version
+    // under its own entry) reads from the disk and the cache again: it is the release it was updated to
+    // now. An addon another entry of its source stood in for keeps the check's answer: it is as it was.
     let online: Vec<AddonUpdate> = check
         .addons
         .into_iter()
-        .filter(|addon| !updated.contains(&addon.name))
+        .filter(|addon| !reread.contains(&addon.name))
         .collect();
     answer(&online, messages)
 }

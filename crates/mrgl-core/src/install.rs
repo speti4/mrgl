@@ -345,6 +345,38 @@ pub struct AlreadyInstalled {
     pub warnings: Vec<String>,
 }
 
+impl AlreadyInstalled {
+    /// Whether the entry found is the one of the addon `name` (ASCII case-insensitive, as the sidecar's
+    /// names are).
+    pub fn is_entry_of(&self, name: &str) -> bool {
+        self.name.eq_ignore_ascii_case(name)
+    }
+
+    /// The nothing-to-do line of an install that found the entry at the pick's version already:
+    /// `Questie 1.2.3 is installed already in _forever_ from github:Questie/Questie, nothing to do`.
+    pub fn nothing_to_do_line(&self, folder_name: &str) -> String {
+        format!(
+            "{} {} is installed already in {folder_name} from {}, nothing to do",
+            self.name, self.entry.version, self.entry.source
+        )
+    }
+
+    /// What an update of the addon `name`, installed at `version`, says about this answer (task 089; the
+    /// command line and the window share it, task 099). Under the addon's own entry (another run updated it
+    /// since the check) it is the nothing-to-do line; under another entry of the same source (a renamed
+    /// addon next to its old name) it is a warning that names that entry and says the addon stays as it is.
+    pub fn update_line(&self, name: &str, version: &str, folder_name: &str) -> (Kind, String) {
+        if self.is_entry_of(name) {
+            return (Kind::Nothing, self.nothing_to_do_line(folder_name));
+        }
+        let line = format!(
+            "{name} not updated: {}, a second entry of {}, has {} installed already in {folder_name}; {name} stays at {version}",
+            self.name, self.entry.source, self.entry.version
+        );
+        (Kind::Warning, line)
+    }
+}
+
 /// What a rollback did (task 022): the version installed now is the previous one, pinned, and the version
 /// rolled back from is the previous one in its turn, so a second rollback goes forward again.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -740,8 +772,8 @@ impl Engine {
     }
 
     /// The target an addon from a source is picked for: the engine's flavor and build, on the channel of
-    /// the addon's sidecar entry (task 021): the entry from that source, else the entry of that name, else
-    /// `stable`.
+    /// the addon's sidecar entry (task 021): the entry of that name from that source (task 100), else the
+    /// entry from that source, else the entry of that name, else `stable`.
     pub fn target_for(&self, state: &State, source: &str, name: Option<&str>) -> Target {
         let channel = managed_entry(state, source, name)
             .map(|(_, entry)| entry.channel)
@@ -760,8 +792,9 @@ impl Engine {
 
     /// The one install path of a source (task 055): `add github:`, `import` and `update` all come here.
     /// The request is resolved on the addon's own channel ([`Engine::target_for`]); when the sidecar has
-    /// an addon from the pick's source (ASCII case-insensitive, as GitHub's names are) at the pick's version
-    /// and its folders are there, nothing is downloaded and nothing moves. Otherwise the asset is downloaded
+    /// an addon from the pick's source (ASCII case-insensitive, as GitHub's names are; the entry of the
+    /// request's name first, task 100) at the pick's version and its folders are there, nothing is
+    /// downloaded and nothing moves. Otherwise the asset is downloaded
     /// through the source into a fresh folder under `staging\`, staged and committed with the pick's source
     /// and version as the metadata (the TOC's `## Version` stays the fallback), under the name the sidecar
     /// knows the addon by when it came from this source, else the request's; an addon at another version
@@ -792,7 +825,7 @@ impl Engine {
         };
         let scan = scan::scan_flavor(&self.flavor)?;
         let dropped = state.reconcile(&scan);
-        let managed = managed_entry(&state, &pick.source, None)
+        let managed = managed_entry(&state, &pick.source, request.name.as_deref())
             .map(|(name, entry)| (name.to_string(), entry.clone()));
         if let Some((name, entry)) = &managed
             && entry.version == pick.version
@@ -1207,18 +1240,26 @@ fn renamed_entry<'a>(
         .then_some((old_name, entry))
 }
 
-/// The sidecar entry of an addon from a source: the entry whose source is that spec (ASCII
-/// case-insensitive), else the entry of the name given. The one lookup of the install path (task 055).
+/// The sidecar entry of an addon from a source, the one lookup of the install path (task 055): where a
+/// name is known, the entry of that name when its source is that spec (task 100: of two entries from one
+/// source, a renamed addon next to its old name, the one named answers, not the one whose name sorts
+/// first); else the entry whose source is that spec; else the entry of the name given. Sources and names
+/// compare ASCII case-insensitive.
 fn managed_entry<'a>(
     state: &'a State,
     source: &str,
     name: Option<&str>,
 ) -> Option<(&'a str, &'a Entry)> {
-    state
-        .addons
-        .iter()
-        .find(|(_, entry)| entry.source.eq_ignore_ascii_case(source))
-        .map(|(name, entry)| (name.as_str(), entry))
+    let of_source = |entry: &Entry| entry.source.eq_ignore_ascii_case(source);
+    name.and_then(|name| state.entry(name))
+        .filter(|(_, entry)| of_source(entry))
+        .or_else(|| {
+            state
+                .addons
+                .iter()
+                .find(|(_, entry)| of_source(entry))
+                .map(|(name, entry)| (name.as_str(), entry))
+        })
         .or_else(|| name.and_then(|name| state.entry(name)))
 }
 
@@ -1810,5 +1851,72 @@ mod tests {
             flavor_label(&FlavorId::Other("wow_mrgl".into())),
             "wow_mrgl"
         );
+    }
+
+    fn questie_entry(version: &str) -> Entry {
+        Entry {
+            source: "github:Questie/Questie".to_string(),
+            version: version.to_string(),
+            previous_version: None,
+            folders: vec!["Questie".to_string()],
+            files: BTreeMap::new(),
+            installed_at: "2026-10-22T10:00:00Z".to_string(),
+            nolib: None,
+            pinned: None,
+            ignored: false,
+            channel: Channel::Stable,
+        }
+    }
+
+    #[test]
+    fn the_update_line_names_a_second_entry_of_the_same_source() {
+        // Tasks 089 and 099: the words the command line and the window say about an "installed already".
+        let found = AlreadyInstalled {
+            name: "Questie".to_string(),
+            entry: questie_entry("1.2.3"),
+            warnings: Vec::new(),
+        };
+        assert!(found.is_entry_of("questie"));
+        assert_eq!(
+            found.update_line("Questie", "1.2.2", "_forever_"),
+            (
+                Kind::Nothing,
+                "Questie 1.2.3 is installed already in _forever_ from github:Questie/Questie, nothing to do"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            found.update_line("QuestieClassic", "1.2.2", "_forever_"),
+            (
+                Kind::Warning,
+                "QuestieClassic not updated: Questie, a second entry of github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn the_named_entry_of_a_source_answers_before_the_first_one() {
+        // Task 100: of two entries from one source, the one named; without a name, or with a name of
+        // another source, the first entry of the source; a name alone where no entry has the source.
+        let mut state = State::new(&FlavorId::Forever);
+        state
+            .addons
+            .insert("Questie".to_string(), questie_entry("1.2.3"));
+        state
+            .addons
+            .insert("QuestieClassic".to_string(), questie_entry("1.2.2"));
+        let source = "github:questie/questie";
+        let name = |name: Option<&str>| managed_entry(&state, source, name).map(|(name, _)| name);
+        assert_eq!(name(Some("questieclassic")), Some("QuestieClassic"));
+        assert_eq!(name(Some("Questie")), Some("Questie"));
+        assert_eq!(name(None), Some("Questie"));
+        assert_eq!(name(Some("Other")), Some("Questie"));
+        assert_eq!(
+            managed_entry(&state, "github:Other/Repo", Some("QuestieClassic"))
+                .map(|(name, _)| name),
+            Some("QuestieClassic")
+        );
+        assert_eq!(managed_entry(&state, "github:Other/Repo", None), None);
     }
 }

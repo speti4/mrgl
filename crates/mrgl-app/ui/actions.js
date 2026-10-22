@@ -68,6 +68,8 @@
     downloading: { label: "downloading", value: 0.4 },
     installing: { label: "installing", value: 0.75 },
     updated: { label: "updated", value: 1 },
+    // Task 099: the install path found the pick's version installed already; the event's line says where.
+    "installed-already": { label: "installed already", value: 1 },
     failed: { label: "failed", value: 1, failed: true },
   };
 

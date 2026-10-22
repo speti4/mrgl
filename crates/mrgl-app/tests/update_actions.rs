@@ -147,6 +147,7 @@ impl Stub {
             "github:Example/Wrapped" => Some(("4.0.0", "wrapped-4.0.0.zip")),
             "github:Example/Needy" => Some(("1.0.0", "needs-library-1.0.0.zip")),
             "github:Example/Stale" => Some(("1.0.0", "stale-interface-1.0.0.zip")),
+            "github:Example/Twice" => Some(("1.1.0", "one-folder-1.1.0.zip")),
             _ => None,
         }
     }
@@ -773,4 +774,146 @@ fn an_update_reports_the_dependency_and_interface_checks() {
         warning.plain,
         "StaleInterface: interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor"
     );
+}
+
+/// A flavor whose sidecar has two entries of `github:Example/Twice` (tasks 099 and 100): `OldOneFolder`,
+/// an older name sorting first, at the source's current release 1.1.0 (its own folder, made by hand), and
+/// `OneFolder` at 1.0.0, installed from the fixture zip.
+fn two_entries_of_one_source(name: &str) -> Game {
+    let game = Game::bare(name);
+    std::fs::create_dir_all(game.addons()).expect("the AddOns folder");
+    let engine = game.engine();
+    engine
+        .install(
+            &zips().join("one-folder-1.0.0.zip"),
+            &Metadata {
+                source: "github:Example/Twice".to_string(),
+                version: Some("1.0.0".to_string()),
+                name: None,
+                nolib: None,
+            },
+        )
+        .expect("installing OneFolder");
+    let old = game.addons().join("OldOneFolder");
+    std::fs::create_dir_all(&old).expect("the old folder");
+    std::fs::write(
+        old.join("OldOneFolder.toc"),
+        "## Interface: 16001\n## Title: OldOneFolder\n## Version: 1.1.0\n",
+    )
+    .expect("the old TOC");
+    let mut state = engine.load_state().expect("the sidecar").state;
+    let mut entry = state.addons["OneFolder"].clone();
+    entry.version = "1.1.0".to_string();
+    entry.folders = vec!["OldOneFolder".to_string()];
+    entry.files.clear();
+    state.addons.insert("OldOneFolder".to_string(), entry);
+    engine
+        .home
+        .write_state(&state)
+        .expect("the sidecar written");
+    game
+}
+
+#[test]
+fn a_row_update_works_on_the_named_entry_of_two_from_one_source() {
+    // Task 100: the one install path looks the addon up by its source and its name, so the row update of
+    // `OneFolder` updates it and leaves `OldOneFolder` alone; before, it found `OldOneFolder` by the source
+    // alone and answered "installed already" (task 099).
+    let game = two_entries_of_one_source("named-entry");
+    let old = game
+        .engine()
+        .load_state()
+        .expect("the sidecar")
+        .state
+        .addons["OldOneFolder"]
+        .clone();
+    let (answer, events) = run_with(&game, &Stub::new(), Plan::One("OneFolder".into()), None);
+    assert_eq!(
+        phases(&events),
+        [
+            (Phase::Checking, Some("OneFolder")),
+            (Phase::Checked, Some("OneFolder")),
+            (Phase::Updating, Some("OneFolder")),
+            (Phase::Downloading, Some("OneFolder")),
+            (Phase::Installing, Some("OneFolder")),
+            (Phase::Updated, Some("OneFolder")),
+        ]
+    );
+    assert_eq!(last_plain(&answer), "1 addon updated");
+    assert_eq!(game.toc_version("OneFolder"), "1.1.0");
+    assert_eq!(game.sidecar_version("OneFolder"), "1.1.0");
+    let state = game.engine().load_state().expect("the sidecar").state;
+    assert_eq!(
+        state.addons["OldOneFolder"], old,
+        "the other entry left alone"
+    );
+    assert!(
+        game.addons().join("OldOneFolder").is_dir(),
+        "its folder too"
+    );
+}
+
+#[test]
+fn an_update_another_run_made_since_the_check_is_installed_already() {
+    // Task 099: the one install path's "installed already" answer is its own phase in the core's words,
+    // counted apart from the updated addons. Here another run (the command line, say) updates `OneFolder`
+    // between the check and the install, so the install path finds it at the pick's version.
+    let game = Game::new("installed-already");
+    let engine = game.engine();
+    let home = game.home();
+    let events = RefCell::new(Vec::new());
+    let answer = actions::run(
+        &engine,
+        &Stub::new(),
+        &Plan::One("OneFolder".into()),
+        &|| false,
+        Some(&home),
+        Voice::new(true),
+        &mut |event| {
+            if event.phase == Phase::Updating {
+                game.engine()
+                    .install(
+                        &zips().join("one-folder-1.1.0.zip"),
+                        &Metadata {
+                            source: "github:Example/One".to_string(),
+                            version: Some("1.1.0".to_string()),
+                            name: None,
+                            nolib: None,
+                        },
+                    )
+                    .expect("the other run's update");
+            }
+            events.borrow_mut().push(event);
+        },
+    );
+    let events = events.into_inner();
+    assert_eq!(
+        phases(&events),
+        [
+            (Phase::Checking, Some("OneFolder")),
+            (Phase::Checked, Some("OneFolder")),
+            (Phase::Updating, Some("OneFolder")),
+            (Phase::InstalledAlready, Some("OneFolder")),
+        ]
+    );
+    let last = &events.last().expect("an event").message;
+    assert_eq!(
+        (last.kind, last.plain.as_str()),
+        (
+            "nothing",
+            "OneFolder 1.1.0 is installed already in _forever_ from github:Example/One, nothing to do"
+        )
+    );
+    // The command line's summary of the same answer (task 089).
+    assert_eq!(last_plain(&answer), "nothing updated: 1 installed already");
+    // The row reads from the disk again: the release the other run installed.
+    let row = answer
+        .flavor
+        .as_ref()
+        .expect("the flavor")
+        .addons
+        .iter()
+        .find(|row| row.folder == "OneFolder")
+        .expect("the row");
+    assert_eq!(row.version.as_deref(), Some("1.1.0"));
 }

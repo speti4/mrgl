@@ -1,7 +1,7 @@
 //! End-to-end tests of what the `mrgl` exe reports: the staging folder the doctor names (task 088), an
-//! update a second entry of the same source has installed already (task 089) and the dependency check
-//! of `import` (task 090). Every run points `MRGL_HOME` and `MRGL_ROOT` at a temporary folder, answers the
-//! sources from the fixture folder stub and reads no registry, as `tests/cli.rs` does.
+//! update over two entries of one source, which works on the entry it names (tasks 089 and 100), and the
+//! dependency check of `import` (task 090). Every run points `MRGL_HOME` and `MRGL_ROOT` at a temporary
+//! folder, answers the sources from the fixture folder stub and reads no registry, as `tests/cli.rs` does.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -188,7 +188,7 @@ fn doctor_names_a_staging_folder_kept_for_its_previous_folders_in_text_and_json(
     );
 }
 
-// --- task 089: `update` reports a second entry of the same source that has the pick's version ---
+// --- tasks 089 and 100: `update` over two entries of one source works on the entry it names ---
 
 impl Game {
     fn addon(&self, folder: &str) -> PathBuf {
@@ -239,100 +239,89 @@ impl Game {
     }
 }
 
-/// A game whose sidecar has two entries of `github:Questie/Questie`: `Questie` at the current release
-/// 1.2.3 of the fixture answers, and `QuestieClassic`, an older name of it, at 1.2.2. The one install path
-/// looks an addon up by its source and finds `Questie` first.
-fn two_entries_of_one_source(name: &str) -> Game {
+/// A game whose sidecar has two entries of `github:Questie/Questie`: `OldOneFolder`, an older name sorting
+/// first, at the current release 1.2.3 of the fixture answers, and `OneFolder` at 1.2.2, each with its own
+/// folder. The asset of 1.2.3 is the fixture zip of `OneFolder`.
+fn two_entries_of_one_source(name: &str) -> (Game, PathBuf) {
     let game = Game::new(name);
     game.managed(&[
-        ("Questie", "github:Questie/Questie", "1.2.3"),
-        ("QuestieClassic", "github:Questie/Questie", "1.2.2"),
+        ("OldOneFolder", "github:Questie/Questie", "1.2.3"),
+        ("OneFolder", "github:Questie/Questie", "1.2.2"),
     ]);
-    game
+    let stub = stub_with_forever_zip(&game, "one-folder-1.1.0.zip");
+    (game, stub)
 }
 
-const SECOND_ENTRY_LINE: &str = "QuestieClassic not updated: Questie, a second entry of github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2";
-
 #[test]
-fn update_reports_a_second_entry_of_the_same_source_and_counts_it_apart() {
-    for (args, checked, summary) in [
-        (
-            ["update", "QuestieClassic"],
-            vec!["checking QuestieClassic of _forever_ against their sources"],
-            "nothing updated: 1 installed already",
-        ),
-        (
-            ["update", "--all"],
-            vec![
-                "checking the managed addons of _forever_ against their sources",
-                "checking Questie against github:Questie/Questie (1 of 2)",
-                "Questie  1.2.3  up to date",
-            ],
-            "nothing updated: 1 installed already, 1 up to date",
-        ),
+fn update_works_on_the_named_entry_of_two_from_one_source() {
+    // Task 100: the one install path looks the addon up by its source and its name, so `update OneFolder`
+    // updates `OneFolder` and leaves `OldOneFolder` alone; task 089 found `OldOneFolder` by the source alone
+    // and said `OneFolder not updated: OldOneFolder, a second entry of …`.
+    for (args, summary) in [
+        (["update", "OneFolder"], "1 addon updated"),
+        (["update", "--all"], "1 addon updated, 1 up to date"),
     ] {
-        let game = two_entries_of_one_source(&format!("update-second-{}", args[1]));
-        let before = game.sidecar();
-        let output = game
-            .mrgl()
-            .arg("--serious")
-            .args(args)
-            .args(["--yes", "--flavor", "forever"])
-            .output()
-            .expect("run mrgl");
-        assert!(output.status.success(), "{}", stderr_last_line(&output));
-        let text = stdout(&output);
-        let mut expected = checked;
-        let at = if args[1] == "--all" { 2 } else { 1 };
-        let checking =
-            format!("checking QuestieClassic against github:Questie/Questie ({at} of {at})");
-        expected.extend([
-            checking.as_str(),
-            "QuestieClassic  1.2.2 -> 1.2.3  update available",
-            "updating QuestieClassic from 1.2.2 to 1.2.3",
-            SECOND_ENTRY_LINE,
-            summary,
-        ]);
-        assert_eq!(text.lines().collect::<Vec<_>>(), expected, "{text}");
-        assert_eq!(game.sidecar(), before, "nothing written");
-
-        let output = game
-            .mrgl()
-            .arg("--json")
-            .args(args)
-            .args(["--yes", "--flavor", "forever"])
-            .output()
-            .expect("run mrgl");
-        assert!(output.status.success(), "{}", stderr_last_line(&output));
-        let value: serde_json::Value =
-            serde_json::from_slice(&output.stdout).expect("one document");
-        assert_eq!(value["updated"], 0, "{value}");
-        assert_eq!(value["installed_already"], 1, "{value}");
-        let addon = value["addons"]
-            .as_array()
-            .expect("the addons")
-            .iter()
-            .find(|addon| addon["name"] == "QuestieClassic")
-            .expect("QuestieClassic");
-        assert_eq!(addon["updated"], false, "{addon}");
-        assert_eq!(addon["addon"], serde_json::Value::Null, "{addon}");
-        assert_eq!(
-            addon["installed_already"],
-            serde_json::json!({
-                "name": "Questie",
-                "version": "1.2.3",
-                "outcome": null,
-                "previous_version": null,
-                "source": "github:Questie/Questie",
-                "folders": ["Questie"],
-                "removed_folders": [],
-                "same_entry": false,
-                "message": SECOND_ENTRY_LINE,
-            }),
-            "{addon}"
-        );
-        assert_eq!(addon["error"], serde_json::Value::Null, "{addon}");
-        assert_eq!(game.sidecar(), before, "nothing written");
+        for json in [false, true] {
+            let (game, stub) =
+                two_entries_of_one_source(&format!("update-named-{}-{json}", args[1]));
+            let old = game.sidecar()["addons"]["OldOneFolder"].clone();
+            let output = game
+                .mrgl()
+                .env("MRGL_HTTP_STUB", &stub)
+                .arg(if json { "--json" } else { "--serious" })
+                .args(args)
+                .args(["--yes", "--flavor", "forever"])
+                .output()
+                .expect("run mrgl");
+            assert!(output.status.success(), "{}", stderr_last_line(&output));
+            if json {
+                let value: serde_json::Value =
+                    serde_json::from_slice(&output.stdout).expect("one document");
+                assert_eq!(value["updated"], 1, "{value}");
+                assert_eq!(value["installed_already"], 0, "{value}");
+                let addon = value["addons"]
+                    .as_array()
+                    .expect("the addons")
+                    .iter()
+                    .find(|addon| addon["name"] == "OneFolder")
+                    .expect("OneFolder");
+                assert_eq!(addon["updated"], true, "{addon}");
+                assert_eq!(addon["addon"]["name"], "OneFolder", "{addon}");
+                assert_eq!(addon["addon"]["version"], "1.2.3", "{addon}");
+                assert_eq!(addon["addon"]["folders"], serde_json::json!(["OneFolder"]));
+                assert_eq!(
+                    addon["installed_already"],
+                    serde_json::Value::Null,
+                    "{addon}"
+                );
+            } else {
+                let text = stdout(&output);
+                let lines: Vec<&str> = text.lines().collect();
+                assert!(
+                    lines.contains(&"updating OneFolder from 1.2.2 to 1.2.3"),
+                    "{text}"
+                );
+                assert!(
+                    lines.contains(
+                        &"updated OneFolder from 1.2.2 to 1.2.3 (1 folder: OneFolder) in _forever_"
+                    ),
+                    "{text}"
+                );
+                assert!(!text.contains("not updated"), "{text}");
+                assert_eq!(lines.last(), Some(&summary), "{text}");
+            }
+            let sidecar = game.sidecar();
+            assert_eq!(sidecar["addons"]["OneFolder"]["version"], "1.2.3");
+            assert_eq!(
+                sidecar["addons"]["OneFolder"]["folders"],
+                serde_json::json!(["OneFolder"])
+            );
+            assert_eq!(
+                sidecar["addons"]["OldOneFolder"], old,
+                "the other entry left alone"
+            );
+            assert!(game.addon("OldOneFolder").is_dir(), "its folder too");
+        }
     }
 }
 

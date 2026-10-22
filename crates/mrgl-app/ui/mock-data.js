@@ -48,10 +48,12 @@
 // A progress event of a run (task 010, `src/actions.rs`):
 //
 //   { phase,                                    checking | checked | stopped | updating | downloading |
-//                                               installing | updated | failed
+//                                               installing | updated | installed-already | failed
 //     folder, index, total,                     the row (the addon's first folder), its place and the count
 //     check,                                    on `checked`: the check's answer, as a row's `check`
-//     message }                                 progress; the stop's warning; a failed update's error
+//     message }                                 progress; the stop's warning; 099: installed already, the
+//                                               core's line (a warning that names a second entry of the
+//                                               same source); a failed update's error
 //
 // A flavor is `Flavor` of `flavor.rs` plus its friendly name and its scanned addons:
 //
@@ -161,14 +163,23 @@
     return { state, label: LABELS[state], latest: latest || null, order, detail: detail || null, line: `${row.name}  ${versions}  ${text}` };
   }
 
-  // What the made-up check answers for a managed row: GitHub rows from the made-up current release, the
-  // other sources not asked (the check asks GitHub only, task 056 brings the rest).
+  // The core's line for a spec of a source this build does not have (task 092, `sources/router.rs`): the
+  // spec in its canonical spelling and the source's name. The sketch's build has the GitHub source alone.
+  const SPEC_PREFIX = { github: "github", wago: "wago", wowi: "wowi", curseforge: "curse" };
+  const SOURCE_NAME = { github: "GitHub", wago: "Wago", wowi: "WoWInterface", curseforge: "CurseForge" };
+  function notConfigured(source) {
+    const spec = `${SPEC_PREFIX[source.kind]}:${source.id}`;
+    return `source not configured: ${spec} (this build has no ${SOURCE_NAME[source.kind]} source)`;
+  }
+
+  // What the made-up check answers for a managed row: GitHub rows from the made-up current release, a
+  // source the sketch's build does not have not asked, in the core's words.
   function checkOf(row) {
     if (!row.managed) return null;
     if (row.linked) return checkFact(row, "not-checked", null, "a linked development folder");
     if (row.ignored) return checkFact(row, "ignored", null, null);
     if (row.source.kind === "zip") return checkFact(row, "not-checked", null, "a zip in hand; a newer zip goes in with mrgl add <zip>");
-    if (row.source.kind !== "github") return checkFact(row, "not-checked", null, "a source the update check does not handle yet");
+    if (row.source.kind !== "github") return checkFact(row, "not-checked", null, notConfigured(row.source));
     const latest = row.latest || row.version;
     if (row.pinned) return checkFact(row, "pinned", latest, null);
     if (row.newer) return checkFact(row, "installed-newer", latest, null);

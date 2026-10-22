@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 15 backlog (0 ready · 0 blocked · 4 waiting · 11 ideas) · 0 in progress · 80 done · 5 dropped · 6 decisions
+**State:** 14 backlog (0 ready · 0 blocked · 4 waiting · 10 ideas) · 0 in progress · 83 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -51,14 +51,13 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 100 | [The install path picks the named entry among two sidecar entries of one source](backlog/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md) | S | 2026-10-22 |
+| 108 | [update --all over two entries of one source whose first install takes the secon…](backlog/108-update-all-over-two-entries-of-one-source-whose-first-install-takes-the-second-folder.md) | S | 2026-10-22 |
 
 #### M2 Window MVP
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 099 | [The window's update reports a second entry of the same source that has the pick…](backlog/099-the-windows-update-reports-a-second-entry-of-the-same-source.md) | S | 2026-10-22 |
-| 102 | [The window's offline sketch says "source not configured" as the core does](backlog/102-the-ui-mock-says-source-not-configured-as-the-core-does.md) | S | 2026-10-22 |
+| 107 | [The window's row menu and the offline sketch follow the sources of this build](backlog/107-the-windows-row-menu-and-offline-sketch-follow-the-sources-of-this-build.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
@@ -101,6 +100,9 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 102 | [The window's offline sketch says "source not configured" as the core does](done/102-the-ui-mock-says-source-not-configured-as-the-core-does.md) | 2026-10-22 |
+| 100 | [The install path picks the named entry among two sidecar entries of one source](done/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md) | 2026-10-22 |
+| 099 | [The window's update reports a second entry of the same source that has the pick…](done/099-the-windows-update-reports-a-second-entry-of-the-same-source.md) | 2026-10-22 |
 | 095 | [The Wago source](done/095-the-wago-source.md) | 2026-10-22 |
 | 094 | [The WoWInterface source](done/094-the-wowinterface-source.md) | 2026-10-22 |
 | 093 | [API keys: one place to set, read and name them](done/093-api-keys-one-place-to-set-read-and-name-them.md) | 2026-10-22 |
@@ -108,11 +110,8 @@ _none_
 | 091 | [The remaining toolbox lines move into the core: the set list note, the not-inst…](done/091-the-remaining-toolbox-lines-move-into-the-core.md) | 2026-10-22 |
 | 090 | [import runs the dependency check after an install, as add and update do](done/090-import-runs-the-dependency-check-after-an-install.md) | 2026-10-22 |
 | 089 | [update <name> says what happened when another entry of the same source already …](done/089-update-one-reports-a-second-entry-of-the-same-source.md) | 2026-10-22 |
-| 088 | [The doctor names a staging folder kept for its previous\ folders](done/088-doctor-names-a-staging-folder-kept-for-its-previous-folders.md) | 2026-10-22 |
-| 087 | [The command line's update check writes the last-check file the window reads](done/087-cli-update-check-writes-the-last-check-file.md) | 2026-10-22 |
-| 086 | [One summary line of set apply and savedvars in the core, shared by the command …](done/086-one-set-and-savedvars-summary-in-the-core.md) | 2026-10-22 |
 
-_70 more in `done/`._
+_73 more in `done/`._
 
 ### Decisions
 

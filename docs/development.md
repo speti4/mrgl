@@ -218,10 +218,13 @@ The one install path (task 055) is `Engine::install_from_source` in `install`: `
 and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
 or a pick made already, and the name the list file gives the addon) and resolves it for the flavor's build
 on the addon's own channel, the channel of its sidecar entry from that source (else of the entry of that
-name, else `stable`, `Engine::target_for`, task 021). An addon the sidecar has from that source at the
+name, else `stable`, `Engine::target_for`, task 021). The sidecar entry is looked up by the source and the
+request's name together where the request names the addon (`update`, `import`; task 100: of two entries
+from one source, a renamed addon next to its old name, the one named answers, not the one whose name sorts
+first), else by the source alone, else by the name alone. An addon the sidecar has from that source at the
 pick's version, its folders there, is installed already: nothing is downloaded and nothing moves. Otherwise
 the asset is downloaded into a fresh folder under `staging\`, staged and committed with the pick's source
-and version under the name the sidecar knows the source by (else the request's name, else the folders'),
+and version under the name of that entry (else the request's name, else the folders'),
 and the download is removed whatever the install returned. `Engine::resolve` is the same resolve alone, for
 a dry run, and `Engine::install_pick` the same path for a pick in hand. The link refusal of task 005 sits in
 `Engine::commit`, so a zip in hand, a source, an import, an update and a rollback all refuse to install over
@@ -310,10 +313,11 @@ summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ign
 `1 update available` and writes nothing under `Interface\AddOns` or in the sidecar). An update the one
 install path answers with "installed already" is not counted as updated (task 089): under the addon's own
 entry (another run updated it since the check) `update` says the nothing-to-do line of `add`; under another
-entry of the same source, which the install path finds first by its source (a renamed addon next to its old
-name), it says a warning that names that entry, `QuestieClassic not updated: Questie, a second entry of
-github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2`, and leaves
-both entries as they are; the summary counts either as `1 installed already`. Right after the check,
+entry of the same source, which the install path falls back to only when no entry of the addon's name has
+that source any more (task 100; an install earlier in the run took its folders over, say), it says a
+warning that names that entry, `QuestieClassic not updated: Questie, a second entry of github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2`, and leaves
+both entries as they are; the summary counts either as `1 installed already`. The words are the core's
+(`AlreadyInstalled::update_line`), and the window's update says them too (task 099). Right after the check,
 before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
 as the window's check does (task 087, below): a source gone, a failed check and an addon left before the
 rate limit are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
@@ -735,8 +739,14 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   pick, task 055). Each takes a Tauri channel (`tauri::ipc::Channel`) and sends one event per step as it
   happens: `{ phase, folder, index, total, check, message }`, the phase `checking`, `checked` (with the
   addon's `check`), `stopped` (the request budget's stop line of task 068, a warning, sent once and not
-  repeated in the answer), `updating`, `downloading`, `installing`, `updated` or `failed` (an error), the
-  folder the addon's first one, the message in the voice. The answer is `{ flavor, messages }`: the flavor as
+  repeated in the answer), `updating`, `downloading`, `installing`, `updated`, `installed-already` or
+  `failed` (an error), the folder the addon's first one, the message in the voice. `installed-already`
+  (task 099) is the install path's "installed already" answer in the command line's words of task 089
+  (`AlreadyInstalled::update_line` of the core, which both say): the nothing-to-do line under the addon's
+  own entry, else the warning that names the second entry of the same source (`OneFolder not updated:
+  OldOneFolder, a second entry of github:Example/Twice, has 1.1.0 installed already in _forever_; OneFolder
+  stays at 1.0.0`); the summary counts it as `1 installed already`, not as updated, and the row of an addon
+  another entry stood in for keeps the check's answer. The answer is `{ flavor, messages }`: the flavor as
   it is now (its rows read again, with the check's answer laid over them except for the addons this run
   updated; the answers the cache cannot give again are kept in `last-check.json` for the next list, task
   078, and a file that cannot be written is a warning) and the warnings, then the summary, `UpdateCheck::summary` of the core, which the command line

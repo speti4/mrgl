@@ -21,12 +21,14 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The doctor names a staging folder kept for its `previous\` folders ([088](https://github.com/speti4/mrgl/blob/main/tasks/done/088-doctor-names-a-staging-folder-kept-for-its-previous-folders.md))
 - `update <name>` says what happened when another entry of the same source already has the pick's version ([089](https://github.com/speti4/mrgl/blob/main/tasks/done/089-update-one-reports-a-second-entry-of-the-same-source.md))
 - `import` runs the dependency check after an install, as `add` and `update` do ([090](https://github.com/speti4/mrgl/blob/main/tasks/done/090-import-runs-the-dependency-check-after-an-install.md))
+- The install path picks the named entry among two sidecar entries of one source ([100](https://github.com/speti4/mrgl/blob/main/tasks/done/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md))
 
 ### M2 Window MVP
 
 - The window's cached view: the Forever build signal walks the releases like the resolve, and the last online answer is kept ([078](https://github.com/speti4/mrgl/blob/main/tasks/done/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md))
 - Window and exe polish after the first release: the checks after an update, the title bar theme, the CLI exe's version ([079](https://github.com/speti4/mrgl/blob/main/tasks/done/079-window-and-exe-polish-after-the-first-release.md))
 - The window's rows show the interface states `scan` and `list` mark ([081](https://github.com/speti4/mrgl/blob/main/tasks/done/081-window-rows-show-the-interface-states.md))
+- The window's update reports a second entry of the same source that has the pick's version ([099](https://github.com/speti4/mrgl/blob/main/tasks/done/099-the-windows-update-reports-a-second-entry-of-the-same-source.md))
 
 ### M3 Toolbox
 
@@ -47,6 +49,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - Housekeeping after the M1 fixes: one `Blizzard_` prefix, the doctor's formatter alias, the voice sample in the docs ([080](https://github.com/speti4/mrgl/blob/main/tasks/done/080-housekeeping-after-wave-5.md))
 - One summary line of `set apply` and `savedvars` in the core, shared by the command line and the window ([086](https://github.com/speti4/mrgl/blob/main/tasks/done/086-one-set-and-savedvars-summary-in-the-core.md))
 - The remaining toolbox lines move into the core: the set list note, the not-installed warning and the two-account error's words ([091](https://github.com/speti4/mrgl/blob/main/tasks/done/091-the-remaining-toolbox-lines-move-into-the-core.md))
+- The window's offline sketch says "source not configured" as the core does ([102](https://github.com/speti4/mrgl/blob/main/tasks/done/102-the-ui-mock-says-source-not-configured-as-the-core-does.md))
 
 ## 0.1.0 — 2026-10-22
 

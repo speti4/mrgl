@@ -1682,10 +1682,7 @@ fn already_installed_summary(current: &AlreadyInstalled, folder_name: &str) -> I
         }),
         mismatch: None,
         out_of_date: None,
-        line: format!(
-            "{} {} is installed already in {folder_name} from {}, nothing to do",
-            current.name, current.entry.version, current.entry.source
-        ),
+        line: current.nothing_to_do_line(folder_name),
     }
 }
 
@@ -2697,26 +2694,14 @@ struct InstalledAlready {
 impl InstalledAlready {
     /// The answer for the addon `name` at `version` (task 089). Its own entry at the pick's version (another
     /// run updated it since the check) is the nothing-to-do line; another entry of the same source (a renamed
-    /// addon next to its old name) is a warning that names that entry and says the addon stays as it is.
+    /// addon next to its old name) is a warning that names that entry and says the addon stays as it is;
+    /// the words are the core's (`AlreadyInstalled::update_line`), which the window says too (task 099).
     fn of(name: &str, version: &str, current: &AlreadyInstalled, folder_name: &str) -> Self {
-        let summary = already_installed_summary(current, folder_name);
-        if current.name.eq_ignore_ascii_case(name) {
-            let line = summary.line.clone();
-            return InstalledAlready {
-                summary,
-                same_entry: true,
-                kind: Kind::Nothing,
-                line,
-            };
-        }
-        let line = format!(
-            "{name} not updated: {}, a second entry of {}, has {} installed already in {folder_name}; {name} stays at {version}",
-            current.name, current.entry.source, current.entry.version
-        );
+        let (kind, line) = current.update_line(name, version, folder_name);
         InstalledAlready {
-            summary,
-            same_entry: false,
-            kind: Kind::Warning,
+            summary: already_installed_summary(current, folder_name),
+            same_entry: current.is_entry_of(name),
+            kind,
             line,
         }
     }
