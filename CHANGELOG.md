@@ -40,6 +40,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - One source per spec: the router, the spec forms and the generic paths ([092](https://github.com/speti4/mrgl/blob/main/tasks/done/092-one-source-per-spec-the-router-and-the-generic-paths.md))
 - API keys: one place to set, read and name them ([093](https://github.com/speti4/mrgl/blob/main/tasks/done/093-api-keys-one-place-to-set-read-and-name-them.md))
 - The WoWInterface source ([094](https://github.com/speti4/mrgl/blob/main/tasks/done/094-the-wowinterface-source.md))
+- The Wago source ([095](https://github.com/speti4/mrgl/blob/main/tasks/done/095-the-wago-source.md))
 
 ### Project housekeeping
 
