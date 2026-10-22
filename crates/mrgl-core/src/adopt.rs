@@ -27,6 +27,11 @@
 //! The summary, the marker line and the refusal name what adopts in the caller's words ([`AdoptBy`], task
 //! 112): the command line's `adopt --apply` and `--alongside-curseforge`, or the window's Adopt button and
 //! the confirmation of its dialog.
+//!
+//! The window applies the report it shows (task 113): the report records its sources' answers
+//! ([`Answers`], through [`Answering`]), the card hands them back, and the apply and the report after it
+//! are built over the folders and the sidecar as they are then and those answers, asking no source again
+//! while the answers are younger than [`ANSWERS_MAX_AGE_SECONDS`]. The command line reads once and writes.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -35,7 +40,7 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::flavor::Flavor;
+use crate::flavor::{Flavor, FlavorId};
 use crate::install;
 use crate::keys;
 use crate::scan::{self, Addon, Scan};
@@ -959,9 +964,183 @@ fn row(
     }
 }
 
+/// How long the sources' answers of a shown report stand for the apply that follows it (task 113): an
+/// hour, the shortest cache rule of the sources (WoWInterface's project answer, `Cache-Control:
+/// max-age=3600`; its file list and Wago's slug lists keep a day, GitHub asks again with its `ETag`). An
+/// older report is asked again first.
+pub const ANSWERS_MAX_AGE_SECONDS: i64 = 3_600;
+
+/// One source's answer to whether it publishes a build for the flavor, as a report met it (task 113).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Answer {
+    pub build: Offered,
+    pub why: String,
+    /// What the run lacked to ask the source then ([`Source::missing`]); when that changed since (a key set
+    /// or removed), the source is asked again.
+    pub missing: Option<String>,
+}
+
+/// The sources' answers a report was built from (task 113): per spec its build answer and the folders it
+/// names, for one flavor, with when the asking began. The window's card carries them from the report it
+/// shows to the apply, so the apply and the report after it ask no source again.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Answers {
+    /// The `.flavor.info` id the answers are for; answers of another flavor are asked again.
+    pub flavor: String,
+    /// When the first source was asked, RFC 3339 in UTC.
+    pub asked_at: String,
+    /// Per canonical spec, its answer ([`Source::offers`]).
+    pub offers: BTreeMap<String, Answer>,
+    /// Per canonical spec, the folders it names ([`Source::folders`]), `null` for none.
+    pub folders: BTreeMap<String, Option<Vec<String>>>,
+}
+
+impl Answers {
+    /// No answer yet, for a flavor, asked from now on.
+    pub fn new(flavor: &FlavorId) -> Answers {
+        Answers {
+            flavor: flavor.as_str().to_string(),
+            asked_at: state::now_rfc3339(),
+            ..Answers::default()
+        }
+    }
+
+    /// Whether the answers stand for an apply in a flavor now: the flavor's own, asked less than
+    /// [`ANSWERS_MAX_AGE_SECONDS`] ago (a time ahead of the clock, or one that does not read, does not).
+    pub fn stand_for(&self, flavor: &FlavorId) -> bool {
+        self.stand_for_at(flavor, &state::now_rfc3339())
+    }
+
+    /// [`Answers::stand_for`] at a given time.
+    pub fn stand_for_at(&self, flavor: &FlavorId, now: &str) -> bool {
+        let age = crate::sources::unix_from_rfc3339(now)
+            .zip(crate::sources::unix_from_rfc3339(&self.asked_at))
+            .map(|(now, then)| now - then);
+        self.flavor == flavor.as_str()
+            && age.is_some_and(|age| (0..ANSWERS_MAX_AGE_SECONDS).contains(&age))
+    }
+}
+
+/// A source that answers [`Source::offers`] and [`Source::folders`] from the answers it holds and asks
+/// the source under it for the rest, holding what it gets (task 113); the rest it hands down. Built for
+/// [`report`]: a report through it asks each spec at most once over the answers' life.
+pub struct Answering<'a> {
+    inner: &'a dyn Source,
+    answers: std::cell::RefCell<Answers>,
+}
+
+impl<'a> Answering<'a> {
+    pub fn new(inner: &'a dyn Source, answers: Answers) -> Answering<'a> {
+        Answering {
+            inner,
+            answers: std::cell::RefCell::new(answers),
+        }
+    }
+
+    /// The answers held, those carried in and those asked.
+    pub fn into_answers(self) -> Answers {
+        self.answers.into_inner()
+    }
+}
+
+impl Source for Answering<'_> {
+    fn resolve(
+        &self,
+        spec: &SourceSpec,
+        target: &Target,
+    ) -> crate::error::Result<crate::sources::Pick> {
+        self.inner.resolve(spec, target)
+    }
+
+    fn fetch(&self, pick: &crate::sources::Pick, to: &Path) -> crate::error::Result<()> {
+        self.inner.fetch(pick, to)
+    }
+
+    fn missing(&self, spec: &SourceSpec) -> Option<String> {
+        self.inner.missing(spec)
+    }
+
+    fn offers(&self, spec: &SourceSpec, target: &Target) -> BuildOffer {
+        let key = spec.to_string();
+        let missing = self.inner.missing(spec);
+        if let Some(held) = self.answers.borrow().offers.get(&key)
+            && held.missing == missing
+        {
+            return BuildOffer::new(held.build, held.why.clone());
+        }
+        let offer = self.inner.offers(spec, target);
+        self.answers.borrow_mut().offers.insert(
+            key,
+            Answer {
+                build: offer.build,
+                why: offer.why.clone(),
+                missing,
+            },
+        );
+        offer
+    }
+
+    fn folders(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+        let key = spec.to_string();
+        if let Some(held) = self.answers.borrow().folders.get(&key) {
+            return held.clone();
+        }
+        let folders = self.inner.folders(spec);
+        self.answers
+            .borrow_mut()
+            .folders
+            .insert(key, folders.clone());
+        folders
+    }
+}
+
+/// [`report`] over held answers (task 113): the sources are asked only for what `answers` does not hold,
+/// and the answers come back with what was asked added, for the next report of the same card.
+pub fn report_answering(
+    scan: &Scan,
+    state: &State,
+    sources: &dyn Source,
+    has_key: &dyn Fn(SourceKind) -> bool,
+    answers: Answers,
+) -> (Report, Answers) {
+    let answering = Answering::new(sources, answers);
+    let report = report(scan, state, &answering, has_key);
+    (report, answering.into_answers())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answers_stand_for_their_flavor_for_an_hour() {
+        let forever = FlavorId::Forever;
+        let answers = Answers {
+            flavor: "wowf".to_string(),
+            asked_at: "2026-10-22T10:00:00Z".to_string(),
+            ..Answers::default()
+        };
+        assert!(answers.stand_for_at(&forever, "2026-10-22T10:00:00Z"));
+        assert!(answers.stand_for_at(&forever, "2026-10-22T10:59:59Z"));
+        assert!(
+            !answers.stand_for_at(&forever, "2026-10-22T11:00:00Z"),
+            "an hour old"
+        );
+        assert!(
+            !answers.stand_for_at(&forever, "2026-10-22T09:59:59Z"),
+            "ahead of the clock"
+        );
+        assert!(
+            !answers.stand_for_at(&FlavorId::Retail, "2026-10-22T10:00:00Z"),
+            "another flavor"
+        );
+        let unread = Answers {
+            asked_at: "yesterday".to_string(),
+            ..answers.clone()
+        };
+        assert!(!unread.stand_for_at(&forever, "2026-10-22T10:00:00Z"));
+        assert!(Answers::new(&forever).stand_for(&forever));
+    }
 
     #[test]
     fn the_compiled_in_mapping_holds_to_the_schema() {

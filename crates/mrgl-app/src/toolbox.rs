@@ -19,12 +19,14 @@
 //! as `mrgl adopt --apply` is not; its lines are `adopt.rs`'s, the command line's, and so is the guard of
 //! a folder the CurseForge app manages: the window's confirmation dialog stands for
 //! `--alongside-curseforge`. The summary, the marker line and the refusal name the window's Adopt button
-//! and its confirmation instead of the command line's flags (`AdoptBy::Window`, task 112).
+//! and its confirmation instead of the command line's flags (`AdoptBy::Window`, task 112). The card's
+//! report carries its sources' answers (`adopt::Answers`), and the apply takes them back: it and the report
+//! after it ask no source again while they stand (`Answers::stand_for`, an hour; task 113).
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use mrgl_core::adopt::{self, AdoptBy, Adoptable, Counts, Report};
+use mrgl_core::adopt::{self, AdoptBy, Adoptable, Answers, Counts, Report};
 use mrgl_core::backup;
 use mrgl_core::client;
 use mrgl_core::flavor::{self, Flavor};
@@ -756,6 +758,9 @@ pub struct AdoptView {
     pub counts: Counts,
     /// The summary of the report (the core's `Report::summary`).
     pub summary: Message,
+    /// The sources' answers the report was built from (task 113): the card hands them to the apply, which
+    /// asks no source again while they stand.
+    pub answers: Answers,
 }
 
 /// One unmanaged addon of the report: the core's row (`name`, `folders`, `version`, `sources`, `pages`,
@@ -797,13 +802,23 @@ impl AdoptAnswer {
     }
 }
 
+/// What the card sends with an apply: the dialog's confirmation and the answers of the report it shows.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AdoptRequest<'a> {
+    /// The confirmation of the dialog in a folder the CurseForge app manages, the window's
+    /// `--alongside-curseforge`.
+    pub alongside: bool,
+    /// The sources' answers of the report the card shows (task 113); `None` asks every source again.
+    pub answers: Option<&'a Answers>,
+}
+
 /// The refusal of an adopt apply while an update runs: both write the flavor's sidecar.
 pub fn adopt_updating_line() -> &'static str {
     "an update is running; the adopt waits until it ends"
 }
 
-/// The report of a flavor as the card draws it.
-fn adopt_view(report: &Report, voice: Voice) -> AdoptView {
+/// The report of a flavor as the card draws it, with the answers it was built from.
+fn adopt_view(report: &Report, answers: &Answers, voice: Voice) -> AdoptView {
     let flavor_name = report.flavor_name();
     AdoptView {
         flavor: report.flavor.id.as_str().to_string(),
@@ -829,6 +844,7 @@ fn adopt_view(report: &Report, voice: Voice) -> AdoptView {
         left_out: report.left_out.clone(),
         counts: report.counts,
         summary: said(voice, report.summary(AdoptBy::Window)),
+        answers: answers.clone(),
     }
 }
 
@@ -861,8 +877,8 @@ fn adopting(flavor: &Flavor, home: &Path) -> Result<Adopting, String> {
 /// The adopt report of a flavor (task 109 over task 097, `adopt::report`): every unmanaged addon with its
 /// folder group and its sources, each asked through `sources` whether it has a build for the flavor;
 /// `has_key` tells a missing key from a source this build lacks. Reads the sidecar and writes nothing (the
-/// sources keep their own caches). The answer carries the report, and the warnings and the summary of
-/// `mrgl adopt`.
+/// sources keep their own caches). The answer carries the report with the sources' answers it was built
+/// from (`adopt::Answers`, task 113), and the warnings and the summary of `mrgl adopt`.
 pub fn adopt_report(
     root: &Path,
     flavor_id: &str,
@@ -888,8 +904,9 @@ pub fn adopt_report(
         Ok(adopting) => adopting,
         Err(plain) => return refused(plain),
     };
-    let report = adopt::report(&scan, &state, sources, has_key);
-    let view = adopt_view(&report, voice);
+    let (report, answers) =
+        adopt::report_answering(&scan, &state, sources, has_key, Answers::new(&flavor.id));
+    let view = adopt_view(&report, &answers, voice);
     let mut messages: Vec<Message> = warnings
         .into_iter()
         .chain(report.left_out_lines())
@@ -907,15 +924,20 @@ pub fn adopt_report(
 /// Adopts the report's addons (task 109 over task 098, `adopt::apply`): one sidecar entry per addon with a
 /// source to be adopted as, no download and no folder change, the sidecar written once when an entry was
 /// added. A flavor folder with the CurseForge app's marker is refused before any source is asked
-/// (`adopt::marker_refusal`) unless `alongside` says so, the window's confirmation of
+/// (`adopt::marker_refusal`) unless the request's `alongside` says so, the window's confirmation of
 /// `--alongside-curseforge`; then the entries are written and the answer warns
 /// (`adopt::alongside_warning`). The marker is never touched. The answer carries the report as it is now
 /// (the adopted addons are managed, so they are no rows any more), the flavor's rows as they are now, the
 /// `adopted …` lines, and the warnings and the summary of `mrgl adopt --apply`.
+///
+/// The request's answers are those of the report the card shows (task 113): the report the apply writes
+/// from and the report after it are built over the folders and the sidecar as they are now and those
+/// answers, so no source is asked again (one that arrived since is). Answers of another flavor, an hour old
+/// or older (`adopt::ANSWERS_MAX_AGE_SECONDS`), or none, are asked again first, as the command line asks.
 pub fn adopt_apply(
     root: &Path,
     flavor_id: &str,
-    alongside: bool,
+    request: AdoptRequest<'_>,
     home: Option<&Path>,
     sources: &dyn Source,
     has_key: &dyn Fn(SourceKind) -> bool,
@@ -932,7 +954,7 @@ pub fn adopt_apply(
             format!("nothing adopted: {}", mrgl_core::Error::NoHome),
         ));
     };
-    if flavor.curse_client && !alongside {
+    if flavor.curse_client && !request.alongside {
         return AdoptAnswer::refused(say(
             Kind::Error,
             adopt::marker_refusal(&flavor, AdoptBy::Window),
@@ -947,13 +969,18 @@ pub fn adopt_apply(
         Ok(adopting) => adopting,
         Err(plain) => return AdoptAnswer::refused(say(Kind::Error, plain)),
     };
-    let report = adopt::report(&scan, &state, sources, has_key);
+    let answers = request
+        .answers
+        .filter(|answers| answers.stand_for(&flavor.id))
+        .cloned()
+        .unwrap_or_else(|| Answers::new(&flavor.id));
+    let (report, answers) = adopt::report_answering(&scan, &state, sources, has_key, answers);
     let applied = adopt::apply(&report, &mut state);
     if !applied.adopted.is_empty()
         && let Err(error) = engine.home.write_state(&state)
     {
         return AdoptAnswer {
-            adopt: Some(adopt_view(&report, voice)),
+            adopt: Some(adopt_view(&report, &answers, voice)),
             ..AdoptAnswer::refused(say(Kind::Error, error.to_string()))
         };
     }
@@ -970,14 +997,15 @@ pub fn adopt_apply(
             .map(|line| say(Kind::Warning, line)),
     );
     messages.push(said(voice, report.applied_summary(&applied)));
-    // The report as it is now: the adopted folders are managed, so only the rest are rows.
-    let now = if applied.adopted.is_empty() {
-        report
+    // The report as it is now, over the written sidecar and the same answers: the adopted folders are
+    // managed, so only the rest are rows.
+    let (now, answers) = if applied.adopted.is_empty() {
+        (report, answers)
     } else {
-        adopt::report(&scan, &state, sources, has_key)
+        adopt::report_answering(&scan, &state, sources, has_key, answers)
     };
     AdoptAnswer {
-        adopt: Some(adopt_view(&now, voice)),
+        adopt: Some(adopt_view(&now, &answers, voice)),
         flavor: Some(list::flavor_view(scan.flavor.clone(), Some(home), &[])),
         adopted: applied
             .adopted

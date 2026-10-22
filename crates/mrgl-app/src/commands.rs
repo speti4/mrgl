@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use mrgl_core::VERSION;
+use mrgl_core::adopt::Answers;
 use mrgl_core::discover::{self, GameRoot, RootOrigin};
 use mrgl_core::doctor;
 use mrgl_core::flavor;
@@ -21,7 +22,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::actions::{self, ActionAnswer, Plan, UpdateEvent, UpdateRun};
 use crate::list::{self, FlavorsAnswer, ResolveAnswer};
-use crate::toolbox::{self, AdoptAnswer, ToolboxAnswer, ToolboxRun};
+use crate::toolbox::{self, AdoptAnswer, AdoptRequest, ToolboxAnswer, ToolboxRun};
 
 /// A message as the UI shows it: the kind (it picks the place, `ui/voice.js`), the murloc line (empty when
 /// serious) and the plain line.
@@ -767,10 +768,16 @@ pub async fn adopt(flavor: String) -> AdoptAnswer {
 
 /// Adopts a flavor's unmanaged addons into its sidecar (task 109 over task 098, `toolbox::adopt_apply`);
 /// `alongside` is the confirmation of the dialog in a folder the CurseForge app manages, the window's
-/// `--alongside-curseforge`. Refused while an update runs (both write the sidecar) and while another
-/// toolbox write goes; an update and a mark wait for it the same way.
+/// `--alongside-curseforge`; `answers` are the sources' answers of the report the card shows (task 113),
+/// so no source is asked again while they stand. Refused while an update runs (both write the sidecar) and
+/// while another toolbox write goes; an update and a mark wait for it the same way.
 #[tauri::command]
-pub async fn adopt_apply(app: tauri::AppHandle, flavor: String, alongside: bool) -> AdoptAnswer {
+pub async fn adopt_apply(
+    app: tauri::AppHandle,
+    flavor: String,
+    alongside: bool,
+    answers: Option<Answers>,
+) -> AdoptAnswer {
     blocking(
         move || {
             if app.state::<UpdateRun>().is_running() {
@@ -792,7 +799,10 @@ pub async fn adopt_apply(app: tauri::AppHandle, flavor: String, alongside: bool)
                 Ok(root) => toolbox::adopt_apply(
                     &root,
                     &flavor,
-                    alongside,
+                    AdoptRequest {
+                        alongside,
+                        answers: answers.as_ref(),
+                    },
                     home_dir().as_deref(),
                     &Sources::from_env(),
                     &has_key,

@@ -398,7 +398,8 @@ test("the mock keeps the preferences for the page's life", async () => {
 // The adopt answer of the contract (task 109); `src/toolbox.rs` serializes the same keys, which
 // `tests/adopt.rs` holds it to. These tests come last: an apply turns rows into managed ones.
 const ADOPT_KEYS = ["adopt", "adopted", "flavor", "messages"];
-const ADOPT_VIEW_KEYS = ["counts", "curse_client", "flavor", "folder", "left_out", "marker", "rows", "summary"];
+const ADOPT_VIEW_KEYS = ["answers", "counts", "curse_client", "flavor", "folder", "left_out", "marker", "rows", "summary"];
+const ADOPT_ANSWERS_KEYS = ["asked_at", "flavor", "folders", "offers"];
 const ADOPT_ROW_KEYS = ["adopt_as", "class", "details", "folders", "line", "name", "needs", "pages", "sources", "verdict", "version"];
 const ADOPT_SOURCE_KEYS = ["build", "from", "missing", "needs", "source", "spec", "taken_by", "why"];
 const sorted = (object) => Object.keys(object).sort();
@@ -409,6 +410,7 @@ test("the adopt report keeps the contract's keys, every class and the core's lin
     const answer = await Data.adopt(id);
     assert.deepEqual(sorted(answer), ADOPT_KEYS, id);
     assert.deepEqual(sorted(answer.adopt), ADOPT_VIEW_KEYS, id);
+    assert.deepEqual(sorted(answer.adopt.answers), ADOPT_ANSWERS_KEYS, id);
     assert.deepEqual(answer.messages, [answer.adopt.summary], `${id}: the summary, said`);
     const { rows, counts } = answer.adopt;
     assert.equal(counts.addons, rows.length, id);
@@ -440,6 +442,9 @@ test("the adopt report keeps the contract's keys, every class and the core's lin
     forever.summary.plain,
     "3 unmanaged addons in _forever_: 1 can be adopted without CurseForge, 1 only with CurseForge, 1 with no known source; the Adopt button adopts 1 of them"
   );
+  // The sources' answers the report was built from (task 113), for the apply to send back.
+  assert.equal(forever.answers.flavor, "wowf");
+  assert.equal(forever.answers.offers["github:Tercioo/Details-Damage-Meter"].build, "yes");
   const retail = (await Data.adopt("wow")).adopt;
   assert.equal(retail.marker.kind, "warning");
   assert.equal(
@@ -463,7 +468,9 @@ test("the adopt apply refuses a marked folder without the confirmation and warns
   const bartender = () => flavors.find((flavor) => flavor.id === "wow_classic_era").addons.find((row) => row.folder === "Bartender4");
   assert.equal(bartender().managed, false, "nothing written");
 
-  const era = await Data.adoptApply("wow_classic_era", true);
+  const shown = (await Data.adopt("wow_classic_era")).adopt.answers;
+  const era = await Data.adoptApply("wow_classic_era", true, shown);
+  assert.deepEqual(era.adopt.answers, shown, "the shown report's answers come back (task 113)");
   assert.deepEqual(era.adopted, ["adopted Bartender4 4.15.7 as wowi:11190 (1 folder: Bartender4)"]);
   assert.deepEqual(
     era.messages.map((message) => [message.kind, message.plain]),

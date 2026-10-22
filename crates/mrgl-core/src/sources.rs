@@ -685,7 +685,7 @@ pub fn entry_forever_build<S: Source + ?Sized>(
 }
 
 /// Whether a source publishes a build for a flavor ([`Source::offers`], task 097).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Offered {
     /// Its metadata names the flavor.
