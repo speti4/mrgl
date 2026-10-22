@@ -60,6 +60,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The remaining toolbox lines move into the core: the set list note, the not-installed warning and the two-account error's words ([091](https://github.com/speti4/mrgl/blob/main/tasks/done/091-the-remaining-toolbox-lines-move-into-the-core.md))
 - The window's offline sketch says "source not configured" as the core does ([102](https://github.com/speti4/mrgl/blob/main/tasks/done/102-the-ui-mock-says-source-not-configured-as-the-core-does.md))
 - The window's row menu and the offline sketch follow the sources of this build ([107](https://github.com/speti4/mrgl/blob/main/tasks/done/107-the-windows-row-menu-and-offline-sketch-follow-the-sources-of-this-build.md))
+- The toolbox's adopt lines in the window's words, without the command line's flags ([112](https://github.com/speti4/mrgl/blob/main/tasks/done/112-the-toolboxs-adopt-lines-in-the-windows-words.md))
 
 ## 0.1.0 — 2026-10-22
 
