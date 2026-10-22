@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 20 backlog (1 ready · 0 blocked · 2 waiting · 17 ideas) · 1 in progress · 44 done · 3 dropped · 5 decisions
+**State:** 12 backlog (1 ready · 0 blocked · 2 waiting · 9 ideas) · 0 in progress · 53 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -44,25 +44,12 @@ _none_
 
 ### Ideas
 
-#### M1 Core + CLI
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 064 | [The dependency check counts the client's own Blizzard_* addons as present](backlog/064-blizzard-addons-are-not-missing-dependencies.md) | S | 2026-10-22 |
-| 065 | [The install engine names a multi-folder addon after the zip or the repository, …](backlog/065-derive-name-prefers-the-zip-or-repository-folder.md) | S | 2026-10-22 |
-| 066 | [The GitHub source looks past the newest release for the flavor's asset and for …](backlog/066-github-source-looks-past-the-newest-release.md) | S | 2026-10-22 |
-| 067 | [The link guard also covers the folders a new version drops](backlog/067-link-guard-covers-dropped-folders.md) | S | 2026-10-22 |
-| 071 | [Fold the duplicates: one WTF walker, one size formatter, no dead error variant](backlog/071-fold-the-duplicated-helpers.md) | S | 2026-10-22 |
-| 072 | [GitHub cache housekeeping: stale per-tag release.json files and the old single …](backlog/072-github-cache-housekeeping.md) | S | 2026-10-22 |
-
 #### M2 Window MVP
 
 | # | Task | Size | Created |
 |---|---|---|---|
 | 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
-| 069 | [The doctor report redacts a profile path written with forward slashes](backlog/069-doctor-redacts-forward-slash-profile-paths.md) | S | 2026-10-22 |
-| 070 | [The Forever notes schema check allows one day of slack on verified](backlog/070-forever-notes-date-check-allows-a-day-of-slack.md) | S | 2026-10-22 |
 
 #### M3 Toolbox
 
@@ -93,11 +80,7 @@ _none_
 
 ### In progress
 
-#### M1 Core + CLI
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 068 | [The update check: version order, progress, and a request budget without a token](wip/068-update-check-version-order-progress-and-request-budget.md) | 2026-10-22 | `none` |
+_none_
 
 ### Closed – do not reopen
 
@@ -111,18 +94,18 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 072 | [GitHub cache housekeeping: stale per-tag release.json files and the old single …](done/072-github-cache-housekeeping.md) | 2026-10-22 |
+| 071 | [Fold the duplicates: one WTF walker, one size formatter, no dead error variant](done/071-fold-the-duplicated-helpers.md) | 2026-10-22 |
+| 070 | [The Forever notes schema check allows one day of slack on verified](done/070-forever-notes-date-check-allows-a-day-of-slack.md) | 2026-10-22 |
+| 069 | [The doctor report redacts a profile path written with forward slashes](done/069-doctor-redacts-forward-slash-profile-paths.md) | 2026-10-22 |
+| 068 | [The update check: version order, progress, and a request budget without a token](done/068-update-check-version-order-progress-and-request-budget.md) | 2026-10-22 |
+| 067 | [The link guard also covers the folders a new version drops](done/067-link-guard-covers-dropped-folders.md) | 2026-10-22 |
+| 066 | [The GitHub source looks past the newest release for the flavor's asset and for …](done/066-github-source-looks-past-the-newest-release.md) | 2026-10-22 |
+| 065 | [The install engine names a multi-folder addon after the zip or the repository, …](done/065-derive-name-prefers-the-zip-or-repository-folder.md) | 2026-10-22 |
+| 064 | [The dependency check counts the client's own Blizzard_* addons as present](done/064-blizzard-addons-are-not-missing-dependencies.md) | 2026-10-22 |
 | 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
-| 061 | [CI compiles the non-Windows paths of the core](done/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 |
-| 058 | [Forever notes for the addons the community lists as partly restricted](done/058-forever-notes-for-the-partly-restricted-addons.md) | 2026-10-22 |
-| 057 | [An import option that installs the listed version, not the current release](done/057-import-option-for-the-listed-version.md) | 2026-10-22 |
-| 055 | [One install path: a core helper for resolve, download and install, the link ref…](done/055-one-core-helper-for-resolve-download-and-install.md) | 2026-10-22 |
-| 051 | [A Windows version line in the doctor report](done/051-windows-version-line-in-the-doctor-report.md) | 2026-10-22 |
-| 046 | [The asset download's error path: a 404 names the asset, the size is checked](done/046-asset-download-404-names-the-missing-asset.md) | 2026-10-22 |
-| 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](done/043-second-registry-source-for-the-game-root.md) | 2026-10-22 |
-| 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](done/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | 2026-10-22 |
-| 041 | [Offline resolve from the cached release list, with a warning](done/041-offline-resolve-from-the-cached-release-list.md) | 2026-10-22 |
 
-_34 more in `done/`._
+_43 more in `done/`._
 
 ### Decisions
 
