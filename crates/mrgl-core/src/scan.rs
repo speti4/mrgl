@@ -165,6 +165,14 @@ pub fn scan_addons(dir: &Path, chain: &[Option<TocSuffix>]) -> Result<Addons> {
     Ok(result)
 }
 
+/// A folder that is itself an addon (task 062): a TOC named after it, the base `<Folder>.toc` or one with
+/// a known suffix, read as [`scan_addons`] reads every subfolder. `None` when the folder has no such TOC,
+/// has no name (a drive root) or cannot be read.
+pub fn read_addon_folder(path: &Path, chain: &[Option<TocSuffix>]) -> Option<Addon> {
+    let folder = path.file_name()?.to_string_lossy().into_owned();
+    read_addon(path, folder, false, chain).ok().flatten()
+}
+
 /// One addon folder; `Ok(None)` when it holds no TOC of its own; `Err` with the plain reason when it
 /// cannot be read (a dangling junction, a permission problem).
 fn read_addon(

@@ -1,0 +1,6 @@
+## Interface: 11508
+## Title: SoloAddon (dev)
+## Version: 0.4.0-dev
+
+LibSolo\LibSolo.lua
+SoloAddon.lua

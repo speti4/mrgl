@@ -3339,6 +3339,116 @@ fn link_and_unlink_json_are_one_document_each() {
     assert_eq!(value["kept"], serde_json::json!([]));
 }
 
+/// A copy of the synthetic addon folder of `mrgl-core` (`single-addon/SoloAddon`: a TOC with the Forever
+/// suffix only and an embedded `LibSolo` with a TOC of its own) next to the game folder (task 062).
+#[cfg(windows)]
+fn solo_copy(game: &Game) -> PathBuf {
+    let solo = game
+        .root
+        .parent()
+        .expect("the base folder")
+        .join("repos")
+        .join("SoloAddon");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../mrgl-core/tests/fixtures/single-addon/SoloAddon"),
+        &solo,
+    );
+    solo
+}
+
+#[cfg(windows)]
+#[test]
+fn link_and_unlink_take_a_single_addon_folder() {
+    let game = Game::new("link-single");
+    let solo = solo_copy(&game);
+    let dev = dev_copy(&game);
+    let before = snapshot(&solo);
+
+    let output = game
+        .mrgl()
+        .args(["--serious", "link"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(
+        lines[0],
+        format!("linking the addon folder {} into _forever_", solo.display())
+    );
+    assert!(
+        lines[1].starts_with("linked the addon SoloAddon from "),
+        "{text}"
+    );
+    assert!(lines[1].ends_with("SoloAddon into _forever_"), "{text}");
+    assert_eq!(addons_listing(&game), ["SoloAddon"]);
+
+    // Again: nothing new, said as such.
+    let output = game
+        .mrgl()
+        .args(["--serious", "link"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout_last_line(&output).ends_with(" into _forever_ already"),
+        "{}",
+        stdout(&output)
+    );
+
+    // The JSON names the shape; a development folder still links its subfolders.
+    let output = game
+        .mrgl()
+        .args(["--json", "link"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["shape"], "development-folder");
+    assert_eq!(value["linked"].as_array().expect("linked").len(), 2);
+    assert_eq!(
+        addons_listing(&game),
+        ["DevAddon", "OneFolder", "SoloAddon"]
+    );
+    let output = game
+        .mrgl()
+        .args(["--json", "link"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["shape"], "addon-folder");
+    assert_eq!(value["linked"][0]["name"], "SoloAddon");
+    assert_eq!(value["linked"][0]["already_linked"], true);
+    assert_eq!(value["without_toc"], serde_json::json!([]));
+
+    // Unlinking the addon folder takes its one junction; the development folder's stay.
+    let output = game
+        .mrgl()
+        .args(["--serious", "unlink"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let last = stdout_last_line(&output);
+    assert!(last.starts_with("unlinked 1 addon of "), "{last}");
+    assert!(last.ends_with(" from _forever_: SoloAddon"), "{last}");
+    assert_eq!(addons_listing(&game), ["DevAddon", "OneFolder"]);
+    assert_eq!(snapshot(&solo), before, "the addon folder");
+    let state = std::fs::read_to_string(game.state_path()).expect("the sidecar");
+    assert!(!state.contains("SoloAddon"), "{state}");
+}
+
 #[cfg(windows)]
 #[test]
 fn link_skips_a_real_folder_with_a_warning_and_never_replaces_it() {

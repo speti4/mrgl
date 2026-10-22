@@ -1,7 +1,9 @@
 //! Dev addon linking (task 005): the addons one develops are loaded from their repo, not copied. `link`
 //! makes a directory junction under `Interface\AddOns` for every subfolder of a development folder that
 //! has a TOC named after it (the same rule as the scan, [`crate::scan::scan_addons`]), and records each as
-//! a sidecar entry with the source `link:<development folder>` ([`source_of`]); `unlink` removes exactly
+//! a sidecar entry with the source `link:<development folder>` ([`source_of`]). A folder that is itself an
+//! addon (a TOC named after it, task 062) is linked as that one addon, with the source `link:<that
+//! folder>`; the addon shape wins over its subfolders, which are its own. `unlink` removes exactly
 //! those junctions and their entries, never a real folder and never a junction mrgl did not make. A
 //! junction needs no admin rights, unlike a symbolic link, and is made here, as a mount-point reparse
 //! point through the Windows API, never by running `mklink`.
@@ -50,18 +52,44 @@ pub struct Skipped {
     pub reason: String,
 }
 
+/// What `link` was given (task 062).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Shape {
+    /// A folder whose subfolders are addons, each with a TOC named after it.
+    DevelopmentFolder,
+    /// A folder that is itself an addon: a TOC named after it, the multi-TOC suffixes included.
+    AddonFolder,
+}
+
+/// The shape of the folder `link` is given: an addon folder when it has a TOC named after it (the flavor's
+/// chain picks nothing here, any base or suffix TOC counts, as in the scan), a development folder
+/// otherwise. A folder that cannot be read is a development folder, so `link` reports the reason.
+pub fn shape_of(folder: &Path) -> Shape {
+    let addon = dev_folder(folder)
+        .ok()
+        .and_then(|folder| scan::read_addon_folder(&folder, &[]));
+    match addon {
+        Some(_) => Shape::AddonFolder,
+        None => Shape::DevelopmentFolder,
+    }
+}
+
 /// What `link` did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Linked {
-    /// The development folder, absolute.
+    /// The development folder or the addon folder, absolute.
     pub folder: PathBuf,
+    /// Whether `folder` is a development folder or one addon folder.
+    pub shape: Shape,
     /// The source recorded for every linked addon: `link:<folder>`.
     pub source: String,
     /// The addons linked, by name.
     pub linked: Vec<LinkedAddon>,
     /// The addons not linked: a real folder or another junction in the way, a name managed already.
     pub skipped: Vec<Skipped>,
-    /// Subfolders of the development folder without a TOC named after them, by name.
+    /// Subfolders of the development folder without a TOC named after them, by name; empty for an addon
+    /// folder.
     pub without_toc: Vec<String>,
     /// Plain lines about what went on around the link: a rebuilt sidecar, entries dropped.
     pub warnings: Vec<String>,
@@ -70,7 +98,7 @@ pub struct Linked {
 /// What `unlink` did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Unlinked {
-    /// The development folder, absolute.
+    /// The development folder or the addon folder, absolute.
     pub folder: PathBuf,
     /// The source whose entries were looked for: `link:<folder>`.
     pub source: String,
@@ -275,17 +303,33 @@ impl Engine {
 /// Links every addon of a development folder into the engine's flavor: a junction under
 /// `Interface\AddOns` per subfolder with a TOC named after it, and a sidecar entry with the source
 /// `link:<folder>`, the TOC's version (or `unknown`) and no file list (the files are the developer's and
-/// change all the time). A name in the way (a real folder, another junction, an addon managed from
-/// another source) is skipped with its reason; a junction already pointing to the same folder is kept and
-/// recorded. Running it again links what is new and changes nothing else.
+/// change all the time). A folder that is itself an addon (task 062, [`shape_of`]) is linked as that one
+/// addon, under its own name and with the source `link:<folder>`. A name in the way (a real folder,
+/// another junction, an addon managed from another source) is skipped with its reason; a junction already
+/// pointing to the same folder is kept and recorded. Running it again links what is new and changes
+/// nothing else.
 pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
     ensure_supported()?;
     let dev = dev_folder(folder)?;
     let source = source_of(&dev);
-    let found = if dev.is_dir() {
-        scan::scan_addons(&dev, &engine.flavor.toc_chain())?
+    let chain = engine.flavor.toc_chain();
+    let single = if dev.is_dir() {
+        scan::read_addon_folder(&dev, &chain)
     } else {
-        scan::Addons::default()
+        None
+    };
+    let shape = if single.is_some() {
+        Shape::AddonFolder
+    } else {
+        Shape::DevelopmentFolder
+    };
+    let found = match single {
+        Some(addon) => scan::Addons {
+            addons: vec![addon],
+            ..scan::Addons::default()
+        },
+        None if dev.is_dir() => scan::scan_addons(&dev, &chain)?,
+        None => scan::Addons::default(),
     };
     if found.addons.is_empty() {
         return Err(Error::NoAddonInDevFolder { path: dev });
@@ -313,7 +357,7 @@ pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
     let mut forgotten = false;
     for addon in &found.addons {
         let name = addon.folder.clone();
-        let target = dev.join(&name);
+        let target = addon.path.clone();
         let path = addons_dir.join(&name);
         let known = state
             .entry(&name)
@@ -408,6 +452,7 @@ pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
     }
     Ok(Linked {
         folder: dev,
+        shape,
         source,
         linked,
         skipped,
@@ -416,9 +461,10 @@ pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
     })
 }
 
-/// Removes the junctions `link` made from a development folder and their sidecar entries: an entry's
-/// folder that is a junction into the development folder is removed (the junction itself, nothing it
-/// points to), one that is gone already is forgotten, a real folder is left in place and forgotten (it is
+/// Removes the junctions `link` made from a development folder or an addon folder and their sidecar
+/// entries: an entry's folder that is a junction into the development folder (or to the addon folder
+/// itself, task 062) is removed (the junction itself, nothing it points to), one that is gone already is
+/// forgotten, a real folder is left in place and forgotten (it is
 /// not linked any more), and a junction pointing elsewhere is left in place with its entry. The
 /// development folder itself may be gone.
 pub fn unlink(engine: &Engine, folder: &Path) -> Result<Unlinked> {
@@ -452,7 +498,8 @@ pub fn unlink(engine: &Engine, folder: &Path) -> Result<Unlinked> {
                     kept_reason = Some(format!("{}: {error}", path.display()));
                 }
                 Ok(metadata) if metadata.file_type().is_symlink() => {
-                    let ours = link_target(&path).is_ok_and(|target| is_under(&target, &dev));
+                    let ours = link_target(&path)
+                        .is_ok_and(|target| is_under(&target, &dev) || same_path(&target, &dev));
                     if !ours {
                         keep_entry = true;
                         kept_reason = Some(format!(

@@ -104,6 +104,7 @@ target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # 
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe remove SomeAddon --flavor forever                   # remove an addon mrgl installed
 target\release\mrgl.exe link D:\dev\my-addons --flavor forever              # a junction per addon you develop
+target\release\mrgl.exe link D:\dev\MyAddon --flavor forever                # or one addon whose repo is its folder
 target\release\mrgl.exe unlink D:\dev\my-addons --flavor forever            # exactly those junctions go again
 target\release\mrgl.exe pin SomeAddon 1.2.0 --flavor forever                # keep it at 1.2.0 (no version: the installed one)
 target\release\mrgl.exe unpin SomeAddon --flavor forever                    # let updates reach it again
@@ -199,6 +200,8 @@ block into the [bug report](https://github.com/speti4/mrgl/issues/new?template=b
 
 `link` makes a directory junction under `Interface\AddOns` for every subfolder of a development folder that
 has a TOC named after it (no admin rights needed), so the game loads your addons straight from your repo. A
+folder that is itself an addon (a TOC named after it, `MyAddon.toc` or `MyAddon_Forever.toc`) is linked as
+that one addon, so a repository that is the addon folder needs no parent. A
 folder of the same name already there is skipped, never replaced; an install never writes over a linked
 addon, and `unlink` removes exactly the junctions `link` made, never a folder and never a file of yours.
 

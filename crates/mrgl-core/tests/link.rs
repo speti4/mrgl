@@ -3,8 +3,9 @@
 //! test can never touch the fixture, against a temporary game folder and mrgl home: link, the scan lists
 //! the junctions as linked, an install or a removal over a linked addon is refused, a real folder or a
 //! foreign junction in the way is skipped, unlink removes exactly the junctions and leaves the
-//! development folder byte for byte as it was. The junction tests are Windows-only; elsewhere the two
-//! calls answer that junctions are Windows-only.
+//! development folder byte for byte as it was. A single addon folder (`tests/fixtures/single-addon/`, task
+//! 062) links and unlinks as that one addon. The junction tests are Windows-only; elsewhere the two calls
+//! answer that junctions are Windows-only.
 
 // The helpers serve the Windows tests; elsewhere only the Windows-only answer is tested.
 #![cfg_attr(not(windows), allow(dead_code, unused_imports))]
@@ -111,6 +112,18 @@ fn snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     let mut into = BTreeMap::new();
     walk(dir, "", &mut into);
     into
+}
+
+/// A copy of the synthetic addon folder `tests/fixtures/single-addon/SoloAddon` (a TOC with the Forever
+/// suffix only, and an embedded `LibSolo` folder with a TOC of its own) under the sandbox, as a
+/// repository that is the addon folder itself (task 062).
+fn solo_copy(sandbox: &Sandbox) -> PathBuf {
+    let solo = sandbox.root.join("repos").join("SoloAddon");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/single-addon/SoloAddon"),
+        &solo,
+    );
+    solo
 }
 
 fn zip(name: &str) -> PathBuf {
@@ -373,6 +386,100 @@ fn a_junction_made_by_hand_to_the_same_folder_is_taken_over() {
 
 #[cfg(windows)]
 #[test]
+fn a_single_addon_folder_links_and_unlinks_on_its_own() {
+    let sandbox = Sandbox::new("single");
+    let solo = solo_copy(&sandbox);
+    let before = snapshot(&solo);
+    assert_eq!(link::shape_of(&solo), link::Shape::AddonFolder);
+    assert_eq!(link::shape_of(&sandbox.dev), link::Shape::DevelopmentFolder);
+
+    let linked = link::link(&sandbox.engine, &solo).expect("links");
+    let folder = link::dev_folder(&solo).expect("the folder");
+    assert_eq!(linked.shape, link::Shape::AddonFolder);
+    assert_eq!(linked.folder, folder);
+    assert_eq!(linked.source, format!("link:{}", folder.display()));
+    let names: Vec<(&str, &str, bool)> = linked
+        .linked
+        .iter()
+        .map(|addon| {
+            (
+                addon.name.as_str(),
+                addon.version.as_str(),
+                addon.already_linked,
+            )
+        })
+        .collect();
+    assert_eq!(names, [("SoloAddon", "0.4.0-dev", false)]);
+    assert!(link::same_path(&linked.linked[0].target, &folder));
+    assert!(linked.skipped.is_empty(), "{:?}", linked.skipped);
+    assert!(linked.without_toc.is_empty(), "{:?}", linked.without_toc);
+    // The addon shape wins: the embedded LibSolo is part of the addon, never linked on its own.
+    assert_eq!(sandbox.addons_listing(), ["SoloAddon"]);
+    assert!(link::is_link(&sandbox.addon("SoloAddon")));
+    assert!(link::same_path(
+        &link::link_target(&sandbox.addon("SoloAddon")).expect("a target"),
+        &folder
+    ));
+    assert!(
+        sandbox
+            .addon("SoloAddon")
+            .join("LibSolo/LibSolo.toc")
+            .is_file()
+    );
+
+    // The scan reads it through the junction, the Forever suffix TOC chosen.
+    let scan = mrgl_core::scan::scan_flavor(&sandbox.engine.flavor).expect("scans");
+    let solo_scan = scan
+        .addons
+        .iter()
+        .find(|addon| addon.folder == "SoloAddon")
+        .expect("SoloAddon in the scan");
+    assert!(solo_scan.linked);
+    assert_eq!(solo_scan.chosen.as_deref(), Some("SoloAddon_Forever.toc"));
+    assert_eq!(solo_scan.version(), Some("0.4.0-dev"));
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    let (_, entry) = state.entry("SoloAddon").expect("an entry");
+    assert_eq!(entry.source, linked.source);
+    assert_eq!(entry.folders, ["SoloAddon"]);
+    assert!(entry.files.is_empty());
+
+    // A second link changes nothing; a development folder still links its subfolders next to it.
+    let again = link::link(&sandbox.engine, &solo).expect("links again");
+    assert_eq!(again.linked.len(), 1);
+    assert!(again.linked[0].already_linked);
+    let dev = link::link(&sandbox.engine, &sandbox.dev).expect("links the development folder");
+    assert_eq!(dev.shape, link::Shape::DevelopmentFolder);
+    let dev_names: Vec<&str> = dev.linked.iter().map(|addon| addon.name.as_str()).collect();
+    assert_eq!(dev_names, ["DevAddon", "OneFolder"]);
+    assert_eq!(
+        sandbox.addons_listing(),
+        ["DevAddon", "OneFolder", "SoloAddon"]
+    );
+
+    // Unlinking the addon folder removes its one junction and entry; the development folder's stay.
+    let unlinked = link::unlink(&sandbox.engine, &solo).expect("unlinks");
+    assert_eq!(unlinked.folder, folder);
+    assert_eq!(unlinked.unlinked, ["SoloAddon"]);
+    assert!(unlinked.kept.is_empty(), "{:?}", unlinked.kept);
+    assert_eq!(sandbox.addons_listing(), ["DevAddon", "OneFolder"]);
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    let left: Vec<&str> = state.addons.keys().map(String::as_str).collect();
+    assert_eq!(left, ["DevAddon", "OneFolder"]);
+    assert_eq!(snapshot(&solo), before, "the addon folder");
+
+    // Linked again and then deleted: the dangling junction to the addon folder is still ours to remove.
+    link::link(&sandbox.engine, &solo).expect("links once more");
+    std::fs::remove_dir_all(&solo).expect("the addon folder goes");
+    let unlinked = link::unlink(&sandbox.engine, &solo).expect("unlinks");
+    assert_eq!(unlinked.unlinked, ["SoloAddon"]);
+    assert_eq!(sandbox.addons_listing(), ["DevAddon", "OneFolder"]);
+    let unlinked = link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
+    assert_eq!(unlinked.unlinked, ["DevAddon", "OneFolder"]);
+    assert!(sandbox.addons_listing().is_empty());
+}
+
+#[cfg(windows)]
+#[test]
 fn unlink_leaves_a_real_folder_and_takes_a_dangling_junction_of_its_own() {
     let sandbox = Sandbox::new("unlink-cases");
     link::link(&sandbox.engine, &sandbox.dev).expect("links");
@@ -415,7 +522,7 @@ fn a_folder_without_addons_and_a_missing_folder_are_errors() {
     assert!(
         error
             .to_string()
-            .ends_with("Media: no subfolder with a TOC named after it"),
+            .ends_with("Media: no TOC named after it and no subfolder with one"),
         "{error}"
     );
     let error = link::link(&sandbox.engine, &sandbox.root.join("missing")).expect_err("missing");

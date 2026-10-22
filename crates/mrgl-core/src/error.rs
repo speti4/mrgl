@@ -156,8 +156,9 @@ pub enum Error {
     #[error("junctions are Windows-only: link and unlink work on Windows")]
     JunctionsWindowsOnly,
 
-    /// A development folder with no addon in it: no subfolder with a TOC named after it (task 005).
-    #[error("no addon in {path}: no subfolder with a TOC named after it")]
+    /// A development folder with no addon in it: no subfolder with a TOC named after it (task 005), and
+    /// no TOC named after the folder itself (task 062).
+    #[error("no addon in {path}: no TOC named after it and no subfolder with one")]
     NoAddonInDevFolder { path: PathBuf },
 
     /// An install or a removal over an addon `link` made (task 005): `unlink` is the way out, never

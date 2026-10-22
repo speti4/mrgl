@@ -144,9 +144,11 @@ enum Command {
         #[arg(long)]
         flavor: Option<String>,
     },
-    /// Link the addons of a development folder into a flavor with junctions (no admin rights needed).
+    /// Link the addons of a development folder, or one addon folder, into a flavor with junctions (no
+    /// admin rights needed).
     Link {
-        /// A folder whose subfolders are addons (each with its TOC).
+        /// A folder whose subfolders are addons (each with its TOC), or an addon folder (a TOC named after
+        /// it).
         folder: PathBuf,
         /// The flavor id or folder.
         #[arg(long)]
@@ -154,7 +156,7 @@ enum Command {
     },
     /// Remove the junctions `link` made.
     Unlink {
-        /// The development folder `link` was given.
+        /// The development folder or the addon folder `link` was given.
         folder: PathBuf,
         /// The flavor id or folder.
         #[arg(long)]
@@ -1750,19 +1752,21 @@ fn remove_command(reporter: &Reporter, name: &str, flavor: Option<&str>) -> Resu
 }
 
 /// `mrgl link <folder> --flavor <id>` (task 005): a junction under `Interface\AddOns` for every addon of a
-/// development folder, recorded as `link:<folder>`; a name in the way is a warning, never replaced.
+/// development folder, or for the one addon a folder with a TOC named after it is (task 062), recorded as
+/// `link:<folder>`; a name in the way is a warning, never replaced.
 fn link_command(reporter: &Reporter, folder: &Path, flavor: Option<&str>) -> Result<(), String> {
     link::ensure_supported().map_err(|error| error.to_string())?;
     let mut warnings = Vec::new();
     let engine = engine_for(flavor, &mut warnings)?;
     let folder_name = engine.flavor.folder_name();
     if !reporter.json {
+        let what = match link::shape_of(folder) {
+            link::Shape::AddonFolder => "the addon folder",
+            link::Shape::DevelopmentFolder => "the addons of",
+        };
         reporter.say(
             Kind::Progress,
-            format!(
-                "linking the addons of {} into {folder_name}",
-                folder.display()
-            ),
+            format!("linking {what} {} into {folder_name}", folder.display()),
         );
     }
     let linked = link::link(&engine, folder).map_err(|error| error.to_string())?;
@@ -1772,6 +1776,7 @@ fn link_command(reporter: &Reporter, folder: &Path, flavor: Option<&str>) -> Res
             "kind": "link",
             "flavor": &engine.flavor,
             "folder": linked.folder,
+            "shape": linked.shape,
             "source": linked.source,
             "linked": linked.linked,
             "skipped": linked.skipped,
@@ -1799,6 +1804,31 @@ fn link_command(reporter: &Reporter, folder: &Path, flavor: Option<&str>) -> Res
         .iter()
         .filter(|addon| addon.already_linked)
         .count();
+    if linked.shape == link::Shape::AddonFolder
+        && let [addon] = linked.linked.as_slice()
+    {
+        let (kind, summary) = if addon.already_linked {
+            (
+                Kind::Nothing,
+                format!(
+                    "{} is linked from {} into {folder_name} already",
+                    addon.name,
+                    linked.folder.display()
+                ),
+            )
+        } else {
+            (
+                Kind::Success,
+                format!(
+                    "linked the addon {} from {} into {folder_name}",
+                    addon.name,
+                    linked.folder.display()
+                ),
+            )
+        };
+        reporter.say(kind, summary);
+        return Ok(());
+    }
     let mut summary = if names.is_empty() {
         format!(
             "linked no addon from {} into {folder_name}",

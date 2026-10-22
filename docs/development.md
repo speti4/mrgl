@@ -26,8 +26,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   addon there and leaves both zips in the cache, so a second rollback goes forward again, task 022), the
   dev addon links (`link`, task 005: a directory junction under `Interface\AddOns` for every
   addon of a development folder, a mount-point reparse point made through the Windows API, recorded in the
-  sidecar with the source `link:<development folder>`, the TOC's version and no file list; `unlink` removes
-  exactly those junctions, never a real folder or a junction mrgl did not make; Windows-only), the state
+  sidecar with the source `link:<development folder>`, the TOC's version and no file list; a folder that is
+  itself an addon, a TOC named after it with or without a multi-TOC suffix, is linked as that one addon
+  under its own name with the source `link:<addon folder>`, and that shape wins over its subfolders, which
+  are its own, task 062, `link::shape_of` and `Linked::shape`; `unlink` removes exactly those junctions,
+  never a real folder or a junction mrgl did not make; Windows-only), the state
   sidecar (`state`, D-003; an entry's optional `pinned` version, `ignored` flag and release `channel`,
   `stable` or `prerelease`, with the queries and setters the update check and the CLI call, task 021; absent
   fields read as unpinned, not ignored, stable, and a reinstall keeps them), the toolbox (`backup`: the `WTF`
@@ -76,7 +79,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   it installed already), `add
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
   task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
-  (task 024), `link <folder>` and `unlink <folder>` (task 005), `export --flavor <flavor> [--to <file>]`
+  (task 024), `link <folder>` and `unlink <folder>` (task 005; the folder is a development folder or one
+  addon folder, task 062, and `link --json` names it as `shape`, `development-folder` or `addon-folder`),
+  `export --flavor <flavor> [--to <file>]`
   and `import <file> --flavor <flavor> [--exact] [--dry-run]` (tasks 015 and 057), `pin <name> [version]`,
   `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
@@ -730,7 +735,9 @@ keeps the check from looking into), a fourth game folder for the interface state
 a `_retail_` flavor with a current TOC, one an interface number behind the build and one of another
 expansion), and a
 development folder for the junction links (`dev/`: two addons with a TOC and a folder without one, task
-005; the tests copy it into a temporary folder and make their junctions there). A real addon zip, a real
+005; the tests copy it into a temporary folder and make their junctions there), and a single addon folder
+for the same links (`single-addon/SoloAddon/`: a TOC with the Forever suffix only and an embedded library
+folder with a TOC of its own, task 062). A real addon zip, a real
 AddOns folder or a `WTF` folder never enters the
 repo; a manual round on a real game folder is a task of its own, and its result is a dated line in that
 task's Verification. The running-client tests copy the system's signed `ping.exe`

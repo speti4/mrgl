@@ -15,6 +15,10 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The dependency and interface checks say what the client says: an embedded-only dependency is missing, a lower interface number is out of date ([076](https://github.com/speti4/mrgl/blob/main/tasks/done/076-the-checks-say-what-the-client-says.md))
 - The marks survive a reinstall under a new derived name, and the pinned line uses the version order ([077](https://github.com/speti4/mrgl/blob/main/tasks/done/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md))
 
+### M3 Toolbox
+
+- `link` takes a single addon folder as well as a development folder ([062](https://github.com/speti4/mrgl/blob/main/tasks/done/062-link-takes-a-single-addon-folder.md))
+
 ### Project housekeeping
 
 - Housekeeping after the M1 fixes: one `Blizzard_` prefix, the doctor's formatter alias, the voice sample in the docs ([080](https://github.com/speti4/mrgl/blob/main/tasks/done/080-housekeeping-after-wave-5.md))

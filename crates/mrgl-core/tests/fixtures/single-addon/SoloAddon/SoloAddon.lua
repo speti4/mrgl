@@ -1,0 +1,3 @@
+-- SoloAddon, an addon whose repository is the addon folder
+local _, ns = ...
+ns.solo = true
