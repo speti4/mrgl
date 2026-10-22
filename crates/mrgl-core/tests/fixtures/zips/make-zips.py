@@ -90,6 +90,17 @@ write("several-folders-2.1.0.zip", [
     ("SeveralFolders_Options/core.lua", "-- options 2.1.0\n"),
 ])
 
+# The shape of a boss-mod core zip (task 065): no folder is extended by all the others, and the first by name
+# is not the core; the zip's stem names it.
+write("boss-core-5.0.0.zip", [
+    ("Boss-Arena/Boss-Arena.toc", toc("Boss: Arena", "5.0.0", extra="## Dependencies: Boss-Core\r\n")),
+    ("Boss-Arena/core.lua", "-- Boss-Arena 5.0.0\n"),
+    ("Boss-Core/Boss-Core.toc", toc("Boss Core", "5.0.0")),
+    ("Boss-Core/core.lua", "-- Boss-Core 5.0.0\n"),
+    ("Boss-GUI/Boss-GUI.toc", toc("Boss: GUI", "5.0.0", extra="## Dependencies: Boss-Core\r\n")),
+    ("Boss-GUI/core.lua", "-- Boss-GUI 5.0.0\n"),
+])
+
 write("root-toc-3.0.0.zip", [
     ("RootToc.toc", toc("Root TOC", "3.0.0", interface="120105")),
     ("RootToc_Vanilla.toc", toc("Root TOC", "3.0.0", interface="11509")),
@@ -119,7 +130,7 @@ write("escaping-path.zip", [
 write("needs-library-1.0.0.zip", [
     ("NeedsLibrary/NeedsLibrary.toc",
      toc("Needs Library", "1.0.0",
-         extra="## Dependencies: LibEmbedded, LibMissing\r\n## OptionalDeps: LibOptional\r\n")),
+         extra="## Dependencies: LibEmbedded, LibMissing, Blizzard_Something\r\n## OptionalDeps: LibOptional\r\n")),
     ("NeedsLibrary/core.lua", "-- NeedsLibrary 1.0.0\n"),
     ("NeedsLibrary/Libs/LibEmbedded/LibEmbedded.lua", "-- an embedded library\n"),
 ])

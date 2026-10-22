@@ -4,18 +4,23 @@
 //! refuses with the documented line; the no-client path over the fixture tree is cheap.
 
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use mrgl_core::Error;
 use mrgl_core::client;
-use mrgl_core::flavor::{self, Flavor};
+use mrgl_core::flavor;
+#[cfg(windows)]
+use mrgl_core::flavor::Flavor;
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flavors")
 }
 
 /// A synthetic game folder under the temp dir, with a `.build.info` row for `wowf` and a `_forever_` folder.
+#[cfg(windows)]
 fn temp_game_root(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("mrgl-client-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -92,6 +97,7 @@ impl Drop for StandIn {
     }
 }
 
+#[cfg(windows)]
 fn read(root: &Path) -> Flavor {
     flavor::read_flavor(&root.join("_forever_")).expect("a flavor")
 }

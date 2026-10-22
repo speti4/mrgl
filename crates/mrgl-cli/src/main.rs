@@ -42,7 +42,7 @@ use mrgl_core::sets::{self, AddonSet};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
-use mrgl_core::update::{self, UpdateState};
+use mrgl_core::update::{self, CheckProgress, UpdateState};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::zip_entry;
 use mrgl_core::{Error, VERSION};
@@ -2015,7 +2015,7 @@ fn backup_command(
             reporter.line(format!(
                 "{}  {files}  {}  {}",
                 entry.name,
-                human_bytes(entry.bytes),
+                zip_entry::size_text(entry.bytes),
                 entry.modified.as_deref().unwrap_or("-")
             ));
         }
@@ -2145,7 +2145,7 @@ fn backup_command(
         Kind::Success,
         format!(
             "backed up WTF of {folder_name}: {files}, {}, in {}",
-            human_bytes(backup.bytes),
+            zip_entry::size_text(backup.bytes),
             backup.zip.display()
         ),
     );
@@ -2171,24 +2171,6 @@ fn confirmed() -> bool {
     }
     let answer = answer.trim();
     answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")
-}
-
-/// A byte count for a human: `512 B`, `34.2 KB`, `1.5 MB`, `2.0 GB`.
-fn human_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
-    if bytes < 1024 {
-        return format!("{bytes} B");
-    }
-    let mut value = bytes as f64 / 1024.0;
-    let mut unit = UNITS[0];
-    for next in &UNITS[1..] {
-        if value < 1024.0 {
-            break;
-        }
-        value /= 1024.0;
-        unit = next;
-    }
-    format!("{value:.1} {unit}")
 }
 
 /// `mrgl export --flavor <id> [--to <file>]`: the flavor's managed addons as a list file (task 015).
@@ -2428,7 +2410,10 @@ enum Applied {
 /// needed), then each update through the one install path of the engine (task 055) with the pick the
 /// check made, and the summary that counts every state (`2 addons updated, 12 up to date, 1 pinned, 1
 /// ignored`). `--dry-run` checks and writes nothing. An update or a check that fails does not stop the
-/// others; the command then ends with exit code 1.
+/// others; the command then ends with exit code 1. Task 068: a progress line before each addon the source
+/// is asked about and its data line as soon as it is checked; a stop before GitHub's rate limit is one
+/// warning line with the reset time, and the addons it leaves are counted (`2 not checked (rate limit)`),
+/// a warning, not a failure.
 fn update_command(
     reporter: &Reporter,
     name: Option<&str>,
@@ -2447,7 +2432,27 @@ fn update_command(
         );
     }
     let github = GitHub::from_env(sources::http_from_env());
-    let check = update::check(&engine, &github, name).map_err(|error| error.to_string())?;
+    // Task 068: a progress line before each addon the source is asked about, its data line once it is
+    // checked, and the one line of a stop before the rate limit, as they happen.
+    let check = update::check(&engine, &github, name, &mut |step| {
+        if reporter.json {
+            return;
+        }
+        match step {
+            CheckProgress::Checking {
+                index,
+                total,
+                name,
+                source,
+            } => reporter.say(
+                Kind::Progress,
+                format!("checking {name} against {source} ({index} of {total})"),
+            ),
+            CheckProgress::Stopped { stop } => reporter.say(Kind::Warning, stop.line()),
+            CheckProgress::Checked { addon, .. } => reporter.line(addon.line()),
+        }
+    })
+    .map_err(|error| error.to_string())?;
     warnings.extend(check.warnings.iter().cloned());
     // Task 041: a pick from the cached release list, offline, is a warning here as on `add`.
     warnings.extend(
@@ -2457,11 +2462,6 @@ fn update_command(
             .filter_map(|addon| addon.pick.as_ref()?.stale_warning()),
     );
     let updates: Vec<&update::AddonUpdate> = check.updates().collect();
-    if !reporter.json {
-        for addon in &check.addons {
-            reporter.line(addon.line());
-        }
-    }
 
     let mut applied: BTreeMap<String, Applied> = BTreeMap::new();
     if !dry_run && !updates.is_empty() {
@@ -2582,6 +2582,12 @@ fn update_command(
                 (key, check.count(*state).into())
             })
             .collect();
+        // Task 068: the stop before the rate limit, with its line; `null` when the check asked about every addon.
+        let stopped = check.stopped.as_ref().map(|stop| {
+            let mut value = serde_json::to_value(stop).unwrap_or_default();
+            value["message"] = stop.line().into();
+            value
+        });
         reporter.document(serde_json::json!({
             "kind": "update",
             "flavor": &engine.flavor,
@@ -2589,6 +2595,7 @@ fn update_command(
             "addons": addons,
             "updated": updated,
             "counts": counts,
+            "stopped": stopped,
             "warnings": warnings,
         }));
     } else {
@@ -2654,6 +2661,7 @@ fn update_summary(
         UpdateState::GuessOnly,
         UpdateState::SourceGone,
         UpdateState::Failed,
+        UpdateState::RateLimited,
     ]
     .into_iter()
     .any(|state| check.count(state) > 0)
@@ -2750,7 +2758,7 @@ fn savedvars_command(reporter: &Reporter, spec: Option<&str>, clean: bool) -> Re
                     "moved {} of {folder_name} ({}, {}) into {}; unzip it into the WTF folder to put them back",
                     count_orphans(cleaned.moved.len()),
                     count_files(cleaned.files),
-                    human_bytes(cleaned.bytes),
+                    zip_entry::size_text(cleaned.bytes),
                     zip.display()
                 ),
             ),
@@ -2793,7 +2801,7 @@ fn savedvars_command(reporter: &Reporter, spec: Option<&str>, clean: bool) -> Re
             Kind::Success,
             format!(
                 "{count} of {folder_name}, {} in all, no orphans",
-                human_bytes(listing.bytes)
+                zip_entry::size_text(listing.bytes)
             ),
         );
     } else {
@@ -2801,9 +2809,9 @@ fn savedvars_command(reporter: &Reporter, spec: Option<&str>, clean: bool) -> Re
             Kind::Warning,
             format!(
                 "{count} of {folder_name}, {} in all; {} ({}) have no addon folder: `mrgl savedvars --clean` moves them into a backup zip",
-                human_bytes(listing.bytes),
+                zip_entry::size_text(listing.bytes),
                 count_orphans(listing.orphans),
-                human_bytes(listing.orphan_bytes)
+                zip_entry::size_text(listing.orphan_bytes)
             ),
         );
     }
@@ -2820,7 +2828,7 @@ fn savedvars_line(file: &SavedVariablesFile) -> String {
     };
     format!(
         "{:>9}  {}  {}{mark}",
-        human_bytes(file.bytes),
+        zip_entry::size_text(file.bytes),
         file.addon,
         file.place()
     )

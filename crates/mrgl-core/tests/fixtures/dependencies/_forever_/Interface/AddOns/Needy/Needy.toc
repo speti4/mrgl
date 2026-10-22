@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Needy
 ## Version: 1.0.0
-## Dependencies: LibMet, LibEmbedded, LibMissing
+## Dependencies: LibMet, LibEmbedded, LibMissing, Blizzard_Something
 ## RequiredDeps: libmet
 ## OptionalDeps: LibOptional
 

@@ -617,7 +617,7 @@ fn an_update_over_a_foreign_junction_is_refused() {
         zip: zip("one-folder-1.2.0.zip"),
         version: "1.2.0",
     };
-    let check = update::check(&sandbox.engine, &source, None).expect("checks");
+    let check = update::check(&sandbox.engine, &source, None, &mut |_| {}).expect("checks");
     let addon = &check.addons[0];
     assert_eq!(addon.state, UpdateState::UpdateAvailable);
     let request = addon.request().expect("an update");
@@ -632,4 +632,92 @@ fn an_update_over_a_foreign_junction_is_refused() {
     assert!(link::is_link(&sandbox.addon("OneFolder")));
     let state = sandbox.engine.load_state().expect("the sidecar").state;
     assert_eq!(state.addons["OneFolder"].version, "1.1.0");
+}
+
+// --- task 067: the guard covers the folders a new version drops ---
+
+#[cfg(windows)]
+#[test]
+fn an_update_that_drops_a_linked_folder_is_refused() {
+    let sandbox = Sandbox::new("dropped-folder");
+    // The development folder holds the folder that version 2.1.0 drops.
+    let data = sandbox.dev.join("SeveralFolders_Data");
+    std::fs::create_dir_all(&data).expect("the folder");
+    std::fs::write(
+        data.join("SeveralFolders_Data.toc"),
+        "## Interface: 11508\n## Title: Data in development\n## Version: 9.9.9\n\ncore.lua\n",
+    )
+    .expect("a TOC");
+    std::fs::write(data.join("core.lua"), "-- work in progress\n").expect("a file");
+    let older = zip("several-folders-2.0.0.zip");
+    let newer = zip("several-folders-2.1.0.zip");
+    sandbox
+        .engine
+        .install(&older, &metadata_for(&older))
+        .expect("installs");
+    let dev = link::dev_folder(&sandbox.dev).expect("the folder");
+    let refused_update = |sandbox: &Sandbox| {
+        let before = snapshot(&sandbox.dev);
+        let listing = sandbox.addons_listing();
+        let error = sandbox
+            .engine
+            .install(&newer, &metadata_for(&newer))
+            .expect_err("refused");
+        assert!(link::is_link(&sandbox.addon("SeveralFolders_Data")));
+        assert_eq!(snapshot(&sandbox.dev), before, "the development folder");
+        assert_eq!(sandbox.addons_listing(), listing, "the AddOns folder");
+        let state = sandbox.engine.load_state().expect("the sidecar").state;
+        assert_eq!(state.addons["SeveralFolders"].version, "2.0.0");
+        assert!(
+            snapshot(&sandbox.addon("SeveralFolders")).contains_key("SeveralFolders.toc"),
+            "the previous version stays"
+        );
+        error
+    };
+
+    // A junction made by hand where the dropped folder was: not moved aside, not deleted.
+    std::fs::remove_dir_all(sandbox.addon("SeveralFolders_Data")).expect("the folder goes");
+    link::create_junction(
+        &sandbox.addon("SeveralFolders_Data"),
+        &dev.join("SeveralFolders_Data"),
+    )
+    .expect("a junction by hand");
+    let error = refused_update(&sandbox);
+    assert!(
+        matches!(&error, Error::ForeignJunction { folder, .. } if folder == "SeveralFolders_Data"),
+        "{error}"
+    );
+
+    // The same folder linked by `mrgl link`, with a sidecar that still lists it under the managed addon
+    // (`link` skips a folder another entry lists, so only a sidecar written otherwise holds both).
+    std::fs::remove_dir(sandbox.addon("SeveralFolders_Data")).expect("the junction goes");
+    let mut state = sandbox.engine.load_state().expect("the sidecar").state;
+    let folders = &mut state
+        .addons
+        .get_mut("SeveralFolders")
+        .expect("managed")
+        .folders;
+    folders.retain(|folder| folder != "SeveralFolders_Data");
+    sandbox.engine.home.write_state(&state).expect("writes");
+    let linked = link::link(&sandbox.engine, &sandbox.dev).expect("links");
+    assert!(
+        linked
+            .linked
+            .iter()
+            .any(|addon| addon.name == "SeveralFolders_Data"),
+        "{linked:?}"
+    );
+    let mut state = sandbox.engine.load_state().expect("the sidecar").state;
+    state
+        .addons
+        .get_mut("SeveralFolders")
+        .expect("managed")
+        .folders
+        .push("SeveralFolders_Data".to_string());
+    sandbox.engine.home.write_state(&state).expect("writes");
+    let error = refused_update(&sandbox);
+    assert!(
+        matches!(&error, Error::LinkedAddon { action: "install over", name, .. } if name == "SeveralFolders_Data"),
+        "{error}"
+    );
 }

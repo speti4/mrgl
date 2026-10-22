@@ -25,7 +25,8 @@
 //!
 //! The link guard (task 005, [`Engine::refuse_links`]) runs in [`Engine::commit`], before the first folder
 //! moves, so every path that stages and commits (a zip, a source, a rollback) refuses to install over a
-//! linked addon or a junction mrgl did not make.
+//! linked addon or a junction mrgl did not make, among the staged folders and the folders of the previous
+//! version the new one drops (task 067).
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
@@ -51,8 +52,9 @@ pub struct Metadata {
     pub source: String,
     /// The version the source names; `None` takes the primary folder's `## Version`, else `unknown`.
     pub version: Option<String>,
-    /// The addon's name, the sidecar's key; `None` derives it from the folders (the one whose name the
-    /// others extend, `BigWigs` for `BigWigs_Core` and `BigWigs_Options`, else the first by name).
+    /// The addon's name, the sidecar's key; `None` derives it from the folders ([`derive_name`]: the one
+    /// whose name the others extend, `BigWigs` for `BigWigs_Core` and `BigWigs_Options`, else the one the
+    /// zip's stem or the source's repository names, else the first by name).
     pub name: Option<String>,
     /// The pick's `nolib` flag ([`crate::sources::Pick::nolib`]), recorded on the sidecar entry for the
     /// dependency check (task 029); `None` when the source does not say (a zip in hand).
@@ -373,6 +375,7 @@ impl Engine {
                     .iter()
                     .map(|addon| addon.folder.as_str())
                     .collect::<Vec<_>>(),
+                &name_hints(&stem, &metadata.source),
             )
             .to_string(),
         };
@@ -397,16 +400,11 @@ impl Engine {
     /// Swaps the staged folders into `Interface\AddOns` one at a time, removes the folders the previous
     /// version had and this one lacks, records the install in the state (and writes it) and keeps the zip
     /// in the cache. When a swap fails, every folder moved so far is put back and the error says so.
-    /// Before anything moves, a staged folder that is a linked addon or a junction mrgl did not make is
-    /// refused (task 005, [`Engine::refuse_links`]): here, so no path that stages and commits can skip it.
+    /// Before anything moves, a staged folder or a folder of the previous version this one drops that is a
+    /// linked addon or a junction mrgl did not make is refused (tasks 005 and 067,
+    /// [`Engine::refuse_links`]): here, so no path that stages and commits can skip it, and a dropped
+    /// folder is never moved aside into the staging folder and deleted with it.
     pub fn commit(&self, mut staged: Staged, state: &mut State) -> Result<Installed> {
-        self.refuse_links(state, &staged.folders())?;
-        let addons_dir = self.addons_dir();
-        std::fs::create_dir_all(&addons_dir).map_err(|source| Error::Io {
-            context: "creating the AddOns folder",
-            path: addons_dir.clone(),
-            source,
-        })?;
         let previous = state
             .entry(&staged.name)
             .map(|(name, entry)| (name.to_string(), entry.clone()));
@@ -417,6 +415,14 @@ impl Engine {
             .filter(|folder| !contains_folder(&new_folders, folder))
             .cloned()
             .collect();
+        let guarded: Vec<String> = new_folders.iter().chain(&stale).cloned().collect();
+        self.refuse_links(state, &guarded)?;
+        let addons_dir = self.addons_dir();
+        std::fs::create_dir_all(&addons_dir).map_err(|source| Error::Io {
+            context: "creating the AddOns folder",
+            path: addons_dir.clone(),
+            source,
+        })?;
 
         // The running-client check (task 023), once per commit and before the first folder moves: a running
         // client loads the new folders at `/reload`, so it is a warning, never a refusal (task 038).
@@ -1278,9 +1284,63 @@ fn toc_version(dir: &Path, folder: &str) -> Option<String> {
     })
 }
 
+/// The names a zip suggests for its addon (task 065), the strongest first: the zip's stem without its
+/// version and flavor suffix ([`stem_name`]: `DBM-Core` for `DBM-Core-12.0.11-classic`), then the
+/// repository of a `github:<owner>/<repo>` source. [`derive_name`] takes a folder that answers one of them.
+pub fn name_hints(zip_stem: &str, source: &str) -> Vec<String> {
+    let mut hints = Vec::new();
+    let stem = stem_name(zip_stem);
+    if !stem.is_empty() {
+        hints.push(stem.to_string());
+    }
+    if let Ok(SourceSpec::GitHub { repo, .. }) = SourceSpec::parse(source) {
+        hints.push(repo);
+    }
+    hints
+}
+
+/// A zip's stem without the version and what follows it, or without a trailing flavor or `nolib` part
+/// when it names no version: the `-`-separated parts before the first one that starts with a digit or
+/// with `v` and a digit (`Questie` for `Questie-v1.2.3-forever`), else the parts before the trailing
+/// flavor suffixes (`Addon` for `Addon-forever-nolib`).
+pub fn stem_name(stem: &str) -> &str {
+    let is_version = |part: &str| {
+        let digits = part
+            .strip_prefix(['v', 'V'])
+            .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+            .unwrap_or(part);
+        digits.starts_with(|c: char| c.is_ascii_digit())
+    };
+    let mut end = 0;
+    for (index, part) in stem.split('-').enumerate() {
+        if index > 0 && is_version(part) {
+            return &stem[..end];
+        }
+        end += if index == 0 {
+            part.len()
+        } else {
+            part.len() + 1
+        };
+    }
+    let mut name = stem;
+    while let Some((head, last)) = name.rsplit_once('-') {
+        let suffix = last.eq_ignore_ascii_case("nolib")
+            || crate::sources::github::FLAVOR_SUFFIXES
+                .iter()
+                .any(|flavor| last.eq_ignore_ascii_case(flavor));
+        if !suffix || head.is_empty() {
+            break;
+        }
+        name = head;
+    }
+    name
+}
+
 /// The addon name of a set of folders: the folder whose name every other one extends with `_` or `-`
-/// (`BigWigs` for `BigWigs_Core`), else the first by name.
-pub fn derive_name<'a>(folders: &[&'a str]) -> &'a str {
+/// (`BigWigs` for `BigWigs_Core`), else the folder a hint names, ASCII case-insensitive, the first hint
+/// that names one ([`name_hints`]: `DBM-Core` of `DBM-Core-12.0.11.zip` among `DBM-Brawlers`, `DBM-Core`
+/// and `DBM-GUI`, task 065), else the first by name.
+pub fn derive_name<'a>(folders: &[&'a str], hints: &[String]) -> &'a str {
     let mut sorted: Vec<&str> = folders.to_vec();
     sorted.sort_by_key(|folder| (folder.len(), folder.to_ascii_lowercase()));
     let extends = |base: &str, other: &str| {
@@ -1295,6 +1355,14 @@ pub fn derive_name<'a>(folders: &[&'a str]) -> &'a str {
             sorted
                 .iter()
                 .all(|other| other.eq_ignore_ascii_case(base) || extends(base, other))
+        })
+        .or_else(|| {
+            hints.iter().find_map(|hint| {
+                sorted
+                    .iter()
+                    .copied()
+                    .find(|folder| folder.eq_ignore_ascii_case(hint))
+            })
         })
         .unwrap_or_else(|| {
             sorted.sort_by_key(|folder| folder.to_ascii_lowercase());
@@ -1369,18 +1437,82 @@ mod tests {
     #[test]
     fn the_name_is_the_folder_the_others_extend_else_the_first() {
         assert_eq!(
-            derive_name(&["BigWigs_Core", "BigWigs", "BigWigs_Options"]),
+            derive_name(&["BigWigs_Core", "BigWigs", "BigWigs_Options"], &[]),
             "BigWigs"
         );
         assert_eq!(
-            derive_name(&["DBM-GUI", "DBM-Core", "DBM-StatusBarTimers"]),
+            derive_name(&["DBM-GUI", "DBM-Core", "DBM-StatusBarTimers"], &[]),
             "DBM-Core"
         );
-        assert_eq!(derive_name(&["Zed", "Alpha"]), "Alpha");
-        assert_eq!(derive_name(&["Solo"]), "Solo");
-        assert_eq!(derive_name(&["foo_x", "Foo"]), "Foo");
-        assert_eq!(derive_name(&["FooBar", "Foo"]), "Foo");
-        assert_eq!(derive_name(&[]), "");
+        assert_eq!(derive_name(&["Zed", "Alpha"], &[]), "Alpha");
+        assert_eq!(derive_name(&["Solo"], &[]), "Solo");
+        assert_eq!(derive_name(&["foo_x", "Foo"], &[]), "Foo");
+        assert_eq!(derive_name(&["FooBar", "Foo"], &[]), "Foo");
+        assert_eq!(derive_name(&[], &[]), "");
+    }
+
+    #[test]
+    fn a_hint_names_the_addon_when_no_folder_is_extended_by_the_others() {
+        let dbm = ["DBM-Brawlers", "DBM-Core", "DBM-GUI", "DBM-StatusBarTimers"];
+        assert_eq!(derive_name(&dbm, &[]), "DBM-Brawlers", "the old fallback");
+        let hints = |stem: &str, source: &str| name_hints(stem, source);
+        assert_eq!(
+            derive_name(
+                &dbm,
+                &hints("DBM-Core-12.0.11", "C:\\zips\\DBM-Core-12.0.11.zip")
+            ),
+            "DBM-Core"
+        );
+        assert_eq!(
+            derive_name(&dbm, &hints("dbm-core-12.0.11-classic", "")),
+            "DBM-Core",
+            "ASCII case-insensitive, the flavor suffix gone with the version"
+        );
+        assert_eq!(
+            derive_name(&dbm, &hints("download", "github:Someone/DBM-Core")),
+            "DBM-Core",
+            "the repository when the stem names no folder"
+        );
+        assert_eq!(
+            derive_name(&dbm, &hints("DBM-GUI-1.0", "github:Someone/DBM-Core")),
+            "DBM-GUI",
+            "the stem before the repository"
+        );
+        assert_eq!(
+            derive_name(
+                &dbm,
+                &hints("DeadlyBossMods-1.0", "github:Someone/Elsewhere")
+            ),
+            "DBM-Brawlers",
+            "no hint names a folder: the first by name"
+        );
+        assert_eq!(
+            derive_name(
+                &["BigWigs_Core", "BigWigs", "BigWigs_Options"],
+                &hints("BigWigs_Options-1.0", "")
+            ),
+            "BigWigs",
+            "the folder the others extend comes first"
+        );
+    }
+
+    #[test]
+    fn the_stem_name_drops_the_version_and_the_flavor() {
+        assert_eq!(stem_name("DBM-Core-12.0.11"), "DBM-Core");
+        assert_eq!(stem_name("DBM-Core-12.0.11-classic"), "DBM-Core");
+        assert_eq!(stem_name("Questie-v1.2.3-forever"), "Questie");
+        assert_eq!(stem_name("several-folders-2.0.0"), "several-folders");
+        assert_eq!(stem_name("Addon-forever-nolib"), "Addon");
+        assert_eq!(stem_name("Addon-Mists"), "Addon");
+        assert_eq!(stem_name("Vuhdo-Options"), "Vuhdo-Options");
+        assert_eq!(stem_name("2fast"), "2fast", "the first part is the name");
+        assert_eq!(stem_name("forever"), "forever");
+        assert_eq!(stem_name(""), "");
+        assert_eq!(name_hints("", "zip"), Vec::<String>::new());
+        assert_eq!(
+            name_hints("A-v1.0.0-forever", "github:o/Repo"),
+            ["A", "Repo"]
+        );
     }
 
     #[test]

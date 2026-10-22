@@ -32,7 +32,9 @@ A Forever note says why an addon that has a Forever build still only half works 
 [`data/forever-notes.json`](data/forever-notes.json) through a pull request: the addon's source spec
 (`github:<owner>/<repo>`) as the key, the restriction it runs into (`kind`), a one-line `reason`, the date you
 `verified` it and the `source` URL that shows it. State the fact and its source, nothing more; `cargo test`
-checks the file's shape ([docs/development.md](docs/development.md#forever-notes)).
+checks the file's shape, and takes a `verified` date up to one day after today in UTC, so your local day
+passes east of UTC too (the rule for adding a note:
+[docs/development.md](docs/development.md#forever-notes)).
 
 ## Build prerequisites
 

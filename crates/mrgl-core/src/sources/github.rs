@@ -17,15 +17,25 @@
 //! first page of 30 releases without a stable one (a repository that publishes nightly prereleases) is
 //! followed by the next pages the `Link` header names, up to [`MAX_PAGES`] (task 042).
 //!
+//! When the current release has no asset for the flavor (a release built for classic only), the resolve
+//! walks the channel's releases ([`releases_on`]) down to the newest one that has (task 066); a version
+//! asked for by name that the list lacks is looked for on the pages after it, within the same bound.
+//!
 //! The same release says whether the addon publishes a Forever build at all ([`forever_build`], task 011):
 //! the pick carries it, and every release's `release.json` is cached per tag next to the list (task 042), so
 //! a repeated resolve of the same release downloads it once and `list` can answer from the cache alone
-//! ([`GitHub::cached_forever_build`]), offline.
+//! ([`GitHub::cached_forever_build`]), offline. Once the API has answered with the list, fresh or
+//! confirmed unchanged, the files of tags it no longer holds are dropped (task 072).
 //!
 //! When the API cannot be reached (no network, a timeout) and the release list is cached, the resolve
 //! answers from the cache, the cached `release.json` of the release included, and the pick carries
 //! [`Stale`] with the cache's date, so the caller warns that it may be stale (task 041); with nothing
 //! cached the network error stands.
+//!
+//! Without a token the source counts the API requests of its run against the 60 an hour GitHub allows
+//! ([`ANONYMOUS_LIMIT`]), and an answer's `x-ratelimit-remaining` and reset time take over once one names
+//! them; the update check reads the budget before each addon and stops before the limit (task 068). An
+//! asset download goes to the object store and is not counted.
 
 use std::path::{Path, PathBuf};
 
@@ -52,6 +62,9 @@ pub const CACHE_FILE: &str = "releases.json";
 /// The folder of the cached `release.json` files of a repository, one `tag-<tag>.json` per release, next to
 /// [`CACHE_FILE`] (tasks 011, 042).
 pub const RELEASE_JSON_CACHE_DIR: &str = "release-json";
+/// The single cached `release.json` of task 011, next to [`CACHE_FILE`], which nothing reads since the
+/// per-tag files of task 042: removed when found (task 072).
+const OLD_RELEASE_JSON_CACHE_FILE: &str = "release-json.json";
 /// How many releases one page lists; the current one is near the top.
 const PER_PAGE: u32 = 30;
 /// How many pages of the release list a resolve reads at most while none of them holds a stable release
@@ -64,6 +77,8 @@ pub struct GitHub<H: Http> {
     http: H,
     token: Option<String>,
     cache_dir: Option<PathBuf>,
+    /// The API requests of this run and what the answers said of the rate limit (task 068).
+    budget: std::sync::Mutex<BudgetCount>,
 }
 
 /// One release as the API lists it; only the fields the pick needs.
@@ -150,13 +165,25 @@ pub fn current_release(releases: &[Release]) -> Option<&Release> {
 /// draft nor a prerelease, a prerelease only when there is nothing else; on the prerelease one the newest
 /// release that is not a draft, prerelease or not. The API lists the newest first.
 pub fn current_release_on(releases: &[Release], channel: Channel) -> Option<&Release> {
-    let mut published = releases.iter().filter(|release| !release.draft);
+    releases_on(releases, channel).into_iter().next()
+}
+
+/// Every release a channel may take, newest first, the current one ([`current_release_on`]) first: on the
+/// stable channel the releases that are neither a draft nor a prerelease, every release that is not a draft
+/// when there is none of them; on the prerelease channel every release that is not a draft. The resolve
+/// walks them down to the first one with an asset for the flavor (task 066).
+pub fn releases_on(releases: &[Release], channel: Channel) -> Vec<&Release> {
+    let published: Vec<&Release> = releases.iter().filter(|release| !release.draft).collect();
     match channel {
-        Channel::Prerelease => published.next(),
-        Channel::Stable => published
-            .clone()
-            .find(|release| !release.prerelease)
-            .or_else(|| published.next()),
+        Channel::Prerelease => published,
+        Channel::Stable => {
+            let stable: Vec<&Release> = published
+                .iter()
+                .copied()
+                .filter(|release| !release.prerelease)
+                .collect();
+            if stable.is_empty() { published } else { stable }
+        }
     }
 }
 
@@ -191,7 +218,7 @@ pub fn flavor_keys(target: &Target) -> Vec<&'static str> {
 }
 
 /// Every flavor suffix an asset name can end with; a retail zip ends with none of them.
-const FLAVOR_SUFFIXES: [&str; 12] = [
+pub(crate) const FLAVOR_SUFFIXES: [&str; 12] = [
     "forever", "camelot", "mainline", "standard", "classic", "vanilla", "mists", "cata", "wrath",
     "wotlkc", "bcc", "tbc",
 ];
@@ -375,6 +402,7 @@ impl<H: Http> GitHub<H> {
             http,
             token: token.filter(|token| !token.is_empty()),
             cache_dir,
+            budget: std::sync::Mutex::new(BudgetCount::default()),
         }
     }
 
@@ -411,7 +439,40 @@ impl<H: Http> GitHub<H> {
     /// tag made file-safe (the file names the tag again, so two tags that read the same here never mix).
     fn release_json_cache_path(&self, owner: &str, repo: &str, tag: &str) -> Option<PathBuf> {
         self.cache_path(owner, repo, RELEASE_JSON_CACHE_DIR)
-            .map(|dir| dir.join(format!("tag-{}.json", state::file_safe(tag))))
+            .map(|dir| dir.join(release_json_cache_name(tag)))
+    }
+
+    /// Drops what a repository's cache no longer needs once the API has answered with its release list
+    /// (task 072): every `tag-*.json` of a tag the list does not hold, and the old single
+    /// `release-json.json`. Best effort, as every cache write: a file that cannot be removed stays until the
+    /// next answer, and the list read offline (task 041) never comes here.
+    fn prune_release_json_cache(&self, owner: &str, repo: &str, releases: &serde_json::Value) {
+        if let Some(old) = self.cache_path(owner, repo, OLD_RELEASE_JSON_CACHE_FILE) {
+            let _ = std::fs::remove_file(old);
+        }
+        let Some(entries) = self
+            .cache_path(owner, repo, RELEASE_JSON_CACHE_DIR)
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+        else {
+            return;
+        };
+        let current: Vec<String> = releases
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|release| release.get("tag_name")?.as_str())
+            .map(release_json_cache_name)
+            .collect();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("tag-")
+                && name.ends_with(".json")
+                && !current.contains(&name)
+                && entry.file_type().is_ok_and(|kind| kind.is_file())
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
 
     /// The cached `release.json` of a release, when the cache holds the one of this tag and this asset.
@@ -490,7 +551,7 @@ impl<H: Http> GitHub<H> {
         if let Some(etag) = cached.as_ref().and_then(|cached| cached.etag.as_ref()) {
             request = request.header("If-None-Match", etag.clone());
         }
-        let response = match self.http.get(&request) {
+        let response = match self.api_get(&request) {
             Ok(response) => response,
             Err(error @ Error::Network { .. }) => {
                 let Some(cached) = cached else {
@@ -529,7 +590,7 @@ impl<H: Http> GitHub<H> {
                     && !has_stable_release(&releases)
                     && let Some(url) = next.take()
                 {
-                    let response = self.http.get(&self.api_request(url.clone()))?;
+                    let response = self.api_get(&self.api_request(url.clone()))?;
                     if response.status != 200 {
                         return Err(status_error(response.status, &url, &response));
                     }
@@ -546,7 +607,9 @@ impl<H: Http> GitHub<H> {
                     };
                     // The cache is a convenience: a folder that cannot be written costs a request per
                     // run, never the command.
-                    let _ = write_cache(path, &cached);
+                    if write_cache(path, &cached).is_ok() {
+                        self.prune_release_json_cache(owner, repo, &releases);
+                    }
                 }
                 releases
             }
@@ -555,7 +618,9 @@ impl<H: Http> GitHub<H> {
                     // Confirmed: the offline resolve dates the cache from here (task 041).
                     if let Some(path) = &cache_file {
                         cached.checked_at = Some(state::now_rfc3339());
-                        let _ = write_cache(path, &cached);
+                        if write_cache(path, &cached).is_ok() {
+                            self.prune_release_json_cache(owner, repo, &cached.releases);
+                        }
                     }
                     cached.releases
                 }
@@ -692,6 +757,11 @@ fn next_page(response: &Response) -> Option<String> {
     })
 }
 
+/// The file name of a release's cached `release.json`: `tag-<tag>.json`, the tag made file-safe.
+fn release_json_cache_name(tag: &str) -> String {
+    format!("tag-{}.json", state::file_safe(tag))
+}
+
 /// Writes a cache file through a temporary file and a rename, so a reader (another run at the same time)
 /// never sees a half-written file.
 fn write_cache<T: Serialize>(path: &Path, cached: &T) -> std::io::Result<()> {
@@ -760,7 +830,124 @@ fn rate_limit_reset(response: &Response) -> Option<i64> {
     })
 }
 
+/// How many API requests an hour GitHub allows without a token (task 068).
+pub const ANONYMOUS_LIMIT: u32 = 60;
+
+/// The API requests of one run and the rate limit the last answer that named it said (task 068).
+#[derive(Debug, Default)]
+struct BudgetCount {
+    /// The API requests answered in this run.
+    sent: u32,
+    /// The `x-ratelimit-remaining` of the last answer that had one, with `sent` at that answer.
+    remaining: Option<(u32, u32)>,
+    /// When the limit resets, in Unix seconds, from the last answer that said.
+    reset: Option<i64>,
+}
+
 impl<H: Http> GitHub<H> {
+    /// An API request through the client, counted against the rate limit with what the answer says of it:
+    /// `x-ratelimit-remaining` and the reset time; a 429 says nothing is left. A request that never got
+    /// an answer (the network) is not counted.
+    fn api_get(&self, request: &Request) -> Result<Response> {
+        let response = self.http.get(request)?;
+        if let Ok(mut budget) = self.budget.lock() {
+            budget.sent += 1;
+            let remaining = response
+                .header("x-ratelimit-remaining")
+                .and_then(|value| value.trim().parse::<u32>().ok())
+                .or((response.status == 429).then_some(0));
+            if let Some(remaining) = remaining {
+                budget.remaining = Some((remaining, budget.sent));
+            }
+            if let Some(reset) = rate_limit_reset(&response) {
+                budget.reset = Some(reset);
+            }
+        }
+        Ok(response)
+    }
+
+    /// The versions of the cached release list, newest first, drafts left out: the list the last resolve
+    /// read or confirmed, so no request (task 068).
+    fn cached_versions(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+        let SourceSpec::GitHub { owner, repo } = spec;
+        let bytes = std::fs::read(self.cache_file(owner, repo)?).ok()?;
+        let cached: CachedReleases<Vec<Release>> = serde_json::from_slice(&bytes).ok()?;
+        Some(
+            cached
+                .releases
+                .iter()
+                .filter(|release| !release.draft)
+                .map(|release| release.version().to_string())
+                .collect(),
+        )
+    }
+
+    /// The rate limit of this run without a token (task 068): [`ANONYMOUS_LIMIT`] less the requests sent
+    /// until an answer names `x-ratelimit-remaining`, then that count less the requests since. `None` with
+    /// a token, whose 5000 an hour no update check comes near.
+    fn budget(&self) -> Option<sources::RequestBudget> {
+        if self.token.is_some() {
+            return None;
+        }
+        let budget = self.budget.lock().ok()?;
+        let remaining = match budget.remaining {
+            Some((remaining, at)) => remaining.saturating_sub(budget.sent.saturating_sub(at)),
+            None => ANONYMOUS_LIMIT.saturating_sub(budget.sent),
+        };
+        Some(sources::RequestBudget {
+            host: "GitHub",
+            limit: ANONYMOUS_LIMIT,
+            sent: budget.sent,
+            remaining,
+            reset: budget.reset,
+            hint: format!("set {TOKEN_ENV} to a token of your own for 5000 requests an hour"),
+        })
+    }
+}
+
+impl<H: Http> GitHub<H> {
+    /// Reads the pages of the release list after the ones `releases` holds, `page=<n>` of the API, until
+    /// `found` answers for a page, a page is short (the last one), or [`MAX_PAGES`] are held (task 066).
+    /// A list that is not a whole number of pages is complete already, and nothing is asked. The pages are
+    /// not cached: only a version asked for by name reads them.
+    fn further_pages(
+        &self,
+        owner: &str,
+        repo: &str,
+        releases: &mut Vec<Release>,
+        found: impl Fn(&[Release]) -> bool,
+    ) -> Result<()> {
+        let per_page = PER_PAGE as usize;
+        if !releases.len().is_multiple_of(per_page) {
+            return Ok(());
+        }
+        let mut pages = releases.len() / per_page;
+        while pages < MAX_PAGES {
+            let url = format!(
+                "{API_URL}/repos/{owner}/{repo}/releases?per_page={PER_PAGE}&page={}",
+                pages + 1
+            );
+            let response = self.http.get(&self.api_request(url.clone()))?;
+            if response.status != 200 {
+                return Err(status_error(response.status, &url, &response));
+            }
+            let page: Vec<Release> =
+                serde_json::from_slice(&response.body).map_err(|reason| Error::SourceDocument {
+                    what: "release list",
+                    spec: format!("github:{owner}/{repo}"),
+                    reason: reason.to_string(),
+                })?;
+            let last = page.len() < per_page;
+            let hit = found(&page);
+            releases.extend(page);
+            pages += 1;
+            if hit || last {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     /// The pick of one release for a target: the asset its `release.json` names, else one by its name
     /// (a guess), or why there is none. The resolve of the current release and the one of a version
     /// (task 057) share it; `stale` says the release list came from the cache, offline (task 041).
@@ -838,27 +1025,91 @@ impl<H: Http> GitHub<H> {
 }
 
 impl<H: Http> Source for GitHub<H> {
+    /// The newest release of the target's channel that has an asset for the flavor (task 066): the
+    /// releases of [`releases_on`] in the list's order, down to the first with a pick; a release without
+    /// an asset for the flavor is passed, any other error stands. When none has one, the newest release's
+    /// error says how many releases were looked at.
     fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
         let SourceSpec::GitHub { owner, repo } = spec;
         let (releases, stale) = self.release_list(owner, repo)?;
-        let release =
-            current_release_on(&releases, target.channel).ok_or_else(|| Error::NoRelease {
+        let candidates = releases_on(&releases, target.channel);
+        if candidates.is_empty() {
+            return Err(Error::NoRelease {
                 spec: spec.to_string(),
-            })?;
-        self.pick_of(spec, release, target, stale)
+            });
+        }
+        let mut newest_error = None;
+        for (newer, release) in candidates.iter().enumerate() {
+            match self.pick_of(spec, release, target, stale.clone()) {
+                Ok(mut pick) => {
+                    if newer > 0 {
+                        let releases = if newer == 1 { "release" } else { "releases" };
+                        pick.reason = format!(
+                            "{}; the newest release with a {} asset, {newer} newer {releases} without one",
+                            pick.reason,
+                            target.flavor_name()
+                        );
+                    }
+                    return Ok(pick);
+                }
+                Err(error @ Error::NoAssetForFlavor { .. }) => {
+                    newest_error.get_or_insert(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(match newest_error {
+            Some(Error::NoAssetForFlavor {
+                spec,
+                release,
+                flavor,
+                detail,
+            }) => {
+                let looked_at = match candidates.len() {
+                    1 => "looked at 1 release".to_string(),
+                    count => format!("looked at {count} releases, none has one"),
+                };
+                Error::NoAssetForFlavor {
+                    spec,
+                    release,
+                    flavor,
+                    detail: format!("{detail}; {looked_at}"),
+                }
+            }
+            Some(error) => error,
+            None => Error::NoRelease {
+                spec: spec.to_string(),
+            },
+        })
     }
 
-    /// The release tagged with the version, from the same release list with every page it walks
-    /// ([`release_of_version`]); from the cache when offline, like the current one (task 041).
+    /// The release tagged with the version, from the same release list ([`release_of_version`]); from the
+    /// cache when offline, like the current one (task 041). A version the list lacks is looked for on the
+    /// pages after it, up to [`MAX_PAGES`] in all, before it reads as not offered (task 066).
     fn resolve_version(&self, spec: &SourceSpec, target: &Target, version: &str) -> Result<Pick> {
         let SourceSpec::GitHub { owner, repo } = spec;
-        let (releases, stale) = self.release_list(owner, repo)?;
+        let (mut releases, stale) = self.release_list(owner, repo)?;
+        if release_of_version(&releases, version).is_none() && stale.is_none() {
+            self.further_pages(owner, repo, &mut releases, |page| {
+                release_of_version(page, version).is_some()
+            })?;
+        }
         let release =
             release_of_version(&releases, version).ok_or_else(|| Error::VersionNotOffered {
                 spec: spec.to_string(),
                 version: version.to_string(),
             })?;
         self.pick_of(spec, release, target, stale)
+    }
+
+    /// The cached release list's versions (task 068).
+    fn listed_versions(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+        self.cached_versions(spec)
+    }
+
+    /// The anonymous rate limit of this run (task 068).
+    fn request_budget(&self) -> Option<sources::RequestBudget> {
+        self.budget()
     }
 
     /// Downloads the picked asset; a byte count other than the size the release list names is refused
@@ -1348,7 +1599,10 @@ mod tests {
             ),
             "{error}"
         );
-        assert!(error.ends_with("; assets: release.json, A.zip)"), "{error}");
+        assert!(
+            error.ends_with("; assets: release.json, A.zip; looked at 1 release)"),
+            "{error}"
+        );
     }
 
     #[test]

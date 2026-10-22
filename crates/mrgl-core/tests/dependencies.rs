@@ -1,6 +1,6 @@
 //! The dependency check (task 029) over the synthetic game folder `fixtures/dependencies/`: `Needy`
-//! requires `LibMet` (an addon of its own, met), `LibEmbedded` (a folder inside `Needy`, embedded) and
-//! `LibMissing` (nowhere, missing); `NolibBuild` carries a `LibEmbedded` folder too, which counts only
+//! requires `LibMet` (an addon of its own, met), `Blizzard_Something` (the client's own, met, task 064),
+//! `LibEmbedded` (a folder inside `Needy`, embedded) and `LibMissing` (nowhere, missing); `NolibBuild` carries a `LibEmbedded` folder too, which counts only
 //! while the sidecar does not mark it a `nolib` build. Offline, read-only.
 
 use std::collections::BTreeMap;
@@ -29,8 +29,15 @@ fn met_embedded_and_missing_over_the_fixture() {
     assert_eq!(checks.len(), 3, "one per addon: {checks:?}");
 
     let needy = of(&checks, "Needy");
-    assert_eq!(needy.required, ["LibMet", "LibEmbedded", "LibMissing"]);
-    assert_eq!(needy.met, ["LibMet"]);
+    assert_eq!(
+        needy.required,
+        ["LibMet", "LibEmbedded", "LibMissing", "Blizzard_Something"]
+    );
+    assert_eq!(
+        needy.met,
+        ["LibMet", "Blizzard_Something"],
+        "the client's own addon is met (task 064)"
+    );
     assert_eq!(needy.embedded, ["LibEmbedded"]);
     assert_eq!(needy.missing, ["LibMissing"]);
     assert_eq!(needy.nolib, None);

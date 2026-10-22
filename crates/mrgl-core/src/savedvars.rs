@@ -36,11 +36,8 @@ use crate::error::{Error, Result};
 use crate::flavor::Flavor;
 use crate::scan;
 use crate::toc::TocSuffix;
+use crate::wtf::{self, SAVED_VARIABLES_DIR, WtfFolder, link_warning};
 
-/// The folder of the account folders, under `WTF`.
-pub const ACCOUNT_DIR: &str = "Account";
-/// The folder of the SavedVariables files, under an account or a character folder.
-pub const SAVED_VARIABLES_DIR: &str = "SavedVariables";
 /// A cleanup zip's name: `SavedVariables-<date>.zip`, next to the `WTF` backups.
 pub const CLEANUP_PREFIX: &str = "SavedVariables-";
 /// The name prefix of the client's own SavedVariables (its built-in interface), never an orphan.
@@ -175,39 +172,38 @@ fn list_at(
     mut warnings: Vec<String>,
 ) -> Result<Listing> {
     let mut files = Vec::new();
-    for (account, account_dir) in subfolders(&wtf.join(ACCOUNT_DIR), &mut warnings)? {
-        let place = Place {
-            account: &account,
-            realm: None,
-            character: None,
+    wtf::walk(wtf, &mut warnings, |folder, warnings| {
+        let (place, folder) = match folder {
+            WtfFolder::Account { account, folder } => (
+                Place {
+                    account,
+                    realm: None,
+                    character: None,
+                },
+                folder,
+            ),
+            WtfFolder::Character {
+                account,
+                realm,
+                name,
+                folder,
+            } => (
+                Place {
+                    account,
+                    realm: Some(realm),
+                    character: Some(name),
+                },
+                folder,
+            ),
         };
         collect(
-            &account_dir.join(SAVED_VARIABLES_DIR),
+            &folder.join(SAVED_VARIABLES_DIR),
             &place,
             installed,
             &mut files,
-            &mut warnings,
-        )?;
-        for (realm, realm_dir) in subfolders(&account_dir, &mut warnings)? {
-            if realm.eq_ignore_ascii_case(SAVED_VARIABLES_DIR) {
-                continue;
-            }
-            for (character, character_dir) in subfolders(&realm_dir, &mut warnings)? {
-                let place = Place {
-                    account: &account,
-                    realm: Some(&realm),
-                    character: Some(&character),
-                };
-                collect(
-                    &character_dir.join(SAVED_VARIABLES_DIR),
-                    &place,
-                    installed,
-                    &mut files,
-                    &mut warnings,
-                )?;
-            }
-        }
-    }
+            warnings,
+        )
+    })?;
     files.sort_by(|a, b| {
         b.bytes
             .cmp(&a.bytes)
@@ -240,38 +236,6 @@ fn io_error(context: &'static str, path: &Path, source: io::Error) -> Error {
         path: path.to_path_buf(),
         source,
     }
-}
-
-/// The subfolders of a folder by name, with their paths; a missing folder has none, and a link is a
-/// warning and not followed.
-fn subfolders(dir: &Path, warnings: &mut Vec<String>) -> Result<Vec<(String, PathBuf)>> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(source) => return Err(io_error("reading WTF", dir, source)),
-    };
-    let mut folders = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|source| io_error("reading WTF", dir, source))?;
-        let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .map_err(|source| io_error("reading WTF", &path, source))?;
-        if file_type.is_symlink() {
-            warnings.push(link_warning(&path));
-        } else if file_type.is_dir() {
-            folders.push((entry.file_name().to_string_lossy().into_owned(), path));
-        }
-    }
-    folders.sort();
-    Ok(folders)
-}
-
-fn link_warning(path: &Path) -> String {
-    format!(
-        "not read: {} is a link, not a folder or a file",
-        path.display()
-    )
 }
 
 /// One `.lua` and one `.lua.bak` of an addon, as found in a folder.

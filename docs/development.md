@@ -13,13 +13,17 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   Markdown markers are stripped, cut at `NOTES_MAX_CHARS` (120) with an ellipsis by `sources::notes_line`,
   and `page`, the release's page, both left out when absent, task 030; the `Target` carries the addon's
   channel, and on `prerelease` the newest release that is not a draft is current, a prerelease or not,
-  task 021; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
+  task 021; the resolve walks the channel's releases from the current one down to the first with an asset
+  for the flavor, the newest release that has one, and says so in the pick's reason when it passed newer
+  ones, and the no-asset error names the newest release and how many releases were looked at, task 066;
+  later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
   result, never a refusal, task 038; its commit, `Engine::commit`, refuses to install over a linked addon
   or a junction it did not make before the first folder moves, so every path that stages and commits does,
-  task 055; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
+  task 055, and the guard covers the staged folders and the previous version's folders the new one drops,
+  so a dropped folder that is now a junction is refused instead of moved aside and deleted, task 067; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
   below; the rollback, `Engine::rollback`, sends the entry's previous
   version and its zip from the cache through the same stage and swap with the entry's source, pins the
   addon there and leaves both zips in the cache, so a second rollback goes forward again, task 022), the
@@ -42,7 +46,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a lookup trait with a stub), the
   dependency check (`dependencies`, task 029: every required name of the TOC the flavor loads, `## Dependencies`,
   `## RequiredDeps` and the other `## Dep…` lines, ASCII case-insensitive, is *met* when an addon folder of
-  that name is in the scan, *embedded* when a folder of that name sits inside the addon's own folder, at
+  that name is in the scan or the name starts with `Blizzard_`, an addon the client ships (task 064),
+  *embedded* when a folder of that name sits inside the addon's own folder, at
   most three levels down, which a build without `nolib` carries, and *missing* otherwise; an optional
   dependency is never reported; the sidecar entry's `nolib` flag, recorded from the pick at install, turns
   the embedded lookup off for a `nolib` build, and an entry without it is unknown, embedded possible), the
@@ -62,6 +67,13 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the third `WTF` write of D-002 and D-003, runs the 023 guard first, writes the orphans and their `.bak`
   files with the backup's zip writer, entry names relative to `WTF`, and removes each file only once its
   entry, read back from the finished zip, matches it byte for byte; `backup::restore_wtf` refuses that zip.
+  `savedvars` and `sets` read `WTF` through one walk, `wtf::walk` (task 071), with the one set of its
+  folder names (`wtf::ACCOUNT_DIR`, `wtf::SAVED_VARIABLES_DIR`; `WTF` itself is `backup::WTF_DIR`): every
+  account folder, then every character folder of it, each level by name, the account's `SavedVariables`
+  never a realm, a missing folder empty, and a link or a junction a warning that is never followed
+  (`savedvars` lists it among its warnings, `sets` passes it over). The core's one size formatter is
+  `zip_entry::size_text` (`512 B`, `34.2 KB`, `1.5 MB`, in steps of 1024, up to `PB`): the zip bound's
+  messages, the CLI's listings and the doctor's report all write sizes with it (task 071).
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002; `list` reads the flavor's
   sidecar through the install engine and marks every addon managed or unmanaged with `state::classify`,
   task 037, while `scan` stays the raw folder view), `add github:<owner>/<repo>
@@ -137,10 +149,12 @@ the GitHub source takes the release of the same list whose tag is the version, w
 `v`, never a draft, on any channel (`sources::github::release_of_version`), and picks its asset for the
 flavor as for the current one. An entry whose version the source no longer offers is reported (`<name>
 skipped, version <v> not offered: no release <v> in <source>`, outcome `version-not-offered` in the JSON,
-`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup sees the
-releases the release list holds: the first page, and the pages after it only while none holds a stable
-release (task 042), so a version older than the first page reads as not offered. The JSON document carries
-`exact`.
+`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup reads the
+releases the release list holds (the first page, and the pages after it while none holds a stable release,
+task 042) and, when the version is not among them, the pages after those, `page=<n>` of the API, until the
+version turns up, a page is short (the last one) or five pages are held in all (`MAX_PAGES`, task 066);
+only then does it read as not offered. These further pages are not cached, and offline the cached list is
+all there is. The JSON document carries `exact`.
 
 The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:`, `import`
 and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
@@ -157,6 +171,13 @@ a linked addon or a junction mrgl did not make. The command line reports every i
 (the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
 interface checks).
 
+The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
+request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
+`BigWigs_Core` and `BigWigs_Options`); else the folder named after the zip's stem without its version and
+flavor suffix (`DBM-Core` for `DBM-Core-12.0.11-classic.zip`), else after the repository of a `github:`
+source, both ASCII case-insensitive (task 065); else the first folder by name. A source install of an addon
+the sidecar has from that source keeps the name it is recorded under.
+
 The update check (task 006) is `update::check` in the core: every managed addon of the sidecar (or the one
 a name or a folder names) against its source's current release on the addon's own channel, one
 `UpdateState` each, read-only. `up-to-date`: the release's version is the installed one. `update-available`:
@@ -165,16 +186,41 @@ by its name; it is reported, not installed, and `mrgl add <source>` installs it 
 and reported with the current release, left alone. `ignored`: skipped without a request. `source-gone`: no
 release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
 hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
-limit, a server error). Another version counts as an update whatever its number: the source's current
-release on the addon's channel is the one to have. An addon whose folders were deleted by hand is left out
-with a warning. `mrgl update --all` and `mrgl update <name>` print a plain data line per addon
+limit, a server error). `installed-newer` (task 068): the installed version is newer than the current
+release on the addon's channel (a deleted release, a switch from the prerelease channel to the stable one);
+it is not an update and is left alone, its line `Switched  1.1.0-beta  newer than the current release
+1.0.0, left alone`, with `(<version> is no longer listed)` when the release list lacks the installed
+version. The order is the GitHub source's cached release list (`Source::listed_versions`, newest first,
+no request) where it lists both versions, else `update::lenient_order`: a leading `v` dropped, the numbers
+before the first `-` or `+` compared as numbers (`1.2` is `1.2.0`), and on equal numbers a version with a
+suffix before one without (`2.0.0-beta` before `2.0.0`); when neither can tell, another version counts as
+an update. `rate-limited`: not asked, the check stopped before the request limit (below). An addon whose
+folders were deleted by hand is left out with a warning.
+
+`update::check` takes a progress callback, `&mut dyn FnMut(CheckProgress)`, the one the command line and
+the window (task 010) share: `Checking { index, total, name, source }` before an addon the source is asked
+about, `Checked { index, total, addon }` after every addon with its `AddonUpdate`, and `Stopped { stop }`
+when the check stops before the request limit. The request budget: without a token the GitHub source counts
+the API requests of its run against the 60 an hour (`Source::request_budget`), and once an answer names
+`x-ratelimit-remaining` that count, less the requests since, takes over with the answer's reset time (a
+429 leaves nothing); an asset download is not counted, a token turns the budget off. Before each addon
+that needs a request the check reads the budget, and with nothing left it stops asking: the addons left
+are `rate-limited`, and `UpdateCheck::stopped` (`BudgetStop`) carries the limit, the requests sent, the
+reset time and how many addons it left, with its line `stopped the check before GitHub's rate limit of 60
+requests an hour without a token: 2 addons not checked, the limit resets at <local time> (local time); set
+MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour` (`within the hour` when no answer named
+the reset). `mrgl update --all` and `mrgl update <name>` print a progress line through the voice before
+each addon the source is asked about (`checking Questie against github:Questie/Questie (10 of 12)`), the
+stop as a warning when it happens, and a plain data line per addon as soon as it is checked
 (`Questie  1.2.2 -> 1.2.3  update available`), ask once for the updates (`--yes` answers; without a
 terminal or with `--json` the command stops and says what `--yes` does, exit 1), install each through the
 one install path with the pick the check made (`AddonUpdate::request`, no second resolve) and end with the
 summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
 `1 update available` and writes nothing). `--json` is one `update` document: every addon with `state`,
-`latest`, `pick`, `updated` and the installed `addon` block, the `counts` per state and the warnings. An
-update or a check that fails does not stop the others; the run then ends with exit code 1.
+`latest`, `pick`, `updated` and the installed `addon` block, the `counts` per state, `stopped` (the
+`BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
+update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
+the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.
 
 The interface check (task 015) compares the `## Interface` numbers of the TOC the flavor loads with the
 installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,
@@ -264,9 +310,11 @@ two-line summary through the voice (a success when nothing needs a look, a warni
 (`mrgl_core::doctor`: `report_of_process` builds it, `Report::lines` and `Report::text` are the block), so the
 window's "copy diagnostics" action (task 009) copies the same text. It reads and never repairs: the AddOns
 probe is its one write. A fact it cannot read is a value (`unknown`, `missing`), never an error, and only an
-unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, in its long
-and its 8.3 short form) is shown with that folder as `~`, and an API key is named, never read out, so a pasted
-report carries no home folder path and no secret.
+unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, else `HOME`,
+in its long and its 8.3 short form) is shown with that folder as `~`: matched in any case and with `\` or `/`
+(or a mix) as the separator, and only when a separator or the end of the path follows, so a folder that only
+starts with the profile's name (`someone2` next to the profile `someone`) stays as it is (task 069). An API
+key is named, never read out, so a pasted report carries no home folder path and no secret.
 
 The lines, with the JSON field in brackets:
 
@@ -401,7 +449,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   joins.
 - `resolve`: a managed addon through its source, for the flavor's build and on its channel: the source's
   own `Pick`, the handover to the update actions of task 010.
-- `update_all`: answers that the update actions are task 010, in the voice.
+- `update_all`: answers that the update actions are task 010, in the voice (a plain warning line: the core
+  has no error for a command not built yet).
 - `preferences` and `set_preferences` (task 034): the theme (`auto`, `light`, `dark`) and the serious
   switch as they apply, which source decided the switch (`environment` locks the window's switch: the
   window cannot override `MRGL_SERIOUS`), and what `config.json` stores (`theme`, `serious`, next to
@@ -596,7 +645,8 @@ a folder per URL the source asks, the release lists as the API writes them and `
 shape the BigWigs packager writes, `forever` next to other flavors, one without metadata, one repository
 without `release.json`, one with no release, one with a draft and a prerelease above the stable release),
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
-one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
+one addon folder in three versions, several folders in one archive, several whose core is not the first by
+name and no folder extended by the others (`boss-core-5.0.0.zip`, task 065), a TOC at the zip's root, a wrapper
 folder, a TOC with an interface for another build, a path that tries to escape the staging folder, an addon
 with an embedded and a missing required dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
@@ -605,7 +655,8 @@ up from the first line, task 013), a second `WTF` tree for the addon sets (`addo
 two characters on two realms of one account, one `AddOns.txt` with CRLF endings, the other with LF, a line
 the client never wrote and no last line break, and the account's `SavedVariables` that is no realm), a
 third game folder for the dependency check (`dependencies/`, task
-029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency, and a
+029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency and one
+on a client addon, `Blizzard_Something`, task 064, and a
 library folder inside an addon that a `nolib` entry in a test's sidecar turns into a missing one), and a
 development folder for the junction links (`dev/`: two addons with a TOC and a folder without one, task
 005; the tests copy it into a temporary folder and make their junctions there). A real addon zip, a real
@@ -629,7 +680,10 @@ makes the command line answer every request from that folder instead (the URL's 
 sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
 request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
-`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline. Every
+`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline.
+Whenever the API answers with the list, a 200 or a 304, the `tag-*.json` files of tags the list no longer
+holds are removed, and so is a `release-json.json` next to `releases.json`, the single file of task 011 that
+nothing reads any more (task 072); the list read offline removes nothing. Every
 fixture repository under `releases/` is classified for the Forever build in `tests/github_source.rs`, so a
 new fixture names its expected build there.
 
@@ -637,7 +691,10 @@ The release list walks its pages (task 042): when the first page of 30 holds no 
 that publishes a nightly prerelease every day), the source follows the `Link` header's `rel="next"` page,
 on `api.github.com` only, with the token, until a page holds a stable release or five pages are read
 (`sources::github::MAX_PAGES`); past the bound the newest prerelease is current, as for a repository without
-a stable release. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
+a stable release. The resolve then walks the releases its channel may take, newest first, down to the first
+with an asset for the flavor (task 066): a repository whose newest release is built for other flavors only
+resolves to the release before it, never a draft and never a prerelease on the stable channel while a
+stable release exists. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
 conditional request. A release's `release.json` is read from `release-json/tag-<tag>.json` when the file
 names the same tag and the same asset URL and size, so a repeated resolve of an unchanged release costs that
 one request and no download. A 429, or a 403 with `x-ratelimit-remaining: 0`, is the rate limit: its line
@@ -770,8 +827,11 @@ canonical source spec. To add a note, add an entry under `addons` with the restr
 one-line reason (lower case, no trailing full stop: what does not work), the day it was checked against the
 source and the source's URL, then run `cargo test`. The schema check (`forever::tests`) rejects an unknown
 field or kind, a key that is not a canonical spec, a reason over one line, a date that is no real day or lies
-in the future, and a source that is not an `https://` URL. A note whose `verified` date is more than 90 days
-old (`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
+in the future, and a source that is not an `https://` URL. The `verified` date is the day of the check where
+you are: the schema check compares it with today in UTC and allows one day of slack
+(`forever::VERIFIED_SLACK_DAYS`, task 070), so a note dated by the local day east of UTC passes between local
+and UTC midnight, while a date two days ahead fails. A note whose `verified` date is more than 90 days old
+(`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
 checks the age in CI.
 
 Where a note comes from (task 058): a public source that a page under `docs/research/` cites, an addon author's

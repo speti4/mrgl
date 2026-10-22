@@ -9,7 +9,9 @@
 //! unmanaged `list` tests (task 037) install a fixture zip through the engine into a temporary game folder.
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+#[cfg(windows)]
+use std::process::Child;
+use std::process::{Command, Output, Stdio};
 
 /// The synthetic game folder of `mrgl-core`.
 fn fixtures() -> PathBuf {
@@ -1996,7 +1998,7 @@ fn add_failures_are_plain_lines_with_exit_code_one() {
                 "forever",
                 "--dry-run",
             ],
-            "no asset for flavor forever in github:Example/MainlineOnly v4.0.0 (release.json names mainline, standard; assets: Only-v4.0.0.zip, release.json)",
+            "no asset for flavor forever in github:Example/MainlineOnly v4.0.0 (release.json names mainline, standard; assets: Only-v4.0.0.zip, release.json; looked at 1 release)",
         ),
     ];
     for (args, plain) in cases {
@@ -2618,8 +2620,8 @@ fn list_json_carries_the_dependencies_of_every_addon() {
         addon("Needy")["dependencies"],
         serde_json::json!({
             "folder": "Needy",
-            "required": ["LibMet", "LibEmbedded", "LibMissing"],
-            "met": ["LibMet"],
+            "required": ["LibMet", "LibEmbedded", "LibMissing", "Blizzard_Something"],
+            "met": ["LibMet", "Blizzard_Something"],
             "embedded": ["LibEmbedded"],
             "missing": ["LibMissing"],
             "nolib": null,
@@ -2728,6 +2730,11 @@ fn add_warns_after_the_install_when_a_dependency_is_missing() {
     let dependencies = &value["addon"]["dependencies"][0];
     assert_eq!(dependencies["folder"], "NeedsLibrary");
     assert_eq!(dependencies["embedded"], serde_json::json!(["LibEmbedded"]));
+    assert_eq!(
+        dependencies["met"],
+        serde_json::json!(["Blizzard_Something"]),
+        "the client's own addon (task 064)"
+    );
     assert_eq!(dependencies["missing"], serde_json::json!(["LibMissing"]));
     assert_eq!(
         dependencies["nolib"],
@@ -2894,11 +2901,12 @@ fn doctor_game_root(name: &str) -> PathBuf {
 }
 
 /// Asserts that an output carries no home folder path: neither the profile folder of this run nor any
-/// `\Users\` folder (the 8.3 short form a runner's temporary folder carries included).
+/// `\Users\` folder (the 8.3 short form a runner's temporary folder carries included), with `\` or `/` as
+/// the separator.
 fn assert_no_home_path(output: &str) {
-    let lower = output.to_lowercase();
+    let lower = output.to_lowercase().replace('/', "\\");
     if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
-        let profile = profile.to_string_lossy().to_lowercase();
+        let profile = profile.to_string_lossy().to_lowercase().replace('/', "\\");
         assert!(!lower.contains(&profile), "the profile folder in: {output}");
     }
     assert!(
@@ -3009,6 +3017,32 @@ fn doctor_json_is_one_document_without_a_key_value_or_a_home_path() {
     assert_eq!(flavor["cache"]["bytes"], 0);
     assert_eq!(flavor["client"]["status"], "not_running");
     assert_eq!(value["warnings"], serde_json::json!([]));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn doctor_hides_a_home_path_written_with_forward_slashes() {
+    let root = doctor_game_root("forward-slashes");
+    let home = temp_home("doctor-forward-slashes");
+    let forward = |path: &Path| path.display().to_string().replace('\\', "/");
+    let output = mrgl()
+        .env("MRGL_HOME", forward(&home))
+        .args(["--serious", "doctor", "--root", &forward(&root)])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let stdout = stdout(&output);
+    assert_no_home_path(&stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(lines[2].starts_with("root: "), "{stdout}");
+    assert!(lines[3].starts_with("home: "), "{stdout}");
+    // The temporary folder lies under the profile folder (in its long or short form) on a usual machine
+    // and on the runner; elsewhere there is nothing to hide.
+    let temp = std::env::temp_dir().display().to_string().to_lowercase();
+    if temp.contains(":\\users\\") {
+        assert!(lines[2].starts_with("root: ~/"), "{stdout}");
+        assert!(lines[3].starts_with("home: ~/"), "{stdout}");
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -4962,11 +4996,12 @@ fn add_offline_finds_the_installed_release_from_the_cache_with_a_warning() {
 
 // --- task 006: the update check and `update --all` / `update <name>`, against the folder stub ---
 
-/// A game with a fixture sidecar of ten managed addons, one for every state of the update check, each
-/// with its folder made by hand, and an unmanaged folder. The fixture answers serve the Forever zip of
-/// `Questie/Questie` v1.2.3, the one update.
+/// A game with a fixture sidecar of twelve managed addons, one or two for every state of the update check,
+/// each with its folder made by hand, and an unmanaged folder. The fixture answers serve the Forever zip of
+/// `Questie/Questie` v1.2.3, the one update. Task 068: `Switched` has the prerelease of
+/// `Example/Prerelease` on the stable channel (a channel switch) and `Delisted` a version the release list
+/// no longer has; both are newer than the current release, not an update.
 fn update_game(name: &str) -> Game {
-    let game = Game::new(name);
     let entries = [
         (
             "Beta",
@@ -4974,6 +5009,7 @@ fn update_game(name: &str) -> Game {
             "1.1.0-beta",
             r#", "channel": "prerelease""#,
         ),
+        ("Delisted", "github:Example/Prerelease", "1.5.0", ""),
         ("Dev", r"link:D:\\dev\\Dev", "dev", ""),
         ("Empty", "github:Example/Empty", "1.0.0", ""),
         ("Gone", "github:Example/Missing", "1.0.0", ""),
@@ -4992,8 +5028,16 @@ fn update_game(name: &str) -> Game {
         ),
         ("Plain", "github:Example/Prerelease", "1.0.0", ""),
         ("Questie", "github:Questie/Questie", "1.2.2", ""),
+        ("Switched", "github:Example/Prerelease", "1.1.0-beta", ""),
         ("Zipped", r"C:\\Downloads\\Zipped-1.0.0.zip", "1.0.0", ""),
     ];
+    managed_game(name, &entries)
+}
+
+/// A game whose sidecar manages the entries (folder, source, version, the entry's other fields), each
+/// with its folder made by hand, and an unmanaged folder `ByHand`.
+fn managed_game(name: &str, entries: &[(&str, &str, &str, &str)]) -> Game {
+    let game = Game::new(name);
     let mut json = Vec::new();
     for (folder, source, version, marks) in entries {
         addon_by_hand(&game, folder, version);
@@ -5031,7 +5075,7 @@ fn update_dry_run_reports_every_state_of_a_fixture_sidecar_and_writes_nothing() 
     let text = stdout(&output);
     let mut lines: Vec<&str> = text.lines().collect();
     // The 404 line names the release list URL, whose query belongs to the GitHub source.
-    let gone = lines.remove(4);
+    let gone = lines.remove(9);
     assert!(
         gone.starts_with(
             "Gone  1.0.0  source gone: GitHub answered 404 for https://api.github.com/repos/Example/Missing/releases"
@@ -5042,16 +5086,27 @@ fn update_dry_run_reports_every_state_of_a_fixture_sidecar_and_writes_nothing() 
         lines,
         [
             "checking the managed addons of _forever_ against their sources",
+            "checking Beta against github:Example/Prerelease (1 of 12)",
             "Beta  1.1.0-beta  up to date",
+            "checking Delisted against github:Example/Prerelease (2 of 12)",
+            "Delisted  1.5.0  newer than the current release 1.0.0 (1.5.0 is no longer listed), left alone",
             "Dev  dev  not checked: a linked development folder",
+            "checking Empty against github:Example/Empty (4 of 12)",
             "Empty  1.0.0  source gone: no release in github:Example/Empty",
+            "checking Gone against github:Example/Missing (5 of 12)",
+            "checking Guess against github:Example/NoReleaseJson (6 of 12)",
             "Guess  2.0.0 -> 3.0.0  guess only: no release.json names forever; the asset name ends in -forever, a guess; `mrgl add github:Example/NoReleaseJson` installs it anyway",
             "Ignored  1.0.0  ignored, not checked",
+            "checking Pinned against github:Example/Notes (8 of 12)",
             "Pinned  2.0.0  pinned at 2.0.0, 2.1.0 is out, left alone",
+            "checking Plain against github:Example/Prerelease (9 of 12)",
             "Plain  1.0.0  up to date",
+            "checking Questie against github:Questie/Questie (10 of 12)",
             "Questie  1.2.2 -> 1.2.3  update available",
+            "checking Switched against github:Example/Prerelease (11 of 12)",
+            "Switched  1.1.0-beta  newer than the current release 1.0.0, left alone",
             "Zipped  1.0.0  not checked: a zip in hand; a newer zip goes in with mrgl add <zip>",
-            "dry run: 1 update available, 2 up to date, 1 pinned, 1 ignored, 1 guess only, 2 source gone, 2 not checked; nothing written",
+            "dry run: 1 update available, 2 up to date, 2 newer than the release, 1 pinned, 1 ignored, 1 guess only, 2 source gone, 2 not checked; nothing written",
         ],
         "{text}"
     );
@@ -5066,7 +5121,10 @@ fn update_all_with_yes_updates_through_the_one_path_and_counts_the_rest() {
     let output = run_in(&game, &["update", "--all", "--yes"]);
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     let text = stdout(&output);
-    let lines: Vec<&str> = text.lines().skip(11).collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .skip_while(|line| !line.starts_with("updating "))
+        .collect();
     assert_eq!(
         lines,
         [
@@ -5074,7 +5132,7 @@ fn update_all_with_yes_updates_through_the_one_path_and_counts_the_rest() {
             "downloading Questie-v1.2.3-forever.zip",
             "installing Questie-v1.2.3-forever.zip into _forever_",
             "updated Questie from 1.2.2 to 1.2.3 (1 folder: Questie) in _forever_",
-            "1 addon updated, 2 up to date, 1 pinned, 1 ignored, 1 guess only, 2 source gone, 2 not checked",
+            "1 addon updated, 2 up to date, 2 newer than the release, 1 pinned, 1 ignored, 1 guess only, 2 source gone, 2 not checked",
         ],
         "{text}"
     );
@@ -5087,7 +5145,9 @@ fn update_all_with_yes_updates_through_the_one_path_and_counts_the_rest() {
     let after = sidecar(&game);
     assert_eq!(after["addons"]["Questie"]["version"], "1.2.3");
     assert_eq!(after["addons"]["Questie"]["previous_version"], "1.2.2");
-    for name in ["Beta", "Pinned", "Ignored", "Guess", "Empty", "Zipped"] {
+    for name in [
+        "Beta", "Delisted", "Pinned", "Ignored", "Guess", "Empty", "Switched", "Zipped",
+    ] {
         assert_eq!(after["addons"][name], before["addons"][name], "{name}");
     }
     assert_eq!(staging_entries(&game), Vec::<String>::new());
@@ -5097,7 +5157,7 @@ fn update_all_with_yes_updates_through_the_one_path_and_counts_the_rest() {
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     assert_eq!(
         stdout_last_line(&output),
-        "nothing updated: 3 up to date, 1 pinned, 1 ignored, 1 guess only, 2 source gone, 2 not checked"
+        "nothing updated: 3 up to date, 2 newer than the release, 1 pinned, 1 ignored, 1 guess only, 2 source gone, 2 not checked"
     );
 }
 
@@ -5143,10 +5203,11 @@ fn update_json_is_one_document_with_every_state_and_count() {
     assert_eq!(
         value["counts"],
         serde_json::json!({
-            "update-available": 1, "up-to-date": 2, "pinned": 1, "ignored": 1, "guess-only": 1,
-            "source-gone": 2, "not-checked": 2, "failed": 0,
+            "update-available": 1, "up-to-date": 2, "installed-newer": 2, "pinned": 1, "ignored": 1,
+            "guess-only": 1, "source-gone": 2, "not-checked": 2, "rate-limited": 0, "failed": 0,
         })
     );
+    assert_eq!(value["stopped"], serde_json::Value::Null);
     let states: Vec<(&str, &str)> = value["addons"]
         .as_array()
         .expect("the addons")
@@ -5162,6 +5223,7 @@ fn update_json_is_one_document_with_every_state_and_count() {
         states,
         [
             ("Beta", "up-to-date"),
+            ("Delisted", "installed-newer"),
             ("Dev", "not-checked"),
             ("Empty", "source-gone"),
             ("Gone", "source-gone"),
@@ -5170,18 +5232,23 @@ fn update_json_is_one_document_with_every_state_and_count() {
             ("Pinned", "pinned"),
             ("Plain", "up-to-date"),
             ("Questie", "update-available"),
+            ("Switched", "installed-newer"),
             ("Zipped", "not-checked"),
         ]
     );
-    let questie = &value["addons"][8];
+    let questie = &value["addons"][9];
     assert_eq!(questie["latest"], "1.2.3");
     assert_eq!(questie["updated"], true);
     assert_eq!(questie["addon"]["version"], "1.2.3");
     assert_eq!(questie["addon"]["previous_version"], "1.2.2");
     assert_eq!(questie["pick"]["asset"], "Questie-v1.2.3-forever.zip");
     assert_eq!(value["addons"][1]["updated"], false);
-    assert_eq!(value["addons"][6]["pinned"], "2.0.0");
-    assert_eq!(value["addons"][6]["latest"], "2.1.0");
+    assert_eq!(value["addons"][1]["latest"], "1.0.0");
+    assert_eq!(value["addons"][1]["detail"], "1.5.0 is no longer listed");
+    assert_eq!(value["addons"][10]["latest"], "1.0.0");
+    assert_eq!(value["addons"][10]["detail"], serde_json::Value::Null);
+    assert_eq!(value["addons"][7]["pinned"], "2.0.0");
+    assert_eq!(value["addons"][7]["latest"], "2.1.0");
     assert_eq!(value["addons"][0]["channel"], "prerelease");
 }
 
@@ -5194,6 +5261,7 @@ fn update_one_addon_takes_the_same_path_and_names_an_unknown_one() {
         stdout(&output).lines().collect::<Vec<_>>(),
         [
             "checking pinned of _forever_ against their sources",
+            "checking Pinned against github:Example/Notes (1 of 1)",
             "Pinned  2.0.0  pinned at 2.0.0, 2.1.0 is out, left alone",
             "nothing updated: 1 pinned",
         ]
@@ -5222,6 +5290,127 @@ fn update_one_addon_takes_the_same_path_and_names_an_unknown_one() {
         let output = game.mrgl().args(&args).output().expect("run mrgl");
         assert_eq!(output.status.code(), Some(2), "{args:?}");
     }
+}
+
+// --- task 068: the update check stops before GitHub's rate limit without a token ---
+
+#[test]
+fn update_stops_before_the_rate_limit_with_the_reset_time_and_counts_the_rest() {
+    let game = managed_game(
+        "update-budget",
+        &[
+            ("Alpha", "github:Example/Notes", "2.0.0", ""),
+            ("Bravo", "github:Questie/Questie", "1.2.2", ""),
+            ("Charlie", r"C:\\Downloads\\Charlie-1.0.0.zip", "1.0.0", ""),
+            ("Delta", "github:Example/Prerelease", "1.0.0", ""),
+            (
+                "Echo",
+                "github:Example/NoMetadata",
+                "1.0.0",
+                r#", "ignored": true"#,
+            ),
+        ],
+    );
+    // The first answer says no request is left this hour, as GitHub's headers do.
+    let stub = game.home.join("stub-budget");
+    copy_tree(&releases(), &stub);
+    let reset = 1_792_598_400;
+    std::fs::write(
+        stub.join("api.github.com/repos/Example/Notes/releases.json.headers"),
+        format!("X-RateLimit-Limit: 60\nX-RateLimit-Remaining: 0\nX-RateLimit-Reset: {reset}\n"),
+    )
+    .expect("the headers");
+    let before = game_snapshot(&game);
+    let stop = format!(
+        "stopped the check before GitHub's rate limit of 60 requests an hour without a token: 2 addons not checked, the limit resets at {} (local time); set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour",
+        mrgl_core::sources::local_time_text(reset)
+    );
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "checking the managed addons of _forever_ against their sources",
+            "checking Alpha against github:Example/Notes (1 of 5)",
+            "Alpha  2.0.0 -> 2.1.0  update available",
+            stop.as_str(),
+            "Bravo  1.2.2  not checked (rate limit): the check stopped before GitHub's rate limit",
+            "Charlie  1.0.0  not checked: a zip in hand; a newer zip goes in with mrgl add <zip>",
+            "Delta  1.0.0  not checked (rate limit): the check stopped before GitHub's rate limit",
+            "Echo  1.0.0  ignored, not checked",
+            "dry run: 1 update available, 1 ignored, 1 not checked, 2 not checked (rate limit); nothing written",
+        ],
+        "{text}"
+    );
+    assert_eq!(game_snapshot(&game), before, "a dry run writes nothing");
+    let api: Vec<String> = std::fs::read_dir(game.home.join("cache/github/example"))
+        .expect("the cache")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(api, ["notes"], "only the first addon's list was asked for");
+    assert!(!game.home.join("cache/github/questie").exists());
+
+    // The murloc speaks the stop as a warning; the JSON document carries it with the counts.
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["update", "--all", "--dry-run", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let text = stdout(&output);
+    assert!(
+        text.contains(&format!("Mrgl? Mrgl…\n{stop}")),
+        "the stop is a warning: {text}"
+    );
+    assert!(
+        text.contains("Mrrrgl… mrgl mrgl.\nchecking Alpha against github:Example/Notes (1 of 5)"),
+        "{text}"
+    );
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args([
+            "--json",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["counts"]["rate-limited"], 2);
+    assert_eq!(value["counts"]["update-available"], 1);
+    assert_eq!(value["stopped"]["host"], "GitHub");
+    assert_eq!(value["stopped"]["limit"], 60);
+    assert_eq!(value["stopped"]["sent"], 1);
+    assert_eq!(value["stopped"]["reset"], reset);
+    assert_eq!(value["stopped"]["not_checked"], 2);
+    assert_eq!(value["stopped"]["message"], stop.as_str());
+    assert_eq!(value["addons"][1]["state"], "rate-limited");
+    assert_eq!(value["addons"][1]["latest"], serde_json::Value::Null);
 }
 
 // --- task 057: `import --exact` installs the version the list names ---
@@ -5382,6 +5571,133 @@ fn import_without_exact_still_takes_the_current_release() {
         stdout(&output)
     );
     assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.2.3");
+}
+
+// --- task 066: the newest release with a Forever asset, and a listed version on page two ---
+
+/// A copy of the fixture answers with two more repositories, each with the fixture `Questie` zip behind
+/// its Forever asset: `Example/Behind`, whose newest release has a classic zip only, and `Example/Paged`,
+/// whose first page holds 30 releases of 2.0.x and whose second page holds v1.0.0.
+fn stub_with_older_forever_releases(base: &Path) -> PathBuf {
+    let stub = base.join("stub-066");
+    let _ = std::fs::remove_dir_all(&stub);
+    copy_tree(&releases(), &stub);
+    let questie = releases()
+        .join("github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1.2.3-forever.zip");
+    let release = |repo: &str, tag: &str, assets: &[&str]| {
+        let assets: Vec<serde_json::Value> = assets
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name,
+                    "browser_download_url":
+                        format!("https://github.com/Example/{repo}/releases/download/{tag}/{name}"),
+                })
+            })
+            .collect();
+        serde_json::json!({ "tag_name": tag, "draft": false, "prerelease": false, "assets": assets })
+    };
+    let write = |path: &str, text: String| {
+        let path = stub.join(path);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("the folder");
+        std::fs::write(path, text).expect("the answer");
+    };
+    let serve = |repo: &str, tag: &str, asset: &str| {
+        let folder = stub.join(format!("github.com/Example/{repo}/releases/download/{tag}"));
+        std::fs::create_dir_all(&folder).expect("the release folder");
+        std::fs::copy(&questie, folder.join(asset)).expect("the asset");
+    };
+
+    write(
+        "api.github.com/repos/Example/Behind/releases.json",
+        serde_json::json!([
+            release("Behind", "v2.0.0", &["Behind-v2.0.0-classic.zip"]),
+            release("Behind", "v1.9.0", &["Behind-v1.9.0-forever.zip"]),
+        ])
+        .to_string(),
+    );
+    serve("Behind", "v1.9.0", "Behind-v1.9.0-forever.zip");
+
+    let first: Vec<serde_json::Value> = (0..30)
+        .rev()
+        .map(|n| {
+            let tag = format!("v2.0.{n}");
+            release("Paged", &tag, &[&format!("Paged-{tag}-forever.zip")])
+        })
+        .collect();
+    write(
+        "api.github.com/repos/Example/Paged/releases.json",
+        serde_json::Value::Array(first).to_string(),
+    );
+    write(
+        "api.github.com/repos/Example/Paged/releases.page-2.json",
+        serde_json::json!([release("Paged", "v1.0.0", &["Paged-v1.0.0-forever.zip"])]).to_string(),
+    );
+    serve("Paged", "v1.0.0", "Paged-v1.0.0-forever.zip");
+    stub
+}
+
+#[test]
+fn add_takes_the_newest_release_with_a_forever_asset() {
+    let game = Game::new("add-behind");
+    let stub = stub_with_older_forever_releases(game.root.parent().expect("the base"));
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args([
+            "--serious",
+            "add",
+            "github:Example/Behind",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.contains("github:Example/Behind v1.9.0 (Behind-v1.9.0-forever.zip")
+            && text
+                .contains("the newest release with a forever asset, 1 newer release without one"),
+        "{text}"
+    );
+    assert_eq!(
+        sidecar(&game)["addons"]["Questie"]["source"],
+        "github:Example/Behind"
+    );
+    assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.9.0");
+}
+
+#[test]
+fn import_exact_installs_a_listed_version_from_page_two() {
+    let game = Game::new("import-exact-paged");
+    let stub = stub_with_older_forever_releases(game.root.parent().expect("the base"));
+    let list = write_list(
+        &game,
+        "paged.json",
+        &[("Questie", "github:Example/Paged", "1.0.0")],
+    );
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever", "--exact"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines()
+            .any(|line| line == "Questie  installed 1.0.0 from github:Example/Paged"),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "imported 1 addon of paged.json into _forever_: 1 installed"
+    );
+    assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.0.0");
+    assert!(game.addon("Questie").join("Questie.toc").is_file());
 }
 
 // --- tasks 006 and 057 over task 041: a pick from the cached release list is a warning on update and import ---

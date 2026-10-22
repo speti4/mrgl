@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, UNIX_EPOCH};
 

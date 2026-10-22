@@ -349,6 +349,38 @@ fn a_wrapper_folder_is_looked_into_one_level_down() {
 }
 
 #[test]
+fn a_zip_without_a_folder_the_others_extend_is_named_after_its_stem_or_repository() {
+    // Task 065: `Boss-Arena` comes first by name, but the core is `Boss-Core`.
+    let sandbox = Sandbox::new("boss-core");
+    let installed = sandbox.install("boss-core-5.0.0.zip");
+    assert_eq!(
+        installed.name, "Boss-Core",
+        "the zip's stem without its version"
+    );
+    assert_eq!(installed.version, "5.0.0");
+    assert_eq!(installed.folders, ["Boss-Core", "Boss-Arena", "Boss-GUI"]);
+    assert!(sandbox.state().entry("Boss-Core").is_some());
+
+    // The same zip under a name that says nothing, from a repository named after the core.
+    let renamed = Sandbox::new("boss-core-repository");
+    let download = renamed.root.join("download.zip");
+    std::fs::copy(zip("boss-core-5.0.0.zip"), &download).expect("a copy");
+    let from_repository = renamed
+        .engine
+        .install(
+            &download,
+            &Metadata {
+                source: "github:Someone/boss-core".to_string(),
+                version: Some("5.0.0".to_string()),
+                name: None,
+                nolib: Some(false),
+            },
+        )
+        .expect("installs");
+    assert_eq!(from_repository.name, "Boss-Core", "the repository's name");
+}
+
+#[test]
 fn the_metadata_names_the_source_the_version_and_the_name() {
     let sandbox = Sandbox::new("metadata");
     let given = Metadata {

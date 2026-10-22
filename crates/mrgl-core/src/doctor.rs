@@ -372,7 +372,8 @@ pub fn api_keys_from(env: impl Fn(&str) -> Option<OsString>) -> Vec<ApiKey> {
 }
 
 /// Hides the user's profile folder in a path or a line: every occurrence of the folder, in its long and
-/// its 8.3 short form, ASCII case-insensitively, becomes `~` when a separator or the end follows it.
+/// its 8.3 short form, in any case and with `\` or `/` (or a mix) as the separator, becomes `~` when a
+/// separator or the end follows it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Redactor {
     /// The forms of the profile folder, longest first, without a trailing separator.
@@ -405,7 +406,7 @@ impl Redactor {
             .filter(|form| !form.is_empty())
             .collect();
         forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
-        forms.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        forms.dedup_by(|a, b| path_prefix(a, b) == Some(a.len()));
         Redactor { forms }
     }
 
@@ -423,19 +424,15 @@ impl Redactor {
         if self.forms.is_empty() {
             return text.to_string();
         }
-        let bytes = text.as_bytes();
         let mut result = String::with_capacity(text.len());
         let mut at = 0;
         'outer: while at < text.len() {
             for form in &self.forms {
-                let end = at + form.len();
-                let follows = bytes.get(end);
-                if end <= bytes.len()
-                    && bytes[at..end].eq_ignore_ascii_case(form.as_bytes())
-                    && matches!(follows, None | Some(b'\\') | Some(b'/'))
+                if let Some(length) = path_prefix(&text[at..], form)
+                    && text[at + length..].chars().next().is_none_or(is_separator)
                 {
                     result.push('~');
-                    at = end;
+                    at += length;
                     continue 'outer;
                 }
             }
@@ -450,6 +447,27 @@ impl Redactor {
     pub fn path(&self, path: &Path) -> String {
         self.text(&path.display().to_string())
     }
+}
+
+/// The length in bytes of the start of `text` that spells the path `form`: character by character in any
+/// case, with `\` and `/` as the same separator; `None` when `text` does not start with it.
+fn path_prefix(text: &str, form: &str) -> Option<usize> {
+    let mut chars = text.char_indices();
+    for wanted in form.chars() {
+        let (_, found) = chars.next()?;
+        let same = found == wanted
+            || (is_separator(found) && is_separator(wanted))
+            || found.to_lowercase().eq(wanted.to_lowercase());
+        if !same {
+            return None;
+        }
+    }
+    Some(chars.next().map_or(text.len(), |(index, _)| index))
+}
+
+/// A path separator as Windows reads one: `\` or `/`.
+fn is_separator(c: char) -> bool {
+    matches!(c, '\\' | '/')
 }
 
 /// Whether a flavor's `Interface\AddOns` folder takes a write.
@@ -880,23 +898,8 @@ fn client_check(processes: &dyn ProcessList, folder: &Path, redactor: &Redactor)
     }
 }
 
-/// A byte count for a human: `512 B`, `34.2 KB`, `1.5 MB`.
-fn bytes_text(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
-    if bytes < 1024 {
-        return format!("{bytes} B");
-    }
-    let mut value = bytes as f64 / 1024.0;
-    let mut unit = UNITS[0];
-    for next in &UNITS[1..] {
-        if value < 1024.0 {
-            break;
-        }
-        value /= 1024.0;
-        unit = next;
-    }
-    format!("{value:.1} {unit}")
-}
+// A byte count for a human, the core's one size formatter (task 071): `512 B`, `34.2 KB`, `1.5 MB`.
+use crate::zip_entry::size_text as bytes_text;
 
 fn with_reason(text: &str, reason: Option<&String>) -> String {
     match reason {
@@ -1517,6 +1520,39 @@ mod tests {
         assert_eq!(Redactor::new(None).text("C:\\Users\\x"), "C:\\Users\\x");
     }
 
+    #[test]
+    fn the_redactor_hides_the_profile_folder_with_either_separator_in_any_case() {
+        let redactor = Redactor::new(Some(Path::new("C:\\Users\\someone")));
+        assert_eq!(
+            redactor.text("C:/Users/someone/AppData/Local/mrgl"),
+            "~/AppData/Local/mrgl"
+        );
+        assert_eq!(redactor.text("c:/USERS/SomeOne"), "~");
+        assert_eq!(redactor.text("C:/Users\\someone/x"), "~/x", "mixed");
+        assert_eq!(
+            redactor.text("from C:\\USERS/someone\\x and c:/users/someone"),
+            "from ~\\x and ~"
+        );
+        assert_eq!(
+            redactor.text("C:/Users/someone2/x"),
+            "C:/Users/someone2/x",
+            "another folder that starts the same"
+        );
+        assert_eq!(
+            redactor.text("C:/Users/someone.old"),
+            "C:/Users/someone.old"
+        );
+        // A profile variable written with forward slashes hides the backslash form too.
+        let forward = Redactor::new(Some(Path::new("C:/Users/someone/")));
+        assert_eq!(forward.text("C:\\Users\\someone\\x"), "~\\x");
+        assert_eq!(forward.text("c:/users/someone"), "~");
+        // A name beyond ASCII matches in any case too.
+        let accented = Redactor::new(Some(Path::new("C:\\Users\\Ébredő")));
+        assert_eq!(accented.text("c:/users/ÉBREDŐ/x"), "~/x");
+        assert_eq!(accented.text("C:\\Users\\ébredő"), "~");
+        assert_eq!(accented.text("C:\\Users\\Ébredő2"), "C:\\Users\\Ébredő2");
+    }
+
     #[cfg(windows)]
     #[test]
     fn the_redactor_hides_the_short_form_too() {
@@ -1528,6 +1564,16 @@ mod tests {
         let short = client::short_form(&profile).expect("a short form");
         assert_eq!(redactor.path(&short.join("x")), "~\\x");
         assert_eq!(redactor.path(&profile.join("x")), "~\\x");
+        // Both forms with forward slashes and in upper case too.
+        for form in [&short, &profile] {
+            let forward = form.join("x").display().to_string().replace('\\', "/");
+            assert_eq!(redactor.text(&forward), "~/x", "{forward}");
+            assert_eq!(
+                redactor.text(&forward.to_ascii_uppercase()),
+                "~/X",
+                "{forward}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 

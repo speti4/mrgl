@@ -34,8 +34,11 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
 - **Updates you can read first.** `mrgl update --all --dry-run` checks every addon mrgl installed against
   its source, each on its own release channel, and says where each stands: up to date, update available, a
   guess only (no `release.json` names the flavor, so it is not installed blindly), source gone, pinned,
-  ignored, or not checked (a zip in hand, a linked folder); `mrgl update --all` installs the updates after
-  one confirmation (`--yes` for scripts), leaves a pinned addon alone and skips an ignored one.
+  ignored, not checked (a zip in hand, a linked folder), or newer than the release (a deleted release, a
+  channel switch: never downgraded); `mrgl update --all` installs the updates after one confirmation
+  (`--yes` for scripts), leaves a pinned addon alone and skips an ignored one. It says which addon it is
+  checking as it goes, and without a GitHub token it stops before the 60 requests an hour run out, with the
+  time the limit resets, instead of failing addon after addon.
 - **A known-good set on another machine.** `mrgl export` writes the managed addons into a list file and
   `mrgl import` installs it elsewhere, at the current releases, or with `--exact` at the versions the list
   names; a version the source no longer offers is reported and skipped.
@@ -151,8 +154,9 @@ Mrgl? Mrgl…
 Needy needs the missing dependency LibMissing: install it or the addon does not load
 ```
 
-A dependency counts as there when an addon folder of that name is installed, or when the addon carries the
-library inside its own folder (a release that is not a `nolib` build). `--json` has the details per addon
+A dependency counts as there when an addon folder of that name is installed, when it is one of the game's
+own `Blizzard_` addons, or when the addon carries the library inside its own folder (a release that is not
+a `nolib` build). `--json` has the details per addon
 under `dependencies`.
 
 Something not working? `mrgl doctor` prints what a bug report needs: the game folder and how it was found,

@@ -27,6 +27,11 @@ The repository, the task standard and the empty workspace: no app yet.
 - Offline resolve from the cached release list, with a warning ([041](https://github.com/speti4/mrgl/blob/main/tasks/done/041-offline-resolve-from-the-cached-release-list.md))
 - GitHub source: pagination past 30 releases, the rate-limit reset time, `release.json` cached per tag ([042](https://github.com/speti4/mrgl/blob/main/tasks/done/042-github-source-pagination-rate-limit-and-per-tag-cache.md))
 - The asset download's error path: a 404 names the asset, the size is checked ([046](https://github.com/speti4/mrgl/blob/main/tasks/done/046-asset-download-404-names-the-missing-asset.md))
+- The dependency check counts the client's own `Blizzard_*` addons as present ([064](https://github.com/speti4/mrgl/blob/main/tasks/done/064-blizzard-addons-are-not-missing-dependencies.md))
+- The install engine names a multi-folder addon after the zip or the repository, not the first folder ([065](https://github.com/speti4/mrgl/blob/main/tasks/done/065-derive-name-prefers-the-zip-or-repository-folder.md))
+- The GitHub source looks past the newest release for the flavor's asset and for a named version ([066](https://github.com/speti4/mrgl/blob/main/tasks/done/066-github-source-looks-past-the-newest-release.md))
+- The link guard also covers the folders a new version drops ([067](https://github.com/speti4/mrgl/blob/main/tasks/done/067-link-guard-covers-dropped-folders.md))
+- The update check: version order, progress, and a request budget without a token ([068](https://github.com/speti4/mrgl/blob/main/tasks/done/068-update-check-version-order-progress-and-request-budget.md))
 
 ### M2 Window MVP
 
@@ -42,6 +47,8 @@ The repository, the task standard and the empty workspace: no app yet.
 - A second registry source for the game root: the Uninstall entry, and expanded values ([043](https://github.com/speti4/mrgl/blob/main/tasks/done/043-second-registry-source-for-the-game-root.md))
 - A Windows version line in the doctor report ([051](https://github.com/speti4/mrgl/blob/main/tasks/done/051-windows-version-line-in-the-doctor-report.md))
 - Forever notes for the addons the community lists as partly restricted ([058](https://github.com/speti4/mrgl/blob/main/tasks/done/058-forever-notes-for-the-partly-restricted-addons.md))
+- The doctor report redacts a profile path written with forward slashes ([069](https://github.com/speti4/mrgl/blob/main/tasks/done/069-doctor-redacts-forward-slash-profile-paths.md))
+- The Forever notes schema check allows one day of slack on `verified` ([070](https://github.com/speti4/mrgl/blob/main/tasks/done/070-forever-notes-date-check-allows-a-day-of-slack.md))
 
 ### M3 Toolbox
 
@@ -69,3 +76,5 @@ The repository, the task standard and the empty workspace: no app yet.
 - One install path: a core helper for resolve, download and install, the link refusal in the commit ([055](https://github.com/speti4/mrgl/blob/main/tasks/done/055-one-core-helper-for-resolve-download-and-install.md))
 - CI compiles the non-Windows paths of the core ([061](https://github.com/speti4/mrgl/blob/main/tasks/done/061-ci-compiles-the-non-windows-paths.md))
 - The stand-in client of the tests is a copy of a signed system executable, not of the test binary ([063](https://github.com/speti4/mrgl/blob/main/tasks/done/063-stand-in-client-from-a-signed-system-exe.md))
+- Fold the duplicates: one `WTF` walker, one size formatter, no dead error variant ([071](https://github.com/speti4/mrgl/blob/main/tasks/done/071-fold-the-duplicated-helpers.md))
+- GitHub cache housekeeping: stale per-tag `release.json` files and the old single file ([072](https://github.com/speti4/mrgl/blob/main/tasks/done/072-github-cache-housekeeping.md))
