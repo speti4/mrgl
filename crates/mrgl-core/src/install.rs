@@ -723,25 +723,7 @@ impl Engine {
         // client loads the new folders at `/reload`, so it is a warning, never a refusal (task 038).
         let client_warning = self.client_warning(RunningClient::install_warning);
 
-        let previous_dir = staged.dir.join(staging::PREVIOUS_DIR);
-        let mut journal: Vec<(PathBuf, PathBuf)> = Vec::new();
-        let outcome = swap_all(&addons_dir, &staged, &stale, &previous_dir, &mut journal);
-        if let Err((folder, reason)) = outcome {
-            for (from, to) in journal.iter().rev() {
-                if let Err(revert_error) = move_dir(to, from) {
-                    staged.keep = true;
-                    return Err(Error::SwapRevertFailed {
-                        folder,
-                        reason: format!("{reason}; moving {} back: {revert_error}", to.display()),
-                        staging: staged.dir.clone(),
-                    });
-                }
-            }
-            return Err(Error::SwapFailed {
-                folder,
-                reason: reason.to_string(),
-            });
-        }
+        swap_or_revert(&addons_dir, &mut staged, &stale, &move_dir)?;
 
         let mut warnings = std::mem::take(&mut staged.sweep_warnings);
         let mut files = BTreeMap::new();
@@ -1041,10 +1023,7 @@ impl Engine {
         let scan = scan::scan_flavor(&self.flavor)?;
         let dropped = state.reconcile(&scan);
         let flavor = flavor_label(&self.flavor.id);
-        let Some((known, entry)) = state
-            .find(name)
-            .map(|(known, entry)| (known.to_string(), entry.clone()))
-        else {
+        let Some((known, current)) = state.find_mut(name) else {
             let name = name.to_string();
             return Err(if self.addons_dir().join(&name).is_dir() {
                 Error::NotManagedToMark {
@@ -1056,14 +1035,14 @@ impl Engine {
                 Error::AddonNotFound { name, flavor }
             });
         };
-        let Some(target) = entry
+        let Some(target) = current
             .previous_version
             .clone()
-            .filter(|previous| previous != &entry.version)
+            .filter(|previous| previous != &current.version)
         else {
             return Err(Error::NoPreviousVersion {
                 name: known,
-                version: entry.version,
+                version: current.version.clone(),
                 flavor,
             });
         };
@@ -1075,6 +1054,11 @@ impl Engine {
                 path: zip,
             });
         }
+        // The pin goes on in memory before the stage; nothing is written before the commit, which keeps
+        // the replaced entry's marks: one sidecar write, and no warning that the pin differs from the
+        // version just installed.
+        current.pin(Some(&target));
+        let entry = current.clone();
         let metadata = Metadata {
             source: entry.source.clone(),
             version: Some(target.clone()),
@@ -1084,11 +1068,6 @@ impl Engine {
             nolib: entry.nolib,
         };
         let staged = self.stage(&zip, &metadata)?;
-        // The pin goes on before the commit, which keeps the replaced entry's marks: one sidecar write,
-        // and no warning that the pin differs from the version just installed.
-        if let Some(current) = state.addons.get_mut(&known) {
-            current.pin(Some(&target));
-        }
         let mut installed = self.commit(staged, &mut state)?;
         let mut warnings: Vec<String> = loaded.warning.into_iter().collect();
         warnings.extend(dropped.into_iter().map(|name| {
@@ -1210,10 +1189,12 @@ impl Engine {
             .flatten()
             .map(|version| self.home.cached_zip(&staged.name, version))
             .collect();
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
+        // The folder holds the zip just copied (or found there), so its listing cannot fail; an empty
+        // listing is nothing to prune.
+        let entries: Vec<std::fs::DirEntry> = std::fs::read_dir(&dir)
+            .map(|entries| entries.flatten().collect())
+            .unwrap_or_default();
+        for entry in entries {
             let path = entry.path();
             if !keep.iter().any(|kept| kept == &path) {
                 let _ = std::fs::remove_file(&path);
@@ -1240,12 +1221,13 @@ fn swap_all(
     stale: &[String],
     previous_dir: &Path,
     journal: &mut Vec<(PathBuf, PathBuf)>,
+    mover: &dyn Fn(&Path, &Path) -> io::Result<()>,
 ) -> std::result::Result<(), (String, io::Error)> {
     let move_away = |folder: &str, journal: &mut Vec<(PathBuf, PathBuf)>| {
         let target = addons_dir.join(folder);
         if std::fs::symlink_metadata(&target).is_ok() {
             let away = previous_dir.join(folder);
-            move_dir(&target, &away).map_err(|error| (folder.to_string(), error))?;
+            mover(&target, &away).map_err(|error| (folder.to_string(), error))?;
             journal.push((target, away));
         }
         Ok(())
@@ -1253,13 +1235,51 @@ fn swap_all(
     for addon in &staged.addons {
         move_away(&addon.folder, journal)?;
         let target = addons_dir.join(&addon.folder);
-        move_dir(&addon.path, &target).map_err(|error| (addon.folder.clone(), error))?;
+        mover(&addon.path, &target).map_err(|error| (addon.folder.clone(), error))?;
         journal.push((addon.path.clone(), target));
     }
     for folder in stale {
         move_away(folder, journal)?;
     }
     Ok(())
+}
+
+/// [`swap_all`] and, when it fails, the revert of the journal in reverse order: the swap's failure is
+/// [`Error::SwapFailed`] once every move is undone; a move back that fails is [`Error::SwapRevertFailed`],
+/// and the staging folder, which holds the folders moved aside under `previous\`, is kept. `mover` moves
+/// one folder ([`move_dir`]; the tests' stand-in fails where they say).
+fn swap_or_revert(
+    addons_dir: &Path,
+    staged: &mut Staged,
+    stale: &[String],
+    mover: &dyn Fn(&Path, &Path) -> io::Result<()>,
+) -> Result<()> {
+    let previous_dir = staged.dir.join(staging::PREVIOUS_DIR);
+    let mut journal: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let Err((folder, reason)) = swap_all(
+        addons_dir,
+        staged,
+        stale,
+        &previous_dir,
+        &mut journal,
+        mover,
+    ) else {
+        return Ok(());
+    };
+    for (from, to) in journal.iter().rev() {
+        if let Err(revert_error) = mover(to, from) {
+            staged.keep = true;
+            return Err(Error::SwapRevertFailed {
+                folder,
+                reason: format!("{reason}; moving {} back: {revert_error}", to.display()),
+                staging: staged.dir.clone(),
+            });
+        }
+    }
+    Err(Error::SwapFailed {
+        folder,
+        reason: reason.to_string(),
+    })
 }
 
 /// A reinstall keeps the pin, the ignored mark and the channel of the entry it replaces (task 021): they
@@ -1374,10 +1394,9 @@ fn take_over_folders(
     warnings: &mut Vec<String>,
 ) -> Vec<Folded> {
     let mut emptied = Vec::new();
+    // The entry of `name` itself was taken out before this (the commit's `previous`), so every entry here
+    // is another addon's.
     for (other, entry) in state.addons.iter_mut() {
-        if other.eq_ignore_ascii_case(name) {
-            continue;
-        }
         let before = entry.folders.clone();
         entry
             .folders
@@ -1747,10 +1766,19 @@ pub fn derive_name<'a>(folders: &[&'a str], hints: &[String]) -> &'a str {
 /// Moves a folder: a rename on the same volume, a copy and a delete across volumes (the mrgl home on one
 /// drive, the game on another). A failed copy removes what it had copied before it reports.
 fn move_dir(from: &Path, to: &Path) -> io::Result<()> {
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    match std::fs::rename(from, to) {
+    move_dir_with(from, to, |from, to| std::fs::rename(from, to))
+}
+
+/// [`move_dir`] with the rename given (the tests' stand-in for a rename across volumes).
+fn move_dir_with(
+    from: &Path,
+    to: &Path,
+    rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    // A target always lies in a folder (under `AddOns` or `staging`); a bare name's parent is the empty
+    // path, which `create_dir_all` takes as the current folder.
+    std::fs::create_dir_all(to.parent().unwrap_or(Path::new("")))?;
+    match rename(from, to) {
         Ok(()) => Ok(()),
         Err(error) if crosses_devices(&error) => {
             if let Err(copy_error) = copy_dir_all(from, to) {
@@ -2000,5 +2028,271 @@ mod tests {
             Some("QuestieClassic")
         );
         assert_eq!(managed_entry(&state, "github:Other/Repo", None), None);
+    }
+
+    #[test]
+    fn an_older_name_is_an_entry_whose_folder_the_staged_name_is_and_whose_name_the_zip_ships() {
+        let mut state = State::new(&FlavorId::Forever);
+        let with_folders = |folders: &[&str]| Entry {
+            folders: folders.iter().map(|folder| folder.to_string()).collect(),
+            ..questie_entry("1.0")
+        };
+        state
+            .addons
+            .insert("Old".to_string(), with_folders(&["New", "Old"]));
+        state
+            .addons
+            .insert("Lib".to_string(), with_folders(&["Shipped"]));
+        let folders = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            renamed_entry(&state, "new", &folders(&["New", "Old"])).map(|(name, _)| name),
+            Some("Old")
+        );
+        assert_eq!(
+            renamed_entry(&state, "Shipped", &folders(&["Shipped"])),
+            None,
+            "the entry's own name is no folder of the zip: a library another addon ships"
+        );
+        assert_eq!(
+            renamed_entry(&state, "Old", &folders(&["Old"])),
+            None,
+            "the entry of that name is no older name"
+        );
+        assert_eq!(stem_name("-forever"), "-forever");
+    }
+
+    /// A zip in memory, stored entries in the given order; a name with a trailing `/` is a folder.
+    fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        let mut writer = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+        let stored =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, content) in entries {
+            if name.ends_with('/') {
+                writer.add_directory(*name, stored).expect("a folder entry");
+            } else {
+                writer.start_file(*name, stored).expect("a file entry");
+                writer.write_all(content).expect("content");
+            }
+        }
+        writer.finish().expect("finished").into_inner()
+    }
+
+    fn temp_unpack(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mrgl-unpack-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder");
+        dir
+    }
+
+    #[test]
+    fn an_entry_that_cannot_be_written_names_what_failed() {
+        // A file and a folder of one name in one zip, in each order, and a zip whose folder cannot be
+        // made under a file: each fails at the write with the context of the step.
+        let base = temp_unpack("entry-clash");
+        for (entries, context) in [
+            (
+                vec![("Foo", &b"a file"[..]), ("Foo/", &b""[..])],
+                "creating a staged folder",
+            ),
+            (
+                vec![("Foo", &b"a file"[..]), ("Foo/bar.lua", &b"-- x"[..])],
+                "creating a staged folder",
+            ),
+            (
+                vec![("Foo/", &b""[..]), ("Foo", &b"a file"[..])],
+                "writing a staged file",
+            ),
+        ] {
+            let zip = base.join("clash.zip");
+            std::fs::write(&zip, zip_bytes(&entries)).expect("the zip");
+            let into = base.join("unpacked");
+            let _ = std::fs::remove_dir_all(&into);
+            let error = unpack(&zip, &into, zip_entry::MAX_UNPACKED).expect_err("refused");
+            assert!(
+                matches!(&error, Error::Io { context: found, .. } if *found == context),
+                "{entries:?}: {error}"
+            );
+        }
+        std::fs::write(base.join("file"), "not a folder").expect("a file");
+        let zip = base.join("fine.zip");
+        std::fs::write(&zip, zip_bytes(&[("Foo/Foo.toc", b"## Title: Foo")])).expect("the zip");
+        let error = unpack(
+            &zip,
+            &base.join("file").join("unpacked"),
+            zip_entry::MAX_UNPACKED,
+        )
+        .expect_err("no folder under a file");
+        assert!(
+            matches!(&error, Error::Io { context, .. } if *context == "creating the staging folder"),
+            "{error}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn an_entry_whose_bytes_do_not_match_its_checksum_fails_the_write() {
+        let base = temp_unpack("bad-crc");
+        let content = b"## Title: Foo, with enough bytes to find\n";
+        let mut bytes = zip_bytes(&[("Foo/Foo.toc", content)]);
+        let at = bytes
+            .windows(content.len())
+            .position(|window| window == content)
+            .expect("the stored bytes are in the zip");
+        bytes[at] = b'#'.wrapping_add(1);
+        let zip = base.join("bad-crc.zip");
+        std::fs::write(&zip, bytes).expect("the zip");
+        let into = base.join("unpacked");
+        let error = unpack(&zip, &into, zip_entry::MAX_UNPACKED).expect_err("refused");
+        assert!(
+            matches!(&error, Error::Io { context, .. } if *context == "writing a staged file"),
+            "{error}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_listing_of_a_folder_tells_tocs_from_folders_and_short_names() {
+        let base = temp_unpack("list-dir");
+        std::fs::create_dir_all(base.join("sub")).expect("a folder");
+        for name in ["Foo.toc", "Foo_Vanilla.TOC", "a.md", "README.md"] {
+            std::fs::write(base.join(name), "x").expect("a file");
+        }
+        let (tocs, folders) = list_dir(&base).expect("lists");
+        assert_eq!(tocs, ["Foo.toc", "Foo_Vanilla.TOC"]);
+        assert_eq!(folders, ["sub"]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_revert_that_fails_keeps_the_staging_folder_with_the_previous_folders_in_it() {
+        // Two folders staged over two installed ones: the swap fails at the second folder, and moving the
+        // first new folder back fails too, so the old first folder waits under `previous\` and the run's
+        // folder stays once the staged guard goes.
+        let base = temp_unpack("revert-fails");
+        let run = RunDir::create(&base.join("staging"), "x.zip").expect("a run folder");
+        let dir = run.path().to_path_buf();
+        let unpacked = dir.join("unpacked");
+        let addons_dir = base.join("AddOns");
+        let mut addons = Vec::new();
+        for name in ["A", "B"] {
+            std::fs::create_dir_all(unpacked.join(name)).expect("the staged folder");
+            std::fs::write(unpacked.join(name).join("new.lua"), "-- new\n").expect("a file");
+            std::fs::create_dir_all(addons_dir.join(name)).expect("the installed folder");
+            std::fs::write(addons_dir.join(name).join("old.lua"), "-- old\n").expect("a file");
+            addons.push(StagedAddon {
+                folder: name.to_string(),
+                path: unpacked.join(name),
+                version: None,
+                files: BTreeMap::new(),
+            });
+        }
+        let mut staged = Staged {
+            zip: base.join("x.zip"),
+            dir: dir.clone(),
+            addons,
+            name: "A".to_string(),
+            version: "1.0".to_string(),
+            source: base.join("x.zip").display().to_string(),
+            nolib: None,
+            forever_build: None,
+            sweep_warnings: Vec::new(),
+            keep: false,
+            run,
+        };
+        let in_use = [
+            dir.join(staging::PREVIOUS_DIR).join("B"),
+            unpacked.join("A"),
+        ];
+        let mover = |from: &Path, to: &Path| -> io::Result<()> {
+            if in_use.iter().any(|path| path == to) {
+                return Err(io::Error::other("the folder is in use"));
+            }
+            move_dir(from, to)
+        };
+        let error =
+            swap_or_revert(&addons_dir, &mut staged, &[], &mover).expect_err("the revert fails");
+        match &error {
+            Error::SwapRevertFailed {
+                folder,
+                reason,
+                staging,
+            } => {
+                assert_eq!(folder, "B");
+                assert_eq!(
+                    reason,
+                    &format!(
+                        "the folder is in use; moving {} back: the folder is in use",
+                        addons_dir.join("A").display()
+                    )
+                );
+                assert_eq!(staging, &dir);
+            }
+            other => panic!("{other}"),
+        }
+        assert!(staged.keep);
+        drop(staged);
+        assert!(
+            dir.join(staging::PREVIOUS_DIR)
+                .join("A")
+                .join("old.lua")
+                .is_file(),
+            "the old folder waits under previous"
+        );
+        assert!(addons_dir.join("A").join("new.lua").is_file());
+        assert!(addons_dir.join("B").join("old.lua").is_file());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_move_across_volumes_copies_and_removes_and_a_failed_copy_leaves_nothing_behind() {
+        let base = temp_unpack("across-volumes");
+        let plant = |from: &Path| {
+            std::fs::create_dir_all(from.join("sub")).expect("the folders");
+            std::fs::write(from.join("a.lua"), "-- a\n").expect("a file");
+            std::fs::write(from.join("sub").join("b.lua"), "-- b\n").expect("a file inside");
+        };
+        let across = |_: &Path, _: &Path| Err(io::Error::from(io::ErrorKind::CrossesDevices));
+        let from = base.join("from");
+        let to = base.join("moved").join("to");
+        plant(&from);
+        move_dir_with(&from, &to, across).expect("copied and removed");
+        assert!(!from.exists());
+        assert_eq!(
+            std::fs::read_to_string(to.join("sub").join("b.lua")).expect("copied"),
+            "-- b\n"
+        );
+        assert!(to.join("a.lua").is_file());
+
+        // A folder in the way of a file: the copy fails, what was copied goes, the source stays.
+        let from = base.join("from-again");
+        let to = base.join("blocked");
+        plant(&from);
+        std::fs::create_dir_all(to.join("a.lua")).expect("a folder in the file's place");
+        let error = move_dir_with(&from, &to, across).expect_err("the copy fails");
+        assert_ne!(error.kind(), io::ErrorKind::CrossesDevices);
+        assert!(!to.exists(), "nothing copied stays");
+        assert!(
+            from.join("sub").join("b.lua").is_file(),
+            "the source is untouched"
+        );
+
+        // Any other failure of the rename is the error it was.
+        let error =
+            move_dir_with(&from, &to, |_, _| Err(io::Error::other("no"))).expect_err("as it was");
+        assert_eq!(error.to_string(), "no");
+        assert_eq!(
+            crosses_devices(&io::Error::from_raw_os_error(17)),
+            cfg!(windows),
+            "ERROR_NOT_SAME_DEVICE is Windows's word for it"
+        );
+        assert!(!crosses_devices(&io::Error::from(io::ErrorKind::NotFound)));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

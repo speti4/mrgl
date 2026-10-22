@@ -1178,13 +1178,522 @@ mod tests {
                 "Some/Path": "github:Owner/Repo",
                 "Wago": "wago:L6Jb2R6v",
                 "Odd": "https://github.com/Owner/Repo",
-                "Broken": "github:Owner"
+                "Broken": "github:Owner",
+                "": "github:Owner/Empty",
+                " Padded": "github:Owner/Padded",
+                ".": "github:Owner/Dot"
             }
         }"#;
         let problems = GithubMapping::parse(bad).expect("parses").problems();
-        assert_eq!(problems.len(), 6, "{problems:#?}");
+        assert_eq!(problems.len(), 9, "{problems:#?}");
         assert!(problems[0].starts_with("schema 2"));
+        for folder in ["\"\"", "\" Padded\"", "\".\"", "\"Some/Path\""] {
+            assert!(
+                problems.contains(&format!("folder {folder}: not a folder name")),
+                "{folder}: {problems:#?}"
+            );
+        }
         assert!(GithubMapping::parse(r#"{"schema": 1, "folders": {}, "extra": 1}"#).is_err());
+    }
+
+    // --- a hand-built scan over a stub source: the arms the fixture game folder does not reach ---
+
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    use crate::flavor::BuildVersion;
+    use crate::scan::TocFile;
+    use crate::sources::Pick;
+
+    /// A source that answers `offers` per spec (unknown for the rest), names folders per spec, lacks a key
+    /// per source kind, and is never asked for a release.
+    #[derive(Default)]
+    struct StubSource {
+        offers: BTreeMap<String, (Offered, &'static str)>,
+        folders: BTreeMap<String, Vec<String>>,
+        missing: BTreeMap<SourceKind, String>,
+        asked: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl Source for StubSource {
+        fn resolve(&self, spec: &SourceSpec, _target: &Target) -> crate::error::Result<Pick> {
+            Err(crate::error::Error::NoRelease {
+                spec: spec.to_string(),
+            })
+        }
+
+        fn fetch(&self, _pick: &Pick, to: &Path) -> crate::error::Result<()> {
+            std::fs::write(to, b"a zip").map_err(|source| crate::error::Error::Io {
+                context: "writing the download",
+                path: to.to_path_buf(),
+                source,
+            })
+        }
+
+        fn missing(&self, spec: &SourceSpec) -> Option<String> {
+            self.missing.get(&spec.kind()).cloned()
+        }
+
+        fn offers(&self, spec: &SourceSpec, _target: &Target) -> BuildOffer {
+            self.asked.borrow_mut().push(spec.to_string());
+            match self.offers.get(&spec.to_string()) {
+                Some((build, why)) => BuildOffer::new(*build, *why),
+                None => BuildOffer::new(Offered::Unknown, "no answer"),
+            }
+        }
+
+        fn folders(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+            self.folders.get(&spec.to_string()).cloned()
+        }
+    }
+
+    fn toc_file(file: &str, text: &str) -> TocFile {
+        TocFile {
+            file: file.to_string(),
+            suffix: None,
+            legacy: false,
+            toc: toc::parse_toc(text),
+        }
+    }
+
+    /// An unmanaged addon folder with its TOCs, the first one chosen.
+    fn addon(folder: &str, tocs: &[(&str, &str)]) -> Addon {
+        let tocs: Vec<TocFile> = tocs
+            .iter()
+            .map(|(file, text)| toc_file(file, text))
+            .collect();
+        Addon {
+            folder: folder.to_string(),
+            path: PathBuf::from(folder),
+            chosen: tocs.first().map(|file| file.file.clone()),
+            tocs,
+            other_tocs: Vec::new(),
+            linked: false,
+        }
+    }
+
+    fn scan_of(folder: &Path, addons: Vec<Addon>) -> Scan {
+        Scan {
+            flavor: Flavor {
+                id: FlavorId::Forever,
+                folder: folder.to_path_buf(),
+                version: BuildVersion::parse("1.60.1.70245"),
+                version_source: None,
+                curse_client: false,
+                warnings: Vec::new(),
+            },
+            addons,
+            skipped: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn mapping_of(text: &str) -> GithubMapping {
+        GithubMapping::parse(text).expect("the synthetic mapping parses")
+    }
+
+    fn entry(source: &str, folders: &[&str]) -> Entry {
+        Entry {
+            source: source.to_string(),
+            version: "1.0.0".to_string(),
+            previous_version: None,
+            folders: folders.iter().map(|folder| folder.to_string()).collect(),
+            files: BTreeMap::new(),
+            installed_at: "2026-10-22T10:00:00Z".to_string(),
+            nolib: None,
+            pinned: None,
+            ignored: false,
+            channel: Channel::Stable,
+            forever_build: None,
+        }
+    }
+
+    fn temp_flavor(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("mrgl-adopt-unit-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn a_linked_folder_is_left_out_with_its_line() {
+        let mut dev = addon("Dev", &[("Dev.toc", "## X-WoWI-ID: 1\n")]);
+        dev.linked = true;
+        let scan = scan_of(Path::new("_forever_"), vec![dev]);
+        let report = report_with(
+            &scan,
+            &State::new(&FlavorId::Forever),
+            &StubSource::default(),
+            &|_| true,
+            &mapping_of(r#"{"schema": 1, "folders": {}}"#),
+        );
+        assert!(report.addons.is_empty());
+        assert_eq!(report.left_out, ["Dev"]);
+        assert_eq!(
+            report.left_out_lines(),
+            ["Dev is a junction or link mrgl did not make: left out"]
+        );
+    }
+
+    #[test]
+    fn every_toc_of_a_folder_names_its_sources_once_and_a_page_once() {
+        // The chosen TOC first, then the other one; a repeated source and a repeated page count once; a
+        // mapping entry that is no spec, or the website's own repository again, adds nothing; an empty
+        // website is no page.
+        let folder = addon(
+            "Two",
+            &[
+                (
+                    "Two.toc",
+                    "## X-Wago-ID: L6Jb2R6v\n## X-Website: https://example.test/two\n",
+                ),
+                (
+                    "Two_Vanilla.toc",
+                    "## X-Wago-ID: L6Jb2R6v\n## X-WoWI-ID: 7\n## X-Website: https://github.com/Owner/Two\n",
+                ),
+                (
+                    "Two_Classic.toc",
+                    "## X-Website: https://example.test/two\n",
+                ),
+                ("Two_Mists.toc", "## X-Website: \n"),
+            ],
+        );
+        let mapping = mapping_of(
+            r#"{"schema": 1, "folders": {"Two": "github:owner/two", "Odd": "not a spec"}}"#,
+        );
+        let hints = hints_of(&folder, &mapping);
+        assert_eq!(
+            hints
+                .specs
+                .iter()
+                .map(|(spec, hint)| (spec.to_string(), *hint))
+                .collect::<Vec<_>>(),
+            [
+                ("wago:L6Jb2R6v".to_string(), Hint::WagoId),
+                ("wowi:7".to_string(), Hint::WowiId),
+                ("github:Owner/Two".to_string(), Hint::Website),
+            ]
+        );
+        assert_eq!(hints.pages, ["https://example.test/two"]);
+        let odd = addon("Odd", &[("Odd.toc", "## Title: Odd\n")]);
+        assert!(hints_of(&odd, &mapping).specs.is_empty());
+    }
+
+    #[test]
+    fn a_group_takes_the_pages_of_its_folders_once_and_a_sources_folders_must_name_the_addon() {
+        // Two folders name the same WoWInterface project; the source names folders that are not these
+        // (so the group is the folders that name the source), and each folder's page joins the row once.
+        let scan = scan_of(
+            Path::new("_forever_"),
+            vec![
+                addon(
+                    "Pair",
+                    &[(
+                        "Pair.toc",
+                        "## X-WoWI-ID: 9\n## X-Website: https://example.test/pair\n",
+                    )],
+                ),
+                addon(
+                    "Pair_Options",
+                    &[(
+                        "Pair_Options.toc",
+                        "## X-WoWI-ID: 9\n## X-Website: https://example.test/options\n",
+                    )],
+                ),
+                addon(
+                    "Pair_Data",
+                    &[(
+                        "Pair_Data.toc",
+                        "## X-WoWI-ID: 9\n## X-Website: https://example.test/pair\n",
+                    )],
+                ),
+            ],
+        );
+        let source = StubSource {
+            offers: BTreeMap::from([("wowi:9".to_string(), (Offered::Yes, "listed"))]),
+            folders: BTreeMap::from([("wowi:9".to_string(), vec!["Elsewhere".to_string()])]),
+            ..StubSource::default()
+        };
+        let report = report_with(
+            &scan,
+            &State::new(&FlavorId::Forever),
+            &source,
+            &|_| true,
+            &mapping_of(r#"{"schema": 1, "folders": {}}"#),
+        );
+        assert_eq!(report.addons.len(), 1, "{:?}", report.addons);
+        let row = &report.addons[0];
+        assert_eq!(row.name, "Pair");
+        assert_eq!(row.folders, ["Pair", "Pair_Data", "Pair_Options"]);
+        assert_eq!(
+            row.pages,
+            ["https://example.test/pair", "https://example.test/options"]
+        );
+        assert_eq!(row.adopt_as.as_deref(), Some("wowi:9"));
+        assert_eq!(
+            source.asked.borrow().iter().collect::<BTreeSet<_>>().len(),
+            1,
+            "one source, asked once for the group"
+        );
+    }
+
+    #[test]
+    fn two_sources_that_need_the_same_key_name_it_once() {
+        let scan = scan_of(
+            Path::new("_forever_"),
+            vec![addon(
+                "Keyed",
+                &[
+                    ("Keyed.toc", "## X-Wago-ID: AAAAAAAA\n"),
+                    ("Keyed_Vanilla.toc", "## X-Wago-ID: BBBBBBBB\n"),
+                ],
+            )],
+        );
+        let source = StubSource {
+            missing: BTreeMap::from([(SourceKind::Wago, "MRGL_WAGO_KEY is not set".to_string())]),
+            ..StubSource::default()
+        };
+        let report = report_with(
+            &scan,
+            &State::new(&FlavorId::Forever),
+            &source,
+            &|_| false,
+            &mapping_of(r#"{"schema": 1, "folders": {}}"#),
+        );
+        let row = &report.addons[0];
+        assert_eq!(row.sources.len(), 2);
+        assert_eq!(row.needs, ["MRGL_WAGO_KEY"]);
+        assert_eq!(
+            row.line("forever"),
+            "Keyed (no version): needs MRGL_WAGO_KEY"
+        );
+    }
+
+    #[test]
+    fn a_curseforge_source_taken_by_a_managed_addon_is_only_with_curseforge() {
+        // The key is there and the source answers yes, but a managed addon has the source already: nothing
+        // to adopt, and nothing the run lacks either.
+        let scan = scan_of(
+            Path::new("_forever_"),
+            vec![addon(
+                "Curse",
+                &[(
+                    "Curse.toc",
+                    "## X-Curse-Project-ID: 4242\n## Version: 0.4\n",
+                )],
+            )],
+        );
+        let source = StubSource {
+            offers: BTreeMap::from([("curse:4242".to_string(), (Offered::Yes, "listed"))]),
+            ..StubSource::default()
+        };
+        let mut state = State::new(&FlavorId::Forever);
+        state
+            .addons
+            .insert("Elsewhere".to_string(), entry("curse:4242", &["Elsewhere"]));
+        let report = report_with(
+            &scan,
+            &state,
+            &source,
+            &|_| true,
+            &mapping_of(r#"{"schema": 1, "folders": {}}"#),
+        );
+        let row = &report.addons[0];
+        assert_eq!(row.class, Class::OnlyCurseforge);
+        assert_eq!(row.adopt_as, None);
+        assert_eq!(row.line("forever"), "Curse 0.4: only with CurseForge");
+        let applied = apply(&report, &mut state);
+        assert_eq!(
+            applied
+                .skipped
+                .iter()
+                .map(|skipped| skipped.line())
+                .collect::<Vec<_>>(),
+            ["Curse not adopted: only with CurseForge"]
+        );
+    }
+
+    #[test]
+    fn apply_skips_a_name_or_a_folder_the_sidecar_knows_and_files_it_cannot_read() {
+        let flavor = temp_flavor("apply-skips");
+        let addons_dir = scan::addons_dir(&flavor);
+        let names = ["Named", "Folded", "Gone"];
+        for name in names {
+            // `Gone` has no folder on disk: its files cannot be read.
+            if name != "Gone" {
+                std::fs::create_dir_all(addons_dir.join(name)).expect("the folder");
+            }
+        }
+        // One WoWInterface project each, so each folder is a row of its own.
+        let scan = scan_of(
+            &flavor,
+            names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    addon(
+                        name,
+                        &[(
+                            &format!("{name}.toc"),
+                            &format!("## X-WoWI-ID: 9{index}\n## Version: 1.0\n"),
+                        )],
+                    )
+                })
+                .collect(),
+        );
+        let source = StubSource {
+            offers: (0..names.len())
+                .map(|index| (format!("wowi:9{index}"), (Offered::Yes, "listed")))
+                .collect(),
+            ..StubSource::default()
+        };
+        let report = report_with(
+            &scan,
+            &State::new(&FlavorId::Forever),
+            &source,
+            &|_| true,
+            &mapping_of(r#"{"schema": 1, "folders": {}}"#),
+        );
+        assert_eq!(report.addons.len(), 3, "{:?}", report.addons);
+        // The sidecar the apply writes into knows `named` by name and `Folded` as a folder of `Other`.
+        let mut state = State::new(&FlavorId::Forever);
+        state
+            .addons
+            .insert("named".to_string(), entry("wowi:1", &["Elsewhere"]));
+        state
+            .addons
+            .insert("Other".to_string(), entry("wowi:2", &["Other", "folded"]));
+        let applied = apply(&report, &mut state);
+        assert!(applied.adopted.is_empty(), "{:?}", applied.adopted);
+        let lines: Vec<String> = applied
+            .skipped
+            .iter()
+            .map(|skipped| skipped.line())
+            .collect();
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert_eq!(
+            lines[0],
+            "Folded not adopted: Other manages one of its folders already"
+        );
+        assert!(
+            lines[1].starts_with("Gone not adopted: its files could not be read: "),
+            "{}",
+            lines[1]
+        );
+        assert_eq!(
+            lines[2],
+            "Named not adopted: a managed addon is named named already"
+        );
+        let _ = std::fs::remove_dir_all(&flavor);
+    }
+
+    #[test]
+    fn apply_hashes_every_file_under_the_folder_and_follows_no_link() {
+        let flavor = temp_flavor("apply-hashes");
+        let addons_dir = scan::addons_dir(&flavor);
+        let deep = addons_dir.join("Deep");
+        std::fs::create_dir_all(deep.join("Libs").join("LibStub")).expect("the folders");
+        std::fs::write(deep.join("Deep.toc"), "## X-WoWI-ID: 9\n").expect("the TOC");
+        std::fs::write(
+            deep.join("Libs").join("LibStub").join("LibStub.lua"),
+            "-- lib\n",
+        )
+        .expect("a file inside");
+        #[cfg(windows)]
+        {
+            let target = flavor.join("outside");
+            std::fs::create_dir_all(&target).expect("the link's target");
+            std::fs::write(target.join("outside.lua"), "-- not the addon's\n").expect("a file");
+            crate::link::create_junction(&deep.join("Linked"), &target).expect("a junction");
+        }
+        let scan = scan_of(
+            &flavor,
+            vec![addon("Deep", &[("Deep.toc", "## X-WoWI-ID: 9\n")])],
+        );
+        let source = StubSource {
+            offers: BTreeMap::from([("wowi:9".to_string(), (Offered::Yes, "listed"))]),
+            ..StubSource::default()
+        };
+        let report = report_with(
+            &scan,
+            &State::new(&FlavorId::Forever),
+            &source,
+            &|_| true,
+            &mapping_of(r#"{"schema": 1, "folders": {}}"#),
+        );
+        let mut state = State::new(&FlavorId::Forever);
+        let applied = apply(&report, &mut state);
+        assert_eq!(applied.adopted.len(), 1, "{:?}", applied.skipped);
+        let (_, entry) = state.entry("Deep").expect("adopted");
+        assert_eq!(
+            entry.files.keys().collect::<Vec<_>>(),
+            ["Deep/Deep.toc", "Deep/Libs/LibStub/LibStub.lua"]
+        );
+        let _ = std::fs::remove_dir_all(&flavor);
+    }
+
+    #[test]
+    fn held_answers_hand_down_what_they_do_not_hold_and_ask_again_once_a_key_changed() {
+        let source = StubSource {
+            offers: BTreeMap::from([("wowi:9".to_string(), (Offered::Yes, "listed"))]),
+            ..StubSource::default()
+        };
+        let spec = SourceSpec::parse("wowi:9").expect("a spec");
+        let target = Target::from_flavor(&Flavor {
+            id: FlavorId::Forever,
+            folder: PathBuf::from("_forever_"),
+            version: BuildVersion::parse("1.60.1.70245"),
+            version_source: None,
+            curse_client: false,
+            warnings: Vec::new(),
+        });
+        // An answer held from a run that lacked something the source has now: asked again.
+        let mut held = Answers::new(&FlavorId::Forever);
+        held.offers.insert(
+            "wowi:9".to_string(),
+            Answer {
+                build: Offered::Unknown,
+                why: "no key".to_string(),
+                missing: Some("a key".to_string()),
+            },
+        );
+        let answering = Answering::new(&source, held);
+        assert_eq!(answering.offers(&spec, &target).build, Offered::Yes);
+        assert_eq!(source.asked.borrow().len(), 1);
+        assert_eq!(answering.offers(&spec, &target).build, Offered::Yes);
+        assert_eq!(source.asked.borrow().len(), 1, "held now");
+        // The rest goes to the source under it.
+        assert!(matches!(
+            answering.resolve(&spec, &target),
+            Err(crate::error::Error::NoRelease { .. })
+        ));
+        let to = temp_flavor("answering-fetch").join("download.zip");
+        std::fs::create_dir_all(to.parent().expect("a parent")).expect("the folder");
+        let pick = Pick {
+            source: "wowi:9".to_string(),
+            release: "1.0".to_string(),
+            version: "1.0".to_string(),
+            published: None,
+            prerelease: false,
+            asset: "x.zip".to_string(),
+            url: "https://example.test/x.zip".to_string(),
+            size: None,
+            md5: None,
+            flavor: "forever".to_string(),
+            interface: None,
+            guess: false,
+            reason: "listed".to_string(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: crate::forever::ForeverBuild::Unknown,
+            stale: None,
+        };
+        answering.fetch(&pick, &to).expect("handed down");
+        assert_eq!(std::fs::read(&to).expect("the download"), b"a zip");
+        let answers = answering.into_answers();
+        assert_eq!(answers.offers["wowi:9"].missing, None);
+        let _ = std::fs::remove_dir_all(to.parent().expect("a parent"));
     }
 
     #[test]

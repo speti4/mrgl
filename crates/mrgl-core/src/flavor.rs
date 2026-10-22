@@ -665,6 +665,30 @@ us|1|e8c4ef4e67bd1d94d820254984258fa8|1.60.1.70245||wowf\n";
     }
 
     #[test]
+    fn a_folder_without_a_name_is_named_by_its_path() {
+        let flavor = Flavor {
+            id: FlavorId::Forever,
+            folder: PathBuf::from("Q:\\"),
+            version: None,
+            version_source: None,
+            curse_client: false,
+            warnings: Vec::new(),
+        };
+        assert_eq!(flavor.folder_name(), "Q:\\");
+    }
+
+    #[test]
+    fn an_empty_path_cannot_be_resolved() {
+        let error = read_flavor(Path::new("")).expect_err("no folder");
+        assert!(
+            error
+                .to_string()
+                .starts_with("resolving the flavor folder: "),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn a_spec_is_a_friendly_name_or_an_id() {
         assert_eq!(FlavorId::from_spec("forever"), Some(FlavorId::Forever));
         assert_eq!(FlavorId::from_spec("Era"), Some(FlavorId::ClassicEra));

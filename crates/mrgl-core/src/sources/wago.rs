@@ -136,6 +136,12 @@ pub fn parse_addon(
     if !addon.is_object() {
         return Err("expected an object".to_string());
     }
+    Ok(read_addon(addon, game_version))
+}
+
+/// The addon an object of the external API describes ([`parse_addon`] once it has the object; the bulk
+/// answer's entries, task 106, are objects already): a field that is missing reads as none.
+fn read_addon(addon: &serde_json::Value, game_version: &str) -> WagoAddon {
     let text = |value: &serde_json::Value, name: &str| {
         value
             .get(name)
@@ -158,12 +164,12 @@ pub fn parse_addon(
             })
         })
         .collect();
-    Ok(WagoAddon {
+    WagoAddon {
         id: text(addon, "id"),
         slug: text(addon, "slug"),
         display_name: text(addon, "display_name"),
         releases,
-    })
+    }
 }
 
 /// The patches a release supports for a game version: `supported_<v>_patches` (a list or one text),
@@ -317,8 +323,8 @@ pub struct Wago<H: Http> {
     cache_dir: Option<PathBuf>,
     budget: Mutex<BudgetCount>,
     slugs: Mutex<BTreeMap<String, Arc<Slugs>>>,
-    /// The answers of this run's bulk lookups (task 106), by game version and id.
-    held: Mutex<BTreeMap<(String, String), serde_json::Value>>,
+    /// The answers of this run's bulk lookups (task 106), read, by game version and id.
+    held: Mutex<BTreeMap<(String, String), WagoAddon>>,
 }
 
 impl<H: Http> Wago<H> {
@@ -397,8 +403,12 @@ impl<H: Http> Wago<H> {
         if keys::hosts(SourceKind::Wago)
             .iter()
             .any(|host| url_host(url).eq_ignore_ascii_case(host))
-            && let Ok(mut budget) = self.budget.lock()
         {
+            // A poisoned lock (a panic while a count was being kept) still holds the count.
+            let mut budget = self
+                .budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             budget.sent += 1;
             let number = |name: &str| {
                 response
@@ -426,13 +436,7 @@ impl<H: Http> Wago<H> {
     pub fn addon(&self, id: &str, game_version: &str) -> Result<(WagoAddon, Option<Stale>)> {
         let spec = format!("wago:{id}");
         // Task 106: an answer of this run's bulk lookup needs no request of its own.
-        if let Some(raw) = self.held_answer(id, game_version) {
-            let addon =
-                parse_addon(&raw, game_version).map_err(|reason| Error::SourceDocument {
-                    what: "addon",
-                    spec: spec.clone(),
-                    reason,
-                })?;
+        if let Some(addon) = self.held_answer(id, game_version) {
             return Ok((addon, None));
         }
         let url = format!("{API_URL}/addons/{id}?game_version={game_version}");
@@ -507,7 +511,7 @@ impl<H: Http> Wago<H> {
     }
 
     /// The answer a bulk lookup of this run holds for an addon and a game version.
-    fn held_answer(&self, id: &str, game_version: &str) -> Option<serde_json::Value> {
+    fn held_answer(&self, id: &str, game_version: &str) -> Option<WagoAddon> {
         self.held
             .lock()
             .ok()?
@@ -547,14 +551,14 @@ impl<H: Http> Wago<H> {
                 reason: reason.to_string(),
             })?;
         let mut answered = Vec::new();
-        for (id, addon) in parse_recents(&raw, ids) {
-            if parse_addon(&addon, game_version).is_err() {
-                continue;
-            }
-            self.store(&id, game_version, addon.clone());
-            if let Ok(mut held) = self.held.lock() {
-                held.insert((game_version.to_string(), id.clone()), addon);
-            }
+        for (id, raw) in parse_recents(&raw, ids) {
+            // Every entry of the bulk answer is an object: it reads as an addon's answer does.
+            let addon = read_addon(&raw, game_version);
+            self.store(&id, game_version, raw);
+            self.held
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert((game_version.to_string(), id.clone()), addon);
             answered.push(id);
         }
         Ok(answered)
@@ -602,9 +606,10 @@ impl<H: Http> Wago<H> {
             },
         };
         let slugs = Arc::new(slugs);
-        if let Ok(mut held) = self.slugs.lock() {
-            held.insert(game_version.to_string(), Arc::clone(&slugs));
-        }
+        self.slugs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(game_version.to_string(), Arc::clone(&slugs));
         Ok(slugs)
     }
 
@@ -1015,6 +1020,7 @@ impl<H: Http> Source for Wago<H> {
 mod tests {
     use super::*;
     use crate::flavor::BuildVersion;
+    use crate::sources::MapHttp;
 
     fn release(stability: &'static str, created_at: Option<&str>) -> WagoRelease {
         WagoRelease {
@@ -1100,6 +1106,11 @@ mod tests {
         );
         assert_eq!(of(FlavorId::Classic, Some("2.5.6.1")), Some(("bc", false)));
         assert_eq!(of(FlavorId::Classic, None), Some(("mop", true)));
+        assert_eq!(
+            of(FlavorId::Classic, Some("9.0.0.1")),
+            Some(("mop", true)),
+            "a build of no game type Wago names is a guess too"
+        );
         assert_eq!(of(FlavorId::Other("wow_x".into()), None), None);
     }
 
@@ -1158,8 +1169,400 @@ mod tests {
             ["abc"]
         );
         assert!(parse_recents(&serde_json::json!("nothing"), &["abc"]).is_empty());
+        // A `data` that is neither an object nor a list is not the root.
+        let odd_data = serde_json::json!({ "data": 5, "addons": { "abc": { "id": "abc" } } });
+        assert_eq!(
+            parse_recents(&odd_data, &["abc"])
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["abc"]
+        );
         assert_eq!(interface_of_patch("12.1.5"), Some(120105));
         assert_eq!(interface_of_patch("3.80.2"), Some(38002));
         assert_eq!(interface_of_patch("x"), None);
+        assert_eq!(
+            interface_of_patch("1.100.0"),
+            None,
+            "a minor past two digits"
+        );
+        assert_eq!(
+            interface_of_patch("1.0.100"),
+            None,
+            "a patch past two digits"
+        );
+    }
+
+    #[test]
+    fn an_answer_whose_data_is_no_object_reads_as_the_addon_itself() {
+        let raw = serde_json::json!({
+            "data": 5, "id": "abc",
+            "recent_release": { "stable": { "label": "1.0.0", "download_link": "https://addons.wago.io/d/1",
+                                            "supported_patches": 5 } }
+        });
+        let addon = parse_addon(&raw, "retail").expect("an addon");
+        assert_eq!(addon.id.as_deref(), Some("abc"));
+        assert_eq!(addon.releases.len(), 1);
+        assert!(
+            addon.releases[0].patches.is_empty(),
+            "a patches field that is no list and no text names no patch"
+        );
+    }
+
+    const ADDON_URL: &str = "https://addons.wago.io/api/external/addons/abc?game_version=forever";
+    const SLUGS_URL: &str = "https://addons.wago.io/api/data/slugs?game_version=forever";
+    const RECENTS_URL: &str =
+        "https://addons.wago.io/api/external/addons/_recents?game_version=forever";
+
+    fn spec() -> SourceSpec {
+        SourceSpec::Wago { id: "abc".into() }
+    }
+
+    fn forever() -> Target {
+        Target::new(FlavorId::Forever)
+    }
+
+    /// A temporary cache folder of one test, removed before use and when the guard drops.
+    struct TempCache(PathBuf);
+
+    impl TempCache {
+        fn new(name: &str) -> TempCache {
+            let dir =
+                std::env::temp_dir().join(format!("mrgl-wago-unit-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            TempCache(dir)
+        }
+
+        fn plant(&self, file: &str, body: &str) {
+            std::fs::write(self.0.join(file), body).unwrap();
+        }
+    }
+
+    impl Drop for TempCache {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A pick of `wago:abc` for a download test.
+    fn test_pick(url: &str) -> Pick {
+        Pick {
+            source: "wago:abc".into(),
+            release: "1.0.0".into(),
+            version: "1.0.0".into(),
+            published: None,
+            prerelease: false,
+            asset: "abc-1.0.0.zip".into(),
+            url: url.into(),
+            size: None,
+            md5: None,
+            flavor: "forever".into(),
+            interface: None,
+            guess: false,
+            reason: String::new(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: ForeverBuild::Yes,
+            stale: None,
+        }
+    }
+
+    #[test]
+    fn an_answer_that_is_no_addon_or_no_json_and_a_status_are_errors() {
+        let with = |http: MapHttp| Wago::new(http, Some("made-up-key".into()), None);
+        let error = with(MapHttp::new().answer(ADDON_URL, 500, ""))
+            .resolve(&spec(), &forever())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!("Wago answered 500 for {ADDON_URL}: the server has a problem; try again later")
+        );
+        let error = with(MapHttp::new().answer(ADDON_URL, 200, "{ not"))
+            .resolve(&spec(), &forever())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("unreadable addon from wago:abc: "),
+            "{error}"
+        );
+        let error = with(MapHttp::new().answer(ADDON_URL, 200, "[]"))
+            .resolve(&spec(), &forever())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "unreadable addon from wago:abc: expected an object");
+        // An error of the client that is not the network's is never answered from the cache.
+        let error = with(MapHttp::new().broken(ADDON_URL))
+            .resolve(&spec(), &forever())
+            .unwrap_err();
+        assert!(matches!(error, Error::Io { .. }), "{error}");
+        // A flavor Wago names no game version for, and a spec of another source.
+        let error = with(MapHttp::new())
+            .resolve(&spec(), &Target::new(FlavorId::Other("wow_x".into())))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "no asset for flavor wow_x in wago:abc - (Wago names no game version for this flavor)"
+        );
+        let github = SourceSpec::parse("github:o/r").unwrap();
+        let error = with(MapHttp::new())
+            .resolve(&github, &forever())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "source not configured: github:o/r (the Wago source answers wago: specs only)"
+        );
+    }
+
+    #[test]
+    fn the_statuses_have_hints() {
+        let response = |headers: &[(&str, &str)]| Response {
+            status: 0,
+            headers: headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+            body: Vec::new(),
+        };
+        let hint = |status: u16, headers: &[(&str, &str)]| {
+            status_error(status, "u", &response(headers), NO_ADDON)
+                .to_string()
+                .split_once(": ")
+                .map(|(_, hint)| hint.to_string())
+                .unwrap_or_default()
+        };
+        assert!(hint(401, &[]).contains(keys::WAGO_KEY));
+        assert!(
+            hint(
+                403,
+                &[
+                    ("x-ratelimit-remaining", "0"),
+                    ("x-ratelimit-reset", "1800000000")
+                ]
+            )
+            .starts_with("the rate limit is used up until ")
+        );
+        assert_eq!(
+            hint(429, &[]),
+            "the rate limit is used up; try again after a short wait"
+        );
+        assert_eq!(hint(403, &[]), "access denied");
+        assert_eq!(hint(404, &[]), NO_ADDON);
+        assert_eq!(hint(502, &[]), "the server has a problem; try again later");
+        assert_eq!(hint(418, &[]), "an unexpected status");
+    }
+
+    #[test]
+    fn the_reset_time_of_an_answer_feeds_the_budget() {
+        let http = MapHttp::new()
+            .answer(ADDON_URL, 200, "{\"id\":\"abc\"}")
+            .with_header(ADDON_URL, "x-ratelimit-limit", "100")
+            .with_header(ADDON_URL, "x-ratelimit-remaining", "7")
+            .with_header(ADDON_URL, "x-ratelimit-reset", "1800000000");
+        let wago = Wago::new(http, Some("made-up-key".into()), None);
+        let error = wago.resolve(&spec(), &forever()).unwrap_err();
+        assert!(matches!(error, Error::NoAssetForFlavor { .. }), "{error}");
+        let budget = wago.request_budget().expect("a budget");
+        assert_eq!((budget.limit, budget.remaining, budget.sent), (100, 7, 1));
+        assert_eq!(budget.reset, Some(1_800_000_000));
+    }
+
+    #[test]
+    fn a_cached_answer_that_is_no_addon_is_a_document_error_and_tells_nothing_of_forever() {
+        let cache = TempCache::new("cache-shape");
+        cache.plant(
+            "abc.json",
+            "{\"answers\":{\"forever\":{\"checked_at\":\"2026-10-21T00:00:00Z\",\"addon\":[]}}}",
+        );
+        let offline = Wago::cached(MapHttp::new(), Some(cache.0.clone()));
+        let error = offline.addon("abc", "forever").unwrap_err().to_string();
+        assert_eq!(error, "unreadable addon from wago:abc: expected an object");
+        assert_eq!(
+            offline.cached_forever_build(&spec(), Channel::Stable),
+            ForeverBuild::Unknown
+        );
+        let github = SourceSpec::parse("github:o/r").unwrap();
+        assert_eq!(
+            offline.cached_forever_build(&github, Channel::Stable),
+            ForeverBuild::Unknown
+        );
+    }
+
+    #[test]
+    fn a_slug_list_cached_without_a_date_is_read_again_and_stands_in_offline() {
+        let cache = TempCache::new("slugs-date");
+        let stale = "{\"checked_at\":null,\"addons\":{\"old-slug\":\"old\"}}";
+        cache.plant("slugs-forever.json", stale);
+        let http = MapHttp::new().answer(SLUGS_URL, 200, "{\"addons\":{\"a-b\":{\"id\":\"abc\"}}}");
+        let wago = Wago::new(http, None, Some(cache.0.clone()));
+        let slugs = wago.slugs("forever").expect("the list");
+        assert!(slugs.has_id("abc") && !slugs.has_id("old"));
+        assert_eq!(wago.http().requests().len(), 1);
+        assert!(
+            std::fs::read_to_string(cache.0.join("slugs-forever.json"))
+                .unwrap()
+                .contains("\"a-b\""),
+            "the list is cached again"
+        );
+        // Offline, the cached list of any age stands.
+        cache.plant("slugs-forever.json", stale);
+        let offline = Wago::new(
+            MapHttp::new().offline(SLUGS_URL, "no network"),
+            None,
+            Some(cache.0.clone()),
+        );
+        assert!(
+            offline
+                .slugs("forever")
+                .expect("the stale list")
+                .has_id("old")
+        );
+        assert_eq!(
+            offline.forever_build("old", Channel::Stable),
+            ForeverBuild::Yes
+        );
+        // Offline without a cached list the error stands, and the Forever signal is unknown.
+        let bare = Wago::new(MapHttp::new().offline(SLUGS_URL, "no network"), None, None);
+        let error = bare.slugs("forever").unwrap_err();
+        assert!(matches!(error, Error::Network { .. }), "{error}");
+        assert_eq!(
+            bare.forever_build("abc", Channel::Stable),
+            ForeverBuild::Unknown
+        );
+    }
+
+    #[test]
+    fn a_slug_list_that_is_no_json_or_a_status_is_an_error() {
+        let error = Wago::new(MapHttp::new().answer(SLUGS_URL, 404, ""), None, None)
+            .slugs("forever")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!("Wago answered 404 for {SLUGS_URL}: no slug list there")
+        );
+        let error = Wago::new(MapHttp::new().answer(SLUGS_URL, 200, "{ not"), None, None)
+            .slugs("forever")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("unreadable slug list from wago: forever: "),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_bulk_answer_that_is_no_json_or_a_status_is_an_error() {
+        let with = |http: MapHttp| Wago::new(http, Some("made-up-key".into()), None);
+        let error = with(MapHttp::new().answer(RECENTS_URL, 404, ""))
+            .recents(&["abc"], "forever")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!("Wago answered 404 for {RECENTS_URL}: no bulk answer there")
+        );
+        let error = with(MapHttp::new().answer(RECENTS_URL, 200, "{ not"))
+            .recents(&["abc"], "forever")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("unreadable bulk answer from wago: forever: "),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_prefetch_sends_nothing_without_specs_a_key_or_a_game_version() {
+        let keyless = Wago::new(MapHttp::new(), None, None);
+        keyless.prefetch(&[spec()], &forever());
+        let keyed = Wago::new(MapHttp::new(), Some("made-up-key".into()), None);
+        keyed.prefetch(&[], &forever());
+        keyed.prefetch(&[spec()], &Target::new(FlavorId::Other("wow_x".into())));
+        assert!(keyless.http().requests().is_empty());
+        assert!(keyed.http().requests().is_empty());
+        let github = SourceSpec::parse("github:o/r").unwrap();
+        assert!(!keyed.holds(&github, &forever()));
+        assert!(!keyed.holds(&spec(), &Target::new(FlavorId::Other("wow_x".into()))));
+    }
+
+    #[test]
+    fn the_offer_says_what_it_cannot_tell() {
+        let mop_slugs = "https://addons.wago.io/api/data/slugs?game_version=mop";
+        let http = MapHttp::new().answer(mop_slugs, 200, "{\"addons\":{\"a-b\":{\"id\":\"abc\"}}}");
+        let wago = Wago::new(http, None, None);
+        let github = SourceSpec::parse("github:o/r").unwrap();
+        let offer = wago.offers(&github, &forever());
+        assert_eq!(
+            (offer.build, offer.why.as_str()),
+            (Offered::Unknown, NOT_WAGO)
+        );
+        let offer = wago.offers(&spec(), &Target::new(FlavorId::Other("wow_x".into())));
+        assert_eq!(
+            (offer.build, offer.why.as_str()),
+            (
+                Offered::Unknown,
+                "Wago names no game version for this flavor"
+            )
+        );
+        // The progressing classic without a build: the list names the addon for a guessed game type.
+        let offer = wago.offers(&spec(), &Target::new(FlavorId::Classic));
+        assert_eq!(
+            (offer.build, offer.why.as_str()),
+            (
+                Offered::Unknown,
+                "Wago lists a release for mop; the installed build is unknown, so the game type is a guess"
+            )
+        );
+        // A list that cannot be read.
+        let offer = wago.offers(&spec(), &forever());
+        assert_eq!(offer.build, Offered::Unknown);
+        assert!(
+            offer.why.starts_with("Wago answered 404 for "),
+            "{}",
+            offer.why
+        );
+    }
+
+    #[test]
+    fn a_download_without_the_key_carries_none_and_a_status_or_a_folder_in_the_way_is_an_error() {
+        let url = "https://addons.wago.io/downloads/abc/1.0.0.zip";
+        let cache = TempCache::new("download");
+        let keyless = Wago::new(MapHttp::new().answer(url, 200, "zip"), None, None);
+        let to = cache.0.join("nested").join("abc.zip");
+        keyless.fetch(&test_pick(url), &to).expect("fetched");
+        assert_eq!(std::fs::read(&to).unwrap(), b"zip");
+        assert_eq!(
+            keyless.http().requests()[0].header_value("Authorization"),
+            None
+        );
+        let error = Wago::new(MapHttp::new().answer(url, 500, ""), None, None)
+            .fetch(&test_pick(url), &to)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!("Wago answered 500 for {url}: the server has a problem; try again later")
+        );
+        // A file where the download folder would be, and an empty path that cannot be written.
+        let file = cache.0.join("a-file");
+        std::fs::write(&file, b"").unwrap();
+        let error = keyless
+            .fetch(&test_pick(url), &file.join("abc.zip"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("creating the download folder: "),
+            "{error}"
+        );
+        let error = keyless
+            .fetch(&test_pick(url), Path::new(""))
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with("writing the download: "), "{error}");
     }
 }

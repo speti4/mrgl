@@ -292,6 +292,7 @@ mod tests {
             "2026-02-30",
             "2026-13-01",
             "2026-00-10",
+            "2026-10-00",
             "2026-1-01",
             "21-10-2026",
             "2026-10-21T00:00:00Z",
@@ -404,6 +405,29 @@ mod tests {
         }
         let unknown_field = r#"{ "schema": 1, "kinds": {}, "addons": {}, "extra": true }"#;
         assert!(CuratedNotes::parse(unknown_field).is_err());
+
+        // The other ways a kind or a note goes wrong: an empty id, a reason of two lines, a source with a
+        // space in it; an id of lower-case letters, digits and dashes is fine.
+        let more = r#"{
+            "schema": 1,
+            "kinds": {
+                "": { "reason": "two\nlines", "verified": "2026-10-21",
+                      "source": "https://example.test/a b" },
+                "rule-2": { "reason": "fine", "verified": "2026-10-21", "source": "https://example.test" }
+            },
+            "addons": {}
+        }"#;
+        let problems = CuratedNotes::parse(more)
+            .expect("parses")
+            .problems(DAY_2026_10_21);
+        assert_eq!(
+            problems,
+            [
+                "kind : the id is not kebab-case",
+                "kind : the reason is not one trimmed line without a full stop",
+                "kind : the source https://example.test/a b is not an https URL",
+            ]
+        );
     }
 
     #[test]

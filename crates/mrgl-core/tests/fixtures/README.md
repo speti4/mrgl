@@ -90,9 +90,11 @@ BOM in a fixture survives every checkout.
   (`behind-interface-1.0.0`), a path that tries to
   escape the staging folder (`escaping-path`), an addon that requires `LibEmbedded`, carried under its
   `Libs/`, and `LibMissing`, carried nowhere (`needs-library-1.0.0`, task 029), a zip with no addon at
-  all (`no-addon`), and the zip in hand of the CurseForge project `4244`, whose author allows no download
-  outside CurseForge (`MrglNoDistribution-2.0.0`, stored, task 096). `.gitignore` allows zips under the test
-  fixtures and nowhere else.
+  all (`no-addon`), the zip in hand of the CurseForge project `4244`, whose author allows no download
+  outside CurseForge (`MrglNoDistribution-2.0.0`, stored, task 096), and a `WTF` backup whose three entries
+  carry no date, the default 1980 date and a real DOS date next to an NTFS extra field, none with the
+  extended timestamp a backup writes (`wtf-dos-times`, the restore's date fallbacks, task 117). `.gitignore`
+  allows zips under the test fixtures and nowhere else.
 - `dependencies/` — a third made-up game folder for the dependency check (task 029): a `.build.info` row
   and a `_forever_` flavor whose `Needy` requires `LibMet` (an addon folder of its own: met), `LibEmbedded`
   (a folder under `Needy/Libs/` only: embedded, and missing, since the client does not count it, task 076)

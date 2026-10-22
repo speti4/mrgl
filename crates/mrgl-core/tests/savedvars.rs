@@ -497,3 +497,44 @@ fn the_cleanup_is_refused_while_the_client_runs_and_the_listing_is_not() {
     assert!(cleaned.zip.is_some());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// An addon folder the scan cannot read (a junction whose target is gone, task 117) counts as installed:
+/// nothing can be told about it, so its SavedVariables file is not an orphan.
+#[cfg(windows)]
+#[test]
+fn an_addon_folder_the_scan_cannot_read_keeps_its_file_from_being_an_orphan() {
+    let root = savedvars_game("unreadable-addon");
+    let flavor = read(&root);
+    let wtf = wtf_of(&root);
+    std::fs::write(
+        wtf.join(ACCOUNT_SV).join("Dangling.lua"),
+        b"DanglingDB = {}\n",
+    )
+    .expect("a file");
+    let target = root.join("gone");
+    std::fs::create_dir_all(&target).expect("a folder");
+    let link = root
+        .join("_forever_")
+        .join("Interface")
+        .join("AddOns")
+        .join("Dangling");
+    mrgl_core::link::create_junction(&link, &target).expect("a junction");
+    std::fs::remove_dir(&target).expect("the target gone");
+
+    let listing = savedvars::list_saved_variables(&flavor).expect("a listing");
+    let dangling = listing
+        .files
+        .iter()
+        .find(|file| file.addon == "Dangling")
+        .expect("Dangling");
+    assert_eq!(dangling.status, Status::Installed);
+    assert_eq!(listing.orphans, 3, "the three orphans of the fixture");
+    assert_eq!(listing.warnings.len(), 1, "{:?}", listing.warnings);
+    assert!(
+        listing.warnings[0].starts_with(&format!("skipped {}: ", link.display())),
+        "{}",
+        listing.warnings[0]
+    );
+    let _ = std::fs::remove_dir(&link);
+    let _ = std::fs::remove_dir_all(&root);
+}

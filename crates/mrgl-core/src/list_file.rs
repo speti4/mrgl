@@ -164,12 +164,9 @@ impl ListFile {
             path: path.to_path_buf(),
             source,
         };
-        if let Some(parent) = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            std::fs::create_dir_all(parent).map_err(|source| io(parent, source))?;
-        }
+        // A bare file name's parent is the empty path, which `create_dir_all` takes as the current folder.
+        let parent = path.parent().unwrap_or(Path::new(""));
+        std::fs::create_dir_all(parent).map_err(|source| io(parent, source))?;
         std::fs::write(path, self.to_json()).map_err(|source| io(path, source))
     }
 }
@@ -231,9 +228,10 @@ impl EntrySource {
         if let Ok(spec) = SourceSpec::parse(trimmed) {
             return EntrySource::Spec(spec);
         }
+        // A drive letter (`C:`); a `scheme://` address has a slash and is caught before this test.
         let looks_like_a_path = trimmed.contains('\\')
             || trimmed.contains('/')
-            || trimmed.as_bytes().get(1) == Some(&b':') && !trimmed.contains("://");
+            || trimmed.as_bytes().get(1) == Some(&b':');
         if trimmed.to_ascii_lowercase().ends_with(".zip") || looks_like_a_path {
             return EntrySource::Zip;
         }
@@ -682,6 +680,116 @@ mod tests {
             std::fs::copy(&self.zip, to).expect("the copy");
             Ok(())
         }
+
+        /// `github:Example/Alias` is recorded as `github:Example/One`, as a Wago page address becomes its
+        /// `wago:<id>` (task 105).
+        fn canonical_spec(&self, spec: &SourceSpec, _target: &Target) -> Result<SourceSpec> {
+            if spec.to_string() == "github:Example/Alias" {
+                return SourceSpec::parse("github:Example/One");
+            }
+            Ok(spec.clone())
+        }
+    }
+
+    #[test]
+    fn reading_a_missing_list_and_writing_where_no_file_can_go_are_errors() {
+        let base = temp("read-write-errors");
+        let error = ListFile::read(&base.join("missing.json")).expect_err("no file");
+        assert!(
+            error.to_string().starts_with("reading the addon list: "),
+            "{error}"
+        );
+        let list = ListFile::from_state(&State::new(&FlavorId::Forever), None);
+        std::fs::create_dir_all(&base).expect("the folder");
+        std::fs::write(base.join("file"), "not a folder").expect("a file");
+        let error = list
+            .write(&base.join("file").join("list.json"))
+            .expect_err("no folder under a file");
+        assert!(
+            error.to_string().starts_with("writing the addon list: "),
+            "{error}"
+        );
+        std::fs::create_dir_all(base.join("folder.json")).expect("a folder in the file's place");
+        let error = list
+            .write(&base.join("folder.json"))
+            .expect_err("a folder in the file's place");
+        assert!(
+            error.to_string().starts_with("writing the addon list: "),
+            "{error}"
+        );
+        let path = base.join("deeper").join("list.json");
+        list.write(&path).expect("writes, making the folder");
+        assert_eq!(ListFile::read(&path).expect("reads"), list);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn import_skips_what_the_list_named_before_or_the_flavor_has_from_the_source() {
+        let (base, engine) = engine("import-present");
+        let other = engine.addons_dir().join("Other");
+        std::fs::create_dir_all(&other).expect("the folder");
+        std::fs::write(other.join("Other.toc"), "## Interface: 16001\n").expect("its TOC");
+        let mut state = State::new(&FlavorId::Forever);
+        state.addons.insert(
+            "Other".to_string(),
+            entry("github:Example/Other", "1.0.0", &["Other"]),
+        );
+        engine.home.write_state(&state).expect("the sidecar");
+        let list = ListFile {
+            format: FORMAT.to_string(),
+            schema: SCHEMA,
+            flavor: "wowf".to_string(),
+            exported_at: None,
+            addons: vec![
+                list_entry("OneFolder", "github:Example/One", &["OneFolder"]),
+                list_entry("OneFolder", "github:Example/Two", &["Two"]),
+                list_entry("Alias", "github:example/one", &["Alias"]),
+                list_entry("Renamed", "github:Example/Other", &["Renamed"]),
+                list_entry("Page", "github:Example/Alias", &["Page"]),
+            ],
+        };
+        let source = OneZip {
+            zip: zips().join("one-folder-1.2.0.zip"),
+            version: "1.2.0",
+        };
+        let report = import(&engine, &source, &list, false, false).expect("imports");
+        let seen: Vec<(Outcome, Option<&str>, &str)> = report
+            .items
+            .iter()
+            .map(|item| (item.outcome, item.version.as_deref(), item.detail.as_str()))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                (
+                    Outcome::Installed,
+                    Some("1.2.0"),
+                    "github:Example/One v1.2.0 (Some-Asset.zip, flavor forever, interface 16001): release.json names forever (interface 16001)"
+                ),
+                (
+                    Outcome::AlreadyInstalled,
+                    None,
+                    "installed earlier in this import"
+                ),
+                (
+                    Outcome::AlreadyInstalled,
+                    None,
+                    "installed earlier in this import"
+                ),
+                (
+                    Outcome::AlreadyInstalled,
+                    Some("1.0.0"),
+                    "Other 1.0.0 comes from the same source"
+                ),
+                (
+                    Outcome::AlreadyInstalled,
+                    None,
+                    "installed earlier in this import"
+                ),
+            ]
+        );
+        assert_eq!(report.count(Outcome::Installed), 1);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -1033,7 +1141,7 @@ mod tests {
                 Some(format!("its source {path} is a local path"))
             );
         }
-        for folder in ["..\\Some", "C:\\AddOns\\Some", "Some/Inner", ".."] {
+        for folder in ["..\\Some", "C:\\AddOns\\Some", "Some/Inner", ".", ".."] {
             assert_eq!(
                 shareable("github:Example/Some", &["Some", folder]),
                 Some(format!("its folder {folder} is a path, not a folder name"))

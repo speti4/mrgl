@@ -356,3 +356,238 @@ fn list_flavors_finds_the_fixture_flavors() {
     let empty = flavor::list_flavors(&fixtures().join("_retail_")).expect("lists");
     assert!(empty.is_empty());
 }
+
+/// A temporary flavor folder with its `.flavor.info`, removed when the guard goes.
+struct TempFlavor {
+    root: PathBuf,
+}
+
+impl TempFlavor {
+    fn new(name: &str) -> TempFlavor {
+        let root =
+            std::env::temp_dir().join(format!("mrgl-scan-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("the flavor folder");
+        std::fs::write(root.join(".flavor.info"), "Product Flavor!STRING:0\nwowf\n")
+            .expect(".flavor.info");
+        TempFlavor { root }
+    }
+
+    fn addons(&self) -> PathBuf {
+        scan::addons_dir(&self.root)
+    }
+}
+
+impl Drop for TempFlavor {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn an_addons_folder_that_is_a_file_is_an_error() {
+    let flavor = TempFlavor::new("addons-is-a-file");
+    std::fs::create_dir_all(flavor.root.join("Interface")).expect("Interface");
+    std::fs::write(flavor.addons(), "not a folder").expect("a file where AddOns goes");
+    let error = scan::scan(&flavor.root).expect_err("the AddOns folder cannot be read");
+    assert!(
+        matches!(&error, Error::Io { context, .. } if *context == "reading the AddOns folder"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_primary_toc_falls_back_to_a_legacy_one() {
+    let legacy = |file: &str, version: &str| mrgl_core::scan::TocFile {
+        file: file.to_string(),
+        suffix: Some(TocSuffix::Bcc),
+        legacy: true,
+        toc: mrgl_core::toc::parse_toc(&format!("## Version: {version}\n")),
+    };
+    let addon = Addon {
+        folder: "Old".to_string(),
+        path: PathBuf::from("Old"),
+        tocs: vec![
+            legacy("Old_BCC.toc", "2.4"),
+            legacy("Old_WOTLKC.toc", "3.3"),
+        ],
+        other_tocs: Vec::new(),
+        chosen: None,
+        linked: false,
+    };
+    assert_eq!(addon.chosen_toc(), None);
+    assert_eq!(
+        addon.primary_toc().map(|file| file.file.as_str()),
+        Some("Old_BCC.toc")
+    );
+    assert_eq!(addon.version(), Some("2.4"));
+    assert!(addon.has_legacy());
+}
+
+#[cfg(windows)]
+#[test]
+fn an_addon_whose_toc_cannot_be_read_is_skipped_with_a_warning() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let flavor = TempFlavor::new("locked-toc");
+    let locked = flavor.addons().join("Locked");
+    std::fs::create_dir_all(&locked).expect("the addon folder");
+    std::fs::write(locked.join("Locked.toc"), "## Interface: 16001\n").expect("its TOC");
+    let open = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(locked.join("Locked.toc"))
+        .expect("a handle with no sharing");
+    let scan = scan::scan(&flavor.root).expect("scans");
+    assert!(scan.addons.is_empty());
+    assert_eq!(scan.skipped, ["Locked"]);
+    assert_eq!(scan.warnings.len(), 1, "{:?}", scan.warnings);
+    assert!(
+        scan.warnings[0].starts_with(&format!(
+            "skipped {}: {}: ",
+            locked.display(),
+            locked.join("Locked.toc").display()
+        )),
+        "{}",
+        scan.warnings[0]
+    );
+    drop(open);
+    assert_eq!(scan::scan(&flavor.root).expect("scans").addons.len(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_folder_only_a_verbatim_path_reaches_is_left_out() {
+    // A folder whose name ends in a dot exists only through the `\\?\` prefix: the listing names it, and
+    // its metadata by the plain path is a missing file, so the scan passes it over.
+    let flavor = TempFlavor::new("trailing-dot");
+    std::fs::create_dir_all(flavor.addons()).expect("AddOns");
+    let verbatim = PathBuf::from(format!(
+        "\\\\?\\{}",
+        flavor.addons().join("Dotted.").display()
+    ));
+    std::fs::create_dir(&verbatim).expect("the folder with a trailing dot");
+    std::fs::create_dir_all(flavor.addons().join("Plain")).expect("Plain");
+    std::fs::write(
+        flavor.addons().join("Plain").join("Plain.toc"),
+        "## Interface: 16001\n",
+    )
+    .expect("its TOC");
+    let scan = scan::scan(&flavor.root).expect("scans");
+    assert_eq!(
+        scan.addons
+            .iter()
+            .map(|addon| addon.folder.as_str())
+            .collect::<Vec<_>>(),
+        ["Plain"]
+    );
+    assert!(scan.skipped.is_empty(), "{:?}", scan.skipped);
+    assert!(scan.warnings.is_empty(), "{:?}", scan.warnings);
+    let _ = std::fs::remove_dir(&verbatim);
+}
+
+#[test]
+fn a_flavor_info_that_cannot_be_read_or_understood_is_an_error() {
+    let flavor = TempFlavor::new("bad-flavor-info");
+    std::fs::write(
+        flavor.root.join(".flavor.info"),
+        "Product Flavor!STRING:0\nwow f\n",
+    )
+    .expect("a bad id");
+    let error = scan::scan(&flavor.root).expect_err("not a flavor folder");
+    assert!(
+        matches!(&error, Error::NotAFlavorFolder { reason, .. } if reason == "unreadable flavor id `wow f` in .flavor.info"),
+        "{error}"
+    );
+    std::fs::remove_file(flavor.root.join(".flavor.info")).expect("removed");
+    std::fs::create_dir(flavor.root.join(".flavor.info")).expect("a folder in the file's place");
+    let error = scan::scan(&flavor.root).expect_err("cannot be read");
+    assert!(
+        matches!(&error, Error::Io { context, .. } if *context == "reading .flavor.info"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_missing_or_unreadable_build_info_is_named_in_the_warning() {
+    let flavor = TempFlavor::new("no-build-info");
+    let read = flavor::read_flavor(&flavor.root).expect("a flavor");
+    assert_eq!(read.version, None);
+    assert_eq!(
+        read.warnings,
+        [format!(
+            "build unknown: no .build.info next to {}",
+            read.folder.display()
+        )]
+    );
+    // A game folder with the flavor in it, whose `.build.info` is a folder: it cannot be read.
+    let game = flavor.root.join("game");
+    let forever = game.join("_forever_");
+    std::fs::create_dir_all(game.join(".build.info")).expect("a folder in the file's place");
+    std::fs::create_dir_all(&forever).expect("the flavor folder");
+    std::fs::copy(
+        flavor.root.join(".flavor.info"),
+        forever.join(".flavor.info"),
+    )
+    .expect("copied");
+    let read = flavor::read_flavor(&forever).expect("a flavor");
+    assert_eq!(read.warnings.len(), 1, "{:?}", read.warnings);
+    assert!(
+        read.warnings[0].starts_with(&format!(
+            "build unknown: cannot read {}: ",
+            read.folder
+                .parent()
+                .expect("the game folder")
+                .join(".build.info")
+                .display()
+        )),
+        "{}",
+        read.warnings[0]
+    );
+}
+
+#[test]
+fn list_flavors_leaves_out_a_folder_that_is_no_flavor_and_fails_on_a_root_it_cannot_read() {
+    let flavor = TempFlavor::new("list-flavors");
+    let error = flavor::list_flavors(&flavor.root.join("missing")).expect_err("no root");
+    assert!(
+        matches!(&error, Error::Io { context, .. } if *context == "reading the game folder"),
+        "{error}"
+    );
+    let game = flavor.root.join("game");
+    for (folder, info) in [
+        ("_forever_", "Product Flavor!STRING:0\nwowf\n"),
+        ("_odd_", "Product Flavor!STRING:0\nwow f\n"),
+    ] {
+        std::fs::create_dir_all(game.join(folder)).expect("the folder");
+        std::fs::write(game.join(folder).join(".flavor.info"), info).expect(".flavor.info");
+    }
+    let flavors = flavor::list_flavors(&game).expect("lists");
+    assert_eq!(
+        flavors.iter().map(|f| f.folder_name()).collect::<Vec<_>>(),
+        ["_forever_"],
+        "a folder whose .flavor.info names no flavor is left out"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn list_flavors_fails_on_a_flavor_info_it_cannot_read() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let flavor = TempFlavor::new("list-flavors-locked");
+    let game = flavor.root.join("game");
+    let info = game.join("_forever_").join(".flavor.info");
+    std::fs::create_dir_all(game.join("_forever_")).expect("the folder");
+    std::fs::write(&info, "Product Flavor!STRING:0\nwowf\n").expect(".flavor.info");
+    let open = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&info)
+        .expect("a handle with no sharing");
+    let error = flavor::list_flavors(&game).expect_err("the file cannot be read");
+    assert!(
+        matches!(&error, Error::Io { context, .. } if *context == "reading .flavor.info"),
+        "{error}"
+    );
+    drop(open);
+    assert_eq!(flavor::list_flavors(&game).expect("lists").len(), 1);
+}

@@ -196,9 +196,10 @@ fn write_at(path: &Path, last: &LastCheck) -> Result<()> {
         path: path.to_path_buf(),
         source,
     };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(io)?;
-    }
+    // The file lies in the flavor's folder; a bare file name's parent is the empty path, which
+    // `create_dir_all` takes as the current folder.
+    let parent = path.parent().unwrap_or(Path::new(""));
+    std::fs::create_dir_all(parent).map_err(io)?;
     let text =
         serde_json::to_string_pretty(last).map_err(|source| io(std::io::Error::other(source)))?;
     let temporary = path.with_extension("json.tmp");
@@ -291,8 +292,12 @@ mod tests {
         last.record(&state, &[checked("a", "1.0", UpdateState::UpToDate)]);
         assert_eq!(last.addons.keys().collect::<Vec<_>>(), ["B"]);
 
-        // Another installed version drops the answer.
+        // Another installed version drops the answer, and so does another source at the same version.
         state.addons.get_mut("B").unwrap().version = "2.1".into();
+        assert!(last.answers(&state).is_empty());
+        state.addons.get_mut("B").unwrap().version = "2.0".into();
+        assert_eq!(last.answers(&state).len(), 1);
+        state.addons.get_mut("B").unwrap().source = "github:o/other".into();
         assert!(last.answers(&state).is_empty());
 
         // Another flavor's file, or one that is not JSON, is no answer.
@@ -304,6 +309,51 @@ mod tests {
         std::fs::write(LastCheck::path(&home), "{ not json").unwrap();
         assert!(LastCheck::read(&home, &FlavorId::Forever).addons.is_empty());
         let _ = std::fs::remove_dir_all(&home_dir);
+    }
+
+    #[test]
+    fn a_file_of_another_format_or_schema_is_no_answer() {
+        let home_dir = temp_home("format");
+        let home = FlavorHome::at(&home_dir, &FlavorId::Forever);
+        let mut state = State::new(&FlavorId::Forever);
+        state.addons.insert("A".into(), entry("github:o/r", "1.0"));
+        let mut last = LastCheck::new(&FlavorId::Forever);
+        last.record(&state, &[checked("A", "1.0", UpdateState::Failed)]);
+        last.write(&home).expect("written");
+        let text = std::fs::read_to_string(LastCheck::path(&home)).expect("the file");
+        assert_eq!(LastCheck::read(&home, &FlavorId::Forever).addons.len(), 1);
+        for (from, to) in [
+            (
+                r#""format": "mrgl-last-check""#,
+                r#""format": "mrgl-other""#,
+            ),
+            (r#""schema": 1"#, r#""schema": 2"#),
+        ] {
+            assert!(text.contains(from), "{text}");
+            std::fs::write(LastCheck::path(&home), text.replace(from, to)).expect("rewritten");
+            assert!(
+                LastCheck::read(&home, &FlavorId::Forever).addons.is_empty(),
+                "{to}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&home_dir);
+    }
+
+    #[test]
+    fn a_home_that_is_a_file_cannot_take_the_answers() {
+        let home_dir = temp_home("home-is-a-file");
+        std::fs::write(&home_dir, "not a folder").expect("a file");
+        let home = FlavorHome::at(&home_dir, &FlavorId::Forever);
+        let error = LastCheck::new(&FlavorId::Forever)
+            .write(&home)
+            .expect_err("the flavor's folder cannot be made under a file");
+        assert!(
+            error
+                .to_string()
+                .starts_with("writing the last check's answers: "),
+            "{error}"
+        );
+        let _ = std::fs::remove_file(&home_dir);
     }
 
     #[test]

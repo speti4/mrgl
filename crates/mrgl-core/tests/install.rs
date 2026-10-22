@@ -1989,3 +1989,374 @@ fn a_reinstall_of_the_recorded_version_is_told_apart_from_an_update() {
         ("1.0.0", "1.1.0")
     );
 }
+
+// --- task 117: the engine's error arms ---
+
+use mrgl_core::forever::ForeverBuild;
+use mrgl_core::install::{Mark, SourceRequest, Wanted};
+use mrgl_core::voice::Kind;
+
+#[test]
+fn the_engine_names_its_process_list_in_its_debug_form() {
+    let sandbox = Sandbox::new("debug-form");
+    let text = format!("{:?}", sandbox.engine);
+    assert!(text.contains("Processes"), "{text}");
+}
+
+#[test]
+fn a_channel_already_followed_is_nothing_to_do() {
+    let sandbox = Sandbox::new("channel-again");
+    sandbox.install("one-folder-1.0.0.zip");
+    let mark = Mark::Channel(Channel::Prerelease);
+    let first = sandbox
+        .engine
+        .apply_mark("OneFolder", &mark)
+        .expect("marks");
+    assert_eq!(
+        mark.line(&first, "_forever_"),
+        (
+            Kind::Success,
+            "OneFolder follows the prerelease channel in _forever_".to_string()
+        )
+    );
+    let again = sandbox
+        .engine
+        .apply_mark("OneFolder", &mark)
+        .expect("marks again");
+    assert!(!again.changed);
+    assert_eq!(
+        mark.line(&again, "_forever_"),
+        (
+            Kind::Nothing,
+            "OneFolder is already on the prerelease channel in _forever_".to_string()
+        )
+    );
+}
+
+#[test]
+fn the_checks_of_an_install_carry_a_scan_that_fails() {
+    let sandbox = Sandbox::new("checks-no-scan");
+    let interface = sandbox.engine.flavor.folder.join("Interface");
+    std::fs::create_dir_all(&interface).expect("Interface");
+    std::fs::write(interface.join("AddOns"), "not a folder").expect("a file where AddOns goes");
+    let one = ["One".to_string()];
+    let two = ["Two".to_string()];
+    let checks = sandbox.engine.check_installed_each(&[&one, &two]);
+    assert_eq!(checks.len(), 2);
+    for check in &checks {
+        assert!(check.dependencies.is_empty() && check.mismatch.is_none());
+        assert_eq!(check.warnings.len(), 1, "{:?}", check.warnings);
+        assert!(
+            check.warnings[0].starts_with("reading the AddOns folder: "),
+            "{}",
+            check.warnings[0]
+        );
+    }
+}
+
+#[test]
+fn an_interface_folder_that_is_a_file_refuses_the_install() {
+    let sandbox = Sandbox::new("interface-is-a-file");
+    std::fs::write(
+        sandbox.engine.flavor.folder.join("Interface"),
+        "not a folder",
+    )
+    .expect("a file where Interface goes");
+    let error = sandbox
+        .engine
+        .install(
+            &zip("one-folder-1.0.0.zip"),
+            &metadata("one-folder-1.0.0.zip"),
+        )
+        .expect_err("no AddOns folder under a file");
+    assert!(
+        matches!(&error, Error::Io { context, .. } if *context == "creating the AddOns folder"),
+        "{error}"
+    );
+    assert!(sandbox.staging_entries().is_empty());
+    assert!(!sandbox.engine.home.state_path().exists());
+}
+
+#[test]
+fn a_path_that_is_no_zip_file_is_unreadable() {
+    // `..` has no stem to name the run folder after and opens as no zip.
+    let sandbox = Sandbox::new("no-stem");
+    let error = sandbox
+        .engine
+        .stage(Path::new(".."), &metadata("one-folder-1.0.0.zip"))
+        .expect_err("not a zip");
+    assert!(matches!(error, Error::ZipUnreadable { .. }), "{error}");
+    assert!(sandbox.staging_entries().is_empty());
+}
+
+#[test]
+fn remove_passes_over_a_folder_deleted_by_hand() {
+    let sandbox = Sandbox::new("remove-gone-folder");
+    sandbox.install("several-folders-2.0.0.zip");
+    std::fs::remove_dir_all(sandbox.addon("SeveralFolders_Data")).expect("deleted by hand");
+    let removed = sandbox.engine.remove("SeveralFolders").expect("removes");
+    assert_eq!(
+        removed.folders,
+        [
+            "SeveralFolders",
+            "SeveralFolders_Data",
+            "SeveralFolders_Options"
+        ]
+    );
+    assert!(removed.warnings.is_empty(), "{:?}", removed.warnings);
+    assert!(sandbox.folders().is_empty());
+    assert!(sandbox.state().addons.is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_folder_that_cannot_be_removed_fails_the_removal() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let sandbox = Sandbox::new("remove-locked");
+    sandbox.install("one-folder-1.0.0.zip");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(sandbox.addon("OneFolder/core.lua"))
+        .expect("a handle with no sharing");
+    let error = sandbox
+        .engine
+        .remove("OneFolder")
+        .expect_err("the folder cannot go while a file in it is open");
+    assert!(
+        matches!(&error, Error::Io { context, .. } if *context == "removing the addon folder"),
+        "{error}"
+    );
+    drop(lock);
+    assert!(
+        sandbox.state().entry("OneFolder").is_some(),
+        "the sidecar still has the entry"
+    );
+    assert_eq!(sandbox.cache_entries("OneFolder"), ["1.0.0.zip"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_cache_that_cannot_be_removed_is_a_warning() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let sandbox = Sandbox::new("remove-locked-cache");
+    sandbox.install("one-folder-1.0.0.zip");
+    let cache = sandbox.engine.home.addon_cache_dir("OneFolder");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(cache.join("1.0.0.zip"))
+        .expect("a handle with no sharing");
+    let removed = sandbox.engine.remove("OneFolder").expect("removes");
+    assert!(sandbox.folders().is_empty());
+    assert!(sandbox.state().addons.is_empty());
+    assert_eq!(removed.warnings.len(), 1, "{:?}", removed.warnings);
+    assert!(
+        removed.warnings[0].starts_with(&format!(
+            "the cache of OneFolder could not be removed: {}: ",
+            cache.display()
+        )),
+        "{}",
+        removed.warnings[0]
+    );
+    drop(lock);
+}
+
+#[test]
+fn a_rollback_names_the_addons_deleted_by_hand() {
+    let sandbox = Sandbox::new("rollback-dropped");
+    sandbox.install("one-folder-1.0.0.zip");
+    sandbox.install("one-folder-1.1.0.zip");
+    sandbox.install("several-folders-2.0.0.zip");
+    for folder in [
+        "SeveralFolders",
+        "SeveralFolders_Data",
+        "SeveralFolders_Options",
+    ] {
+        std::fs::remove_dir_all(sandbox.addon(folder)).expect("deleted by hand");
+    }
+    let rolled = sandbox.engine.rollback("OneFolder").expect("rolls back");
+    assert_eq!(rolled.version, "1.0.0");
+    assert_eq!(
+        rolled.warnings,
+        ["SeveralFolders was deleted by hand since its install and is no longer managed"]
+    );
+    assert_eq!(
+        sandbox.state().addons.keys().collect::<Vec<_>>(),
+        ["OneFolder"]
+    );
+}
+
+/// The boss zip installed twice as `Boss-Arena` (task 077's older name), so the next install of the same
+/// zip renames the entry to `Boss-Core` and carries its cache over.
+fn installed_as_arena(sandbox: &Sandbox) {
+    let as_arena = |version: &str| Metadata {
+        version: Some(version.to_string()),
+        name: Some("Boss-Arena".to_string()),
+        ..metadata("boss-core-5.0.0.zip")
+    };
+    for version in ["4.0.0", "5.0.0"] {
+        sandbox
+            .engine
+            .install(&zip("boss-core-5.0.0.zip"), &as_arena(version))
+            .expect("installs as Boss-Arena");
+    }
+}
+
+#[test]
+fn a_rename_without_a_cache_or_with_the_zip_there_already_moves_what_it_can() {
+    let sandbox = Sandbox::new("rename-no-cache");
+    installed_as_arena(&sandbox);
+    std::fs::remove_dir_all(sandbox.engine.home.addon_cache_dir("Boss-Arena"))
+        .expect("the cache removed by hand");
+    let installed = sandbox.install("boss-core-5.0.0.zip");
+    assert_eq!(installed.name, "Boss-Core");
+    assert_eq!(
+        installed.warnings,
+        ["Boss-Arena is managed as Boss-Core now, with its marks and its previous version"]
+    );
+    assert_eq!(sandbox.cache_entries("Boss-Core"), ["5.0.0.zip"]);
+
+    // Back under the old name, with the new name's cache holding the current zip already: that zip stays
+    // where it is, the other moves, and the old folder stays for the zip it still holds.
+    let sandbox = Sandbox::new("rename-zip-there");
+    installed_as_arena(&sandbox);
+    let core_cache = sandbox.engine.home.addon_cache_dir("Boss-Core");
+    std::fs::create_dir_all(&core_cache).expect("the new name's cache");
+    std::fs::write(core_cache.join("5.0.0.zip"), "an older copy").expect("a zip there already");
+    let installed = sandbox.install("boss-core-5.0.0.zip");
+    assert_eq!(installed.name, "Boss-Core");
+    assert_eq!(installed.warnings.len(), 1, "{:?}", installed.warnings);
+    assert_eq!(
+        sandbox.cache_entries("Boss-Core"),
+        ["4.0.0.zip", "5.0.0.zip"]
+    );
+    assert_eq!(
+        sandbox.cache_entries("Boss-Arena"),
+        ["5.0.0.zip"],
+        "the zip the new folder had already stays under the old name"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_cached_zip_that_cannot_move_to_the_new_name_is_a_warning() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let sandbox = Sandbox::new("rename-locked-cache");
+    installed_as_arena(&sandbox);
+    let arena_cache = sandbox.engine.home.addon_cache_dir("Boss-Arena");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(arena_cache.join("4.0.0.zip"))
+        .expect("a handle with no sharing");
+    let installed = sandbox.install("boss-core-5.0.0.zip");
+    assert_eq!(installed.name, "Boss-Core");
+    assert_eq!(installed.warnings.len(), 2, "{:?}", installed.warnings);
+    assert!(
+        installed.warnings[1].starts_with(&format!(
+            "the cached zip of Boss-Arena could not move to {}: ",
+            sandbox
+                .engine
+                .home
+                .cached_zip("Boss-Core", "4.0.0")
+                .display()
+        )),
+        "{}",
+        installed.warnings[1]
+    );
+    drop(lock);
+    assert_eq!(sandbox.cache_entries("Boss-Core"), ["5.0.0.zip"]);
+    assert_eq!(sandbox.cache_entries("Boss-Arena"), ["4.0.0.zip"]);
+}
+
+#[test]
+fn a_zip_that_cannot_be_kept_is_a_warning_and_the_install_stands() {
+    let sandbox = Sandbox::new("cache-is-a-file");
+    let cache = sandbox.engine.home.addon_cache_dir("OneFolder");
+    std::fs::create_dir_all(cache.parent().expect("the cache folder")).expect("the folder");
+    std::fs::write(&cache, "not a folder").expect("a file where the addon's cache goes");
+    let installed = sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(installed.warnings.len(), 1, "{:?}", installed.warnings);
+    assert!(
+        installed.warnings[0].starts_with(&format!(
+            "the zip could not be kept for a later rollback: {}: ",
+            sandbox
+                .engine
+                .home
+                .cached_zip("OneFolder", "1.0.0")
+                .display()
+        )),
+        "{}",
+        installed.warnings[0]
+    );
+    assert_eq!(sandbox.folders(), ["OneFolder"]);
+    assert_eq!(
+        sandbox.state().addons["OneFolder"].version,
+        "1.0.0",
+        "the install stands"
+    );
+}
+
+#[test]
+fn the_recorded_forever_signal_survives_a_reinstall_from_the_same_source_only() {
+    // Task 096: the signal speaks of the project; a reinstall from the same source that says nothing
+    // keeps it, one from another source drops it, and one that says something writes what it says.
+    let sandbox = Sandbox::new("forever-signal");
+    let commit_saying = |zip_name: &str, build: ForeverBuild| {
+        let mut state = sandbox.state();
+        let mut staged = sandbox
+            .engine
+            .stage(&zip(zip_name), &metadata(zip_name))
+            .expect("stages");
+        staged.forever_build = Some(build);
+        sandbox.engine.commit(staged, &mut state).expect("commits");
+    };
+    let signal = || sandbox.state().addons["OneFolder"].forever_build;
+    commit_saying("one-folder-1.0.0.zip", ForeverBuild::Yes);
+    assert_eq!(signal(), Some(ForeverBuild::Yes));
+
+    sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(
+        signal(),
+        Some(ForeverBuild::Yes),
+        "the same source, nothing said: kept"
+    );
+    sandbox.install("one-folder-1.1.0.zip");
+    assert_eq!(signal(), None, "another source: dropped");
+
+    commit_saying("one-folder-1.1.0.zip", ForeverBuild::No);
+    assert_eq!(signal(), Some(ForeverBuild::No));
+    commit_saying("one-folder-1.1.0.zip", ForeverBuild::Yes);
+    assert_eq!(
+        signal(),
+        Some(ForeverBuild::Yes),
+        "what it says, over the recorded one"
+    );
+}
+
+#[test]
+fn a_request_for_a_pick_in_hand_resolves_to_the_pick() {
+    let sandbox = Sandbox::new("resolve-pick");
+    let releases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/releases");
+    let github = GitHub::new(FolderHttp::new(releases), None, None);
+    let spec = SourceSpec::parse("github:Questie/Questie").expect("a spec");
+    let pick = github
+        .resolve(&spec, &Target::from_flavor(&sandbox.engine.flavor))
+        .expect("a pick");
+    let requests = github.http().requests().len();
+    let request = SourceRequest {
+        spec,
+        wanted: Wanted::Pick(Box::new(pick.clone())),
+        name: None,
+    };
+    assert_eq!(
+        sandbox.engine.resolve(&github, &request).expect("the pick"),
+        pick
+    );
+    assert_eq!(
+        github.http().requests().len(),
+        requests,
+        "a pick in hand asks nothing"
+    );
+}

@@ -44,18 +44,25 @@ impl RunDir {
     /// A fresh folder under `staging`, named after the stem and the clock, never one that exists, with its
     /// lock taken. A lock that cannot be taken leaves the folder to the age rule; the run goes on.
     pub fn create(staging: &Path, stem: &str) -> Result<RunDir> {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default();
+        RunDir::create_at(staging, stem, nanos)
+    }
+
+    /// [`RunDir::create`] with the clock's reading given (the tests' clock): the folder is named after
+    /// the stem and `nanos`, with the first attempt number that no folder has yet.
+    pub fn create_at(staging: &Path, stem: &str, nanos: u128) -> Result<RunDir> {
         let io = |path: &Path, source| Error::Io {
             context: "creating the staging folder",
             path: path.to_path_buf(),
             source,
         };
         std::fs::create_dir_all(staging).map_err(|source| io(staging, source))?;
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_nanos())
-            .unwrap_or_default();
         let stem = state::file_safe(stem);
-        for attempt in 0u32.. {
+        let mut attempt = 0u32;
+        loop {
             let path = staging.join(format!("{stem}-{nanos}-{attempt}"));
             match std::fs::create_dir(&path) {
                 Ok(()) => {
@@ -66,11 +73,10 @@ impl RunDir {
                         keep: false,
                     });
                 }
-                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => attempt += 1,
                 Err(source) => return Err(io(&path, source)),
             }
         }
-        unreachable!("the attempts never run out")
     }
 
     /// The folder.
@@ -181,16 +187,10 @@ pub fn kept(staging: &Path) -> Vec<KeptRun> {
 
 /// Whether a folder under `staging\` is a leftover: old enough, no `previous\` in it, and its lock free.
 fn is_leftover(path: &Path, now: SystemTime) -> bool {
-    let Some(created) = created_at(path) else {
-        return false;
-    };
-    let old = now
-        .duration_since(created)
-        .is_ok_and(|age| age >= STALE_AFTER);
-    if !old || path.join(PREVIOUS_DIR).exists() {
-        return false;
-    }
-    lock_is_free(&path.join(LOCK_FILE))
+    let old = created_at(path)
+        .and_then(|created| now.duration_since(created).ok())
+        .is_some_and(|age| age >= STALE_AFTER);
+    old && !path.join(PREVIOUS_DIR).exists() && lock_is_free(&path.join(LOCK_FILE))
 }
 
 /// When a run's folder was made: the time its name carries, else its modified time.
@@ -346,6 +346,44 @@ mod tests {
         );
         assert!(!staging.join("by-hand").exists());
         assert!(staging.join("note.txt").is_file(), "only folders are swept");
+        let _ = std::fs::remove_dir_all(staging.parent().expect("the test folder"));
+    }
+
+    #[test]
+    fn a_folder_of_the_same_clock_reading_takes_the_next_attempt() {
+        let staging = temp_staging("same-clock");
+        let first = RunDir::create_at(&staging, "Same.zip", 42).expect("the first run folder");
+        let second = RunDir::create_at(&staging, "Same.zip", 42).expect("the second run folder");
+        assert_eq!(first.path(), staging.join("Same.zip-42-0"));
+        assert_eq!(second.path(), staging.join("Same.zip-42-1"));
+        drop(first);
+        drop(second);
+        let _ = std::fs::remove_dir_all(staging.parent().expect("the test folder"));
+    }
+
+    #[test]
+    fn a_staging_folder_that_cannot_be_made_is_an_error() {
+        let staging = temp_staging("staging-is-a-file");
+        std::fs::create_dir_all(staging.parent().expect("the test folder")).expect("the folder");
+        std::fs::write(&staging, "not a folder").expect("a file where staging goes");
+        let error = RunDir::create(&staging, "Any.zip").expect_err("no folder under a file");
+        assert_eq!(
+            error.to_string().split(": ").take(2).collect::<Vec<_>>(),
+            [
+                "creating the staging folder",
+                &staging.display().to_string()
+            ]
+        );
+        // A run folder that cannot be made either: a name longer than the file system allows.
+        let _ = std::fs::remove_file(&staging);
+        let error = RunDir::create(&staging, &"a".repeat(300)).expect_err("a name too long");
+        assert!(
+            error
+                .to_string()
+                .starts_with("creating the staging folder: "),
+            "{error}"
+        );
+        assert!(staging.is_dir(), "the staging folder itself was made");
         let _ = std::fs::remove_dir_all(staging.parent().expect("the test folder"));
     }
 

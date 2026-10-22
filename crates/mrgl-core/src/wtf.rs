@@ -190,6 +190,28 @@ mod tests {
         let _ = fs::remove_dir_all(wtf.parent().expect("a parent"));
     }
 
+    #[test]
+    fn an_account_folder_that_is_a_file_is_an_error_that_names_it() {
+        let wtf = temp_wtf("file");
+        let accounts = wtf.join(ACCOUNT_DIR);
+        fs::create_dir_all(&wtf).expect("WTF");
+        fs::write(&accounts, "a file where the folder goes").expect("a file");
+        let mut warnings = Vec::new();
+        let error = walk(&wtf, &mut warnings, |_, _| Ok(())).expect_err("not a folder");
+        assert!(
+            matches!(&error, Error::Io { context: "reading WTF", path, .. } if path == &accounts),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("reading WTF: {}: ", accounts.display())),
+            "{error}"
+        );
+        assert!(warnings.is_empty());
+        let _ = fs::remove_dir_all(wtf.parent().expect("a parent"));
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_junction_is_a_warning_and_not_followed() {

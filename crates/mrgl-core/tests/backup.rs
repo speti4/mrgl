@@ -602,3 +602,345 @@ fn a_backup_that_lies_about_its_size_fails_the_restore_and_wtf_comes_back() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// --- task 117: the arms the fixture round trip does not reach ---
+
+/// The modification time of a file, to the second since 1970; `None` before 1970.
+fn modified_seconds(path: &Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|elapsed| elapsed.as_secs())
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_under_wtf_is_left_out_of_the_backup_with_a_warning() {
+    let root = temp_game_root("junction", true);
+    let flavor = read(&root);
+    let wtf = root.join("_forever_").join(WTF_DIR);
+    let elsewhere = root.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("a folder");
+    std::fs::write(elsewhere.join("linked.txt"), b"behind the junction").expect("a file");
+    let link = wtf.join("Account").join("Linked");
+    mrgl_core::link::create_junction(&link, &elsewhere).expect("a junction");
+
+    let backups = backups_of(&root);
+    let backup = backup::backup_wtf(&flavor, &backups).expect("a backup");
+    assert_eq!(backup.files, 8, "nothing behind the junction");
+    assert_eq!(backup.folders, 7);
+    assert_eq!(
+        backup.warnings,
+        [format!(
+            "left out of the backup: {} is a link, not a folder or a file",
+            link.display()
+        )]
+    );
+    let names: Vec<String> = {
+        let file = std::fs::File::open(&backup.zip).expect("the zip");
+        let mut archive = zip::ZipArchive::new(file).expect("a readable zip");
+        (0..archive.len())
+            .map(|index| {
+                archive
+                    .by_index_raw(index)
+                    .expect("an entry")
+                    .name()
+                    .expect("a name")
+                    .into_owned()
+            })
+            .collect()
+    };
+    assert!(
+        names.iter().all(|name| !name.contains("Linked")),
+        "{names:?}"
+    );
+    let _ = std::fs::remove_dir(&link);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_locked_file_or_folder_under_wtf_fails_the_backup_and_leaves_no_part_file() {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let root = temp_game_root("locked-backup", true);
+    let flavor = read(&root);
+    let wtf = root.join("_forever_").join(WTF_DIR);
+    let backups = backups_of(&root);
+
+    let config = wtf.join("Config.wtf");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&config)
+        .expect("a handle with no sharing");
+    let error = backup::backup_wtf(&flavor, &backups).expect_err("the file cannot be read");
+    assert!(
+        matches!(&error, Error::Io { context: "reading a WTF file", path, .. } if path == &config),
+        "{error}"
+    );
+    drop(lock);
+
+    let account = wtf.join("Account").join("MRGLFIXTURE");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(&account)
+        .expect("a folder handle with no sharing");
+    let error = backup::backup_wtf(&flavor, &backups).expect_err("the folder cannot be read");
+    assert!(
+        matches!(&error, Error::Io { context: "reading WTF", path, .. } if path == &account),
+        "{error}"
+    );
+    drop(lock);
+
+    let leftovers: Vec<String> = std::fs::read_dir(&backups)
+        .expect("the backups folder")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert!(leftovers.is_empty(), "no part file: {leftovers:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_file_dated_before_1970_carries_no_time_in_the_backup_and_gets_the_restore_time() {
+    let root = temp_game_root("before-1970", true);
+    let flavor = read(&root);
+    let wtf = root.join("_forever_").join(WTF_DIR);
+    std::fs::File::options()
+        .write(true)
+        .open(wtf.join("Config.wtf"))
+        .expect("open")
+        .set_modified(UNIX_EPOCH - Duration::from_secs(86_400))
+        .expect("dated 1969");
+    assert_eq!(modified_seconds(&wtf.join("Config.wtf")), None);
+
+    let backups = backups_of(&root);
+    let backup = backup::backup_wtf(&flavor, &backups).expect("a backup");
+    {
+        let file = std::fs::File::open(&backup.zip).expect("the zip");
+        let mut archive = zip::ZipArchive::new(file).expect("a readable zip");
+        let entry = archive.by_name("Config.wtf").expect("the entry");
+        assert_eq!(entry.extra_data_fields().count(), 0, "no timestamp field");
+        assert_eq!(entry.last_modified(), Some(zip::DateTime::default()));
+    }
+
+    let other = temp_game_root("before-1970-target", false);
+    let started = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("now")
+        .as_secs();
+    backup::restore_wtf(&read(&other), &backup.zip, &backups_of(&other)).expect("restored");
+    let restored = modified_seconds(&other.join("_forever_").join(WTF_DIR).join("Config.wtf"))
+        .expect("a time");
+    assert!(restored >= started, "the file keeps the restore's time");
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&other);
+}
+
+#[test]
+fn the_zips_own_date_is_read_as_local_time_without_the_timestamp_field() {
+    let root = temp_game_root("dos-times", false);
+    let flavor = read(&root);
+    let started = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("now")
+        .as_secs();
+    let restored = backup::restore_wtf(
+        &flavor,
+        &fixture_zip("wtf-dos-times.zip"),
+        &backups_of(&root),
+    )
+    .expect("restored");
+    assert_eq!((restored.files, restored.folders), (3, 0));
+    let wtf = root.join("_forever_").join(WTF_DIR);
+    let account = wtf.join("Account").join("MRGLFIXTURE");
+    // No date at all, and the default date: the file keeps the restore's time.
+    for file in [wtf.join("Config.wtf"), account.join("config-cache.wtf")] {
+        let modified = modified_seconds(&file).expect("a time");
+        assert!(modified >= started, "{}", file.display());
+    }
+    // The zip's own date fields, read as local time; the NTFS field next to them is passed over.
+    let dated = backup::clock::from_local_civil(&backup::clock::Civil {
+        year: 2024,
+        month: 3,
+        day: 1,
+        hour: 12,
+        minute: 30,
+        second: 10,
+    });
+    assert_eq!(
+        modified_seconds(&account.join("bindings-cache.wtf")),
+        Some(
+            dated
+                .duration_since(UNIX_EPOCH)
+                .expect("after 1970")
+                .as_secs()
+        )
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_listing_passes_over_other_entries_and_warns_about_an_unreadable_zip() {
+    let root = temp_game_root("listing", false);
+    let backups = backups_of(&root);
+    std::fs::create_dir_all(backups.join("other-folder")).expect("a folder");
+    std::fs::write(backups.join("notes.txt"), b"not a zip").expect("a file");
+    let broken = backups.join("WTF-2026-01-01-000000.zip");
+    write_zip(&broken, &[("Config.wtf", &b"fine"[..])]);
+    // The central directory still reads; the first entry's local header does not.
+    let mut bytes = std::fs::read(&broken).expect("the zip");
+    bytes[..4].copy_from_slice(b"XXXX");
+    std::fs::write(&broken, bytes).expect("broken");
+
+    let listing = backup::list_backups(&backups).expect("a listing");
+    assert_eq!(listing.backups.len(), 1);
+    assert_eq!(listing.backups[0].path, broken);
+    assert_eq!(listing.backups[0].files, None);
+    assert!(listing.aside.is_empty(), "a folder of another name");
+    assert_eq!(listing.warnings.len(), 1, "{:?}", listing.warnings);
+    assert!(
+        listing.warnings[0].starts_with(&format!("unreadable backup: {}: ", broken.display())),
+        "{}",
+        listing.warnings[0]
+    );
+
+    let error = backup::list_backups(&backups.join("notes.txt")).expect_err("a file");
+    assert!(
+        matches!(&error, Error::Io { context: "reading the backups folder", path, .. } if path == &backups.join("notes.txt")),
+        "{error}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_restore_that_fails_into_a_flavor_without_wtf_leaves_none() {
+    let root = temp_game_root("no-wtf-revert", false);
+    let flavor = read(&root);
+    let backups = backups_of(&root);
+    std::fs::create_dir_all(&backups).expect("the backups folder");
+    let zip = backups.join("clash.zip");
+    write_zip(
+        &zip,
+        &[
+            ("Account", &b"a file where a folder goes"[..]),
+            ("Account/MRGLFIXTURE/AddOns.txt", &b"x"[..]),
+        ],
+    );
+    let error = backup::restore_wtf(&flavor, &zip, &backups).expect_err("fails half way");
+    assert!(
+        matches!(&error, Error::RestoreFailed { path, .. } if path == &zip),
+        "{error}"
+    );
+    assert!(
+        !root.join("_forever_").join(WTF_DIR).exists(),
+        "the half-written WTF is removed"
+    );
+    assert!(
+        backup::list_backups(&backups)
+            .expect("a listing")
+            .aside
+            .is_empty()
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_backups_path_that_is_a_file_or_a_zip_that_is_a_folder_refuses_the_restore() {
+    let root = temp_game_root("restore-paths", true);
+    let flavor = read(&root);
+    let wtf = root.join("_forever_").join(WTF_DIR);
+    let before = snapshot(&wtf);
+    let backups = backups_of(&root);
+    let backup = backup::backup_wtf(&flavor, &backups).expect("a backup");
+
+    let error = backup::restore_wtf(&flavor, &backups, &backups).expect_err("a folder");
+    assert!(
+        matches!(&error, Error::ZipUnreadable { role: ZipRole::Backup, path, .. } if path == &backups),
+        "{error}"
+    );
+
+    let file = root.join("a-file");
+    std::fs::write(&file, b"").expect("a file");
+    let error = backup::restore_wtf(&flavor, &backup.zip, &file).expect_err("a file");
+    assert!(
+        matches!(&error, Error::Io { context: "creating the backups folder", path, .. } if path == &file),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf), before, "nothing moved");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_corrupt_entry_fails_the_restore_and_wtf_comes_back() {
+    let root = temp_game_root("corrupt", true);
+    let flavor = read(&root);
+    let wtf = root.join("_forever_").join(WTF_DIR);
+    let before = snapshot(&wtf);
+    let backups = backups_of(&root);
+    std::fs::create_dir_all(&backups).expect("the backups folder");
+    let zip = backups.join("corrupt.zip");
+    write_zip(&zip, &[("Config.wtf", &b"SET portal \"EU\"\r\n"[..])]);
+    // One byte of the stored data flipped: the entry opens, and its checksum fails as it is read.
+    let mut bytes = std::fs::read(&zip).expect("the zip");
+    let at = bytes
+        .windows(6)
+        .position(|window| window == b"portal")
+        .expect("the data");
+    bytes[at] = b'P';
+    std::fs::write(&zip, bytes).expect("corrupt");
+
+    let error = backup::restore_wtf(&flavor, &zip, &backups).expect_err("fails while writing");
+    assert!(
+        matches!(&error, Error::RestoreFailed { path, reason } if path == &zip && reason.starts_with("writing ")),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf), before, "the previous WTF is back");
+    assert!(
+        backup::list_backups(&backups)
+            .expect("a listing")
+            .aside
+            .is_empty()
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_locked_file_under_wtf_refuses_the_move_aside() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = temp_game_root("locked-restore", true);
+    let flavor = read(&root);
+    let wtf = root.join("_forever_").join(WTF_DIR);
+    let backups = backups_of(&root);
+    let backup = backup::backup_wtf(&flavor, &backups).expect("a backup");
+    let before = snapshot(&wtf);
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(wtf.join("Config.wtf"))
+        .expect("a handle with no sharing");
+    let error = backup::restore_wtf(&flavor, &backup.zip, &backups).expect_err("cannot move");
+    assert!(
+        matches!(&error, Error::Io { context: "moving WTF aside", path, .. } if path == &wtf),
+        "{error}"
+    );
+    drop(lock);
+    assert_eq!(snapshot(&wtf), before, "nothing moved");
+    assert!(
+        backup::list_backups(&backups)
+            .expect("a listing")
+            .aside
+            .is_empty()
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

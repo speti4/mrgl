@@ -6,17 +6,19 @@
 //! Manager's generic credential `mrgl:<source>` (`mrgl:github`, `mrgl:wago`, `mrgl:curse`), which
 //! `mrgl key set <source>` writes from the standard input and `mrgl key clear <source>` removes. Outside
 //! Windows the store is not available (a key store there is M6); `MRGL_KEY_STORE=off` turns it off for a
-//! run, which is how the end-to-end tests stay away from the real Credential Manager, and the unit tests
-//! hand every function a [`MemoryStore`].
+//! run and `MRGL_KEY_STORE=<folder>` replaces it with a [`FolderStore`] there (the mirror of
+//! `MRGL_HTTP_STUB`), which is how the end-to-end tests stay away from the real Credential Manager, and
+//! the unit tests hand every function a [`MemoryStore`].
 //!
 //! A key's value lives in a [`Key`], whose `Debug` hides it, and goes to its source's hosts only
 //! ([`may_send`]); a listing ([`KeyState`]: `mrgl key list`, the doctor) names the key and its [`Origin`]
 //! and nothing else.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::BufRead;
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use serde::Serialize;
 
@@ -31,7 +33,8 @@ pub const WAGO_KEY: &str = "MRGL_WAGO_KEY";
 pub const CURSEFORGE_KEY: &str = "MRGL_CURSEFORGE_KEY";
 /// The sources that take a key, in the order every listing names them; WoWInterface needs none.
 pub const KEYED: [SourceKind; 3] = [SourceKind::GitHub, SourceKind::Wago, SourceKind::CurseForge];
-/// The variable that turns the key store off for a run when it says `off`.
+/// The variable that turns the key store off for a run when it says `off`, and replaces it with a
+/// [`FolderStore`] when it names a folder.
 pub const STORE_ENV: &str = "MRGL_KEY_STORE";
 /// The prefix of a key's entry in the store, before the source's prefix: `mrgl:wago`.
 pub const TARGET_PREFIX: &str = "mrgl:";
@@ -197,15 +200,22 @@ pub trait KeyStore {
     fn delete(&self, kind: SourceKind) -> Result<bool>;
 }
 
-/// The key store of this process: the Windows Credential Manager, or none with `MRGL_KEY_STORE=off`.
+/// The key store of this process: [`store_from_env`] of `MRGL_KEY_STORE`.
 pub fn store_of_process() -> Box<dyn KeyStore> {
-    let off = std::env::var_os(STORE_ENV).is_some_and(|value| value.eq_ignore_ascii_case("off"));
-    if off {
-        Box::new(NoStore {
+    store_from_env(std::env::var_os(STORE_ENV).as_deref())
+}
+
+/// The key store `MRGL_KEY_STORE` names: unset or empty is the Windows Credential Manager, `off` is no
+/// store, and anything else is the folder of a [`FolderStore`].
+pub fn store_from_env(value: Option<&OsStr>) -> Box<dyn KeyStore> {
+    match value.filter(|value| !value.is_empty()) {
+        None => Box::new(CredentialStore),
+        Some(value) if value.eq_ignore_ascii_case("off") => Box::new(NoStore {
             reason: "MRGL_KEY_STORE=off",
-        })
-    } else {
-        Box::new(CredentialStore)
+        }),
+        Some(folder) => Box::new(FolderStore {
+            folder: PathBuf::from(folder),
+        }),
     }
 }
 
@@ -256,11 +266,6 @@ pub fn list(env: &dyn Fn(&str) -> Option<OsString>, store: &dyn KeyStore) -> Vec
 /// [`lookup`] in this process: its environment and [`store_of_process`].
 pub fn of_process(kind: SourceKind) -> Option<Key> {
     lookup(kind, &|name| std::env::var_os(name), &*store_of_process())
-}
-
-/// [`list`] in this process.
-pub fn list_of_process() -> Vec<KeyState> {
-    list(&|name| std::env::var_os(name), &*store_of_process())
 }
 
 /// Reads a key from an input: one line from a terminal (Enter ends it), else all of it (a pipe), trimmed.
@@ -360,27 +365,80 @@ impl KeyStore for MemoryStore {
     }
 
     fn read(&self, kind: SourceKind) -> Result<Option<String>> {
-        Ok(self
-            .keys
-            .lock()
-            .ok()
-            .and_then(|keys| keys.get(&target_name(kind)).cloned()))
+        Ok(self.keys().get(&target_name(kind)).cloned())
     }
 
     fn write(&self, kind: SourceKind, value: &str) -> Result<()> {
-        if let Ok(mut keys) = self.keys.lock() {
-            keys.insert(target_name(kind), value.to_string());
-        }
+        self.keys().insert(target_name(kind), value.to_string());
         Ok(())
     }
 
     fn delete(&self, kind: SourceKind) -> Result<bool> {
-        Ok(self
-            .keys
-            .lock()
-            .ok()
-            .and_then(|mut keys| keys.remove(&target_name(kind)))
-            .is_some())
+        Ok(self.keys().remove(&target_name(kind)).is_some())
+    }
+}
+
+impl MemoryStore {
+    /// The map, locked; a lock poisoned by a panicking test still holds the keys as they were.
+    fn keys(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, String>> {
+        self.keys.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// A store in a folder, for the end-to-end tests of a child process (`MRGL_KEY_STORE=<folder>`): one
+/// file per source, named after its target with a `-` for the `:` a file name cannot carry
+/// (`mrgl-github`), the key as its UTF-8 content. The folder is made on the first write.
+pub struct FolderStore {
+    pub folder: PathBuf,
+}
+
+/// The folder store's name in a line.
+const FOLDER_STORE: &str = "the folder key store";
+
+impl FolderStore {
+    /// The file of a source's key.
+    fn file_of(&self, kind: SourceKind) -> PathBuf {
+        self.folder.join(target_name(kind).replace(':', "-"))
+    }
+
+    /// The error of a file operation that failed; never the value.
+    fn failed(action: &'static str, error: std::io::Error) -> Error {
+        Error::KeyStore {
+            action,
+            store: FOLDER_STORE,
+            reason: error.to_string(),
+        }
+    }
+}
+
+impl KeyStore for FolderStore {
+    fn name(&self) -> &'static str {
+        FOLDER_STORE
+    }
+
+    fn available(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn read(&self, kind: SourceKind) -> Result<Option<String>> {
+        match std::fs::read(self.file_of(kind)) {
+            Ok(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(Self::failed("read", error)),
+        }
+    }
+
+    fn write(&self, kind: SourceKind, value: &str) -> Result<()> {
+        std::fs::create_dir_all(&self.folder).map_err(|error| Self::failed("store", error))?;
+        std::fs::write(self.file_of(kind), value).map_err(|error| Self::failed("store", error))
+    }
+
+    fn delete(&self, kind: SourceKind) -> Result<bool> {
+        match std::fs::remove_file(self.file_of(kind)) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(Self::failed("remove", error)),
+        }
     }
 }
 
@@ -767,6 +825,216 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "the key store is not available: the Windows Credential Manager exists on Windows only"
+        );
+    }
+
+    /// A fresh temporary folder for one test, removed first and on drop.
+    struct TempFolder(PathBuf);
+
+    impl TempFolder {
+        fn new(name: &str) -> TempFolder {
+            let dir =
+                std::env::temp_dir().join(format!("mrgl-keys-test-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            TempFolder(dir)
+        }
+    }
+
+    impl Drop for TempFolder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A store whose every read fails.
+    struct BrokenStore;
+
+    impl KeyStore for BrokenStore {
+        fn name(&self) -> &'static str {
+            "the broken store"
+        }
+
+        fn available(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn read(&self, _kind: SourceKind) -> Result<Option<String>> {
+            Err(Error::KeyStore {
+                action: "read",
+                store: "the broken store",
+                reason: "locked".to_string(),
+            })
+        }
+
+        fn write(&self, _kind: SourceKind, _value: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn delete(&self, _kind: SourceKind) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    /// An input that cannot be read.
+    struct ClosedInput;
+
+    impl std::io::Read for ClosedInput {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("the handle is closed"))
+        }
+    }
+
+    impl BufRead for ClosedInput {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            Err(std::io::Error::other("the handle is closed"))
+        }
+
+        fn consume(&mut self, _amount: usize) {}
+    }
+
+    #[test]
+    fn a_url_too_short_for_a_scheme_takes_no_key() {
+        assert!(!may_send(SourceKind::GitHub, "https:/"));
+        assert!(!may_send(SourceKind::GitHub, ""));
+        // Seven ASCII bytes and a two-byte character: the eighth byte is no character boundary.
+        assert!(!may_send(SourceKind::GitHub, "https:/é/api.github.com"));
+    }
+
+    #[test]
+    fn an_input_that_cannot_be_read_is_the_reason_without_a_value() {
+        for one_line in [true, false] {
+            let error = read_key(&mut ClosedInput, one_line)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                error,
+                "no key read from the standard input: the standard input cannot be read: the handle is closed",
+                "{one_line}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_store_that_is_off_refuses_a_write_and_a_removal_directly() {
+        let store = NoStore {
+            reason: "none here",
+        };
+        assert_eq!(store.name(), "the key store");
+        assert_eq!(
+            store
+                .write(SourceKind::Wago, SECRET)
+                .unwrap_err()
+                .to_string(),
+            "the key store is not available: none here"
+        );
+        assert_eq!(
+            store.delete(SourceKind::Wago).unwrap_err().to_string(),
+            "the key store is not available: none here"
+        );
+    }
+
+    #[test]
+    fn a_store_that_fails_or_holds_only_whitespace_reads_as_no_key() {
+        let none = env_with(&[]);
+        assert_eq!(lookup(SourceKind::Wago, &none, &BrokenStore), None);
+        assert_eq!(
+            list(&none, &BrokenStore)
+                .iter()
+                .map(|state| state.origin)
+                .collect::<Vec<_>>(),
+            [Origin::NotSet; 3]
+        );
+        // The variable still answers over a store that fails.
+        let env = env_with(&[("MRGL_WAGO_KEY", "from-env")]);
+        assert_eq!(
+            lookup(SourceKind::Wago, &env, &BrokenStore).map(|key| key.origin),
+            Some(Origin::Environment)
+        );
+        let store = MemoryStore::new();
+        assert_eq!(store.name(), "the test store");
+        store.write(SourceKind::Wago, " \n\t ").unwrap();
+        assert_eq!(lookup(SourceKind::Wago, &none, &store), None);
+    }
+
+    #[test]
+    fn the_store_of_a_run_is_named_by_the_variable() {
+        assert_eq!(
+            store_from_env(Some(OsStr::new("off"))).name(),
+            "the key store"
+        );
+        assert_eq!(
+            store_from_env(Some(OsStr::new("OFF")))
+                .available()
+                .unwrap_err()
+                .to_string(),
+            "the key store is not available: MRGL_KEY_STORE=off"
+        );
+        // Unset or empty is the Credential Manager; its name is all that is asked of it here.
+        assert_eq!(store_from_env(None).name(), CREDENTIAL_MANAGER);
+        assert_eq!(
+            store_from_env(Some(OsStr::new(""))).name(),
+            CREDENTIAL_MANAGER
+        );
+        let folder = TempFolder::new("named");
+        let store = store_from_env(Some(folder.0.as_os_str()));
+        assert_eq!(store.name(), FOLDER_STORE);
+        assert!(store.available().is_ok());
+        assert_eq!(store.read(SourceKind::Wago).unwrap(), None, "no folder yet");
+    }
+
+    #[test]
+    fn the_folder_store_keeps_one_file_per_key() {
+        let folder = TempFolder::new("files");
+        let store = FolderStore {
+            folder: folder.0.clone(),
+        };
+        // A missing folder holds nothing and has nothing to remove.
+        assert_eq!(store.read(SourceKind::CurseForge).unwrap(), None);
+        assert!(!clear(&store, SourceKind::CurseForge).unwrap());
+        // The first write makes the folder; the file is named after the target, the key is its text.
+        set(&store, SourceKind::CurseForge, SECRET).unwrap();
+        let file = folder.0.join("mrgl-curse");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), SECRET);
+        assert_eq!(
+            store.read(SourceKind::CurseForge).unwrap().as_deref(),
+            Some(SECRET)
+        );
+        assert_eq!(store.read(SourceKind::Wago).unwrap(), None);
+        set(&store, SourceKind::CurseForge, "replaced").unwrap();
+        assert_eq!(
+            lookup(SourceKind::CurseForge, &env_with(&[]), &store).map(|key| key.into_value()),
+            Some("replaced".to_string())
+        );
+        assert!(clear(&store, SourceKind::CurseForge).unwrap());
+        assert!(!file.exists());
+        assert!(!clear(&store, SourceKind::CurseForge).unwrap(), "gone");
+        // A folder where the file should be: the read, the write and the removal are errors.
+        std::fs::create_dir_all(folder.0.join("mrgl-wago")).unwrap();
+        for (result, action) in [
+            (store.read(SourceKind::Wago).map(|_| ()), "read"),
+            (store.write(SourceKind::Wago, SECRET), "store"),
+            (store.delete(SourceKind::Wago).map(|_| ()), "remove"),
+        ] {
+            let error = result.unwrap_err().to_string();
+            assert!(
+                error.starts_with(&format!(
+                    "cannot {action} the key in the folder key store: "
+                )),
+                "{error}"
+            );
+            assert!(!error.contains(SECRET));
+        }
+        // A file where the folder should be: nothing can be stored.
+        std::fs::write(folder.0.join("blocker"), "").unwrap();
+        let blocked = FolderStore {
+            folder: folder.0.join("blocker"),
+        };
+        let error = set(&blocked, SourceKind::GitHub, SECRET)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("cannot store the key in the folder key store: "),
+            "{error}"
         );
     }
 }

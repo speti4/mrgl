@@ -460,6 +460,7 @@ mod tests {
         assert_eq!(entry_path("COM10"), strings(&["COM10"]));
         assert!(is_reserved_device_name("lpt9.txt"));
         assert!(!is_reserved_device_name("lpt10"));
+        assert!(!is_reserved_device_name("COMA"));
         assert_eq!(
             entry_path("Foo/Console.lua"),
             strings(&["Foo", "Console.lua"])
@@ -780,6 +781,40 @@ mod tests {
                 toc
             )
         );
+    }
+
+    /// A reader that fails with the given error on its first read.
+    struct Failing(Option<io::Error>);
+
+    impl Read for Failing {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(self.0.take().expect("read once"))
+        }
+    }
+
+    #[test]
+    fn a_read_failure_that_is_not_the_size_lie_comes_back_as_it_was() {
+        // Only the zip crate's own refusal of an entry past its declared size is the lie; any other
+        // failure, `InvalidData` with other words included, is the plain I/O error it was.
+        let checked = CheckedEntry {
+            index: 0,
+            parts: vec!["Foo".into(), "core.lua".into()],
+            is_dir: false,
+            size: 16,
+        };
+        for error in [
+            io::Error::new(io::ErrorKind::InvalidData, "Invalid checksum"),
+            io::Error::other("the disk went away"),
+        ] {
+            let kind = error.kind();
+            let text = error.to_string();
+            let mut unpacked = Unpacked::new(Path::new("x.zip"), ZipRole::Addon, MAX_UNPACKED);
+            let mut counted = unpacked.entry(&checked, Failing(Some(error)));
+            let failure = counted.read(&mut [0u8; 8]).expect_err("fails");
+            assert_eq!((failure.kind(), failure.to_string()), (kind, text.clone()));
+            assert!(refusal(failure).is_err(), "no refusal in {text}");
+            assert_eq!(unpacked.written(), 0);
+        }
     }
 
     #[test]

@@ -1087,9 +1087,11 @@ impl FolderHttp {
 
     /// The answer to a GET or a POST, from the files; the request is kept first.
     fn answer(&self, request: &Request) -> Result<Response> {
-        if let Ok(mut requests) = self.requests.lock() {
-            requests.push(request.clone());
-        }
+        // A poisoned lock (a panic while a request was being kept) still holds the list.
+        self.requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(request.clone());
         // No folder at all is no network: the offline resolve of task 041 is tested this way.
         if !self.root.is_dir() {
             return Err(Error::Network {
@@ -1205,7 +1207,13 @@ pub fn local_time_text(seconds: i64) -> String {
 /// A client picked by the environment: the folder stub when `MRGL_HTTP_STUB` names a folder, else the real
 /// one. The command line and the window build their sources through this ([`Sources::from_env`]).
 pub fn http_from_env() -> Box<dyn Http> {
-    match std::env::var_os(HTTP_STUB_ENV).filter(|value| !value.is_empty()) {
+    http_from_env_value(std::env::var_os(HTTP_STUB_ENV))
+}
+
+/// [`http_from_env`] for a value of `MRGL_HTTP_STUB` read elsewhere: the folder stub for a folder, the real
+/// client for an unset or empty value.
+pub fn http_from_env_value(stub: Option<std::ffi::OsString>) -> Box<dyn Http> {
+    match stub.filter(|value| !value.is_empty()) {
         Some(folder) => Box::new(FolderHttp::new(folder)),
         None => Box::new(UreqHttp::new()),
     }
@@ -1268,11 +1276,23 @@ pub fn notes_line(body: &str) -> Option<String> {
     Some(cut)
 }
 
-/// An in-memory stand-in for the unit tests: a URL to its answer, every miss a 404.
+/// An in-memory stand-in for the unit tests: a URL to its answer, every miss a 404; a URL can fail instead
+/// of answering, as the network does ([`MapHttp::offline`]) or as a stub whose file cannot be read
+/// ([`MapHttp::broken`]).
 #[cfg(test)]
 pub(crate) struct MapHttp {
     answers: std::collections::HashMap<String, Response>,
+    failures: std::collections::HashMap<String, MapFailure>,
     requests: Mutex<Vec<Request>>,
+}
+
+/// How a URL of a [`MapHttp`] fails.
+#[cfg(test)]
+enum MapFailure {
+    /// The network: [`Error::Network`] with the reason.
+    Network(String),
+    /// Any other error of a client: the folder stub's unreadable answer file, [`Error::Io`].
+    Io,
 }
 
 #[cfg(test)]
@@ -1281,8 +1301,22 @@ impl MapHttp {
     pub(crate) fn new() -> MapHttp {
         MapHttp {
             answers: std::collections::HashMap::new(),
+            failures: std::collections::HashMap::new(),
             requests: Mutex::new(Vec::new()),
         }
+    }
+
+    /// A URL the network cannot reach.
+    pub(crate) fn offline(mut self, url: &str, reason: &str) -> MapHttp {
+        self.failures
+            .insert(url.to_string(), MapFailure::Network(reason.to_string()));
+        self
+    }
+
+    /// A URL whose request fails with an error that is not the network's.
+    pub(crate) fn broken(mut self, url: &str) -> MapHttp {
+        self.failures.insert(url.to_string(), MapFailure::Io);
+        self
     }
 
     pub(crate) fn answer(mut self, url: &str, status: u16, body: &str) -> MapHttp {
@@ -1319,6 +1353,22 @@ impl Http for MapHttp {
     fn get(&self, request: &Request) -> Result<Response> {
         if let Ok(mut requests) = self.requests.lock() {
             requests.push(request.clone());
+        }
+        match self.failures.get(&request.url) {
+            Some(MapFailure::Network(reason)) => {
+                return Err(Error::Network {
+                    url: request.url.clone(),
+                    reason: reason.clone(),
+                });
+            }
+            Some(MapFailure::Io) => {
+                return Err(Error::Io {
+                    context: "reading the stub answer",
+                    path: PathBuf::from(&request.url),
+                    source: std::io::Error::other("a stub answer that cannot be read"),
+                });
+            }
+            None => {}
         }
         Ok(self.answers.get(&request.url).cloned().unwrap_or(Response {
             status: 404,
@@ -1366,18 +1416,23 @@ mod tests {
             ("github:Questie/Questie/releases", GITHUB_FORM),
             ("github:/Questie", GITHUB_FORM),
             ("github:Que stie/Questie", GITHUB_FORM),
+            ("github:Questie/.git", GITHUB_FORM),
             ("bitbucket:abc", SPEC_FORMS),
             ("", SPEC_FORMS),
             ("wago:", WAGO_FORM),
             ("wago:ab-c", WAGO_FORM),
+            ("wowi:", WOWI_FORM),
             ("wowi:abc", WOWI_FORM),
             ("wowi:0", WOWI_FORM),
+            ("curse:", CURSE_FORM),
             ("curse:-1", CURSE_FORM),
             ("curse:1234567890123", CURSE_FORM),
             ("https://addons.wago.io/", WAGO_PAGE),
+            ("https://addons.wago.io/addons//versions", WAGO_PAGE),
             ("https://addons.wago.io/addons/bad%20slug", WAGO_PAGE),
             ("https://addons.wago.io/wa/abc", WAGO_PAGE),
             ("https://www.curseforge.com/wow/addons/details", CURSE_PAGE),
+            ("https://www.curseforge.com/projects/details", CURSE_FORM),
             (
                 "https://www.wowinterface.com/downloads/fileinfo.php",
                 WOWI_FORM,
@@ -1387,6 +1442,21 @@ mod tests {
             let error = SourceSpec::parse(spec).unwrap_err().to_string();
             assert_eq!(error, format!("unknown source: {spec} ({hint})"), "{spec}");
         }
+        // An id or a slug past its length is refused whatever its characters.
+        for (spec, hint) in [
+            (format!("wago:{}", "a".repeat(33)), WAGO_FORM),
+            (
+                format!("https://addons.wago.io/addons/{}", "a".repeat(101)),
+                WAGO_PAGE,
+            ),
+        ] {
+            let error = SourceSpec::parse(&spec).unwrap_err().to_string();
+            assert_eq!(error, format!("unknown source: {spec} ({hint})"), "{spec}");
+        }
+        assert_eq!(
+            SourceSpec::parse(&format!("wago:{}", "a".repeat(32))).unwrap(),
+            SourceSpec::Wago { id: "a".repeat(32) }
+        );
         assert_eq!(
             SourceSpec::parse("github:Questie").unwrap_err().to_string(),
             "unknown source: github:Questie (expected github:<owner>/<repo>)"
@@ -1442,6 +1512,14 @@ mod tests {
                     repo: "Questie".into(),
                 },
                 "github:Questie/Questie",
+            ),
+            (
+                "github:an-own_er/re.po",
+                SourceSpec::GitHub {
+                    owner: "an-own_er".into(),
+                    repo: "re.po".into(),
+                },
+                "github:an-own_er/re.po",
             ),
         ];
         for (text, spec, canonical) in cases {
@@ -1710,6 +1788,12 @@ mod tests {
             "2026-10-21T14:03:05",
             "2026-10-21 14:03:05Z",
             "2026-13-21T14:03:05Z",
+            "2026-10-32T14:03:05Z",
+            "2026-10-21T24:03:05Z",
+            "2026-10-21T14:60:05Z",
+            "2026-10-21T14:03:60Z",
+            "2026-10-21-01T14:03:05Z",
+            "2026-10-21T14:03:05:00Z",
             "2026-10-21T14:03Z",
             "yesterday",
         ] {
@@ -1760,14 +1844,307 @@ mod tests {
         );
         assert_eq!(version_of_tag("v1.2.3"), "1.2.3");
         assert_eq!(version_of_tag("version-1"), "version-1");
+    }
+
+    #[test]
+    fn the_forever_why_names_the_source_and_what_it_read() {
+        use ForeverBuild::{No, Unknown, Yes};
+        use SourceKind::{CurseForge, GitHub, Wago, WowInterface};
+        for (kind, build, why) in [
+            (
+                WowInterface,
+                Yes,
+                "WoWInterface lists a Forever compatibility",
+            ),
+            (
+                WowInterface,
+                No,
+                "WoWInterface lists no Forever compatibility",
+            ),
+            (
+                WowInterface,
+                Unknown,
+                "WoWInterface lists no Forever compatibility",
+            ),
+            (Wago, Yes, "Wago lists a release for forever"),
+            (Wago, No, "Wago lists no release for forever"),
+            (Wago, Unknown, "Wago could not say"),
+            (CurseForge, Yes, "CurseForge lists a file for forever"),
+            (CurseForge, No, "CurseForge lists no file for forever"),
+            (CurseForge, Unknown, "CurseForge could not say"),
+            (GitHub, Yes, "release.json names forever"),
+            (GitHub, No, "release.json names no forever flavor"),
+            (GitHub, Unknown, "no release.json says"),
+        ] {
+            assert_eq!(forever_why(kind, build), why, "{kind} {build:?}");
+        }
+    }
+
+    /// A pick of a test source, for the trait's defaults.
+    fn test_pick(guess: bool) -> Pick {
+        Pick {
+            source: "wowi:1".into(),
+            release: "v1".into(),
+            version: "1".into(),
+            published: None,
+            prerelease: false,
+            asset: "A.zip".into(),
+            url: "https://x.test/a".into(),
+            size: None,
+            md5: None,
+            flavor: "mainline".into(),
+            interface: None,
+            guess,
+            reason: if guess { "a guess" } else { "by metadata" }.into(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: ForeverBuild::Unknown,
+            stale: None,
+        }
+    }
+
+    /// What a scripted source answers every resolve with.
+    #[derive(Clone, Copy)]
+    enum Scripted {
+        Pick { guess: bool },
+        Gone,
+        Failing,
+    }
+
+    /// A source with the trait's defaults alone, resolving as scripted.
+    struct Defaults {
+        answer: Scripted,
+        missing: Option<&'static str>,
+    }
+
+    impl Source for Defaults {
+        fn resolve(&self, spec: &SourceSpec, _target: &Target) -> Result<Pick> {
+            match self.answer {
+                Scripted::Pick { guess } => Ok(test_pick(guess)),
+                Scripted::Gone => Err(Error::NoRelease {
+                    spec: spec.to_string(),
+                }),
+                Scripted::Failing => Err(Error::Network {
+                    url: "https://x.test/a".into(),
+                    reason: "offline".into(),
+                }),
+            }
+        }
+
+        fn fetch(&self, _pick: &Pick, _to: &Path) -> Result<()> {
+            unreachable!("no fetch in this test")
+        }
+
+        fn missing(&self, _spec: &SourceSpec) -> Option<String> {
+            self.missing.map(str::to_string)
+        }
+    }
+
+    #[test]
+    fn the_default_version_resolve_takes_the_current_release_when_it_carries_the_version() {
+        let source = Defaults {
+            answer: Scripted::Pick { guess: false },
+            missing: None,
+        };
+        let spec = SourceSpec::parse("wowi:1").unwrap();
+        let target = Target::new(FlavorId::Retail);
         assert_eq!(
-            forever_why(SourceKind::WowInterface, ForeverBuild::Unknown),
-            "WoWInterface lists no Forever compatibility"
+            source.resolve_version(&spec, &target, "1").unwrap().version,
+            "1"
+        );
+        let error = source.resolve_version(&spec, &target, "2").unwrap_err();
+        assert!(matches!(error, Error::VersionNotOffered { .. }), "{error}");
+        assert_eq!(error.to_string(), "no release 2 in wowi:1");
+        // The other defaults: no list, no budget, the spec as it is, nothing held, nothing known offline.
+        assert_eq!(source.listed_versions(&spec), None);
+        assert_eq!(source.request_budget_for(&spec), None);
+        assert_eq!(source.canonical_spec(&spec, &target).unwrap(), spec);
+        source.prefetch(std::slice::from_ref(&spec), &target);
+        assert!(!source.holds(&spec, &target));
+        assert_eq!(
+            source.cached_forever_build(&spec, Channel::Stable),
+            ForeverBuild::Unknown
+        );
+        assert_eq!(source.folders(&spec), None);
+    }
+
+    #[test]
+    fn the_default_offer_reads_the_resolve_and_what_the_run_lacks() {
+        let spec = SourceSpec::parse("wowi:1").unwrap();
+        let target = Target::new(FlavorId::Retail);
+        let offer = |answer: Scripted, missing: Option<&'static str>| {
+            let offer = Defaults { answer, missing }.offers(&spec, &target);
+            (offer.build, offer.why)
+        };
+        assert_eq!(
+            offer(Scripted::Pick { guess: false }, None),
+            (Offered::Yes, "by metadata".to_string())
         );
         assert_eq!(
-            forever_why(SourceKind::GitHub, ForeverBuild::Unknown),
-            "no release.json says"
+            offer(Scripted::Pick { guess: true }, None),
+            (Offered::Unknown, "a guess".to_string())
         );
+        assert_eq!(
+            offer(Scripted::Gone, None),
+            (Offered::No, "no release in wowi:1".to_string())
+        );
+        assert_eq!(
+            offer(Scripted::Failing, None),
+            (
+                Offered::Unknown,
+                "cannot reach https://x.test/a: offline".to_string()
+            )
+        );
+        assert_eq!(
+            offer(Scripted::Pick { guess: false }, Some("the key is not set")),
+            (Offered::Unknown, "the key is not set".to_string()),
+            "a source the run cannot ask is not asked"
+        );
+        assert_eq!(Offered::No.to_string(), "no");
+    }
+
+    #[test]
+    fn the_real_client_builds_without_a_connection_and_refuses_a_bad_address() {
+        // The agent is built and configured; nothing is sent until a request, and a request whose
+        // address is no URL fails inside the client before any connection.
+        let client = UreqHttp::default();
+        let get = Request::get("not a url")
+            .header("Accept", "text/plain")
+            .no_redirects();
+        let error = client.get(&get).unwrap_err();
+        assert!(matches!(error, Error::Network { .. }), "{error}");
+        assert!(
+            error.to_string().starts_with("cannot reach not a url: "),
+            "{error}"
+        );
+        let post = Request::post("not a url", b"{}".to_vec()).header("Content-Type", "text/plain");
+        let error = client.post(&post).unwrap_err().to_string();
+        assert!(error.starts_with("cannot reach not a url: "), "{error}");
+        let followed = client.post(&Request::post("not a url", Vec::new()).no_redirects());
+        assert!(followed.is_err());
+        assert!(client.get(&Request::get("not a url")).is_err());
+    }
+
+    /// A body whose reader fails: a connection cut while the answer is read.
+    struct CutBody;
+
+    impl std::io::Read for CutBody {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("the connection was cut"))
+        }
+    }
+
+    #[test]
+    fn the_real_clients_answer_is_read_into_a_response_with_its_status_and_headers() {
+        let request = Request::get("https://api.example.test/a");
+        let answer = ureq::http::Response::builder()
+            .status(304)
+            .header("ETag", "\"abc\"")
+            .header("X-RateLimit-Remaining", "59")
+            .body(ureq::Body::builder().data("the body"))
+            .unwrap();
+        let response = ureq_response(&request, Ok(answer)).unwrap();
+        assert_eq!(response.status, 304);
+        assert_eq!(response.header("etag"), Some("\"abc\""));
+        assert_eq!(response.header("x-ratelimit-remaining"), Some("59"));
+        assert_eq!(response.body, b"the body");
+        let error = ureq_response(&request, Err(ureq::Error::HostNotFound)).unwrap_err();
+        assert!(matches!(error, Error::Network { .. }), "{error}");
+        assert!(
+            error
+                .to_string()
+                .starts_with("cannot reach https://api.example.test/a: "),
+            "{error}"
+        );
+        let cut = ureq::http::Response::builder()
+            .status(200)
+            .body(ureq::Body::builder().reader(CutBody))
+            .unwrap();
+        let error = ureq_response(&request, Ok(cut)).unwrap_err().to_string();
+        assert!(
+            error.starts_with("cannot reach https://api.example.test/a: reading the body: "),
+            "{error}"
+        );
+        assert!(error.contains("the connection was cut"), "{error}");
+    }
+
+    #[test]
+    fn the_client_of_the_environment_is_the_stub_for_a_folder_and_the_real_one_otherwise() {
+        let root = std::env::temp_dir().join(format!("mrgl-stub-env-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("api.example.test")).unwrap();
+        std::fs::write(root.join("api.example.test").join("a.json"), b"[]").unwrap();
+        let stub = http_from_env_value(Some(root.clone().into_os_string()));
+        let answer = stub
+            .get(&Request::get("https://api.example.test/a"))
+            .unwrap();
+        assert_eq!((answer.status, answer.body.as_slice()), (200, &b"[]"[..]));
+        // A boxed client forwards both verbs.
+        assert_eq!(
+            stub.post(&Request::post("https://api.example.test/a", Vec::new()))
+                .unwrap()
+                .status,
+            200
+        );
+        for real in [None, Some(std::ffi::OsString::new())] {
+            let client = http_from_env_value(real);
+            let error = client.get(&Request::get("not a url")).unwrap_err();
+            assert!(matches!(error, Error::Network { .. }), "{error}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_folder_stub_names_its_root_and_skips_a_dot_in_a_path() {
+        let stub = FolderHttp::new("stub-root");
+        assert_eq!(stub.root(), Path::new("stub-root"));
+        assert_eq!(
+            stub.path_for("https://host/./a/b"),
+            Path::new("stub-root").join("host").join("a").join("b")
+        );
+        // An empty pair and a pair without a value: the pair itself is the name; `page` alone is dropped.
+        assert_eq!(
+            FolderHttp::query_suffix("https://h/x?b=2&&flag&page"),
+            Some("@b=2&flag".to_string())
+        );
+        // A control character is no file name character either.
+        assert_eq!(
+            FolderHttp::query_suffix("https://h/x?a=1\u{1}2"),
+            Some("@a=1_2".to_string())
+        );
+    }
+
+    #[test]
+    fn an_answer_file_that_cannot_be_read_is_an_io_error_not_a_404() {
+        let root =
+            std::env::temp_dir().join(format!("mrgl-stub-unreadable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // A folder where the answer file would be: it is there, and it cannot be read as a file.
+        std::fs::create_dir_all(root.join("api.example.test").join("a.json")).unwrap();
+        std::fs::write(root.join("api.example.test").join("b.json"), b"{}").unwrap();
+        std::fs::write(
+            root.join("api.example.test").join("b.json.headers"),
+            ": no name\nX-Odd: value\n",
+        )
+        .unwrap();
+        let stub = FolderHttp::new(&root);
+        let error = stub
+            .get(&Request::get("https://api.example.test/a"))
+            .unwrap_err();
+        assert!(matches!(error, Error::Io { .. }), "{error}");
+        assert!(
+            error.to_string().starts_with("reading the stub answer: "),
+            "{error}"
+        );
+        // A headers line without a name adds nothing; the next line still counts.
+        let odd = stub
+            .get(&Request::get("https://api.example.test/b"))
+            .unwrap();
+        assert_eq!(odd.status, 200);
+        assert_eq!(odd.header("x-odd"), Some("value"));
+        assert_eq!(odd.headers.len(), 2, "the ETag and X-Odd");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
