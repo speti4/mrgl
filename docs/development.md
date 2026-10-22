@@ -408,6 +408,15 @@ then the `serious` preference in `config.json` that the window's switch writes (
 vocabulary breaks no test. The vocabulary and the rules are in [nerglish.md](nerglish.md); the decision is
 D-005.
 
+A summary line that the command line and the window both print lives in the core, once, as a `(Kind, plain
+line)` pair the caller says through its own voice: the update check's `UpdateCheck::summary` (task 010), and
+the toolbox's `sets::Applied::summary` (`mrgl set apply`, the window's set switch),
+`savedvars::Listing::summary` (`mrgl savedvars`, the window's SavedVariables card; `CleanupBy` names
+`` `mrgl savedvars --clean` `` or the window's cleanup) and `savedvars::Cleaned::summary` (`mrgl savedvars
+--clean`, the window's cleanup), task 086. A count and its verb agree (`voice::count_noun`: `1 orphan (12 B)
+has no addon folder`, `2 orphans (50 B) have …`). The CLI tests and the window's `tests/toolbox.rs` assert
+the same lines.
+
 The command line writes every line through one helper (`emit` in `mrgl-cli/src/main.rs`, task 075): the
 `Reporter`'s messages, data lines and JSON documents and `export`'s list on stdout, its warnings and errors on
 stderr. A closed pipe on either (`BrokenPipe`, os error 232 on Windows: the reader of
@@ -669,7 +678,7 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   the command line's plain lines), its SavedVariables (`savedvars::list_saved_variables`: per entry the
   addon, the place, the `.lua` and `.bak` flags, the size in bytes and as `size_text` writes it, and the
   status `installed`, `orphan`, `client` or `unknown`; the totals and the summary `mrgl savedvars` prints,
-  with the cleanup named instead of `--clean`), and `client`, a warning with the guard's refusal line while
+  the core's `Listing::summary` with the cleanup named instead of `--clean`), and `client`, a warning with the guard's refusal line while
   the client runs from the flavor folder (task 023). A part that cannot be read is empty, with its error
   among the messages. The answer is `{ toolbox, changes, zip, messages }`, the same for the two writes.
 - `apply_set` (task 074 over tasks 014 and 027, `toolbox::apply`): a stored set into the `AddOns.txt` of
@@ -679,13 +688,13 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   ambiguous name is the core's error), and `sets::apply_set` with its `Target` writes only the files that
   change. The answer carries the toolbox as it is now, `changes` (per character the lines it changed or
   added, and whether the file is new), the not-installed warning and the summary of `mrgl set apply`
-  (`applied set raid to Second Realm/Grrlwave of _forever_: 3 addon lines changed`, `set raid already
+  (the core's `Applied::summary`: `applied set raid to Second Realm/Grrlwave of _forever_: 3 addon lines changed`, `set raid already
   matches every character of _forever_ (2 characters), nothing written`).
 - `clean_saved_variables` (task 074 over task 025, `toolbox::clean`): the guard first, then
   `savedvars::clean_orphans` into the flavor's backups folder under the mrgl home, which moves the orphans
   and their `.bak` files into `SavedVariables-<date>.zip` and removes a file only once its copy in the zip
   reads back equal. The answer carries the toolbox as it is now, `zip`, and the summary of `mrgl savedvars
-  --clean` (`moved 2 orphans of _forever_ (3 files, 2.5 MB) into …; unzip it into the WTF folder to put
+  --clean` (the core's `Cleaned::summary`: `moved 2 orphans of _forever_ (3 files, 2.5 MB) into …; unzip it into the WTF folder to put
   them back`, or `no orphans …, nothing moved`). Refused with a warning while an update runs: an install
   swaps addon folders, and a folder away for a moment would read as an orphan; an update run waits for a
   toolbox write the same way. One toolbox write at a time (`toolbox::ToolboxRun`); a second one is refused

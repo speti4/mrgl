@@ -6,8 +6,9 @@
 //!
 //! Both writes run the running-client guard of task 023 first (`client::ensure_client_not_running`) and
 //! answer its refusal through the voice before anything else happens; the core's `sets::apply_set` and
-//! `savedvars::clean_orphans` call the same guard again before their first write. Every line here is the
-//! line `mrgl set apply` and `mrgl savedvars` print for the same outcome.
+//! `savedvars::clean_orphans` call the same guard again before their first write. The summaries of an
+//! apply, a listing and a cleanup are the core's (`Applied::summary`, `Listing::summary`,
+//! `Cleaned::summary`, task 086), the lines `mrgl set apply` and `mrgl savedvars` print too.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,9 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use mrgl_core::backup;
 use mrgl_core::client;
 use mrgl_core::flavor::{self, Flavor};
-use mrgl_core::savedvars::{self, SavedVariablesFile, Status};
+use mrgl_core::savedvars::{self, CleanupBy, SavedVariablesFile, Status};
 use mrgl_core::scan;
-use mrgl_core::sets::{self, AddonState, Applied, Character, Target};
+use mrgl_core::sets::{self, AddonState, Character, Target};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::zip_entry::size_text;
 use serde::Serialize;
@@ -345,7 +346,7 @@ fn view_of(
                 orphans: listing.orphans,
                 orphan_bytes: listing.orphan_bytes,
                 orphan_size: size_text(listing.orphan_bytes),
-                summary: listing_summary(&listing, &folder_name, voice),
+                summary: said(voice, listing.summary(&folder_name, CleanupBy::Window)),
             }
         }
         Err(error) => {
@@ -380,39 +381,9 @@ fn view_of(
     }
 }
 
-/// The summary of a listing, as `mrgl savedvars` writes it.
-fn listing_summary(listing: &savedvars::Listing, folder_name: &str, voice: Voice) -> Message {
-    let count = match listing.files.len() {
-        1 => "1 SavedVariables file".to_string(),
-        count => format!("{count} SavedVariables files"),
-    };
-    if listing.files.is_empty() {
-        Message::new(
-            voice,
-            Kind::Nothing,
-            format!("no SavedVariables files in the WTF folder of {folder_name}"),
-        )
-    } else if listing.orphans == 0 {
-        Message::new(
-            voice,
-            Kind::Success,
-            format!(
-                "{count} of {folder_name}, {} in all, no orphans",
-                size_text(listing.bytes)
-            ),
-        )
-    } else {
-        Message::new(
-            voice,
-            Kind::Warning,
-            format!(
-                "{count} of {folder_name}, {} in all; {} ({}) have no addon folder: the cleanup moves them into a backup zip",
-                size_text(listing.bytes),
-                list::count_noun(listing.orphans, "orphan"),
-                size_text(listing.orphan_bytes)
-            ),
-        )
-    }
+/// A summary line of the core (`kind`, plain line) as the window's message.
+fn said(voice: Voice, (kind, plain): (Kind, String)) -> Message {
+    Message::new(voice, kind, plain)
 }
 
 /// The guard of task 023 before a `WTF` write: the refusal line while the client runs, or while the
@@ -502,7 +473,7 @@ pub fn apply(
             ),
         ));
     }
-    messages.push(apply_summary(&applied, &target, &folder_name, voice));
+    messages.push(said(voice, applied.summary(&target, &folder_name)));
     let changes = applied
         .characters
         .iter()
@@ -524,44 +495,6 @@ pub fn apply(
         changes,
         zip: None,
         messages,
-    }
-}
-
-/// The summary of an apply, as `mrgl set apply` writes it.
-fn apply_summary(applied: &Applied, target: &Target, folder_name: &str, voice: Voice) -> Message {
-    let characters = match (target, applied.characters.as_slice()) {
-        (Target::Character { .. }, [one]) => one.character.label(),
-        (_, characters) => list::count_noun(characters.len(), "character"),
-    };
-    let matched = match target {
-        Target::EveryCharacter => format!("every character of {folder_name} ({characters})"),
-        Target::Character { .. } => format!("{characters} of {folder_name}"),
-    };
-    match applied.changed() {
-        0 => Message::new(
-            voice,
-            Kind::Nothing,
-            format!(
-                "set {} already matches {matched}, nothing written",
-                applied.name
-            ),
-        ),
-        1 => Message::new(
-            voice,
-            Kind::Success,
-            format!(
-                "applied set {} to {characters} of {folder_name}: 1 addon line changed",
-                applied.name
-            ),
-        ),
-        count => Message::new(
-            voice,
-            Kind::Success,
-            format!(
-                "applied set {} to {characters} of {folder_name}: {count} addon lines changed",
-                applied.name
-            ),
-        ),
     }
 }
 
@@ -602,28 +535,13 @@ pub fn clean(root: &Path, flavor_id: &str, home: Option<&Path>, voice: Voice) ->
         Ok(cleaned) => cleaned,
         Err(error) => return answer(vec![say(Kind::Error, error.to_string())], None),
     };
-    let folder_name = flavor.folder_name();
     let mut messages: Vec<Message> = cleaned
         .warnings
         .iter()
         .map(|warning| say(Kind::Warning, warning.clone()))
         .collect();
+    messages.push(said(voice, cleaned.summary(&flavor.folder_name())));
     let zip = cleaned.zip.as_ref().map(|zip| zip.display().to_string());
-    match &zip {
-        None => messages.push(say(
-            Kind::Nothing,
-            format!("no orphans in the SavedVariables of {folder_name}, nothing moved"),
-        )),
-        Some(zip) => messages.push(say(
-            Kind::Success,
-            format!(
-                "moved {} of {folder_name} ({}, {}) into {zip}; unzip it into the WTF folder to put them back",
-                list::count_noun(cleaned.moved.len(), "orphan"),
-                list::count_noun(cleaned.files, "file"),
-                size_text(cleaned.bytes),
-            ),
-        )),
-    }
     answer(messages, zip)
 }
 

@@ -637,6 +637,8 @@
     const orphans = files.filter((item) => item.status === "orphan");
     const orphanBytes = orphans.reduce((sum, item) => sum + item.bytes, 0);
     const counted = files.length === 1 ? "1 SavedVariables file" : `${files.length} SavedVariables files`;
+    // The line of the core's `Listing::summary` (task 086): the verb agrees with the orphan count.
+    const [has, them] = orphans.length === 1 ? ["has", "it"] : ["have", "them"];
     const summary =
       files.length === 0
         ? say("nothing", `no SavedVariables files in the WTF folder of ${flavor.folder}`)
@@ -644,7 +646,7 @@
           ? say("success", `${counted} of ${flavor.folder}, ${sizeText(bytes)} in all, no orphans`)
           : say(
               "warning",
-              `${counted} of ${flavor.folder}, ${sizeText(bytes)} in all; ${count(orphans.length, "orphan")} (${sizeText(orphanBytes)}) have no addon folder: the cleanup moves them into a backup zip`
+              `${counted} of ${flavor.folder}, ${sizeText(bytes)} in all; ${count(orphans.length, "orphan")} (${sizeText(orphanBytes)}) ${has} no addon folder: the cleanup moves ${them} into a backup zip`
             );
     return {
       flavor: flavor.id,

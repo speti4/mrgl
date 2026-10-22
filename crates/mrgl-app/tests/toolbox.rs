@@ -534,6 +534,45 @@ fn the_cleanup_moves_the_orphans_into_the_dated_zip() {
     );
 }
 
+/// One orphan reads `1 orphan … has no addon folder`, and its cleanup `moved 1 orphan … (1 file, …)`: the
+/// core's summaries (task 086), the lines `mrgl savedvars` prints, the window naming its cleanup.
+#[test]
+fn one_orphan_reads_has_as_on_the_command_line() {
+    let game = Game::new("one-orphan");
+    let account = game.wtf().join("Account").join(ACCOUNT);
+    for gone in ["OldMeter.lua", "OldMeter.lua.bak"] {
+        std::fs::remove_file(account.join("SavedVariables").join(gone)).expect("removed");
+    }
+    let orphan = account.join("Second Realm/Grrlwave/SavedVariables/GoneAddon.lua");
+    let bytes = file_size(&orphan);
+    let answer = game.load();
+    let saved = &view(&answer).saved_variables;
+    assert_eq!(
+        (saved.summary.kind, saved.summary.plain.as_str()),
+        (
+            "warning",
+            format!(
+                "4 SavedVariables files of _forever_, {} B in all; 1 orphan ({bytes} B) has no addon folder: the cleanup moves it into a backup zip",
+                saved.bytes
+            )
+            .as_str()
+        )
+    );
+    let answer = game.clean();
+    let zip = answer.zip.as_deref().expect("a zip");
+    assert_eq!(
+        plains(&answer),
+        [(
+            "success",
+            format!(
+                "moved 1 orphan of _forever_ (1 file, {bytes} B) into {zip}; unzip it into the WTF folder to put them back"
+            )
+            .as_str()
+        )]
+    );
+    assert!(!orphan.exists());
+}
+
 #[test]
 fn without_a_home_folder_nothing_is_written() {
     let game = Game::new("no-home");

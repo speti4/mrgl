@@ -2819,22 +2819,8 @@ fn savedvars_command(reporter: &Reporter, spec: Option<&str>, clean: bool) -> Re
         for warning in &warnings {
             reporter.say(Kind::Warning, warning);
         }
-        match &cleaned.zip {
-            None => reporter.say(
-                Kind::Nothing,
-                format!("no orphans in the SavedVariables of {folder_name}, nothing moved"),
-            ),
-            Some(zip) => reporter.say(
-                Kind::Success,
-                format!(
-                    "moved {} of {folder_name} ({}, {}) into {}; unzip it into the WTF folder to put them back",
-                    count_orphans(cleaned.moved.len()),
-                    count_files(cleaned.files),
-                    zip_entry::size_text(cleaned.bytes),
-                    zip.display()
-                ),
-            ),
-        }
+        let (kind, summary) = cleaned.summary(&folder_name);
+        reporter.say(kind, summary);
         return Ok(());
     }
 
@@ -2859,34 +2845,8 @@ fn savedvars_command(reporter: &Reporter, spec: Option<&str>, clean: bool) -> Re
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
     }
-    let count = match listing.files.len() {
-        1 => "1 SavedVariables file".to_string(),
-        count => format!("{count} SavedVariables files"),
-    };
-    if listing.files.is_empty() {
-        reporter.say(
-            Kind::Nothing,
-            format!("no SavedVariables files in the WTF folder of {folder_name}"),
-        );
-    } else if listing.orphans == 0 {
-        reporter.say(
-            Kind::Success,
-            format!(
-                "{count} of {folder_name}, {} in all, no orphans",
-                zip_entry::size_text(listing.bytes)
-            ),
-        );
-    } else {
-        reporter.say(
-            Kind::Warning,
-            format!(
-                "{count} of {folder_name}, {} in all; {} ({}) have no addon folder: `mrgl savedvars --clean` moves them into a backup zip",
-                zip_entry::size_text(listing.bytes),
-                count_orphans(listing.orphans),
-                zip_entry::size_text(listing.orphan_bytes)
-            ),
-        );
-    }
+    let (kind, summary) = listing.summary(&folder_name, savedvars::CleanupBy::Command);
+    reporter.say(kind, summary);
     Ok(())
 }
 
@@ -2904,22 +2864,6 @@ fn savedvars_line(file: &SavedVariablesFile) -> String {
         file.addon,
         file.place()
     )
-}
-
-fn count_orphans(count: usize) -> String {
-    if count == 1 {
-        "1 orphan".to_string()
-    } else {
-        format!("{count} orphans")
-    }
-}
-
-fn count_files(count: usize) -> String {
-    if count == 1 {
-        "1 file".to_string()
-    } else {
-        format!("{count} files")
-    }
 }
 
 /// The verbs of `mrgl set` (task 014).
@@ -3322,39 +3266,8 @@ fn report_applied(
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
     }
-    let changed: Vec<sets::Character> = applied
-        .characters
-        .iter()
-        .map(|change| change.character.clone())
-        .collect();
-    let characters = characters_text(target, &changed);
-    let matched = match target {
-        sets::Target::EveryCharacter => format!("every character of {folder_name} ({characters})"),
-        sets::Target::Character { .. } => format!("{characters} of {folder_name}"),
-    };
-    match applied.changed() {
-        0 => reporter.say(
-            Kind::Nothing,
-            format!(
-                "set {} already matches {matched}, nothing written",
-                applied.name
-            ),
-        ),
-        1 => reporter.say(
-            Kind::Success,
-            format!(
-                "applied set {} to {characters} of {folder_name}: 1 addon line changed",
-                applied.name
-            ),
-        ),
-        count => reporter.say(
-            Kind::Success,
-            format!(
-                "applied set {} to {characters} of {folder_name}: {count} addon lines changed",
-                applied.name
-            ),
-        ),
-    }
+    let (kind, summary) = applied.summary(target, &folder_name);
+    reporter.say(kind, summary);
 }
 
 /// The outcome of `set undo` (task 073): one data line per character, the warnings and the summary; or

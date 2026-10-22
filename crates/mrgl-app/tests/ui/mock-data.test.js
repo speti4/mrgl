@@ -237,6 +237,9 @@ test("a set goes to one character and to every one, and the orphans into the zip
   assert.equal((await Data.applySet("wowf", "gone")).messages[0].kind, "error");
   assert.equal((await Data.applySet("wowf", "raid", { character: "Nobody" })).messages[0].kind, "error");
 
+  const listed = (await Data.toolbox("wowf")).toolbox.saved_variables.summary;
+  assert.equal(listed.kind, "warning");
+  assert.match(listed.plain, /; 2 orphans \(2\.5 MB\) have no addon folder: the cleanup moves them into a backup zip$/);
   const clean = await Data.cleanSavedVariables("wowf");
   assert.equal(clean.messages[0].kind, "success");
   assert.match(clean.messages[0].plain, /^moved 2 orphans of _forever_ \(3 files, 2\.5 MB\) into .*SavedVariables-2026-10-22\.zip; /);

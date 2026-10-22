@@ -4834,6 +4834,62 @@ fn savedvars_lists_the_sizes_and_marks_the_orphans() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// One orphan reads `1 orphan … has no addon folder` (task 086: the line is the core's
+/// `Listing::summary`, the window's toolbox prints it too, with its cleanup named instead of the command).
+#[test]
+fn savedvars_says_has_for_one_orphan() {
+    let root = savedvars_game("one-orphan");
+    let flavor = root.join("_forever_");
+    let wtf = flavor.join("WTF");
+    for gone in &SAVEDVARS_ORPHANS[..3] {
+        std::fs::remove_file(wtf.join(gone)).expect("an orphan removed");
+    }
+    let total: u64 = snapshot(&wtf)
+        .iter()
+        .filter(|(path, _)| {
+            path.contains("/SavedVariables/") && (path.ends_with(".lua") || path.ends_with(".bak"))
+        })
+        .map(|(_, bytes)| bytes.len() as u64)
+        .sum();
+
+    let output = mrgl()
+        .args(["--serious", "savedvars", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        stdout_last_line(&output),
+        format!(
+            "5 SavedVariables files of _forever_, {} in all; 1 orphan (90 B) has no addon folder: `mrgl savedvars --clean` moves it into a backup zip",
+            savedvars_bytes(total)
+        )
+    );
+
+    let home = root.join("home");
+    let output = mrgl()
+        .env("MRGL_HOME", &home)
+        .args(["--serious", "savedvars", "--clean", "--flavor"])
+        .arg(&flavor)
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{output:?}");
+    let zip = std::fs::read_dir(home.join("backups").join("wowf"))
+        .expect("the backups folder")
+        .next()
+        .expect("the zip")
+        .expect("an entry")
+        .path();
+    assert_eq!(
+        stdout_last_line(&output),
+        format!(
+            "moved 1 orphan of _forever_ (1 file, 90 B) into {}; unzip it into the WTF folder to put them back",
+            zip.display()
+        )
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn savedvars_clean_moves_the_orphans_into_a_zip_under_the_home() {
     let root = savedvars_game("clean");

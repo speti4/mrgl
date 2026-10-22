@@ -49,6 +49,7 @@ use crate::flavor::{Flavor, FlavorId};
 use crate::home;
 use crate::scan;
 use crate::state;
+use crate::voice::{Kind, count_noun};
 use crate::wtf::{self, ACCOUNT_DIR, WtfFolder};
 
 /// The sets file's name under the flavor's folder of the mrgl home.
@@ -848,6 +849,38 @@ impl Applied {
             .map(|character| character.changed.len())
             .sum()
     }
+
+    /// The summary of an apply in the voice's terms (task 086: `mrgl set apply` and the window's toolbox
+    /// share it): the set, the characters (the one character's `<realm>/<name>` when the target named it,
+    /// else their count) and the lines changed; nothing to say when every file matched already.
+    pub fn summary(&self, target: &Target, folder_name: &str) -> (Kind, String) {
+        let characters = match (target, self.characters.as_slice()) {
+            (Target::Character { .. }, [one]) => one.character.label(),
+            (_, characters) => count_noun(characters.len(), "character"),
+        };
+        let name = &self.name;
+        match self.changed() {
+            0 => {
+                let matched = match target {
+                    Target::EveryCharacter => {
+                        format!("every character of {folder_name} ({characters})")
+                    }
+                    Target::Character { .. } => format!("{characters} of {folder_name}"),
+                };
+                (
+                    Kind::Nothing,
+                    format!("set {name} already matches {matched}, nothing written"),
+                )
+            }
+            count => (
+                Kind::Success,
+                format!(
+                    "applied set {name} to {characters} of {folder_name}: {} changed",
+                    count_noun(count, "addon line")
+                ),
+            ),
+        }
+    }
 }
 
 /// Applies a set to the target's characters: every character of the flavor, or the one
@@ -1473,6 +1506,69 @@ pub fn find_set(flavor: &FlavorId, sets_path: &Path, name: &str) -> Result<(Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_apply_summary_names_the_one_character_or_counts_them() {
+        let character = |realm: &str, name: &str| Character {
+            account: "ACC".into(),
+            realm: realm.into(),
+            name: name.into(),
+            folder: PathBuf::from(realm).join(name),
+        };
+        let change = |realm: &str, name: &str, changed: usize| CharacterChange {
+            character: character(realm, name),
+            changed: (0..changed)
+                .map(|index| (format!("Addon{index}"), AddonState::Enabled))
+                .collect(),
+            created: false,
+        };
+        let applied = |characters: Vec<CharacterChange>| Applied {
+            name: "raid".into(),
+            set: AddonSet {
+                saved_at: "2026-10-22T10:00:00Z".into(),
+                addons: BTreeMap::new(),
+            },
+            characters,
+            not_installed: Vec::new(),
+        };
+        let one = Target::Character {
+            name: "grrlwave".into(),
+            realm: None,
+        };
+        assert_eq!(
+            applied(vec![change("Second Realm", "Grrlwave", 1)]).summary(&one, "_forever_"),
+            (
+                Kind::Success,
+                "applied set raid to Second Realm/Grrlwave of _forever_: 1 addon line changed"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            applied(vec![change("Second Realm", "Grrlwave", 0)]).summary(&one, "_forever_"),
+            (
+                Kind::Nothing,
+                "set raid already matches Second Realm/Grrlwave of _forever_, nothing written"
+                    .to_string()
+            )
+        );
+        let every = applied(vec![
+            change("Fixture Realm", "Mrgltest", 2),
+            change("Second Realm", "Grrlwave", 1),
+        ]);
+        assert_eq!(
+            every.summary(&Target::EveryCharacter, "_forever_").1,
+            "applied set raid to 2 characters of _forever_: 3 addon lines changed"
+        );
+        let matched = applied(vec![change("Fixture Realm", "Mrgltest", 0)]);
+        assert_eq!(
+            matched.summary(&Target::EveryCharacter, "_forever_"),
+            (
+                Kind::Nothing,
+                "set raid already matches every character of _forever_ (1 character), nothing written"
+                    .to_string()
+            )
+        );
+    }
 
     #[test]
     fn a_file_round_trips_byte_for_byte() {
