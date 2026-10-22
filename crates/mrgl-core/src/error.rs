@@ -287,6 +287,14 @@ pub enum Error {
     /// it was never published under that tag.
     #[error("no release {version} in {spec}")]
     VersionNotOffered { spec: String, version: String },
+
+    /// A list file with an entry that names a zip file, a linked folder or another path of one machine
+    /// (task 028): a shareable list names sources and versions only. `entries` names each such entry and
+    /// why, `; `-separated. Nothing was installed.
+    #[error(
+        "not a shareable addon list: {path} ({entries}); a list names sources and versions, never a file or a folder of one machine"
+    )]
+    ListNotShareable { path: PathBuf, entries: String },
 }
 
 /// The crate's result type.

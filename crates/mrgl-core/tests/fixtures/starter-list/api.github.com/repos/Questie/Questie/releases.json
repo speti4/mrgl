@@ -1,0 +1,24 @@
+[
+  {
+    "tag_name": "bundle/v12.1.0+v1.0.6",
+    "name": "bundle/v12.1.0+v1.0.6",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-12T20:34:29Z",
+    "html_url": "https://github.com/Questie/Questie/releases/tag/bundle/v12.1.0+v1.0.6",
+    "assets": [
+      {
+        "name": "Questie-v12.1.0+v1.0.6.zip",
+        "content_type": "application/zip",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/bundle/v12.1.0%2Bv1.0.6/Questie-v12.1.0%2Bv1.0.6.zip"
+      },
+      {
+        "name": "release.json",
+        "content_type": "application/json",
+        "size": 2048,
+        "browser_download_url": "https://github.com/Questie/Questie/releases/download/bundle/v12.1.0%2Bv1.0.6/release.json"
+      }
+    ]
+  }
+]

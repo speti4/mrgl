@@ -1,0 +1,96 @@
+{
+  "format": "mrgl-list",
+  "schema": 1,
+  "flavor": "wowf",
+  "addons": [
+    {
+      "name": "Bartender4",
+      "source": "github:Nevcairiel/Bartender4",
+      "version": "4.18.3.1",
+      "folders": [
+        "Bartender4"
+      ]
+    },
+    {
+      "name": "DBM-Core",
+      "source": "github:DeadlyBossMods/DeadlyBossMods",
+      "version": "12.1.16",
+      "folders": [
+        "DBM-Core",
+        "DBM-Brawlers",
+        "DBM-GUI",
+        "DBM-Lairs-Midnight",
+        "DBM-Midnight",
+        "DBM-Raids-Midnight",
+        "DBM-StatusBarTimers",
+        "DBM-VPVEM"
+      ]
+    },
+    {
+      "name": "DBM-Dungeons",
+      "source": "github:DeadlyBossMods/DBM-Dungeons",
+      "version": "r268",
+      "folders": [
+        "DBM-Challenges",
+        "DBM-Delves-Midnight",
+        "DBM-Delves-WarWithin",
+        "DBM-Party-BC",
+        "DBM-Party-BfA",
+        "DBM-Party-Cataclysm",
+        "DBM-Party-Dragonflight",
+        "DBM-Party-Forever",
+        "DBM-Party-Legion",
+        "DBM-Party-Midnight",
+        "DBM-Party-MoP",
+        "DBM-Party-Shadowlands",
+        "DBM-Party-Vanilla",
+        "DBM-Party-WarWithin",
+        "DBM-Party-WoD",
+        "DBM-Party-WotLK",
+        "DBM-WorldEvents"
+      ]
+    },
+    {
+      "name": "DBM-Vanilla",
+      "source": "github:DeadlyBossMods/DBM-Vanilla",
+      "version": "r833",
+      "folders": [
+        "DBM-Azeroth",
+        "DBM-Raids-Vanilla"
+      ]
+    },
+    {
+      "name": "Mapster",
+      "source": "github:Nevcairiel/Mapster",
+      "version": "1.14.0",
+      "folders": [
+        "Mapster"
+      ]
+    },
+    {
+      "name": "Plater",
+      "source": "github:Tercioo/Plater-Nameplates",
+      "version": "Plater-v661",
+      "folders": [
+        "Plater"
+      ]
+    },
+    {
+      "name": "Questie",
+      "source": "github:Questie/Questie",
+      "version": "bundle/v12.1.0+v1.0.6",
+      "folders": [
+        "Questie",
+        "QuestieDB"
+      ]
+    },
+    {
+      "name": "RXPGuides",
+      "source": "github:RestedXP/RXPGuides",
+      "version": "4.11.27",
+      "folders": [
+        "RXPGuides"
+      ]
+    }
+  ]
+}

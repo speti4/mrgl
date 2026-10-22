@@ -1,0 +1,18 @@
+{
+  "releases": [
+    {
+      "filename": "Mapster-1.14.0.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "mainline",
+          "interface": 120100
+        },
+        {
+          "flavor": "forever",
+          "interface": 16001
+        }
+      ]
+    }
+  ]
+}

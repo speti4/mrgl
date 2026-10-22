@@ -199,7 +199,8 @@ enum Command {
         #[arg(long)]
         root: Option<PathBuf>,
     },
-    /// Write the flavor's managed addons (source and version of each) into a list file, or print it.
+    /// Write the flavor's managed addons (source and version of each) into a list file, or print it; an
+    /// addon from a zip in hand or a linked folder is left out, so the list can be shared.
     Export {
         /// The flavor id or folder.
         #[arg(long)]
@@ -210,6 +211,7 @@ enum Command {
     },
     /// Install the addons of a list file `export` wrote: every `github:` entry the flavor does not have
     /// yet, at its current release, or with `--exact` at the version the list names.
+    /// A list that names a zip or another local path is refused.
     Import {
         /// The list file.
         file: PathBuf,
