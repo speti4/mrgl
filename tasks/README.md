@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 14 backlog (0 ready · 0 blocked · 3 waiting · 11 ideas) · 0 in progress · 80 done · 5 dropped · 5 decisions
+**State:** 15 backlog (0 ready · 0 blocked · 4 waiting · 11 ideas) · 0 in progress · 80 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -38,6 +38,12 @@ _none_
 |---|---|---|---|---|
 | 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
 | 096 | [The CurseForge source with the user's key](backlog/096-the-curseforge-source-with-the-users-key.md) | the CurseForge API key of task 007, for the manual round and the game version type ids | M | 2026-10-22 |
+
+#### M5 Trust
+
+| # | Task | Waits for | Size | Created |
+|---|---|---|---|---|
+| 031 | [Self-update of the portable zip with signature verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | the signed exes of 103 (D-006), whose certificate subject the check pins | M | 2026-10-21 |
 
 ### Ideas
 
@@ -69,7 +75,7 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 031 | [Self-update of the portable zip with attestation verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | M | 2026-10-21 |
+| 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
 
 #### M6 macOS preview
 
@@ -112,6 +118,7 @@ _70 more in `done/`._
 
 | # | Decision | Status | Date |
 |---|---|---|---|
+| D-006 | [Self-update trusts the Authenticode signature and the checksum; the Sigstore attestation stays a gh check for humans](decisions/D-006-self-update-trusts-authenticode-and-the-checksum.md) | decided | 2026-10-22 |
 | D-005 | [Nerglish voice: the murloc language is the tool's voice, not an easter egg](decisions/D-005-nerglish-voice.md) | decided | 2026-10-21 |
 | D-004 | [Public from the first commit; the full CI matrix on every push, macOS only from M6](decisions/D-004-public-from-the-first-commit.md) | decided | 2026-10-21 |
 | D-003 | [The state is a sidecar under %LOCALAPPDATA%\mrgl\ per flavor; the AddOns folder is the truth](decisions/D-003-state-sidecar-under-localappdata.md) | decided | 2026-10-21 |
