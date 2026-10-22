@@ -38,8 +38,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-LINES_FLOOR = 86.0
-BRANCHES_FLOOR = 81.0
+LINES_FLOOR = 94.5
+BRANCHES_FLOOR = 95.5
 
 ATTRIBUTE = "#[cfg_attr(coverage_nightly, coverage(off))]"
 REASON_PREFIX = "// coverage: off — "

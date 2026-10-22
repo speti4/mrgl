@@ -48,7 +48,7 @@ Manager calls are excluded with their reason.
 1. [x] The exclusion attribute (`cfg_attr(coverage_nightly, coverage(off))` with a `// coverage: off —`
        reason line), the `unexpected_cfgs` lint, the two pin files, `scripts/coverage-check.py` with the
        floors and the exclusion register, the `coverage` CI job, the docs (pull request 1)
-2. [ ] The core's seams (a process list for the client guards, the key store from the environment with a
+2. [x] The core's seams (a process list for the client guards, the key store from the environment with a
        folder store, the rename of the backup move, the clock of the backup names, the registry reads on
        well-known keys) and the core's missing cases, file by file (pull request 2)
 3. [ ] The command line's missing end-to-end cases and the unit tests of its pure helpers (pull request 3)
@@ -66,6 +66,20 @@ Manager calls are excluded with their reason.
   docs list), the `coverage` job, the docs. With the test modules excluded the baseline is 86.33% lines
   (2204 missed of 16122) and 81.53% branches (437 of 2366); the floors start at 86.0 / 81.0. Four reasoned
   exclusions: the window's `main` and `run`, `choose_root`, the Credential Manager module.
+- 2026-10-22 — Pull request 1 merged (#277) after two fixes on its branch: the summary folder, and the gate
+  reads the lcov export instead of the JSON summary (the summary counts every instantiation of a generic
+  function on its own, so a branch one instantiation never takes shows as missed while the report shows it
+  covered); the `// coverage: os` line mark for a failure arm only the operating system can provoke, checked
+  against the measurement (a marked line a test reaches fails the run).
+- 2026-10-23 — Pull request 2: mrgl-core at 100.00% lines and branches (11313 lines, 1754 branches counted;
+  79 lines and 22 branches marked `coverage: os`). Seams: `ensure_client_not_running_among` and
+  `warn_if_client_running_among`, `keys::store_from_env` with the folder store behind `MRGL_KEY_STORE=<folder>`,
+  `backup::move_tree_with` and the `_at` forms taking the clock, `restore_wtf_with`, `discover::resolve_root_from`
+  and an environment parameter for the usual install folders, `sources::http_from_env_value`,
+  `staging::RunDir::create_at`, `install::move_dir_with` and `swap_or_revert`. The registry reads are tested
+  on well-known keys of the real registry; the dead arms found on the way are gone with a comment each;
+  `zip_entry::Refusal` carries the bound's refusal so the restore needs no catch-all arm; the unused
+  `keys::list_of_process` is removed. Workspace: 94.93% lines, 95.67% branches; floors 94.5 / 95.5.
 
 ## Deviations from the plan
 
