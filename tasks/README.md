@@ -53,6 +53,8 @@ _none_
 | 066 | [The GitHub source looks past the newest release for the flavor's asset and for …](backlog/066-github-source-looks-past-the-newest-release.md) | S | 2026-10-22 |
 | 067 | [The link guard also covers the folders a new version drops](backlog/067-link-guard-covers-dropped-folders.md) | S | 2026-10-22 |
 | 068 | [The update check: version order, progress, and a request budget without a token](backlog/068-update-check-version-order-progress-and-request-budget.md) | M | 2026-10-22 |
+| 071 | [Fold the duplicates: one WTF walker, one size formatter, no dead error variant](backlog/071-fold-the-duplicated-helpers.md) | S | 2026-10-22 |
+| 072 | [GitHub cache housekeeping: stale per-tag release.json files and the old single …](backlog/072-github-cache-housekeeping.md) | S | 2026-10-22 |
 
 #### M2 Window MVP
 
@@ -60,8 +62,6 @@ _none_
 |---|---|---|---|
 | 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
-| 069 | [The doctor report redacts a profile path written with forward slashes](backlog/069-doctor-redacts-forward-slash-profile-paths.md) | S | 2026-10-22 |
-| 070 | [The Forever notes schema check allows one day of slack on verified](backlog/070-forever-notes-date-check-allows-a-day-of-slack.md) | S | 2026-10-22 |
 
 #### M3 Toolbox
 
@@ -92,12 +92,12 @@ _none_
 
 ### In progress
 
-#### M1 Core + CLI
+#### M2 Window MVP
 
 | # | Task | Started | Plan |
 |---|---|---|---|
-| 071 | [Fold the duplicates: one WTF walker, one size formatter, no dead error variant](wip/071-fold-the-duplicated-helpers.md) | 2026-10-22 | `none` |
-| 072 | [GitHub cache housekeeping: stale per-tag release.json files and the old single …](wip/072-github-cache-housekeeping.md) | 2026-10-22 | `none` |
+| 069 | [The doctor report redacts a profile path written with forward slashes](wip/069-doctor-redacts-forward-slash-profile-paths.md) | 2026-10-22 | `none` |
+| 070 | [The Forever notes schema check allows one day of slack on verified](wip/070-forever-notes-date-check-allows-a-day-of-slack.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
