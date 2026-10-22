@@ -44,7 +44,9 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
+| 075 | [The CLI's output survives a closed pipe](backlog/075-cli-output-survives-a-closed-pipe.md) | S | 2026-10-22 |
 | 076 | [The dependency and interface checks say what the client says: an embedded-only …](backlog/076-the-checks-say-what-the-client-says.md) | S | 2026-10-22 |
+| 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](backlog/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | S | 2026-10-22 |
 | 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](backlog/080-housekeeping-after-wave-5.md) | S | 2026-10-22 |
 
 #### M2 Window MVP
@@ -58,8 +60,6 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 062 | [link takes a single addon folder as well as a development folder](backlog/062-link-takes-a-single-addon-folder.md) | S | 2026-10-21 |
-| 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](backlog/073-addon-sets-undo-edit-and-account.md) | M | 2026-10-22 |
 | 074 | [The window's toolbox: a set switch and a SavedVariables view](backlog/074-window-toolbox-sets-and-savedvariables.md) | M | 2026-10-22 |
 
 #### M4 Sources
@@ -83,12 +83,12 @@ _none_
 
 ### In progress
 
-#### M1 Core + CLI
+#### M3 Toolbox
 
 | # | Task | Started | Plan |
 |---|---|---|---|
-| 075 | [The CLI's output survives a closed pipe](wip/075-cli-output-survives-a-closed-pipe.md) | 2026-10-22 | `none` |
-| 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](wip/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | 2026-10-22 | `none` |
+| 062 | [link takes a single addon folder as well as a development folder](wip/062-link-takes-a-single-addon-folder.md) | 2026-10-22 | `none` |
+| 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](wip/073-addon-sets-undo-edit-and-account.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
