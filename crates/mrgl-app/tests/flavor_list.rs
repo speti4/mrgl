@@ -934,3 +934,74 @@ fn a_flavor_without_an_addons_folder_says_so() {
         )
     );
 }
+
+#[test]
+fn the_rows_read_the_last_check_file_the_command_line_writes() {
+    // Task 087: `mrgl update` keeps a source gone in the same file as the window's check (task 078); the
+    // file below is the shape the command line wrote for a 404, so the row shows what it found.
+    let fixture = Fixture::game_named("cli-last-check");
+    let home = fixture.home();
+    fixture.write(
+        "home/wowf/last-check.json",
+        r#"{
+  "format": "mrgl-last-check",
+  "schema": 1,
+  "flavor": "wowf",
+  "addons": {
+    "Questie": {
+      "source": "github:Questie/Questie",
+      "version": "1.2.3",
+      "state": "source-gone",
+      "latest": null,
+      "detail": "GitHub answered 404 for https://api.github.com/repos/Questie/Questie/releases?per_page=30: no such repository, or it is private",
+      "checked_at": "2026-10-22T12:29:00Z"
+    }
+  }
+}
+"#,
+    );
+    let load = || {
+        list::load(
+            Some(fixture.game_root()),
+            Vec::new(),
+            Some(&home),
+            Voice::new(false),
+        )
+    };
+    let answer = load();
+    let forever = flavor(&answer.flavors, "wowf");
+    let check = row(forever, "Questie")
+        .check
+        .clone()
+        .expect("the kept answer");
+    assert_eq!(check.label, "source gone");
+    assert_eq!(
+        serde_json::to_value(&check).expect("serializes")["state"],
+        "source-gone"
+    );
+    assert!(
+        check
+            .line
+            .ends_with(": no such repository, or it is private"),
+        "{}",
+        check.line
+    );
+    assert_eq!(row(forever, "Questie").update, None);
+
+    // Once a check answers again it drops the entry (the command line's test does that), and the row
+    // reads the offline check again: up to date.
+    let flavor_home = FlavorHome::at(&home, &FlavorId::Forever);
+    let mut last = mrgl_core::last_check::LastCheck::read(&flavor_home, &FlavorId::Forever);
+    assert_eq!(last.addons.len(), 1, "the window reads the file as written");
+    last.addons.clear();
+    last.write(&flavor_home).expect("the file");
+    let answer = load();
+    let forever = flavor(&answer.flavors, "wowf");
+    assert_eq!(
+        row(forever, "Questie")
+            .check
+            .as_ref()
+            .map(|check| check.label),
+        Some("up to date")
+    );
+}

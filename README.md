@@ -55,9 +55,10 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
   time the limit resets, instead of failing addon after addon. The window does the same per flavor: "Check
   for updates", "Update all" with a progress bar per addon and a cancel that lets the addon in flight
   finish, and on each row its update, pin, ignore and release channel, and the interface mark of `scan`
-  and `list` (`interface mismatch`, `out of date`) with the warning's line in its tooltip; what its last
+  and `list` (`interface mismatch`, `out of date`) with the warning's line in its tooltip; what the last
   check found that needs the network to know again (a source gone, a failed check, the addons left before
-  the rate limit) stays on the rows across a mark and a restart until the next check.
+  the rate limit), the window's own or `mrgl update`'s, stays on the rows across a mark and a restart
+  until the next check.
 - **A known-good set on another machine.** `mrgl export` writes the managed addons into a list file and
   `mrgl import` installs it elsewhere, at the current releases, or with `--exact` at the versions the list
   names; a version the source no longer offers is reported and skipped.

@@ -277,7 +277,11 @@ terminal or with `--json` the command stops and says what `--yes` does, exit 1),
 one install path with the pick the check made (`AddonUpdate::request`, no second resolve), say each
 install's summary line with the dependency and interface warnings of the installed addon, and end with the
 summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
-`1 update available` and writes nothing). `--json` is one `update` document: every addon with `state`,
+`1 update available` and writes nothing under `Interface\AddOns` or in the sidecar). Right after the check,
+before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
+as the window's check does (task 087, below): a source gone, a failed check and an addon left before the
+rate limit are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
+that cannot be written is a warning (`the answers of this check are not kept for the window: …`). `--json` is one `update` document: every addon with `state`,
 `latest`, `order` (the installed version against `latest`: `older`, `same`, `newer`, or `null` when there is
 no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installed `addon` block and the
 interface check of the installed addon, `interface_mismatch` and `interface_out_of_date` (task 082, below),
@@ -594,9 +598,11 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   offline rule, task 041), counts no request against the rate limit and never stamps the cache as
   confirmed. `update` is set for `update-available` only, so a newer installed version, a pin or a guess is no
   update; an addon whose answer needs the network (nothing cached) has no `check`. What the cache cannot
-  tell again is the last online check's (task 078): a check of the window keeps every addon's answer of
-  `source-gone`, `failed` or `rate-limited` in `last-check.json` under the flavor's folder of the mrgl home
-  (`mrgl_core::last_check`), and every list lays those answers over the offline ones, so a redraw after a
+  tell again is the last online check's (task 078): a check of the window, and `mrgl update --all` or
+  `mrgl update <name>` on the command line (task 087), keeps every addon's answer of `source-gone`,
+  `failed` or `rate-limited` in `last-check.json` under the flavor's folder of the mrgl home
+  (`mrgl_core::last_check::record_check`, one rule for both writers), and every list lays those answers
+  over the offline ones, so a redraw after a
   mark and a restart show them, until the next check of the addon replaces its answer (dropped for any
   other state). The file is a cache: a missing, unreadable or foreign one is no answer. An answer holds
   while the sidecar entry keeps the source and the version it was given for, so an update or a reinstall
@@ -990,9 +996,9 @@ folder, written by `mrgl root` and the window's chooser; `theme` and `serious`, 
 task 034, the second also the third source of the voice's serious switch),
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
 sidecar `state.json`, the addon sets `sets.json` (task 014), the last set apply's undo record
-`set-undo\` (task 073), the window's last online check answers
-`last-check.json` (task 078; a cache, deleting it only drops a source gone or a failed check until the next
-check),
+`set-undo\` (task 073), the last online check's answers the window shows,
+`last-check.json` (task 078, written by the window's check and by `mrgl update`, task 087; a cache,
+deleting it only drops a source gone or a failed check until the next check),
 the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves, a download waits here; every run folder is removed when its run ends, and the leftovers of a run
 that ended before that are swept, see "The staging folder's lifetime") and `cache\<addon>\<version>.zip` (the current and the previous

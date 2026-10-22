@@ -35,6 +35,7 @@ use mrgl_core::install::{
     PickInstalled, PickStep, SourceInstalled, SourceRequest,
 };
 use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
+use mrgl_core::last_check;
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
@@ -2561,6 +2562,20 @@ fn update_command(
     })
     .map_err(|error| error.to_string())?;
     warnings.extend(check.warnings.iter().cloned());
+    // Task 087: what the check found that the cache cannot tell again (a source gone, a failed check, the
+    // stop before the rate limit) is kept for the window, as its own check keeps it (task 078), and an
+    // addon the check answered otherwise drops its kept answer; a dry run is a check too.
+    let state = engine
+        .load_state()
+        .map(|loaded| loaded.state)
+        .unwrap_or_else(|_| State::new(&engine.flavor.id));
+    if let Err(error) =
+        last_check::record_check(&engine.home, &engine.flavor.id, &state, &check.addons)
+    {
+        warnings.push(format!(
+            "the answers of this check are not kept for the window: {error}"
+        ));
+    }
     // Task 041: a pick from the cached release list, offline, is a warning here as on `add`.
     warnings.extend(
         check

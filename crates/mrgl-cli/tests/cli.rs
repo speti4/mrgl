@@ -6018,6 +6018,153 @@ fn update_stops_before_the_rate_limit_with_the_reset_time_and_counts_the_rest() 
     assert_eq!(value["addons"][1]["latest"], serde_json::Value::Null);
 }
 
+// --- task 087: `update` writes the last-check file the window reads ---
+
+/// The kept answers of the `_forever_` flavor of a game, by addon name: the state and the version each was
+/// given for; the file's head is checked on the way.
+fn kept_answers(game: &Game) -> std::collections::BTreeMap<String, (String, String)> {
+    let path = game.home.join("wowf").join("last-check.json");
+    let text = std::fs::read_to_string(&path).expect("the last-check file");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    assert_eq!(
+        (&value["format"], &value["schema"], &value["flavor"]),
+        (
+            &serde_json::json!("mrgl-last-check"),
+            &serde_json::json!(1),
+            &serde_json::json!("wowf")
+        ),
+        "{text}"
+    );
+    value["addons"]
+        .as_object()
+        .expect("the addons")
+        .iter()
+        .map(|(name, kept)| {
+            assert!(kept["checked_at"].is_string(), "{text}");
+            (
+                name.clone(),
+                (
+                    kept["state"].as_str().expect("a state").to_string(),
+                    kept["version"].as_str().expect("a version").to_string(),
+                ),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn update_keeps_a_gone_source_for_the_window_until_it_answers_again() {
+    let game = managed_game(
+        "last-check",
+        &[
+            ("Gone", "github:Example/Missing", "1.2.3", ""),
+            ("Questie", "github:Questie/Questie", "1.2.3", ""),
+        ],
+    );
+    let base = game.root.parent().expect("the base").to_path_buf();
+    let kept = |state: &str, version: &str| (state.to_string(), version.to_string());
+
+    // Offline with nothing cached: both checks fail, and both answers are kept.
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", base.join("no-such-stub"))
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        kept_answers(&game),
+        std::collections::BTreeMap::from([
+            ("Gone".to_string(), kept("failed", "1.2.3")),
+            ("Questie".to_string(), kept("failed", "1.2.3")),
+        ])
+    );
+
+    // Online: the 404 replaces the failed answer, and an addon up to date drops its own.
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        kept_answers(&game),
+        std::collections::BTreeMap::from([("Gone".to_string(), kept("source-gone", "1.2.3"))])
+    );
+    let text =
+        std::fs::read_to_string(game.home.join("wowf").join("last-check.json")).expect("the file");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let gone = &value["addons"]["Gone"];
+    assert_eq!(gone["source"], "github:Example/Missing");
+    assert!(
+        gone["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.ends_with("no such repository, or it is private")),
+        "{text}"
+    );
+
+    // `update <name>` writes the file too: the source answers again, with the installed version, so the
+    // kept answer goes while the version stays the same.
+    let stub = base.join("stub-found-back");
+    let _ = std::fs::remove_dir_all(&stub);
+    copy_tree(&releases(), &stub);
+    let repos = stub.join("api.github.com").join("repos");
+    std::fs::create_dir_all(repos.join("Example").join("Missing")).expect("the repository");
+    std::fs::copy(
+        repos.join("Questie").join("Questie").join("releases.json"),
+        repos.join("Example").join("Missing").join("releases.json"),
+    )
+    .expect("the release list");
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args([
+            "--serious",
+            "update",
+            "Gone",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout(&output)
+            .lines()
+            .any(|line| line == "Gone  1.2.3  up to date"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(kept_answers(&game), std::collections::BTreeMap::new());
+}
+
+#[test]
+fn update_warns_when_the_last_check_file_cannot_be_written_and_goes_on() {
+    let game = managed_game(
+        "last-check-blocked",
+        &[("Gone", "github:Example/Missing", "1.2.3", "")],
+    );
+    // A folder where the file goes: the write fails, the check stands.
+    std::fs::create_dir_all(game.home.join("wowf").join("last-check.json"))
+        .expect("the blocking folder");
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line
+            .starts_with("the answers of this check are not kept for the window: ")),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "dry run: 1 source gone; nothing written"
+    );
+}
+
 // --- task 057: `import --exact` installs the version the list names ---
 
 /// A copy of the fixture answers with the fixture `Questie` zip behind the Forever asset of the older
