@@ -1,13 +1,16 @@
-"""Writes the synthetic fixture zips of task 004 next to this script, and the release asset the GitHub
-source's folder stub serves (task 040) under `../releases/`, deterministically (fixed timestamps, fixed entry
-order, deflate), so a rerun changes no byte. Run it as `python -I <this file>` after editing a shape below;
-the zips are committed. Nothing here comes from a real addon."""
+"""Writes the synthetic fixture zips of task 004 next to this script, the release asset the GitHub source's
+folder stub serves (task 040) under `../releases/`, and the files the WoWInterface stub serves (task 094) under
+`../sources/`, deterministically (fixed timestamps, fixed entry order, deflate; the WoWInterface files are
+stored, not deflated, so their bytes and the MD5 their answers name never depend on the zlib at hand), so a
+rerun changes no byte. Run it as `python -I <this file>` after editing a shape below; the zips are committed.
+Nothing here comes from a real addon."""
 
 from pathlib import Path
 import zipfile
 
 HERE = Path(__file__).resolve().parent
 RELEASES = HERE.parent / "releases"
+SOURCES = HERE.parent / "sources"
 EPOCH = (1980, 1, 1, 0, 0, 0)
 
 
@@ -18,13 +21,13 @@ def toc(name, version, interface="16001", extra=""):
     )
 
 
-def write(file_name, entries):
+def write(file_name, entries, stored=False):
     path = HERE / file_name
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
         for name, content in entries:
             info = zipfile.ZipInfo(name, date_time=EPOCH)
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED
             info.external_attr = (0o644 << 16) if not name.endswith("/") else (0o755 << 16) | 0x10
             archive.writestr(info, content)
     print(path.name, [name for name, _ in entries])
@@ -154,6 +157,24 @@ write(RELEASES / "github.com/Questie/Questie/releases/download/v1.2.3/Questie-v1
     ("Questie/Questie.toc", toc("Questie", "v1.2.3", extra="## Notes: a made-up stand-in, no real addon\r\n")),
     ("Questie/core.lua", "-- Questie fixture 1.2.3\n"),
 ])
+
+# The files behind the WoWInterface fixture projects (task 094), at the path and query the folder stub maps
+# their `UIDownload` to (`getfile.php@d=<date>&id=<id>&minion`). Their TOCs name an interface of every fixture
+# build, so the interface check stays quiet whichever flavor a test installs them into.
+WOWI = SOURCES / "cdn.wowinterface.com/downloads"
+EVERY_BUILD = "120105, 11507, 40402, 16001"
+for project, folder, version in [
+    (1001, "MrglCompat", "2.0.0"),
+    (1002, "MrglNoList", "1.0.0"),
+    (1004, "MrglBadSum", "1.0.0"),
+    (1005, "MrglForever", "3.1.0"),
+]:
+    write(WOWI / f"getfile.php@d=1785000000&id={project}&minion", [
+        (f"{folder}/", ""),
+        (f"{folder}/{folder}.toc", toc(folder, version, interface=EVERY_BUILD,
+                                       extra=f"## X-WoWI-ID: {project}\r\n")),
+        (f"{folder}/core.lua", f"-- {folder} fixture {version}\n"),
+    ], stored=True)
 
 # Task 039, the bound on the unpacked size. A zip that declares 3 GiB in a few hundred bytes: refused by the
 # bound (2 GiB) before anything is written, installed under a higher one (its data is a few bytes).

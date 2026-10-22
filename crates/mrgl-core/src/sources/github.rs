@@ -108,11 +108,7 @@ pub struct Release {
 impl Release {
     /// The version the tag carries: the tag without a leading `v` (`v1.2.3` is `1.2.3`, `1.2.3` stays).
     pub fn version(&self) -> &str {
-        let tag = self.tag_name.as_str();
-        match tag.strip_prefix('v').or_else(|| tag.strip_prefix('V')) {
-            Some(rest) if rest.starts_with(|c: char| c.is_ascii_digit()) => rest,
-            _ => tag,
-        }
+        sources::version_of_tag(&self.tag_name)
     }
 
     /// The release's `release.json` asset, when the packager uploaded one.
@@ -811,7 +807,7 @@ fn release_json_cache_name(tag: &str) -> String {
 
 /// Writes a cache file through a temporary file and a rename, so a reader (another run at the same time)
 /// never sees a half-written file.
-fn write_cache<T: Serialize>(path: &Path, cached: &T) -> std::io::Result<()> {
+pub(crate) fn write_cache<T: Serialize>(path: &Path, cached: &T) -> std::io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| std::io::Error::other("no parent folder"))?;
@@ -1058,6 +1054,7 @@ impl<H: Http> GitHub<H> {
             asset: chosen.asset.name.clone(),
             url: chosen.asset.browser_download_url.clone(),
             size: chosen.asset.size,
+            md5: None,
             flavor: chosen.flavor,
             interface: chosen.interface,
             guess: chosen.guess,
@@ -1769,6 +1766,7 @@ mod tests {
             asset: "A.zip".into(),
             url: "https://dl.test/A.zip".into(),
             size: None,
+            md5: None,
             flavor: "forever".into(),
             interface: None,
             guess: false,

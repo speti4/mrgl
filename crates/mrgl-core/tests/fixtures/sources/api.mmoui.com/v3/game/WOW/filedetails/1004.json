@@ -1,0 +1,16 @@
+[
+ {
+  "UID": "1004",
+  "UICATID": "21",
+  "UIVersion": "1.0.0",
+  "UIDate": 1785000000000,
+  "UIMD5": "0123456789abcdef0123456789abcdef",
+  "UIFileName": "MrglBadSum-1.0.0.zip",
+  "UIDownload": "https://cdn.wowinterface.com/downloads/getfile.php?id=1004&d=1785000000&minion",
+  "UIPending": "0",
+  "UIName": "Mrgl Bad Sum",
+  "UIAuthorName": "mrgl fixtures",
+  "UIDescription": "A made-up project of the mrgl fixtures.",
+  "UIChangeLog": "## 1.0.0\r\n- a made-up change\r\n"
+ }
+]

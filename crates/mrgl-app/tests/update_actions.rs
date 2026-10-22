@@ -175,6 +175,7 @@ impl Source for Stub {
             asset: zip.to_string(),
             url: format!("https://example.invalid/{zip}"),
             size: None,
+            md5: None,
             flavor: "forever".to_string(),
             interface: Some(16001),
             guess: false,

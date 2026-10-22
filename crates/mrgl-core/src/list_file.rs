@@ -646,6 +646,7 @@ mod tests {
                 asset: "Some-Asset.zip".to_string(),
                 url: "https://github.test/Some-Asset.zip".to_string(),
                 size: None,
+                md5: None,
                 flavor: "forever".to_string(),
                 interface: Some(16001),
                 guess: false,

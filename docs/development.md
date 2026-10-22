@@ -28,8 +28,12 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   does not have or cannot ask, which `Source::missing` tells before any request, so `add` fails, the list
   import reports `source-not-configured` and the update check leaves the entry not checked; the Forever
   signal from the cache is the trait's `cached_forever_build`, `unknown` wherever a source does not name
-  Forever, and the request budget of a spec is `request_budget_for`, task 092; the Wago, WoWInterface and
-  CurseForge sources join the router as they come, M4), the install engine (`install`: a zip into
+  Forever, and the request budget of a spec is `request_budget_for`, task 092; `sources::wowinterface`, the
+  WoWInterface source of task 094, see [Fixtures](#fixtures): the project's one file from the MMOUI API without
+  a key, the flavor from the compatibility list of the all-projects file list, read once a day, a pending
+  file reported, the download checked against the API's MD5 before it is written (`Pick::md5`,
+  `sources::check_md5`, on RustCrypto's `md-5`), the Forever signal `yes` for a Forever compatibility and
+  `unknown` otherwise; the Wago and CurseForge sources join the router as they come, M4), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
@@ -1099,6 +1103,37 @@ print it as a warning and list it in the JSON `warnings`, and so do `import` (th
 `update` (one line per stale pick of the check), through the one install path of task 055. The asset itself is never cached before an install, so an `add` offline only gets as far as
 finding the release installed already. The folder stub with a folder that does not exist answers every
 request with a network error, which is how the tests go offline.
+
+The WoWInterface source (task 094, `sources::wowinterface`) asks the MMOUI API, which takes no key:
+`api.mmoui.com/v3/game/WOW/filedetails/<id>.json` answers an array of one project, its file's version
+(`UIVersion`; the version is the text without a leading `v`, as for a tag), name, download address and MD5
+(`UIFileName`, `UIDownload`, `UIMD5`), its date in milliseconds (`UIDate`) and `UIPending`. A project has
+one file and both channels take it. `UIPending: "1"` (the newest file waits for the site's approval) is the
+error `the newest file of wowi:<id> waits for approval on WoWInterface: nothing is installed until it is
+approved`: `add` fails with it, `import` reports it as failed and the update check as a failed check. The
+download (`cdn.wowinterface.com/downloads/getfile.php?id=<id>&d=<date>&minion`) is compared with `UIMD5`
+before it is written, so the engine never opens it: a mismatch is `refused <file> of wowi:<id> <version>: its
+MD5 is <md5>, the source names <md5>; the download was damaged or the file changed, try again`. The flavor
+comes from the project's compatibility list (`UICompatibility`, the author's "works with" game versions),
+which only the all-projects answer `filelist.json` carries (some 5.6 MB): the source reads it at most once a
+run and once a day and keeps it trimmed to each project's compatibility, folders (`UIDir`) and page under
+`<home>/cache/wowi/filelist.json`, the cache of any age standing in when the API cannot answer. A
+compatibility version names its game (`sources::wowinterface::game_of`: `1.13` to `1.59` Classic Era, `1.60`
+and up Forever, `2` to `5` the progressing classic by its major, Titan's `3.80` apart from Wrath's `3.4`,
+`6` and up retail), and an entry of the flavor's game makes the pick one by metadata (`WoWInterface lists
+compatibility 12.0.7 (<patch name>)`; the progressing classic without a known build is a guess of the game
+type); without one, without a list and on Forever the project's one file is a guess that says what the list
+names, which the update check reports as `guess only`, and the interface check after the install is the
+safety net. The Forever signal is `yes` when the list names a Forever version and `unknown` otherwise, never
+inferred from a classic or retail entry; `list` reads it from the cached file list alone. The project's
+answer is cached under `<home>/cache/wowi/<id>.json` with `checked_at` (the API allows an hour,
+`Cache-Control: max-age=3600`); every resolve asks again, and when the API cannot be reached the cached
+answer stands with `stale`, the offline rule of the GitHub source. The fixture answers are under
+`tests/fixtures/sources/` (`api.mmoui.com/…` and the stored zips under `cdn.wowinterface.com/downloads/`,
+their query mapped to the file name, written by `zips/make-zips.py`): `1001` lists retail, Classic Era and
+Cataclysm Classic, `1002` no compatibility, `1003` waits for approval, `1004` names an MD5 its file does not
+have, `1005` lists a made-up Forever version, and `1006` is in the file list alone with two folders; the
+end-to-end tests point `MRGL_HTTP_STUB` at that folder for a `wowi:` spec.
 
 The Forever starter list (`lists/forever-starter.json`, task 028) has a stub of its own,
 `starter-list/`: one release per entry's repository in the shape that repository's latest release had at

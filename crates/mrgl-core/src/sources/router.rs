@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::error::{Error, Result};
 use crate::forever::ForeverBuild;
 use crate::sources::github::{self, GitHub};
+use crate::sources::wowinterface::{self, WowInterface};
 use crate::sources::{
     Channel, Http, Pick, RequestBudget, Source, SourceKind, SourceSpec, Target, http_from_env,
     not_configured,
@@ -35,20 +36,31 @@ impl Sources {
     /// The sources of this process over one client ([`http_from_env`]: the folder stub when
     /// `MRGL_HTTP_STUB` names one, else the network), each with its key and its cache under the mrgl home
     /// folder: GitHub with its token from `MRGL_GITHUB_TOKEN` or the key store ([`GitHub::from_env`],
-    /// [`crate::keys`]).
+    /// [`crate::keys`]), WoWInterface without a key (task 094).
     pub fn from_env() -> Sources {
         let http: Arc<dyn Http> = Arc::from(http_from_env());
-        Sources::none().with(SourceKind::GitHub, GitHub::from_env(http))
+        Sources::none()
+            .with(SourceKind::GitHub, GitHub::from_env(Arc::clone(&http)))
+            .with(SourceKind::WowInterface, WowInterface::from_env(http))
     }
 
     /// The sources over a client of the caller's, with their caches under a home folder (`None`: no cache)
     /// and no key: the window's offline view (task 078) passes a client that fails every request, so each
     /// source answers from its own cache by its offline rule; a test passes the folder stub.
     pub fn cached(http: Arc<dyn Http>, home: Option<&Path>) -> Sources {
-        Sources::none().with(
-            SourceKind::GitHub,
-            GitHub::new(http, None, home.map(|home| home.join(github::CACHE_SUBDIR))),
-        )
+        Sources::none()
+            .with(
+                SourceKind::GitHub,
+                GitHub::new(
+                    Arc::clone(&http),
+                    None,
+                    home.map(|home| home.join(github::CACHE_SUBDIR)),
+                ),
+            )
+            .with(
+                SourceKind::WowInterface,
+                WowInterface::new(http, home.map(|home| home.join(wowinterface::CACHE_SUBDIR))),
+            )
     }
 
     /// The same sources with one slot filled, or replaced: the source that answers every spec of `kind`.
@@ -160,6 +172,7 @@ mod tests {
                 asset: format!("{}.zip", self.name),
                 url: format!("https://example.test/{}.zip", self.name),
                 size: None,
+                md5: None,
                 flavor: "forever".to_string(),
                 interface: None,
                 guess: false,
@@ -330,6 +343,7 @@ mod tests {
     fn the_cached_sources_have_github_and_answer_offline_from_the_cache_alone() {
         let sources = Sources::cached(Arc::new(Offline), None);
         assert!(sources.has(SourceKind::GitHub));
+        assert!(sources.has(SourceKind::WowInterface), "task 094");
         assert!(!sources.has(SourceKind::Wago));
         let error = sources
             .resolve(&spec("github:o/r"), &Target::new(FlavorId::Forever))

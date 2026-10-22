@@ -307,6 +307,26 @@ pub enum Error {
         got: u64,
     },
 
+    /// A downloaded asset whose MD5 is not the one its source names (task 094: WoWInterface's `UIMD5`):
+    /// damaged on the way or replaced. It is refused before anything writes or opens it.
+    #[error(
+        "refused {asset} of {spec} {release}: its MD5 is {got}, the source names {expected}; the download was damaged or the file changed, try again"
+    )]
+    AssetChecksumMismatch {
+        spec: String,
+        release: String,
+        asset: String,
+        expected: String,
+        got: String,
+    },
+
+    /// The newest file of a project waits for the site's approval (task 094: WoWInterface's `UIPending`):
+    /// reported, never installed.
+    #[error(
+        "the newest file of {spec} waits for approval on {host}: nothing is installed until it is approved"
+    )]
+    ReleasePending { spec: String, host: &'static str },
+
     /// The source has no release of the version asked for (task 057, `import --exact`): it was deleted, or
     /// it was never published under that tag.
     #[error("no release {version} in {spec}")]

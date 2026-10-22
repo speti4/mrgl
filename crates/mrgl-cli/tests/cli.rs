@@ -1574,8 +1574,8 @@ fn add_of_a_source_this_build_lacks_names_what_is_missing() {
             "source not configured: wago:something (this build has no Wago source)",
         ),
         (
-            "https://www.wowinterface.com/downloads/info123-Name.html",
-            "source not configured: wowi:123 (this build has no WoWInterface source)",
+            "https://www.curseforge.com/projects/77",
+            "source not configured: curse:77 (this build has no CurseForge source)",
         ),
         (
             "curse:42",
@@ -1620,7 +1620,7 @@ fn import_reads_a_list_entry_of_a_source_this_build_lacks_as_not_configured() {
             "addons": [
                 { "name": "Questie", "source": "github:Questie/Questie", "version": "1.2.3",
                   "folders": ["Questie"] },
-                { "name": "Clique", "source": "wowi:123", "version": "1.0.0", "folders": ["Clique"] },
+                { "name": "Clique", "source": "curse:123", "version": "1.0.0", "folders": ["Clique"] },
             ],
         })
         .to_string(),
@@ -1637,7 +1637,7 @@ fn import_reads_a_list_entry_of_a_source_this_build_lacks_as_not_configured() {
     let text = stdout(&output);
     assert!(
         text.lines().any(|line| line
-            == "Clique  source not configured (wowi:123): this build has no WoWInterface source"),
+            == "Clique  source not configured (curse:123): this build has no CurseForge source"),
         "{text}"
     );
     assert!(
@@ -1657,7 +1657,7 @@ fn import_reads_a_list_entry_of_a_source_this_build_lacks_as_not_configured() {
     assert_eq!(value["addons"][1]["outcome"], "source-not-configured");
     assert_eq!(
         value["addons"][1]["detail"],
-        "this build has no WoWInterface source"
+        "this build has no CurseForge source"
     );
 }
 
@@ -5971,7 +5971,7 @@ fn update_does_not_ask_a_source_this_build_lacks_and_says_what_is_missing() {
     let game = managed_game(
         "update-not-configured",
         &[
-            ("Clique", "wowi:123", "1.0.0", ""),
+            ("Clique", "curse:123", "1.0.0", ""),
             ("Questie", "github:Questie/Questie", "1.2.3", ""),
         ],
     );
@@ -5982,7 +5982,7 @@ fn update_does_not_ask_a_source_this_build_lacks_and_says_what_is_missing() {
     assert_eq!(
         lines[1..3],
         [
-            "Clique  1.0.0  not checked: source not configured: wowi:123 (this build has no WoWInterface source)",
+            "Clique  1.0.0  not checked: source not configured: curse:123 (this build has no CurseForge source)",
             "checking Questie against github:Questie/Questie (2 of 2)",
         ],
         "{text}"
@@ -7886,4 +7886,218 @@ fn the_exe_carries_the_workspace_version_in_its_properties() {
         .expect("the exe has a version resource");
     assert_eq!(read, expected);
     assert_eq!(mrgl_core::VERSION, env!("CARGO_PKG_VERSION"), "one version");
+}
+
+// --- task 094: the WoWInterface source against the fixture answers under `sources/` ---
+
+/// The fixture answers of the WoWInterface source (task 094), served by the folder stub.
+fn sources_stub() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/sources")
+}
+
+impl Game {
+    /// `mrgl` in this game with the stub of the sources of task 094 instead of the GitHub one.
+    fn mrgl_sources(&self) -> Command {
+        let mut command = self.mrgl();
+        command.env("MRGL_HTTP_STUB", sources_stub());
+        command
+    }
+}
+
+#[test]
+fn add_wowi_installs_the_projects_one_file_from_the_stub() {
+    let game = Game::new("wowi-add");
+    let output = game
+        .mrgl_sources()
+        .args(["--serious", "add", "wowi:1001", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "resolving wowi:1001 for forever",
+            "downloading MrglCompat-2.0.0.zip",
+            "installing MrglCompat-2.0.0.zip into _forever_",
+            "pick for forever, a guess: wowi:1001 v2.0.0 (MrglCompat-2.0.0.zip, flavor forever): WoWInterface lists no forever compatibility (it lists 12.0.7, 1.15.7, 4.4.2); the project's one file is taken, a guess",
+            "forever build: unknown (WoWInterface lists no Forever compatibility)",
+            "installed MrglCompat 2.0.0 (1 folder: MrglCompat) into _forever_",
+        ],
+        "{text}"
+    );
+    assert!(game.addon("MrglCompat").join("MrglCompat.toc").is_file());
+    let state = sidecar(&game);
+    assert_eq!(state["addons"]["MrglCompat"]["source"], "wowi:1001");
+    assert_eq!(state["addons"]["MrglCompat"]["version"], "2.0.0");
+    assert!(
+        game.home.join("cache/wowi/1001.json").is_file(),
+        "the answer is cached"
+    );
+    assert!(game.home.join("cache/wowi/filelist.json").is_file());
+
+    // A page address reads the same id; the dry run with the Forever compatibility is a metadata pick.
+    let output = game
+        .mrgl_sources()
+        .args([
+            "--serious",
+            "add",
+            "https://www.wowinterface.com/downloads/info1005-MrglForever.html",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "resolving wowi:1005 for forever",
+            "pick for forever: wowi:1005 3.1.0 (MrglForever-3.1.0.zip, flavor forever): WoWInterface lists compatibility 1.60.1 (Made-up Forever Patch)",
+            "release notes: 3.1.0 (https://www.wowinterface.com/downloads/info1005-MrglForever.html)",
+            "forever build: yes (WoWInterface lists a Forever compatibility)",
+            "dry run: nothing installed",
+        ],
+        "{text}"
+    );
+    let json = game
+        .mrgl_sources()
+        .args([
+            "--json",
+            "add",
+            "wowi:1005",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one JSON document");
+    assert_eq!(value["pick"]["md5"], "c4839676a8a74ca3b0e44146b54a3477");
+    assert_eq!(value["pick"]["guess"], false);
+    assert_eq!(value["pick"]["forever_build"], "yes");
+}
+
+#[test]
+fn add_wowi_reports_a_pending_file_and_refuses_a_wrong_md5_before_the_zip_opens() {
+    let game = Game::new("wowi-refused");
+    for dry_run in [true, false] {
+        let mut command = game.mrgl_sources();
+        command.args(["--serious", "add", "wowi:1003", "--flavor", "forever"]);
+        if dry_run {
+            command.arg("--dry-run");
+        }
+        let output = command.output().expect("run mrgl");
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(
+            stderr_last_line(&output),
+            "the newest file of wowi:1003 waits for approval on WoWInterface: nothing is installed until it is approved"
+        );
+    }
+    let output = game
+        .mrgl_sources()
+        .args(["--serious", "add", "wowi:1004", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "refused MrglBadSum-1.0.0.zip of wowi:1004 1.0.0: its MD5 is bb4291ce1f730854f286d0707adf9a9d, the source names 0123456789abcdef0123456789abcdef; the download was damaged or the file changed, try again"
+    );
+    assert!(!game.addon("MrglBadSum").exists(), "nothing installed");
+    assert!(!game.state_path().exists(), "no sidecar written");
+    assert_eq!(staging_entries(&game), Vec::<String>::new());
+}
+
+#[test]
+fn import_and_update_take_a_wowi_entry() {
+    let game = Game::new("wowi-import");
+    let base = game.root.parent().expect("the base").to_path_buf();
+    let list = base.join("wowi.json");
+    std::fs::write(
+        &list,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [
+                { "name": "MrglForever", "source": "wowi:1005", "version": "3.1.0",
+                  "folders": ["MrglForever"] },
+            ],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    let output = game
+        .mrgl_sources()
+        .args(["--serious", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let state = sidecar(&game);
+    assert_eq!(state["addons"]["MrglForever"]["source"], "wowi:1005");
+    assert_eq!(state["addons"]["MrglForever"]["version"], "3.1.0");
+    assert!(game.addon("MrglForever").join("MrglForever.toc").is_file());
+
+    // The update check asks WoWInterface: a metadata pick is an update, a guess is reported, a pending
+    // file is a failed check that says why.
+    let game = managed_game(
+        "wowi-update",
+        &[
+            ("MrglCompat", "wowi:1001", "1.9.0", ""),
+            ("MrglForever", "wowi:1005", "3.0.0", ""),
+            ("MrglPending", "wowi:1003", "1.0.0", ""),
+        ],
+    );
+    let output = game
+        .mrgl_sources()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    // A failed check is exit code 1, as for any source that cannot give its current release.
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "1 addon of _forever_ failed: MrglPending; the other addons are done"
+    );
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "checking the managed addons of _forever_ against their sources",
+            "checking MrglCompat against wowi:1001 (1 of 3)",
+            "MrglCompat  1.9.0 -> 2.0.0  guess only: WoWInterface lists no forever compatibility (it lists 12.0.7, 1.15.7, 4.4.2); the project's one file is taken, a guess; `mrgl add wowi:1001` installs it anyway",
+            "checking MrglForever against wowi:1005 (2 of 3)",
+            "MrglForever  3.0.0 -> 3.1.0  update available",
+            "checking MrglPending against wowi:1003 (3 of 3)",
+            "MrglPending  1.0.0  check failed: the newest file of wowi:1003 waits for approval on WoWInterface: nothing is installed until it is approved",
+            "dry run: 1 update available, 1 guess only, 1 check failed; nothing written",
+        ],
+        "{text}"
+    );
+    let output = game
+        .mrgl_sources()
+        .args([
+            "--serious",
+            "update",
+            "MrglForever",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(sidecar(&game)["addons"]["MrglForever"]["version"], "3.1.0");
 }

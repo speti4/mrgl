@@ -36,6 +36,16 @@ BOM in a fixture survives every checkout.
   `releases.json.headers`, the `Link` header to `releases.page-2.json`, whose first release is the stable
   `v1.0.0` with a `release.json` that names `forever`; the folder stub serves a `page` above 1 from
   `<answer>.page-<n>.json` and adds the lines of a `<answer>.headers` file to the answer's headers.
+- `sources/` — the answers of the WoWInterface source (task 094), laid out like `releases/`:
+  `api.mmoui.com/v3/game/WOW/filedetails/<id>.json` per project (an array of one, as the API answers) and a
+  trimmed `filelist.json` with the compatibility lists and the folders, and the files behind the download
+  addresses under `cdn.wowinterface.com/downloads/`, named by the stub's query mapping
+  (`getfile.php@d=1785000000&id=<id>&minion`). `1001` (`MrglCompat`) lists retail, Classic Era and
+  Cataclysm Classic, `1002` (`MrglNoList`) lists nothing, `1003` (`MrglPending`) waits for approval and has
+  no file, `1004` (`MrglBadSum`) names an MD5 its file does not have, `1005` (`MrglForever`) lists a
+  made-up Forever version, `1006` is in the file list alone with two folders. Every name is made up; the
+  files are stored zips written by `zips/make-zips.py`, so the MD5 the answers name does not depend on the
+  zlib at hand.
 - `zips/*.zip` — small archives for the install engine (task 004), written by `zips/make-zips.py` (fixed
   timestamps and entry order, so a rerun changes no byte; `python -I` it after editing a shape): one addon
   folder in three versions (`one-folder-1.0.0` with `old.lua`, `1.1.0` with `new.lua` instead, `1.2.0`),

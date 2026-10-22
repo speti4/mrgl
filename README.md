@@ -109,6 +109,7 @@ target\release\mrgl.exe list --flavor forever                               # wh
 target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # remember a game folder installed elsewhere
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever            # install the release's Forever asset
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # which asset it would be, nothing installed
+target\release\mrgl.exe add wowi:<id> --flavor retail                       # a WoWInterface project's file, no key needed
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe remove SomeAddon --flavor forever                   # remove an addon mrgl installed
 target\release\mrgl.exe link D:\dev\my-addons --flavor forever              # a junction per addon you develop
@@ -154,9 +155,16 @@ A source spec names where an addon comes from: `github:<owner>/<repo>` (or the r
 `wago:<id>`, `wowi:<id>` (or the WoWInterface page, `www.wowinterface.com/downloads/info<id>…`) and
 `curse:<id>` (or `www.curseforge.com/projects/<id>`). A Wago or CurseForge addon page names the addon by a
 slug, not its id, so mrgl refuses it and says where the id is (the `X-Wago-ID` or `X-Curse-Project-ID` line
-of the addon's TOC). This build has the GitHub source only: `add` with a spec of another source says
-`source not configured` and what is missing, an imported list reports such an entry the same way, and the
-update check leaves it not checked.
+of the addon's TOC). This build has the GitHub and the WoWInterface sources: `add` with a spec of another
+source says `source not configured` and what is missing, an imported list reports such an entry the same
+way, and the update check leaves it not checked.
+
+A WoWInterface project has one file, and WoWInterface names no flavor for it: mrgl reads the project's
+compatibility list (the game versions its author ticked) and takes the file for the flavor whose game the
+list names; without such an entry, and on Forever, which no project lists yet, the pick is a guess and says
+so, and the interface check after the install is the safety net. A file that waits for WoWInterface's
+approval is reported and not installed, and a download whose MD5 is not the one WoWInterface names is
+refused before anything opens it. The source needs no key.
 
 On a standard install no flag is needed: mrgl finds the game folder through the registry (the launcher's
 key, or the game's Uninstall entry) or under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
@@ -172,7 +180,8 @@ addon.
 
 On Forever, `add --dry-run` and `list` show a Forever note for each addon. `forever build: yes`, `no` or
 `unknown` says whether the addon's source publishes a Forever build at all: its `release.json` names one,
-names other flavors only, or nothing says. `list` looks at the release an install would take: the newest one
+names other flavors only, or nothing says (a WoWInterface project is `yes` when its compatibility list
+names Forever, `unknown` otherwise). `list` looks at the release an install would take: the newest one
 of the addon's channel with a Forever zip, past a newer release built for other flavors only. A curated note, when there is one, says why an addon with a
 Forever build still only half works there (Forever hides combat values from addons), with the date it was
 verified and its source; a note older than 90 days is marked stale. `list` stays offline and reads what the
@@ -242,7 +251,7 @@ folder of the same name already there is skipped, never replaced; an install nev
 addon, and `unlink` removes exactly the junctions `link` made, never a folder and never a file of yours.
 
 An exported list carries each managed addon's source and version; `import` installs the current release of
-every entry the flavor does not have yet whose source this build has (`github:`), reports an entry of a
+every entry the flavor does not have yet whose source this build has (`github:`, `wowi:`), reports an entry of a
 source not configured with what is missing, and leaves the others alone (a zip in hand stays on the
 machine it came from, a linked folder is linked again). `list` and an install warn when an addon's
 `## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor;
