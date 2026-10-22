@@ -1706,3 +1706,144 @@ fn the_one_path_resolves_a_managed_addon_on_its_channel_and_finds_it_installed()
     assert_eq!(installed.pick.version, "1.1.0-beta");
     assert_eq!(sandbox.staging_entries(), Vec::<String>::new());
 }
+
+// --- task 084: stale staging folders are swept ---
+
+/// A folder under `staging\` as a run of the given age would have named it, with a file in it.
+fn plant_run_folder(sandbox: &Sandbox, stem: &str, age: std::time::Duration) -> PathBuf {
+    let nanos = (std::time::SystemTime::now() - age)
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_nanos();
+    let dir = sandbox
+        .engine
+        .home
+        .staging_dir()
+        .join(format!("{stem}-{nanos}-0"));
+    std::fs::create_dir_all(&dir).expect("the planted folder");
+    std::fs::write(dir.join(stem), "a download left behind\n").expect("a file");
+    dir
+}
+
+const HOURS_AGO: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
+
+#[test]
+fn a_stale_staging_folder_is_gone_after_the_next_install_and_a_live_one_stays() {
+    let sandbox = Sandbox::new("sweep");
+    let stale = plant_run_folder(&sandbox, "download-Questie-v1.2.3-forever.zip", HOURS_AGO);
+    // Another run on the same flavor (the window next to the command line) holds its folder's lock.
+    let live = plant_run_folder(&sandbox, "download-Other.zip", HOURS_AGO);
+    let lock = std::fs::File::create(live.join(mrgl_core::staging::LOCK_FILE)).expect("the lock");
+    lock.try_lock().expect("the other run's lock");
+    // A folder made a minute ago may be a run that has not taken its lock yet.
+    let young = plant_run_folder(
+        &sandbox,
+        "download-Young.zip",
+        std::time::Duration::from_secs(60),
+    );
+
+    let installed = sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(installed.warnings, Vec::<String>::new());
+    assert!(!stale.exists(), "the leftover is swept");
+    assert!(live.is_dir(), "a folder another run holds stays");
+    assert!(young.is_dir(), "a young folder stays");
+    let mut entries = sandbox.staging_entries();
+    entries.sort();
+    let mut expected = [&live, &young].map(|dir| {
+        dir.file_name()
+            .expect("a name")
+            .to_string_lossy()
+            .into_owned()
+    });
+    expected.sort();
+    assert_eq!(entries, expected, "the install's own folders are gone");
+    drop(lock);
+}
+
+#[test]
+fn the_runs_own_folder_stays_while_it_runs_and_a_sweep_hours_later_spares_it() {
+    let sandbox = Sandbox::new("sweep-own");
+    let stale = plant_run_folder(&sandbox, "Questie-v1.2.3-forever", HOURS_AGO);
+    let releases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/releases");
+    let github = GitHub::new(FolderHttp::new(releases), None, None);
+    let spec = SourceSpec::parse("github:Questie/Questie").expect("a spec");
+    let pick = github
+        .resolve(&spec, &Target::from_flavor(&sandbox.engine.flavor))
+        .expect("a pick");
+    let staging = sandbox.engine.home.staging_dir();
+    let mut seen = false;
+    let mut record = |step: PickStep<'_>| {
+        if let PickStep::Installing { zip, .. } = step {
+            let own = zip.parent().expect("the run's folder");
+            assert!(own.join(mrgl_core::staging::LOCK_FILE).is_file());
+            // A sweep that thinks every folder is hours old (another process, much later) spares the run's
+            // own download folder: its lock is held.
+            let later = std::time::SystemTime::now() + HOURS_AGO;
+            assert_eq!(
+                mrgl_core::staging::sweep_at(&staging, later),
+                Vec::<String>::new()
+            );
+            assert!(zip.is_file(), "the download is untouched");
+            seen = true;
+        }
+    };
+    let outcome = sandbox
+        .engine
+        .install_pick(&github, &pick, &mut record)
+        .expect("installs");
+    assert!(seen);
+    assert!(
+        matches!(outcome, PickInstalled::Installed(_)),
+        "{outcome:?}"
+    );
+    assert!(!stale.exists());
+    assert_eq!(sandbox.staging_entries(), Vec::<String>::new());
+}
+
+#[test]
+fn a_folder_a_failed_swap_moved_folders_into_is_never_swept() {
+    let sandbox = Sandbox::new("sweep-previous");
+    let kept = plant_run_folder(&sandbox, "OneFolder-1.1.0", HOURS_AGO);
+    let previous = kept
+        .join(mrgl_core::staging::PREVIOUS_DIR)
+        .join("OneFolder");
+    std::fs::create_dir_all(&previous).expect("the folder moved aside");
+    std::fs::write(previous.join("core.lua"), "-- OneFolder 1.0.0\n").expect("a file");
+    sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(read(&previous.join("core.lua")), "-- OneFolder 1.0.0\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_leftover_that_cannot_be_removed_is_a_warning_and_the_install_stands() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let sandbox = Sandbox::new("sweep-stuck");
+    let stuck = plant_run_folder(&sandbox, "download-Stuck.zip", HOURS_AGO);
+    let open = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(stuck.join("download-Stuck.zip"))
+        .expect("a handle with no sharing");
+    let installed = sandbox.install("one-folder-1.0.0.zip");
+    assert_eq!(installed.warnings.len(), 1, "{:?}", installed.warnings);
+    assert!(
+        installed.warnings[0].starts_with(&format!(
+            "a leftover staging folder could not be removed: {}: ",
+            stuck.display()
+        )),
+        "{}",
+        installed.warnings[0]
+    );
+    assert_eq!(
+        sandbox
+            .state()
+            .entry("OneFolder")
+            .expect("the entry")
+            .1
+            .version,
+        "1.0.0"
+    );
+    drop(open);
+    sandbox.install("one-folder-1.1.0.zip");
+    assert_eq!(sandbox.staging_entries(), Vec::<String>::new());
+}

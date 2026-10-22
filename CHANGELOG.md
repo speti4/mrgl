@@ -14,6 +14,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The CLI's output survives a closed pipe ([075](https://github.com/speti4/mrgl/blob/main/tasks/done/075-cli-output-survives-a-closed-pipe.md))
 - The dependency and interface checks say what the client says: an embedded-only dependency is missing, a lower interface number is out of date ([076](https://github.com/speti4/mrgl/blob/main/tasks/done/076-the-checks-say-what-the-client-says.md))
 - The marks survive a reinstall under a new derived name, and the pinned line uses the version order ([077](https://github.com/speti4/mrgl/blob/main/tasks/done/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md))
+- Stale staging folders are swept, so a run that ends mid-install leaves nothing behind ([084](https://github.com/speti4/mrgl/blob/main/tasks/done/084-stale-staging-folders-are-swept.md))
 
 ### M2 Window MVP
 

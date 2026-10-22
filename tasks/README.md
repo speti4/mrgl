@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 12 backlog (0 ready · 0 blocked · 2 waiting · 10 ideas) · 0 in progress · 66 done · 3 dropped · 5 decisions
+**State:** 11 backlog (0 ready · 0 blocked · 2 waiting · 9 ideas) · 0 in progress · 67 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -46,7 +46,6 @@ _none_
 |---|---|---|---|
 | 082 | [An install and an update report the whole interface check: out of date next to …](backlog/082-install-and-update-report-the-interface-check.md) | S | 2026-10-22 |
 | 083 | [A reinstall of the installed version says it was reinstalled, not updated from …](backlog/083-a-reinstall-of-the-installed-version-says-so.md) | S | 2026-10-22 |
-| 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](backlog/084-stale-staging-folders-are-swept.md) | S | 2026-10-22 |
 | 087 | [The command line's update check writes the last-check file the window reads](backlog/087-cli-update-check-writes-the-last-check-file.md) | S | 2026-10-22 |
 
 #### M3 Toolbox
@@ -91,6 +90,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](done/084-stale-staging-folders-are-swept.md) | 2026-10-22 |
 | 081 | [The window's rows show the interface states scan and list mark](done/081-window-rows-show-the-interface-states.md) | 2026-10-22 |
 | 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](done/080-housekeeping-after-wave-5.md) | 2026-10-22 |
 | 079 | [Window and exe polish after the first release: the checks after an update, the …](done/079-window-and-exe-polish-after-the-first-release.md) | 2026-10-22 |
@@ -100,9 +100,8 @@ _none_
 | 075 | [The CLI's output survives a closed pipe](done/075-cli-output-survives-a-closed-pipe.md) | 2026-10-22 |
 | 074 | [The window's toolbox: a set switch and a SavedVariables view](done/074-window-toolbox-sets-and-savedvariables.md) | 2026-10-22 |
 | 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](done/073-addon-sets-undo-edit-and-account.md) | 2026-10-22 |
-| 072 | [GitHub cache housekeeping: stale per-tag release.json files and the old single …](done/072-github-cache-housekeeping.md) | 2026-10-22 |
 
-_56 more in `done/`._
+_57 more in `done/`._
 
 ### Decisions
 

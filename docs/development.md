@@ -37,7 +37,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   never a real folder or a junction mrgl did not make; Windows-only), the state
   sidecar (`state`, D-003; an entry's optional `pinned` version, `ignored` flag and release `channel`,
   `stable` or `prerelease`, with the queries and setters the update check and the CLI call, task 021; absent
-  fields read as unpinned, not ignored, stable, and a reinstall keeps them), the toolbox (`backup`: the `WTF`
+  fields read as unpinned, not ignored, stable, and a reinstall keeps them), the install engine's run
+  folders under `staging\` and the sweep of their leftovers (`staging`, task 084, below), the toolbox (`backup`: the `WTF`
   backup into a dated zip, the listing and the restore that checks every entry through `zip_entry`, moves
   the current `WTF` aside and reverts on a failure, task 013), the addon sets (`sets`, task 014, below),
   the zip entry check
@@ -198,6 +199,19 @@ a dry run, and `Engine::install_pick` the same path for a pick in hand. The link
 a linked addon or a junction mrgl did not make. The command line reports every install with one summary
 (the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
 interface checks).
+
+The staging folder's lifetime (task 084, `mrgl_core::staging`): every download and every unpacked zip gets
+a run folder of its own under `<flavor-id>\staging\` (`<stem>-<nanoseconds since 1970>-<attempt>`), and
+the run holds an exclusive lock on the `.mrgl-run.lock` file in it for as long as the folder is its own.
+The guard (`RunDir`) removes the folder on every path out; a run that ends before its guard goes (a killed
+process, a crash) leaves it behind, so `Engine::stage` sweeps the leftovers first, for every install, update,
+import, rollback and dry run of a zip. A folder is a leftover when its lock is free or missing, it is older
+than an hour (by the time in its name, else its modified time) and it holds no `previous\` folder. A held
+lock keeps the run's own folders and those of another running mrgl on the same flavor (the window next to
+the command line); the hour keeps a folder made a moment ago that is not locked yet, and a run of an mrgl
+from before task 084, which takes no lock; `previous\` holds the folders an interrupted or failed swap moved
+aside, perhaps the only copy of the version installed before, so that folder stays until it is removed by
+hand. A leftover that cannot be removed is a warning on the install's result, never an error.
 
 The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
 request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
@@ -379,7 +393,12 @@ The command line writes every line through one helper (`emit` in `mrgl-cli/src/m
 stderr. A closed pipe on either (`BrokenPipe`, os error 232 on Windows: the reader of
 `mrgl list --json | head -c 200` is gone) ends the run there, quietly and with exit code 0, since nobody
 reads the rest; any other write error panics as `println!` would. A new output site writes through `emit`
-too, never through `println!`.
+too, never through `println!`. While an addon's install is in flight (`add github:` and `update`, which
+write their progress lines during the install: the progress callback holds an `InFlight` guard, task 084;
+`import` and `add <file.zip>` write nothing while the engine works), a closed pipe does not end the
+run at the next write: the lines are dropped, the swap, the sidecar write and the removal of the run's
+staging folders finish, and the run ends with 0 once that addon's install returns, before the next one
+starts.
 
 ## The doctor
 
@@ -959,7 +978,8 @@ sidecar `state.json`, the addon sets `sets.json` (task 014), the last set apply'
 `last-check.json` (task 078; a cache, deleting it only drops a source gone or a failed check until the next
 check),
 the install engine's `staging\` (a zip is unpacked and checked here before anything
-moves; emptied after every install) and `cache\<addon>\<version>.zip` (the current and the previous
+moves, a download waits here; every run folder is removed when its run ends, and the leftovers of a run
+that ended before that are swept, see "The staging folder's lifetime") and `cache\<addon>\<version>.zip` (the current and the previous
 version's zip for `mrgl rollback`; never required, deleting it only disables the rollback), and the `WTF`
 backups under `backups\<flavor-id>\`: `WTF-<date>.zip` per backup (a plain zip, the date local, so the
 names sort by age) and `WTF-before-restore-<date>\` for every `WTF` folder a restore moved aside; nothing

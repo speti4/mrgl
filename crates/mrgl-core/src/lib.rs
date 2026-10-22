@@ -2,7 +2,8 @@
 //!
 //! The modules follow the roadmap (`tasks/roadmap.md`): [`flavor`] reads a game folder's identity,
 //! [`scan`] and [`toc`] list what is installed, [`sources`] fetch release metadata and zips, [`install`]
-//! swaps addon folders into `Interface\AddOns`, [`link`] makes the junctions of the addons one develops
+//! swaps addon folders into `Interface\AddOns` (each run in a folder of its own under [`staging`], task
+//! 084), [`link`] makes the junctions of the addons one develops
 //! (`link:` entries the engine never installs over), [`state`] is the sidecar cache (D-003), [`backup`]
 //! is the toolbox's WTF backup, [`sets`] its addon sets (task 014), [`client`] finds the running game
 //! client by its executable's path (the guard of every `WTF` write), [`home`] is the mrgl home folder with the remembered game root,
@@ -42,6 +43,7 @@ pub mod savedvars;
 pub mod scan;
 pub mod sets;
 pub mod sources;
+pub mod staging;
 pub mod state;
 pub mod toc;
 pub mod update;
