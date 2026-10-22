@@ -581,3 +581,44 @@ fn add_import_and_update_warn_in_a_folder_the_curseforge_app_manages() {
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     assert!(!stdout(&output).contains(".curseclient"));
 }
+
+// --- task 117: the warnings of the report and a sidecar the apply cannot write ---
+
+#[test]
+fn adopt_says_the_flavors_warnings_and_an_apply_fails_when_the_sidecar_cannot_be_written() {
+    let game = Game::new("warnings");
+    std::fs::remove_file(game.root().join(".build.info")).expect("no build");
+    let output = game
+        .mrgl()
+        .args(["--serious", "adopt", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line.starts_with("build unknown: ")),
+        "{text}"
+    );
+    assert!(
+        stdout(&output)
+            .lines()
+            .last()
+            .is_some_and(|line| line.starts_with("10 unmanaged addons in _forever_: ")),
+        "{text}"
+    );
+    // A folder where the sidecar's temporary file goes: the apply adopts, then cannot write, and says so.
+    let temporary = game.state_path("wowf").with_extension("json.tmp");
+    std::fs::create_dir_all(&temporary).expect("the folder in the way");
+    let output = game
+        .mrgl()
+        .args(["--serious", "adopt", "--flavor", "forever", "--apply"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_last_line(&output).starts_with("writing the state sidecar: "),
+        "{}",
+        stderr_last_line(&output)
+    );
+    assert!(!game.state_path("wowf").exists(), "nothing written");
+}

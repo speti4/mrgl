@@ -51,7 +51,7 @@ Manager calls are excluded with their reason.
 2. [x] The core's seams (a process list for the client guards, the key store from the environment with a
        folder store, the rename of the backup move, the clock of the backup names, the registry reads on
        well-known keys) and the core's missing cases, file by file (pull request 2)
-3. [ ] The command line's missing end-to-end cases and the unit tests of its pure helpers (pull request 3)
+3. [x] The command line's missing end-to-end cases and the unit tests of its pure helpers (pull request 3)
 4. [ ] The window's commands under Tauri's mock runtime, generic over the runtime, with the busy and
        refused arms; the floors at 100; the close (pull request 4)
 5. [ ] Verification: the job summary's table at 100 / 100 outside the listed exclusions, the register check
@@ -80,6 +80,12 @@ Manager calls are excluded with their reason.
   on well-known keys of the real registry; the dead arms found on the way are gone with a comment each;
   `zip_entry::Refusal` carries the bound's refusal so the restore needs no catch-all arm; the unused
   `keys::list_of_process` is removed. Workspace: 94.93% lines, 95.67% branches; floors 94.5 / 95.5.
+- 2026-10-23 — Pull request 3: mrgl-cli at 100.00% lines and branches (2516 lines, 392 branches; 4 lines
+  marked `coverage: os`). The key command, the confirmations of `backup` and `update` take their input and the
+  terminal flag as parameters; `key set` and `key clear` run end to end against the folder key store; a cancelled
+  update confirmation now ends in the summary's `not updated (cancelled)` count the core already worded; the
+  quiet exit on a closed pipe writes the profile under `cfg(coverage)`, since `std::process::exit` skips the
+  handler that writes it. The review of pull request 2 moved the folder key store behind `folder:<path>`.
 
 ## Deviations from the plan
 
