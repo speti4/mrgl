@@ -3,14 +3,16 @@
 //! GitHub, WoWInterface and Wago answers (the fixture `releases/` and `sources/` trees copied into one
 //! temporary folder), the apply with the sidecar it writes, which the window's update then takes as the
 //! command line's does, a second apply that changes nothing, and the guard of a folder the CurseForge app
-//! manages with and without the confirmation. No network, no real game folder, no window.
+//! manages with and without the confirmation, and the apply over the answers of the report the card shows,
+//! which asks no source again (task 113). No network, no real game folder, no window.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mrgl_app_lib::actions::{self, Phase, Plan, UpdateEvent};
-use mrgl_app_lib::toolbox::{self, AdoptAnswer, AdoptView};
+use mrgl_app_lib::toolbox::{self, AdoptAnswer, AdoptRequest, AdoptView};
+use mrgl_core::adopt::Answers;
 use mrgl_core::flavor;
 use mrgl_core::install::Engine;
 use mrgl_core::sources::github::GitHub;
@@ -82,7 +84,17 @@ impl Game {
     /// The router over the stub, as `Sources::from_env` builds it: GitHub without a token, WoWInterface,
     /// Wago with the made-up key or without one; the caches under the home.
     fn sources(&self, wago_key: bool) -> Sources {
-        let http: Arc<dyn Http> = Arc::new(FolderHttp::new(self.base.join("stub")));
+        self.sources_over(Arc::new(FolderHttp::new(self.base.join("stub"))), wago_key)
+    }
+
+    /// The folder stub of every source, whose log counts the requests.
+    fn stub(&self) -> Arc<FolderHttp> {
+        Arc::new(FolderHttp::new(self.base.join("stub")))
+    }
+
+    /// [`Game::sources`] over a given stub, a new router each time, as each command of the window builds
+    /// its own.
+    fn sources_over(&self, http: Arc<dyn Http>, wago_key: bool) -> Sources {
         let cache = self.home().join("cache");
         Sources::none()
             .with(
@@ -116,13 +128,31 @@ impl Game {
     }
 
     fn apply(&self, flavor_id: &str, alongside: bool, wago_key: bool) -> AdoptAnswer {
+        self.apply_over(
+            flavor_id,
+            AdoptRequest {
+                alongside,
+                answers: None,
+            },
+            &self.sources(wago_key),
+            wago_key,
+        )
+    }
+
+    fn apply_over(
+        &self,
+        flavor_id: &str,
+        request: AdoptRequest<'_>,
+        sources: &Sources,
+        wago_key: bool,
+    ) -> AdoptAnswer {
         let home = self.home();
         toolbox::adopt_apply(
             &self.root(),
             flavor_id,
-            alongside,
+            request,
             Some(&home),
-            &self.sources(wago_key),
+            sources,
             &|kind| kind == SourceKind::Wago && wago_key,
             Voice::new(true),
         )
@@ -210,7 +240,7 @@ fn the_report_shows_every_row_its_sources_and_the_counts() {
         ),
         (10, 6, 1, 2, 1, 5)
     );
-    const SUMMARY: &str = "10 unmanaged addons in _forever_: 6 can be adopted without CurseForge, 1 only with CurseForge, 2 with no known source, 1 with no forever build at their sources; adopt --apply adopts 5 of them";
+    const SUMMARY: &str = "10 unmanaged addons in _forever_: 6 can be adopted without CurseForge, 1 only with CurseForge, 2 with no known source, 1 with no forever build at their sources; the Adopt button adopts 5 of them";
     assert_eq!(
         (adopt.summary.kind, adopt.summary.plain.as_str()),
         ("success", SUMMARY)
@@ -259,9 +289,13 @@ fn a_folder_the_curseforge_app_manages_shows_its_marker() {
         (marker.kind, marker.plain.as_str()),
         (
             "warning",
-            "the CurseForge app manages _retail_ (its .curseclient marker is there): a folder belongs to one manager, so adopt --apply writes nothing there without --alongside-curseforge"
+            "the CurseForge app manages _retail_ (its .curseclient marker is there): a folder belongs to one manager, so the Adopt button writes nothing there without the confirmation to adopt alongside the CurseForge app"
         )
     );
+    // The window's words (task 112): no line of the card names a flag of the command line.
+    for line in [&marker.plain, &adopt.summary.plain] {
+        assert!(!line.contains("--"), "{line}");
+    }
     assert_eq!(lines(adopt)[0], "MrglCompat 1.0.0: adopt as wowi:1001");
 }
 
@@ -406,7 +440,7 @@ fn the_marker_guard_holds_without_the_confirmation_and_warns_with_it() {
         plains(&refused),
         [(
             "error",
-            "the CurseForge app manages _retail_ (its .curseclient marker is there) and a folder belongs to one manager: adopt --apply wrote nothing; --alongside-curseforge adopts its addons anyway, and the CurseForge app may still update those folders"
+            "the CurseForge app manages _retail_ (its .curseclient marker is there) and a folder belongs to one manager: the Adopt button wrote nothing; the confirmation to adopt alongside the CurseForge app adopts its addons anyway, and the CurseForge app may still update those folders"
         )]
     );
     assert!(refused.adopt.is_none() && refused.flavor.is_none() && refused.adopted.is_empty());
@@ -448,6 +482,141 @@ fn the_marker_guard_holds_without_the_confirmation_and_warns_with_it() {
     );
 }
 
+/// The sidecar without the times of its entries, which differ from one apply to the next.
+fn timeless(mut state: serde_json::Value) -> serde_json::Value {
+    for entry in state["addons"]
+        .as_object_mut()
+        .expect("the entries")
+        .values_mut()
+    {
+        entry
+            .as_object_mut()
+            .expect("an entry")
+            .remove("installed_at");
+    }
+    state
+}
+
+#[test]
+fn the_apply_writes_from_the_shown_reports_answers_and_asks_no_source() {
+    let game = Game::new("answers");
+    let stub = game.stub();
+    let shown = shown_report(&game, &stub);
+    let asked = stub.requests().len();
+    assert!(asked > 0, "the report asks the sources once");
+    // The answers go to the page and come back as the page sends them.
+    let text = serde_json::to_string(&view(&shown).answers).expect("serializes");
+    assert!(!text.contains(WAGO_TEST_KEY));
+    let answers: Answers = serde_json::from_str(&text).expect("the page's answers parse");
+    assert_eq!(answers.flavor, "wowf");
+    assert!(answers.offers.contains_key("wowi:1005"));
+
+    let answer = game.apply_over(
+        "wowf",
+        AdoptRequest {
+            alongside: false,
+            answers: Some(&answers),
+        },
+        &game.sources_over(stub.clone(), true),
+        true,
+    );
+    assert_eq!(
+        stub.requests().len(),
+        asked,
+        "no request for the apply and the report after it"
+    );
+    assert_eq!(answer.adopted.len(), 6, "{:?}", answer.messages);
+    let names: Vec<&str> = view(&answer)
+        .rows
+        .iter()
+        .map(|row| row.addon.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["MrglCurseOnly", "MrglNoForever", "MrglNoHint", "MrglPage"]
+    );
+    assert_eq!(
+        view(&answer).answers,
+        answers,
+        "the same answers, for the next apply"
+    );
+
+    // The sidecar equals the one of the apply that asks every source again (task 109).
+    let asking = Game::new("answers-asking");
+    asking.apply("wowf", false, true);
+    assert_eq!(
+        timeless(game.sidecar("wowf")),
+        timeless(asking.sidecar("wowf"))
+    );
+}
+
+/// The card's report over a counting stub, with the Wago key.
+fn shown_report(game: &Game, stub: &Arc<FolderHttp>) -> AdoptAnswer {
+    let home = game.home();
+    toolbox::adopt_report(
+        &game.root(),
+        "wowf",
+        Some(&home),
+        &game.sources_over(stub.clone(), true),
+        &|kind| kind == SourceKind::Wago,
+        Voice::new(true),
+    )
+}
+
+/// An apply over the answers of a report.
+fn request(answers: &Answers) -> AdoptRequest<'_> {
+    AdoptRequest {
+        alongside: false,
+        answers: Some(answers),
+    }
+}
+
+#[test]
+fn old_answers_or_another_flavors_are_asked_again() {
+    let game = Game::new("old-answers");
+    let stub = game.stub();
+    let shown = shown_report(&game, &stub);
+    let asked = stub.requests().len();
+    let mut answers = view(&shown).answers.clone();
+    answers.asked_at = "2026-01-01T00:00:00Z".to_string();
+    let other = Answers {
+        flavor: "wow".to_string(),
+        ..view(&shown).answers.clone()
+    };
+    let answer = game.apply_over(
+        "wowf",
+        request(&other),
+        &game.sources_over(stub.clone(), true),
+        true,
+    );
+    assert!(
+        stub.requests().len() > asked,
+        "another flavor's answers are asked again"
+    );
+    assert_eq!(answer.adopted.len(), 6);
+    assert_eq!(
+        view(&answer).answers.flavor,
+        "wowf",
+        "the flavor's own answers"
+    );
+
+    let game = Game::new("old-answers-2");
+    let stub = game.stub();
+    let before = stub.requests().len();
+    let answer = game.apply_over(
+        "wowf",
+        request(&answers),
+        &game.sources_over(stub.clone(), true),
+        true,
+    );
+    assert!(
+        stub.requests().len() > before,
+        "answers older than an hour are asked again"
+    );
+    assert_eq!(answer.adopted.len(), 6);
+    assert_ne!(view(&answer).answers.asked_at, answers.asked_at);
+}
+
 #[test]
 fn without_a_home_folder_nothing_is_read_or_written() {
     let game = Game::new("no-home");
@@ -466,7 +635,7 @@ fn without_a_home_folder_nothing_is_read_or_written() {
     let apply = toolbox::adopt_apply(
         &game.root(),
         "wowf",
-        false,
+        AdoptRequest::default(),
         None,
         &sources,
         &|_| false,
@@ -500,6 +669,7 @@ fn the_answer_serializes_with_the_keys_of_the_contract() {
     assert_eq!(
         keys(adopt),
         [
+            "answers",
             "counts",
             "curse_client",
             "flavor",
@@ -536,4 +706,12 @@ fn the_answer_serializes_with_the_keys_of_the_contract() {
         ]
     );
     assert_eq!(keys(&adopt["summary"]), ["kind", "murloc", "plain"]);
+    assert_eq!(
+        keys(&adopt["answers"]),
+        ["asked_at", "flavor", "folders", "offers"]
+    );
+    assert_eq!(
+        keys(&adopt["answers"]["offers"]["wowi:1005"]),
+        ["build", "missing", "why"]
+    );
 }

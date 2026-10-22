@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 11 backlog (0 ready · 0 blocked · 3 waiting · 8 ideas) · 1 in progress · 93 done · 5 dropped · 6 decisions
+**State:** 9 backlog (0 ready · 0 blocked · 3 waiting · 6 ideas) · 1 in progress · 95 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -50,8 +50,6 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](backlog/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | S | 2026-10-22 |
-| 113 | [The window's adopt apply reuses the shown report's answers](backlog/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | S | 2026-10-22 |
 | 114 | [The window's update reports an entry folded into another during the run](backlog/114-the-windows-update-reports-an-entry-folded-into-another.md) | S | 2026-10-22 |
 | 116 | [The window installs a zip in hand with a recorded source](backlog/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md) | S | 2026-10-22 |
 
@@ -96,6 +94,8 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 113 | [The window's adopt apply reuses the shown report's answers](done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 |
+| 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](done/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 |
 | 110 | [The window's install paths warn in a folder the CurseForge app manages](done/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md) | 2026-10-22 |
 | 109 | [The window's adopt view: the report and --apply in the toolbox](done/109-the-windows-adopt-view.md) | 2026-10-22 |
 | 108 | [update --all over two entries of one source whose first install takes the secon…](done/108-update-all-over-two-entries-of-one-source-whose-first-install-takes-the-second-folder.md) | 2026-10-22 |
@@ -104,10 +104,8 @@ _none_
 | 105 | [A Wago page address resolves to its wago:<id> through the keyless slugs list](done/105-a-wago-page-address-resolves-to-its-id.md) | 2026-10-22 |
 | 104 | [A WoWInterface file waiting for approval is a state of its own in the update ch…](done/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md) | 2026-10-22 |
 | 102 | [The window's offline sketch says "source not configured" as the core does](done/102-the-ui-mock-says-source-not-configured-as-the-core-does.md) | 2026-10-22 |
-| 101 | [The update check stops per source at a rate limit, not as a whole](done/101-the-update-check-stops-per-source-at-a-rate-limit.md) | 2026-10-22 |
-| 100 | [The install path picks the named entry among two sidecar entries of one source](done/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md) | 2026-10-22 |
 
-_83 more in `done/`._
+_85 more in `done/`._
 
 ### Decisions
 

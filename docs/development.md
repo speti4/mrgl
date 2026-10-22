@@ -499,7 +499,10 @@ the toolbox's `sets::Applied::summary` (`mrgl set apply`, the window's set switc
 undo) and `sets::Edited::summary` with its `Edited::not_installed` warning (`mrgl set
 enable|disable|drop`, the window's chips), task 085, then the set list note `sets::SetsFile::summary`
 (`mrgl set list`, the note under the window's set picker) and the apply's `sets::Applied::not_installed_warning`
-(`mrgl set apply`, the window's set switch), task 091. A count and its verb agree (`voice::count_noun`: `1 orphan (12 B)
+(`mrgl set apply`, the window's set switch), task 091, and adopt's `adopt::Report::summary`, its
+`Report::marker_line` and `adopt::marker_refusal` (`mrgl adopt`, the window's Adopt card; `AdoptBy` names
+`adopt --apply` and `--alongside-curseforge`, or the window's Adopt button and the confirmation of its
+dialog, task 112). A count and its verb agree (`voice::count_noun`: `1 orphan (12 B)
 has no addon folder`, `2 orphans (50 B) have …`). The CLI tests and the window's `tests/toolbox.rs` assert
 the same lines.
 
@@ -728,7 +731,20 @@ update actions (task 110: "Check for updates", "Update all" and a row's "Update"
 
 The window's toolbox has the report and the apply in its Adopt card (task 109, the commands `adopt` and
 `adopt_apply` under [The UI](#the-ui)): the same `adopt::report` and `adopt::apply` over the same sidecar,
-the same lines, and the marker guard with a confirmation dialog in place of `--alongside-curseforge`.
+the same lines, and the marker guard with a confirmation dialog in place of `--alongside-curseforge`. The
+summary, the marker line and the refusal name the window's Adopt button and its confirmation instead of the
+flags (`adopt::AdoptBy::Window`, task 112): `; the Adopt button adopts <k> of them`, `so the Adopt button
+writes nothing there without the confirmation to adopt alongside the CurseForge app`. The card applies the
+report it shows (task 113): the report records its sources' answers (`adopt::Answers`: the flavor, when the
+asking began, per spec its build answer with what the run lacked then, and the folders it names), through
+`adopt::Answering`, a source that answers `offers` and `folders` from the answers it holds and asks the
+source under it for the rest (`adopt::report_answering`); the card hands them back with the apply, and the
+apply and the report after it are built over the folders and the sidecar as they are then and those
+answers, asking no source again. A spec the answers lack (a folder that arrived since), or one whose
+`missing` changed (a key set since), is asked. The answers stand for an hour (`adopt::ANSWERS_MAX_AGE_SECONDS`,
+the shortest cache rule of the sources: WoWInterface's project answer, `Cache-Control: max-age=3600`);
+older ones, another flavor's or none are asked again first. The command line reads once and writes, as
+before.
 
 ### The GitHub mapping
 
@@ -811,7 +827,8 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   progress)`, `Data.updateOne(flavorId, folder, progress)`, `Data.cancelUpdate()`, `Data.mark(flavorId,
   folder, action, value)`, the preferences, `Data.toolbox(flavorId)`, `Data.applySet(flavorId, set,
   target)`, `Data.undoSet(flavorId)`, `Data.editSet(flavorId, set, addon, action)`,
-  `Data.cleanSavedVariables(flavorId)`, `Data.adopt(flavorId)`, `Data.adoptApply(flavorId, alongside)`; a
+  `Data.cleanSavedVariables(flavorId)`, `Data.adopt(flavorId)`, `Data.adoptApply(flavorId, alongside,
+  answers)`; a
   flavor as `flavor.rs` serializes it plus its friendly name, the
   source of its build, whether its `Interface\AddOns` folder is there and its addons; an addon as `scan.rs`
   gives it plus the facts of the sidecar, the sources, the update check, the Forever notes, pin / ignore /
@@ -858,8 +875,9 @@ of `src/list.rs`, `src/actions.rs` and `src/toolbox.rs`, which take the game roo
 engine and the source as arguments, so `tests/flavor_list.rs` checks the rows on a made-up game folder,
 `tests/update_actions.rs` the update runs and the marks on a made-up flavor with a stub source, and
 `tests/toolbox.rs` the toolbox on a made-up flavor with the `WTF` tree of the addon-sets fixture, and
-`tests/adopt.rs` the adopt card over a copy of the adopt fixture with the source stubs of tasks 094 and 095,
-without a window. Every message they return is
+`tests/adopt.rs` the adopt card over a copy of the adopt fixture with the source stubs of tasks 094 and 095
+(the apply over the shown report's answers counts the stub's requests: one round for the report, none for
+the apply and the report after it, task 113), without a window. Every message they return is
 `{ kind, murloc, plain }`: the core's voice kind (`Kind::as_str`) picks the place in the window, and a
 serious voice sends the murloc line empty. Whatever reads the disk or the network runs on a blocking thread.
 
@@ -1010,13 +1028,19 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   or a toolbox write goes. The answer is `{ adopt, flavor, adopted, messages }`: `adopt` the report as the
   card draws it (`flavor`, `folder`, `curse_client`, `marker` the warning of `Report::marker_line` or null,
   `rows` with the core's row as `mrgl adopt --json` writes it plus its `line`, `verdict` and `details` (the
-  lines under it, without the indent), `left_out`, `counts`, and `summary`, `Report::summary`), and the
-  messages: the warnings of the scan, the sidecar and the left-out folders, then the summary.
-- `adopt_apply` (task 109 over task 098, `toolbox::adopt_apply`): `alongside` is the dialog's confirmation.
-  In a flavor folder with the `.curseclient` marker and without it, the answer is the refusal of
-  `adopt::marker_refusal` (an error) before any source is asked, and nothing is written; otherwise the
-  report again, `adopt::apply` into the sidecar, written once when an entry was added. The answer carries
-  the report as it is now (the adopted addons are managed, so they are no rows any more), `flavor` with its
+  lines under it, without the indent), `left_out`, `counts`, `summary`, `Report::summary`, and `answers`,
+  the sources' answers the report was built from, task 113: `flavor`, `asked_at`, `offers` per spec with
+  `build`, `why` and `missing`, `folders` per spec), and the messages: the warnings of the scan, the
+  sidecar and the left-out folders, then the summary.
+- `adopt_apply` (task 109 over task 098, `toolbox::adopt_apply`): `alongside` is the dialog's confirmation,
+  `answers` the `adopt.answers` of the report the card shows (task 113; `toolbox::AdoptRequest` carries
+  both). In a flavor folder with the `.curseclient` marker and without the confirmation, the answer is the
+  refusal of `adopt::marker_refusal` (an error) before any source is asked, and nothing is written;
+  otherwise the report again over the folders and the sidecar as they are now and the shown answers
+  (`adopt::report_answering`: no source is asked while the answers stand, an hour; older ones, another
+  flavor's or none are asked again first), `adopt::apply` into the sidecar, written once when an entry was
+  added. The answer carries the report as it is now, over the written sidecar and the same answers (the
+  adopted addons are managed, so they are no rows any more), `flavor` with its
   rows as they are now, `adopted` (the `Adopted::line` of each entry) and the messages of `mrgl adopt
   --apply`: `adopt::alongside_warning` in a marked folder, the warnings, a `<name> not adopted: <why>` per
   skipped addon, and `Report::applied_summary`. Refused while an update runs (both write the sidecar) and
