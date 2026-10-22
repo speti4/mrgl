@@ -14,13 +14,17 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   Markdown markers are stripped, cut at `NOTES_MAX_CHARS` (120) with an ellipsis by `sources::notes_line`,
   and `page`, the release's page, both left out when absent, task 030; the `Target` carries the addon's
   channel, and on `prerelease` the newest release that is not a draft is current, a prerelease or not,
-  task 021; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
+  task 021; the resolve walks the channel's releases from the current one down to the first with an asset
+  for the flavor, the newest release that has one, and says so in the pick's reason when it passed newer
+  ones, and the no-asset error names the newest release and how many releases were looked at, task 066;
+  later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
   result, never a refusal, task 038; its commit, `Engine::commit`, refuses to install over a linked addon
   or a junction it did not make before the first folder moves, so every path that stages and commits does,
-  task 055; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
+  task 055, and the guard covers the staged folders and the previous version's folders the new one drops,
+  so a dropped folder that is now a junction is refused instead of moved aside and deleted, task 067; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
   below; the rollback, `Engine::rollback`, sends the entry's previous
   version and its zip from the cache through the same stage and swap with the entry's source, pins the
   addon there and leaves both zips in the cache, so a second rollback goes forward again, task 022), the
@@ -76,6 +80,13 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the third `WTF` write of D-002 and D-003, runs the 023 guard first, writes the orphans and their `.bak`
   files with the backup's zip writer, entry names relative to `WTF`, and removes each file only once its
   entry, read back from the finished zip, matches it byte for byte; `backup::restore_wtf` refuses that zip.
+  `savedvars` and `sets` read `WTF` through one walk, `wtf::walk` (task 071), with the one set of its
+  folder names (`wtf::ACCOUNT_DIR`, `wtf::SAVED_VARIABLES_DIR`; `WTF` itself is `backup::WTF_DIR`): every
+  account folder, then every character folder of it, each level by name, the account's `SavedVariables`
+  never a realm, a missing folder empty, and a link or a junction a warning that is never followed
+  (`savedvars` lists it among its warnings, `sets` passes it over). The core's one size formatter is
+  `zip_entry::size_text` (`512 B`, `34.2 KB`, `1.5 MB`, in steps of 1024, up to `PB`): the zip bound's
+  messages, the CLI's listings and the doctor's report all write sizes with it (task 071).
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002; `list` reads the flavor's
   sidecar through the install engine and marks every addon managed or unmanaged with `state::classify`,
   task 037, while `scan` stays the raw folder view), `add github:<owner>/<repo>
@@ -166,10 +177,12 @@ the GitHub source takes the release of the same list whose tag is the version, w
 `v`, never a draft, on any channel (`sources::github::release_of_version`), and picks its asset for the
 flavor as for the current one. An entry whose version the source no longer offers is reported (`<name>
 skipped, version <v> not offered: no release <v> in <source>`, outcome `version-not-offered` in the JSON,
-`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup sees the
-releases the release list holds: the first page, and the pages after it only while none holds a stable
-release (task 042), so a version older than the first page reads as not offered. The JSON document carries
-`exact`.
+`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup reads the
+releases the release list holds (the first page, and the pages after it while none holds a stable release,
+task 042) and, when the version is not among them, the pages after those, `page=<n>` of the API, until the
+version turns up, a page is short (the last one) or five pages are held in all (`MAX_PAGES`, task 066);
+only then does it read as not offered. These further pages are not cached, and offline the cached list is
+all there is. The JSON document carries `exact`.
 
 The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:`, `import`
 and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
@@ -377,9 +390,11 @@ two-line summary through the voice (a success when nothing needs a look, a warni
 (`mrgl_core::doctor`: `report_of_process` builds it, `Report::lines` and `Report::text` are the block), so the
 window's "copy diagnostics" action (task 009) copies the same text. It reads and never repairs: the AddOns
 probe is its one write. A fact it cannot read is a value (`unknown`, `missing`), never an error, and only an
-unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, in its long
-and its 8.3 short form) is shown with that folder as `~`, and an API key is named, never read out, so a pasted
-report carries no home folder path and no secret.
+unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, else `HOME`,
+in its long and its 8.3 short form) is shown with that folder as `~`: matched in any case and with `\` or `/`
+(or a mix) as the separator, and only when a separator or the end of the path follows, so a folder that only
+starts with the profile's name (`someone2` next to the profile `someone`) stays as it is (task 069). An API
+key is named, never read out, so a pasted report carries no home folder path and no secret.
 
 The lines, with the JSON field in brackets:
 
@@ -823,7 +838,8 @@ a folder per URL the source asks, the release lists as the API writes them and `
 shape the BigWigs packager writes, `forever` next to other flavors, one without metadata, one repository
 without `release.json`, one with no release, one with a draft and a prerelease above the stable release),
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
-one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
+one addon folder in three versions, several folders in one archive, several whose core is not the first by
+name and no folder extended by the others (`boss-core-5.0.0.zip`, task 065), a TOC at the zip's root, a wrapper
 folder, a TOC with an interface for another build, a path that tries to escape the staging folder, an addon
 with an embedded-only and a missing required dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
@@ -861,7 +877,10 @@ makes the command line answer every request from that folder instead (the URL's 
 sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
 request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
-`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline. Every
+`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline.
+Whenever the API answers with the list, a 200 or a 304, the `tag-*.json` files of tags the list no longer
+holds are removed, and so is a `release-json.json` next to `releases.json`, the single file of task 011 that
+nothing reads any more (task 072); the list read offline removes nothing. Every
 fixture repository under `releases/` is classified for the Forever build in `tests/github_source.rs`, so a
 new fixture names its expected build there.
 
@@ -869,7 +888,10 @@ The release list walks its pages (task 042): when the first page of 30 holds no 
 that publishes a nightly prerelease every day), the source follows the `Link` header's `rel="next"` page,
 on `api.github.com` only, with the token, until a page holds a stable release or five pages are read
 (`sources::github::MAX_PAGES`); past the bound the newest prerelease is current, as for a repository without
-a stable release. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
+a stable release. The resolve then walks the releases its channel may take, newest first, down to the first
+with an asset for the flavor (task 066): a repository whose newest release is built for other flavors only
+resolves to the release before it, never a draft and never a prerelease on the stable channel while a
+stable release exists. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
 conditional request. A release's `release.json` is read from `release-json/tag-<tag>.json` when the file
 names the same tag and the same asset URL and size, so a repeated resolve of an unchanged release costs that
 one request and no download. A 429, or a 403 with `x-ratelimit-remaining: 0`, is the rate limit: its line
@@ -1005,8 +1027,11 @@ canonical source spec. To add a note, add an entry under `addons` with the restr
 one-line reason (lower case, no trailing full stop: what does not work), the day it was checked against the
 source and the source's URL, then run `cargo test`. The schema check (`forever::tests`) rejects an unknown
 field or kind, a key that is not a canonical spec, a reason over one line, a date that is no real day or lies
-in the future, and a source that is not an `https://` URL. A note whose `verified` date is more than 90 days
-old (`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
+in the future, and a source that is not an `https://` URL. The `verified` date is the day of the check where
+you are: the schema check compares it with today in UTC and allows one day of slack
+(`forever::VERIFIED_SLACK_DAYS`, task 070), so a note dated by the local day east of UTC passes between local
+and UTC midnight, while a date two days ahead fails. A note whose `verified` date is more than 90 days old
+(`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
 checks the age in CI.
 
 Where a note comes from (task 058): a public source that a page under `docs/research/` cites, an addon author's
