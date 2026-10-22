@@ -31,6 +31,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - The install engine names a multi-folder addon after the zip or the repository, not the first folder ([065](https://github.com/speti4/mrgl/blob/main/tasks/done/065-derive-name-prefers-the-zip-or-repository-folder.md))
 - The GitHub source looks past the newest release for the flavor's asset and for a named version ([066](https://github.com/speti4/mrgl/blob/main/tasks/done/066-github-source-looks-past-the-newest-release.md))
 - The link guard also covers the folders a new version drops ([067](https://github.com/speti4/mrgl/blob/main/tasks/done/067-link-guard-covers-dropped-folders.md))
+- The update check: version order, progress, and a request budget without a token ([068](https://github.com/speti4/mrgl/blob/main/tasks/done/068-update-check-version-order-progress-and-request-budget.md))
 
 ### M2 Window MVP
 
