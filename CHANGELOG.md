@@ -45,6 +45,7 @@ only.
 - Tauri shell with the flavor list ([009](https://github.com/speti4/mrgl/blob/main/tasks/done/009-tauri-shell-with-the-flavor-list.md))
 - Update all and update one in the window, with progress and the voice ([010](https://github.com/speti4/mrgl/blob/main/tasks/done/010-update-all-and-update-one-in-the-window.md))
 - Forever notes dataset: dead, crippled or viable, from the research ([011](https://github.com/speti4/mrgl/blob/main/tasks/done/011-forever-notes-dataset.md))
+- The murloc icon and the first portable zip release ([012](https://github.com/speti4/mrgl/blob/main/tasks/done/012-murloc-icon-and-first-portable-zip-release.md))
 - Window design sketch: the list view, the states and the voice's place, before the shell is built ([017](https://github.com/speti4/mrgl/blob/main/tasks/done/017-window-design-sketch-before-the-shell.md))
 - Game root auto-discovery: the launcher's registry key and the common install folders ([020](https://github.com/speti4/mrgl/blob/main/tasks/done/020-game-root-auto-discovery.md))
 - Game-running detection: no `WTF` write while the client runs ([023](https://github.com/speti4/mrgl/blob/main/tasks/done/023-game-running-detection.md))
