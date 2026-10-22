@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 21 backlog (1 ready · 0 blocked · 2 waiting · 18 ideas) · 0 in progress · 44 done · 3 dropped · 5 decisions
+**State:** 17 backlog (1 ready · 0 blocked · 2 waiting · 14 ideas) · 4 in progress · 44 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -48,10 +48,6 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 064 | [The dependency check counts the client's own Blizzard_* addons as present](backlog/064-blizzard-addons-are-not-missing-dependencies.md) | S | 2026-10-22 |
-| 065 | [The install engine names a multi-folder addon after the zip or the repository, …](backlog/065-derive-name-prefers-the-zip-or-repository-folder.md) | S | 2026-10-22 |
-| 066 | [The GitHub source looks past the newest release for the flavor's asset and for …](backlog/066-github-source-looks-past-the-newest-release.md) | S | 2026-10-22 |
-| 067 | [The link guard also covers the folders a new version drops](backlog/067-link-guard-covers-dropped-folders.md) | S | 2026-10-22 |
 | 068 | [The update check: version order, progress, and a request budget without a token](backlog/068-update-check-version-order-progress-and-request-budget.md) | M | 2026-10-22 |
 | 071 | [Fold the duplicates: one WTF walker, one size formatter, no dead error variant](backlog/071-fold-the-duplicated-helpers.md) | S | 2026-10-22 |
 | 072 | [GitHub cache housekeeping: stale per-tag release.json files and the old single …](backlog/072-github-cache-housekeeping.md) | S | 2026-10-22 |
@@ -94,7 +90,14 @@ _none_
 
 ### In progress
 
-_none_
+#### M1 Core + CLI
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 064 | [The dependency check counts the client's own Blizzard_* addons as present](wip/064-blizzard-addons-are-not-missing-dependencies.md) | 2026-10-22 | `none` |
+| 065 | [The install engine names a multi-folder addon after the zip or the repository, …](wip/065-derive-name-prefers-the-zip-or-repository-folder.md) | 2026-10-22 | `none` |
+| 066 | [The GitHub source looks past the newest release for the flavor's asset and for …](wip/066-github-source-looks-past-the-newest-release.md) | 2026-10-22 | `none` |
+| 067 | [The link guard also covers the folders a new version drops](wip/067-link-guard-covers-dropped-folders.md) | 2026-10-22 | `none` |
 
 ### Closed – do not reopen
 
