@@ -15,7 +15,9 @@
 //! against their sources (task 006), [`voice`] is the murloc table every message goes through (D-005)
 //! and [`zip_entry`] is the one check every zip entry passes before the install engine or a restore writes
 //! it.
-//! [`savedvars`] lists the SavedVariables files by size and moves the orphans into a backup zip (task 025).
+//! [`savedvars`] lists the SavedVariables files by size and moves the orphans into a backup zip (task 025),
+//! and [`wtf`] is the one walk of the account, realm and character folders under `WTF` that it and
+//! [`sets`] read.
 //! Nothing here prints or reads the network on its own: the callers (the CLI, the window) decide how to
 //! talk and when to go online, which keeps every module testable against the fixtures under
 //! `tests/fixtures/`.
@@ -42,6 +44,7 @@ pub mod state;
 pub mod toc;
 pub mod update;
 pub mod voice;
+pub mod wtf;
 pub mod zip_entry;
 
 pub use error::Error;

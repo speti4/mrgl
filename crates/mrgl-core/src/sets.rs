@@ -39,6 +39,7 @@ use crate::flavor::{Flavor, FlavorId};
 use crate::home;
 use crate::scan;
 use crate::state;
+use crate::wtf::{self, WtfFolder};
 
 /// The sets file's name under the flavor's folder of the mrgl home.
 pub const SETS_FILE: &str = "sets.json";
@@ -48,10 +49,6 @@ pub const SETS_FORMAT: &str = "mrgl-sets";
 pub const SETS_SCHEMA: u32 = 1;
 /// The client's per-character addon state file.
 pub const ADDONS_TXT: &str = "AddOns.txt";
-/// The accounts folder under `WTF`.
-pub const ACCOUNT_DIR: &str = "Account";
-/// The account-wide SavedVariables folder, next to the realm folders of an account: never a realm.
-pub const SAVED_VARIABLES_DIR: &str = "SavedVariables";
 /// The longest set name, in characters.
 pub const SET_NAME_MAX_CHARS: usize = 64;
 
@@ -305,53 +302,32 @@ pub fn characters(flavor: &Flavor) -> Result<Vec<Character>> {
 }
 
 /// The characters under a `WTF` folder, sorted by account, realm and name: every folder two levels under
-/// an account folder (`<realm>\<character>`), the account's `SavedVariables` never a realm. Files, links
-/// and junctions are passed over; a missing `WTF` or `Account` folder is no character, never an error.
+/// an account folder (`<realm>\<character>`), the account's `SavedVariables` never a realm ([`wtf::walk`]).
+/// Files, links and junctions are passed over; a missing `WTF` or `Account` folder is no character, never
+/// an error.
 pub fn characters_in(wtf: &Path) -> Result<Vec<Character>> {
     let mut characters = Vec::new();
-    for (account, account_dir) in subfolders(&wtf.join(ACCOUNT_DIR))? {
-        for (realm, realm_dir) in subfolders(&account_dir)? {
-            if realm.eq_ignore_ascii_case(SAVED_VARIABLES_DIR) {
-                continue;
-            }
-            for (name, folder) in subfolders(&realm_dir)? {
-                characters.push(Character {
-                    account: account.clone(),
-                    realm: realm.clone(),
-                    name,
-                    folder,
-                });
-            }
+    // A link is passed over without a word here: a set has no warnings to carry it.
+    let mut links = Vec::new();
+    wtf::walk(wtf, &mut links, |folder, _| {
+        if let WtfFolder::Character {
+            account,
+            realm,
+            name,
+            folder,
+        } = folder
+        {
+            characters.push(Character {
+                account: account.to_string(),
+                realm: realm.to_string(),
+                name: name.to_string(),
+                folder: folder.to_path_buf(),
+            });
         }
-    }
+        Ok(())
+    })?;
     characters.sort();
     Ok(characters)
-}
-
-/// The real subfolders of a folder (no link, no junction) with their names; a missing folder has none.
-fn subfolders(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
-    let io = |source| Error::Io {
-        context: "reading WTF",
-        path: dir.to_path_buf(),
-        source,
-    };
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(source) => return Err(io(source)),
-    };
-    let mut folders = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(io)?;
-        if entry.file_type().map_err(io)?.is_dir() {
-            folders.push((
-                entry.file_name().to_string_lossy().into_owned(),
-                entry.path(),
-            ));
-        }
-    }
-    folders.sort();
-    Ok(folders)
 }
 
 /// The characters a save reads or an apply writes (task 027).

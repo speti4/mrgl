@@ -9,7 +9,9 @@
 //! unmanaged `list` tests (task 037) install a fixture zip through the engine into a temporary game folder.
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+#[cfg(windows)]
+use std::process::Child;
+use std::process::{Command, Output, Stdio};
 
 /// The synthetic game folder of `mrgl-core`.
 fn fixtures() -> PathBuf {

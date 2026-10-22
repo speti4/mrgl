@@ -880,23 +880,8 @@ fn client_check(processes: &dyn ProcessList, folder: &Path, redactor: &Redactor)
     }
 }
 
-/// A byte count for a human: `512 B`, `34.2 KB`, `1.5 MB`.
-fn bytes_text(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
-    if bytes < 1024 {
-        return format!("{bytes} B");
-    }
-    let mut value = bytes as f64 / 1024.0;
-    let mut unit = UNITS[0];
-    for next in &UNITS[1..] {
-        if value < 1024.0 {
-            break;
-        }
-        value /= 1024.0;
-        unit = next;
-    }
-    format!("{value:.1} {unit}")
-}
+// A byte count for a human, the core's one size formatter (task 071): `512 B`, `34.2 KB`, `1.5 MB`.
+use crate::zip_entry::size_text as bytes_text;
 
 fn with_reason(text: &str, reason: Option<&String>) -> String {
     match reason {

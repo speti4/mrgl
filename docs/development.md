@@ -67,6 +67,13 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the third `WTF` write of D-002 and D-003, runs the 023 guard first, writes the orphans and their `.bak`
   files with the backup's zip writer, entry names relative to `WTF`, and removes each file only once its
   entry, read back from the finished zip, matches it byte for byte; `backup::restore_wtf` refuses that zip.
+  `savedvars` and `sets` read `WTF` through one walk, `wtf::walk` (task 071), with the one set of its
+  folder names (`wtf::ACCOUNT_DIR`, `wtf::SAVED_VARIABLES_DIR`; `WTF` itself is `backup::WTF_DIR`): every
+  account folder, then every character folder of it, each level by name, the account's `SavedVariables`
+  never a realm, a missing folder empty, and a link or a junction a warning that is never followed
+  (`savedvars` lists it among its warnings, `sets` passes it over). The core's one size formatter is
+  `zip_entry::size_text` (`512 B`, `34.2 KB`, `1.5 MB`, in steps of 1024, up to `PB`): the zip bound's
+  messages, the CLI's listings and the doctor's report all write sizes with it (task 071).
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002; `list` reads the flavor's
   sidecar through the install engine and marks every addon managed or unmanaged with `state::classify`,
   task 037, while `scan` stays the raw folder view), `add github:<owner>/<repo>
@@ -415,7 +422,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   joins.
 - `resolve`: a managed addon through its source, for the flavor's build and on its channel: the source's
   own `Pick`, the handover to the update actions of task 010.
-- `update_all`: answers that the update actions are task 010, in the voice.
+- `update_all`: answers that the update actions are task 010, in the voice (a plain warning line: the core
+  has no error for a command not built yet).
 - `preferences` and `set_preferences` (task 034): the theme (`auto`, `light`, `dark`) and the serious
   switch as they apply, which source decided the switch (`environment` locks the window's switch: the
   window cannot override `MRGL_SERIOUS`), and what `config.json` stores (`theme`, `serious`, next to

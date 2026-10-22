@@ -35,13 +35,6 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    /// A command is planned but not built yet; the task id says where.
-    #[error("{command} is not implemented yet (task {task})")]
-    NotImplemented {
-        command: &'static str,
-        task: &'static str,
-    },
-
     /// An I/O error with the path it happened on.
     #[error("{context}: {path}: {source}")]
     Io {

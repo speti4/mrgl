@@ -304,8 +304,8 @@ pub fn refusal(error: io::Error) -> std::result::Result<Error, io::Error> {
     error.downcast::<Error>()
 }
 
-/// A byte count in a message: `512 B`, `16.0 KB`, `2.0 GB`, in steps of 1024 as the CLI's listings write
-/// them.
+/// A byte count for a human: `512 B`, `16.0 KB`, `2.0 GB`, in steps of 1024. The one size formatter of
+/// the messages here, the CLI's listings and the doctor's report (task 071).
 pub fn size_text(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
     if bytes < 1024 {

@@ -412,10 +412,7 @@ pub fn update_all(flavor: String) -> Vec<Message> {
     vec![Message::new(
         voice(),
         Kind::Warning,
-        mrgl_core::Error::NotImplemented {
-            command: "update all in the window",
-            task: "010",
-        },
+        "update all in the window is not implemented yet (task 010)",
     )]
 }
 

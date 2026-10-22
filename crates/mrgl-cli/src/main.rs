@@ -2015,7 +2015,7 @@ fn backup_command(
             reporter.line(format!(
                 "{}  {files}  {}  {}",
                 entry.name,
-                human_bytes(entry.bytes),
+                zip_entry::size_text(entry.bytes),
                 entry.modified.as_deref().unwrap_or("-")
             ));
         }
@@ -2145,7 +2145,7 @@ fn backup_command(
         Kind::Success,
         format!(
             "backed up WTF of {folder_name}: {files}, {}, in {}",
-            human_bytes(backup.bytes),
+            zip_entry::size_text(backup.bytes),
             backup.zip.display()
         ),
     );
@@ -2171,24 +2171,6 @@ fn confirmed() -> bool {
     }
     let answer = answer.trim();
     answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")
-}
-
-/// A byte count for a human: `512 B`, `34.2 KB`, `1.5 MB`, `2.0 GB`.
-fn human_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
-    if bytes < 1024 {
-        return format!("{bytes} B");
-    }
-    let mut value = bytes as f64 / 1024.0;
-    let mut unit = UNITS[0];
-    for next in &UNITS[1..] {
-        if value < 1024.0 {
-            break;
-        }
-        value /= 1024.0;
-        unit = next;
-    }
-    format!("{value:.1} {unit}")
 }
 
 /// `mrgl export --flavor <id> [--to <file>]`: the flavor's managed addons as a list file (task 015).
@@ -2750,7 +2732,7 @@ fn savedvars_command(reporter: &Reporter, spec: Option<&str>, clean: bool) -> Re
                     "moved {} of {folder_name} ({}, {}) into {}; unzip it into the WTF folder to put them back",
                     count_orphans(cleaned.moved.len()),
                     count_files(cleaned.files),
-                    human_bytes(cleaned.bytes),
+                    zip_entry::size_text(cleaned.bytes),
                     zip.display()
                 ),
             ),
@@ -2793,7 +2775,7 @@ fn savedvars_command(reporter: &Reporter, spec: Option<&str>, clean: bool) -> Re
             Kind::Success,
             format!(
                 "{count} of {folder_name}, {} in all, no orphans",
-                human_bytes(listing.bytes)
+                zip_entry::size_text(listing.bytes)
             ),
         );
     } else {
@@ -2801,9 +2783,9 @@ fn savedvars_command(reporter: &Reporter, spec: Option<&str>, clean: bool) -> Re
             Kind::Warning,
             format!(
                 "{count} of {folder_name}, {} in all; {} ({}) have no addon folder: `mrgl savedvars --clean` moves them into a backup zip",
-                human_bytes(listing.bytes),
+                zip_entry::size_text(listing.bytes),
                 count_orphans(listing.orphans),
-                human_bytes(listing.orphan_bytes)
+                zip_entry::size_text(listing.orphan_bytes)
             ),
         );
     }
@@ -2820,7 +2802,7 @@ fn savedvars_line(file: &SavedVariablesFile) -> String {
     };
     format!(
         "{:>9}  {}  {}{mark}",
-        human_bytes(file.bytes),
+        zip_entry::size_text(file.bytes),
         file.addon,
         file.place()
     )

@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::{Child, Command, Stdio};
 
 use mrgl_core::Error;
