@@ -7,6 +7,14 @@ not the list. The summary under a heading is written by hand and kept by the gen
 
 ## Unreleased
 
+<!-- The summary above is written by hand; the list below is generated from tasks/done/ by scripts/changelog.py. -->
+
+### M1 Core + CLI
+
+- The dependency and interface checks say what the client says: an embedded-only dependency is missing, a lower interface number is out of date ([076](https://github.com/speti4/mrgl/blob/main/tasks/done/076-the-checks-say-what-the-client-says.md))
+
+## 0.1.0 — 2026-10-22
+
 The first release, 0.1.0: one portable zip with the `mrgl` command line and the `mrgl-app` window, both with
 the murloc icon, nothing to install. The command line scans every flavor, installs and updates addons from
 GitHub releases flavor-correctly (a zip in hand too), pins, ignores, rolls back, links development folders,
