@@ -36,6 +36,15 @@ checks the file's shape, and takes a `verified` date up to one day after today i
 passes east of UTC too (the rule for adding a note:
 [docs/development.md](docs/development.md#forever-notes)).
 
+## The GitHub mapping
+
+`mrgl adopt` finds the source of an addon whose TOC names none in
+[`data/github-sources.json`](data/github-sources.json): the addon's folder name as the key and the GitHub
+repository whose releases publish its zips as the value (`github:<owner>/<repo>`), one key per folder of a
+multi-folder addon. Add a folder through a pull request once the repository's releases carry the addon's zip:
+a repository without release zips is no source mrgl can install from. `cargo test` checks the file's shape
+([docs/development.md](docs/development.md#the-github-mapping)).
+
 ## Build prerequisites
 
 On Windows 11 you need:

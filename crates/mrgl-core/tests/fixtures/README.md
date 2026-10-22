@@ -56,6 +56,13 @@ BOM in a fixture survives every checkout.
   `MrglWg05` 200 with no request left (each through a `.headers` file);
   `api/data/slugs@game_version=forever.json` is the keyless slug list, naming `MrglWg01`, `MrglWg03` and
   `MrglWg05`. Every id, slug and name is made up.
+- `adopt/` — a fifth made-up game folder, for `mrgl adopt` (task 097): a `.build.info` with a Forever and a
+  retail row, `_forever_` with an addon folder per source header shape (each id header, a GitHub and a
+  non-GitHub `X-Website`, the mapping alone, no hint, two folders grouped by the same Wago id, two named by
+  WoWInterface's `UIDir`, `@project-version@` as the version) whose ids match the answers under `releases/`
+  and `sources/`, and `_retail_` with a `.curseclient` marker (a made-up id) and one WoWInterface addon. Every
+  name and id is made up but `Questie` and `QuestieDB`, which the curated mapping names; the tests read it in
+  place or copy it and never write here.
 - `zips/*.zip` — small archives for the install engine (task 004), written by `zips/make-zips.py` (fixed
   timestamps and entry order, so a rerun changes no byte; `python -I` it after editing a shape): one addon
   folder in three versions (`one-folder-1.0.0` with `old.lua`, `1.1.0` with `new.lua` instead, `1.2.0`),

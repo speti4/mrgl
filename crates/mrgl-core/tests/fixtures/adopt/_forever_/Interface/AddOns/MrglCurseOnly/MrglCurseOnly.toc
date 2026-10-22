@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Mrgl Curse Only
+## Version: 0.4.2
+## X-Curse-Project-ID: 4242
+
+core.lua

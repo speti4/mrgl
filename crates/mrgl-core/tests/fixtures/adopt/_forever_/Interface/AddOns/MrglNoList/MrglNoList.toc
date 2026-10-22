@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: Mrgl No List
+## Version: 1.0.0
+## X-Curse-Project-ID: 4243
+## X-Wago-ID: MrglWg02
+## X-WoWI-ID: 1002
+
+core.lua

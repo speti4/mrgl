@@ -36,7 +36,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `unknown` otherwise; `sources::wago`, the Wago source of task 095, see [Fixtures](#fixtures): the
   external API with the user's key, the game version per flavor, the three recent releases onto the
   channels, the rate limit its answers name, the Forever signal from a release for `forever` or the keyless
-  slug list; the CurseForge source joins the router as it comes, M4), the install engine (`install`: a zip into
+  slug list; the CurseForge source joins the router as it comes, M4; adopt's question to a source, whether it
+  publishes a build for a flavor, is the trait's `offers`, and the folders a source names without a download
+  are its `folders`, task 097), the adopt report (`adopt`, task 097, see [Adopt](#adopt)), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
@@ -122,7 +124,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   and `import <file> --flavor <flavor> [--exact] [--dry-run]` (tasks 015 and 057), `pin <name> [version]`,
   `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
-  `rollback <name>` (task 022), `set save|apply|list|show|remove` (task 014; `--character` on `save` and
+  `rollback <name>` (task 022), `adopt --flavor <flavor> [--apply [--alongside-curseforge]]` (tasks 097
+  and 098, see [Adopt](#adopt)),
+  `set save|apply|list|show|remove` (task 014; `--character` on `save` and
   `apply`, task 027; `set undo`, `set enable|disable|drop <set> <addon>` and `--account`, task 073;
   below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
   below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
@@ -601,6 +605,107 @@ there, never the keyless data endpoints, task 095), the CurseForge key to
 `keys::MemoryStore`; the end-to-end tests set `MRGL_KEY_STORE=off` and remove the three variables, so no
 test reads or writes the real Credential Manager, and they assert that a key given in the environment
 appears in no output of `key`, `doctor` or `add`, text, JSON or error line.
+
+## Adopt
+
+`mrgl adopt --flavor <flavor>` (task 097, `mrgl_core::adopt`) says where the unmanaged addons of a flavor
+come from, before anything is written and before any key exists; its counts measure the roadmap's M4 goal.
+An addon folder the state sidecar does not know is unmanaged (D-003); a junction or link mrgl did not make
+is left out with a warning. The sources of a folder come from all of its TOC files, the one the flavor
+loads first, in this order: `## X-Wago-ID` (eight ASCII letters and digits, `toc::is_wago_id`),
+`## X-WoWI-ID` and `## X-Curse-Project-ID` (a number, `toc::is_number_id`), `## X-Website` when it is a
+github.com repository's address (`Toc::website`, read by `toc::github_repo_of_website`:
+`github:<owner>/<repo>`, with or without `www.`, `.git` or a deeper path), then the curated GitHub mapping
+by the folder's name ([The GitHub mapping](#the-github-mapping)). A header of another shape is no source
+(its raw value stays in the typed field and in `Toc::headers`), and a website on another host is reported
+as a page, never as a source. The TOC parser reads an unsubstituted packager token
+(`## Version: @project-version@`, `toc::is_packager_token`) as no version, everywhere.
+
+Each source is asked whether it publishes a build for the flavor, `Source::offers` through the router:
+`yes`, `no` or `unknown`, with why. The trait's default resolves the spec (a pick by metadata `yes`, a guess
+`unknown`, no release, no asset for the flavor or a 404 `no`, any other failure `unknown` with its line); the
+GitHub source keeps it. WoWInterface answers from the compatibility list of its file list alone, read once a
+day, with no request per project: `yes` for an entry of the flavor's game (Forever once the list names a
+Forever version), `unknown` otherwise, never `no`. Wago answers from the keyless slug list of the flavor's
+game version, with or without the key: `yes` when it names the id, `no` when it does not. A source the run
+cannot ask (`Source::missing`) is `unknown` without a request; one whose key is not set reads
+`needs <KEY NAME>` (`keys::name_of`), and so does CurseForge, whose source this build does not have yet.
+
+The folders of one addon are one row, its folder group: the folders the source names (`Source::folders`:
+WoWInterface's `UIDir` from the file list) when they include the folder, else the folders whose TOCs or
+mapping name the same source, else the folder alone. A folder joins one group only, never a managed or a
+linked one, and the folders with a source are grouped before the ones without, so an options folder without
+a header joins the group its addon's source names. The row's name is the install engine's
+(`install::derive_name`), its version the `## Version` of that folder's TOC. The source a row is adopted as
+is the first, in the order above, that the run can ask and that no managed addon has as its source already,
+with `yes`, else the first such with `unknown`. A row's class: `without-curseforge` when a source other than
+CurseForge does not say `no`, `only-curseforge` when only CurseForge does not, `no-build` when every source
+says `no`, `no-source` when there is none.
+
+The command prints a line per addon: its name, its version or `(no version)`, its folders when there are
+several, and `adopt as <spec>`, `needs <KEY NAME>`, `only with CurseForge, needs MRGL_CURSEFORGE_KEY`,
+`no <flavor> build at its sources` or `no known source`. Under it a line per source,
+`  <spec> from <hint>: <flavor> build <yes|no|unknown> (<why>)`, with `; needs <KEY NAME>` when the key is
+missing, or `needs <KEY NAME>` alone when the source could not be asked, and a page as
+`  page <url> from X-Website, not a source mrgl reads`. Then a warning when the flavor folder has the
+CurseForge app's `.curseclient` marker, and the summary: `<n> unmanaged addons in <folder>: <a> can be
+adopted without CurseForge, <b> only with CurseForge, <c> with no known source`, with
+`, <d> with no <flavor> build at their sources` when there are such and `; adopt --apply adopts <k> of them`
+when there are such. `--json` is `kind: "adopt"` with `flavor`, `curse_client`, `apply`, `addons[]` (`name`,
+`folders`, `version`, `sources[]` with `spec`, `source`, `from`, `build`, `why`, `needs`, `missing` and
+`taken_by`, `pages`, `class`, `adopt_as`, `needs`), `left_out`, `counts` (`addons`, `without_curseforge`,
+`only_curseforge`, `no_build`, `no_source`, `adoptable_now`), `adopted[]` and `skipped[]` (empty without
+`--apply`) and `warnings`. Without `--apply` the report reads the sidecar and writes nothing; the sources
+keep their own caches.
+
+`--apply` (task 098, `adopt::apply`) writes one sidecar entry per row that has a source to be adopted as: the
+spec, the TOC's `## Version` (`unknown` when it has none or an unsubstituted token), the folder group, the
+SHA-256 of every file in it as it is now (`<Folder>/<path>`, as the install engine records them; a link
+inside a folder is not followed), no previous version, no pin, no mark, the stable channel. Nothing is
+downloaded and no folder changes. The next `update` resolves the entry like any other: a source's version
+that differs from the TOC's (`unknown` always does) is an update, and installing it is the engine's one path
+(`Engine::install_from_source`): the source's build is swapped in over the group, and a folder of the group
+the build does not have is removed as a folder of the previous version. A source whose version equals the
+TOC's reads `up to date` and installs nothing. A row the run cannot write (a key it lacks, CurseForge only)
+is a warning, `<name> not adopted: <why>`, never an entry: a CurseForge-only addon waits for the CurseForge
+source (decided 2026-10-22), and a Wago addon for the key; a row without a source is no line. A name or a
+folder the sidecar knows already is skipped too, so the adopted folders are managed from then on and a
+second `--apply` writes nothing (the sidecar is written only when an entry was added). The lines are the
+report's, then `adopted <name> <version> as <spec> (<n> folders: …)` per entry, the warnings and the
+summary, the counts with `; adopted <n> addons into the sidecar, no download and no folder changed: the next
+update installs each from its source` or `; nothing adopted, the sidecar is unchanged`.
+
+A folder belongs to one manager. A flavor folder with the CurseForge app's `.curseclient` marker refuses
+`--apply` before any source is asked (`adopt::marker_refusal`, exit 1, nothing written) unless
+`--alongside-curseforge` (which needs `--apply`) says so; then the entries are written and a warning says
+that the CurseForge app may still update or flag those folders and that its marker stays
+(`adopt::alongside_warning`). mrgl never removes the marker. Every install path warns in such a folder too:
+`add` (a zip or a source, not the dry run of a source, which reads no folder), `import` and `update` add
+`adopt::curse_client_warning` to their warnings, on the screen and in the JSON.
+
+### The GitHub mapping
+
+`data/github-sources.json` (task 097) is compiled into the core with `include_str!`
+(`adopt::MAPPING_JSON`), like the Forever notes: no file to ship and none to read at run time. It names the
+source of an addon whose TOC names none, by its folder:
+
+```json
+{
+  "schema": 1,
+  "about": "what the file is and how an entry joins",
+  "folders": {
+    "<addon folder>": "github:<owner>/<repo>"
+  }
+}
+```
+
+Every folder of a multi-folder addon is a key of its own with the same source, which makes them one folder
+group. An entry joins by a pull request, and only for a repository whose releases carry the addon's zip: a
+repository without release zips is no source mrgl can install from. The schema check (`adopt::tests`,
+`GithubMapping::problems`) rejects an unknown field, a schema other than 1, a key that is no folder name (a
+path separator, surrounding space) or repeats another without regard to case, and a value that is not a
+canonical `github:<owner>/<repo>` spec, and it holds the seed: every folder of the Forever starter list
+(`lists/forever-starter.json`) maps to that list's source.
 
 ## The UI
 
@@ -1183,6 +1288,18 @@ stabilities for retail, none stable for Forever and one for `mop`, `MrglWg04` an
 answers with `X-RateLimit-Remaining: 0` (both through a `.headers` file), and
 `api/data/slugs@game_version=forever.json` names `MrglWg01`, `MrglWg03` and `MrglWg05`. The tests pass a
 made-up key and assert that it goes to `addons.wago.io` only and reaches no output and no cache file.
+
+The adopt fixture (task 097) is a game folder of its own, `adopt/`: a `.build.info` with a Forever and a
+retail row, `_forever_` with one addon folder per header shape, and `_retail_` with the CurseForge app's
+`.curseclient` marker (a made-up id) and `MrglCompat` (`X-WoWI-ID: 1001`). The Forever folders:
+`MrglWagoOne` and `MrglWagoOne_Options` (`X-Wago-ID: MrglWg01` in both, one group by the same source),
+`MrglNoList` (the three id headers: `MrglWg02`, which the slug list does not name, `1002` and a CurseForge
+id), `MrglForever` (`1005`, CRLF lines), `MrglElsewhere` with `MrglElsewhere_Options` (`1006`, whose `UIDir`
+names both; the options TOC has no header), `MrglCurseOnly` (a CurseForge id alone), `MrglSite` (`X-Website`
+on `github.com/Example/Nightly` and `## Version: @project-version@`), `MrglNoForever` (`X-Website` on
+`github.com/Example/MainlineOnly`, no Forever asset), `MrglPage` (`X-Website` on another host), `MrglNoHint`
+(nothing) and `Questie` with `QuestieDB` (no header: the mapping's folders). The tests copy `releases/` and
+`sources/` into one temporary folder for the stub; the end-to-end tests copy the game folder too.
 
 The Forever starter list (`lists/forever-starter.json`, task 028) has a stub of its own,
 `starter-list/`: one release per entry's repository in the shape that repository's latest release had at

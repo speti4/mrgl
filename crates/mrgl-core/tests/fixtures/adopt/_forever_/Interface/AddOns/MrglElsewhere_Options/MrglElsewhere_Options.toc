@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Mrgl Elsewhere Options
+## Version: 0.1
+## Dependencies: MrglElsewhere
+
+options.lua

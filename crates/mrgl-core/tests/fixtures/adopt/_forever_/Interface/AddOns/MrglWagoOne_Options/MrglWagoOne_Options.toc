@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: Mrgl Wago One Options
+## Version: 1.0.0
+## Dependencies: MrglWagoOne
+## LoadOnDemand: 1
+## X-Wago-ID: MrglWg01
+
+options.lua

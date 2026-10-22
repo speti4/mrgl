@@ -586,6 +586,91 @@ pub trait Source {
         let _ = (spec, channel);
         ForeverBuild::Unknown
     }
+
+    /// Whether the source publishes a build of the spec's addon for the target (task 097, `mrgl adopt`):
+    /// `yes` when its metadata names the target's flavor, `no` when it answers without one, `unknown` when
+    /// it cannot say. This default resolves the spec: a pick by metadata is `yes`, a guess `unknown`, an
+    /// answer with nothing for the flavor ([`source_gone`]) `no`, any other failure `unknown` with its
+    /// line; a spec the run cannot ask ([`Source::missing`]) is `unknown` without a request. A source that
+    /// can answer for less overrides it (WoWInterface from its file list, Wago from its keyless slug list).
+    fn offers(&self, spec: &SourceSpec, target: &Target) -> BuildOffer {
+        if let Some(missing) = self.missing(spec) {
+            return BuildOffer::new(Offered::Unknown, missing);
+        }
+        match self.resolve(spec, target) {
+            Ok(pick) if pick.guess => BuildOffer::new(Offered::Unknown, pick.reason),
+            Ok(pick) => BuildOffer::new(Offered::Yes, pick.reason),
+            Err(error) if source_gone(&error) => BuildOffer::new(Offered::No, error.to_string()),
+            Err(error) => BuildOffer::new(Offered::Unknown, error.to_string()),
+        }
+    }
+
+    /// The addon folders the source names for a spec without a download (task 097: WoWInterface's
+    /// `UIDir`), `None` when it names none, which is this default.
+    fn folders(&self, spec: &SourceSpec) -> Option<Vec<String>> {
+        let _ = spec;
+        None
+    }
+}
+
+/// Whether a source publishes a build for a flavor ([`Source::offers`], task 097).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Offered {
+    /// Its metadata names the flavor.
+    Yes,
+    /// It answered, and names nothing for the flavor.
+    No,
+    /// It cannot say: a guess, no metadata, a source the run cannot ask, a failed request.
+    Unknown,
+}
+
+impl Offered {
+    /// The value's name, as the JSON writes it.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Offered::Yes => "yes",
+            Offered::No => "no",
+            Offered::Unknown => "unknown",
+        }
+    }
+}
+
+impl fmt::Display for Offered {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A source's answer to "does it publish a build for this flavor" and why, in plain words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BuildOffer {
+    pub build: Offered,
+    pub why: String,
+}
+
+impl BuildOffer {
+    pub fn new(build: Offered, why: impl Into<String>) -> BuildOffer {
+        BuildOffer {
+            build,
+            why: why.into(),
+        }
+    }
+}
+
+/// Whether an error says the source has nothing for the addon, rather than that it could not be asked: no
+/// release, no asset for the flavor, or no such repository or project (the update check's `source gone`,
+/// task 006, and [`Source::offers`]' `no`).
+pub fn source_gone(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::NoRelease { .. }
+            | Error::NoAssetForFlavor { .. }
+            | Error::SourceStatus {
+                status: 404 | 410,
+                ..
+            }
+    )
 }
 
 /// The error of a spec a source cannot ask about: [`Error::SourceNotConfigured`] with the source's

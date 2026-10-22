@@ -18,6 +18,7 @@
 //! the cache cannot tell again (task 078), [`voice`] is the murloc table every message goes through (D-005)
 //! and [`zip_entry`] is the one check every zip entry passes before the install engine or a restore writes
 //! it.
+//! [`adopt`] reports the source of every unmanaged addon of a flavor (task 097).
 //! [`savedvars`] lists the SavedVariables files by size and moves the orphans into a backup zip (task 025),
 //! and [`wtf`] is the one walk of the account, realm and character folders under `WTF` that it and
 //! [`sets`] read.
@@ -25,6 +26,7 @@
 //! talk and when to go online, which keeps every module testable against the fixtures under
 //! `tests/fixtures/`.
 
+pub mod adopt;
 pub mod backup;
 pub mod client;
 pub mod dependencies;

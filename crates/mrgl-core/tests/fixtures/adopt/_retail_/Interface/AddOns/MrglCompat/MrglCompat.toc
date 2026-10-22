@@ -1,0 +1,6 @@
+## Interface: 120105
+## Title: Mrgl Compat
+## Version: 1.0.0
+## X-WoWI-ID: 1001
+
+core.lua

@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Mrgl Forever
+## Version: 3.0.0
+## X-WoWI-ID: 1005
+
+core.lua
