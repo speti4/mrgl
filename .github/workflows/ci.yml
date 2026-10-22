@@ -168,6 +168,7 @@ jobs:
         shell: bash
         run: |
           cargo "+$COVERAGE_TOOLCHAIN" llvm-cov --workspace --branch --locked --no-report
+          mkdir -p target/llvm-cov
           cargo "+$COVERAGE_TOOLCHAIN" llvm-cov report --branch --json --summary-only --output-path target/llvm-cov/summary.json
           cargo "+$COVERAGE_TOOLCHAIN" llvm-cov report --branch --show-missing-lines
       - name: The table and the floors

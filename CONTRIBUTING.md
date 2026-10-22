@@ -117,6 +117,7 @@ rustup toolchain install --profile minimal --component llvm-tools-preview (Get-C
 cargo install cargo-llvm-cov --version (Get-Content scripts/cargo-llvm-cov-version.txt -Raw).Trim() --locked
 # Every time: the nightly's name from the pin file, the summary as JSON, the table and the floors.
 $nightly = (Get-Content scripts/coverage-toolchain.txt -Raw).Trim()
+New-Item -ItemType Directory -Force target/llvm-cov | Out-Null
 cargo "+$nightly" llvm-cov --workspace --branch --locked --json --summary-only --output-path target/llvm-cov/summary.json
 python -I scripts/coverage-check.py target/llvm-cov/summary.json
 cargo "+$nightly" llvm-cov report --branch --html --open    # the lines a test misses, file by file
