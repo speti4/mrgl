@@ -35,7 +35,7 @@ use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{
-    AlreadyInstalled, Engine, InstallOutcome, Installed, InstalledChecks, Mark, Metadata,
+    AlreadyInstalled, Engine, Folded, InstallOutcome, Installed, InstalledChecks, Mark, Metadata,
     PickInstalled, PickStep, SourceInstalled, SourceRequest,
 };
 use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
@@ -2831,6 +2831,9 @@ enum Applied {
     /// Task 089: the one install path found the pick's version installed already, under the addon's own
     /// entry or under another entry of the same source, and installed nothing.
     InstalledAlready(Box<InstalledAlready>),
+    /// Task 108: an install earlier in the run took every folder of the addon's entry over and dropped the
+    /// entry, so nothing is left to update: the addon is folded into that install's addon.
+    Folded(Box<Folded>),
     Failed(String),
 }
 
@@ -2879,6 +2882,9 @@ impl InstalledAlready {
 /// is asked about and its data line as soon as it is checked; a stop before a source's rate limit is one
 /// warning line with the reset time, and the addons it leaves are counted per source (task 101: `2 not
 /// checked (GitHub's rate limit)`, the other sources still asked), a warning, not a failure.
+/// Task 108: an addon whose entry an install earlier in the run dropped (that
+/// install's zip carried every folder of it) is not installed again: `update` says it is folded into
+/// that addon.
 fn update_command(
     reporter: &Reporter,
     name: Option<&str>,
@@ -2944,6 +2950,8 @@ fn update_command(
     let updates: Vec<&update::AddonUpdate> = check.updates().collect();
 
     let mut applied: BTreeMap<String, Applied> = BTreeMap::new();
+    // Task 108: the entries the installs of this run dropped, folded into the installed addon.
+    let mut folded: Vec<Folded> = Vec::new();
     if !dry_run && !updates.is_empty() {
         let count = count_addons(updates.len());
         if !yes {
@@ -2970,6 +2978,17 @@ fn update_command(
             let Some(request) = addon.request() else {
                 continue;
             };
+            if let Some(into) = folded
+                .iter()
+                .find(|entry| entry.name.eq_ignore_ascii_case(&addon.name))
+            {
+                if !reporter.json {
+                    let (kind, line) = into.update_line(&folder_name);
+                    reporter.say(kind, line);
+                }
+                applied.insert(addon.name.clone(), Applied::Folded(Box::new(into.clone())));
+                continue;
+            }
             if !reporter.json {
                 reporter.say(
                     Kind::Progress,
@@ -3002,6 +3021,7 @@ fn update_command(
                         // Task 082: the interface check of the updated addon, as `add` says it.
                         summary.say_interface(reporter, &folder_name);
                     }
+                    folded.extend(installed.folded.iter().cloned());
                     Applied::Updated(Box::new(summary))
                 }
                 Ok(SourceInstalled {
@@ -3036,6 +3056,10 @@ fn update_command(
         .values()
         .filter(|result| matches!(result, Applied::InstalledAlready(_)))
         .count();
+    let folded_count = applied
+        .values()
+        .filter(|result| matches!(result, Applied::Folded(_)))
+        .count();
     let mut failed: Vec<&str> = applied
         .iter()
         .filter(|(_, result)| matches!(result, Applied::Failed(_)))
@@ -3068,9 +3092,21 @@ fn update_command(
                     Some(Applied::InstalledAlready(already)) => Some(already.json()),
                     _ => None,
                 };
+                // Task 108: the addon an earlier install of the run folded this entry into, `null`
+                // otherwise.
+                let folded_into = match applied.get(&addon.name) {
+                    Some(Applied::Folded(into)) => Some(serde_json::json!({
+                        "name": into.into,
+                        "version": into.into_version,
+                        "folders": into.folders,
+                        "message": into.update_line(&folder_name).1,
+                    })),
+                    _ => None,
+                };
                 value["updated"] = summary.is_some().into();
                 value["addon"] = summary.map(|summary| summary.addon.clone()).into();
                 value["installed_already"] = already.into();
+                value["folded_into"] = folded_into.into();
                 // Task 082: the interface check of the updated addon, `null` when it passes or was not
                 // updated.
                 value["interface_mismatch"] =
@@ -3111,6 +3147,7 @@ fn update_command(
             "addons": addons,
             "updated": updated,
             "installed_already": installed_already,
+            "folded": folded_count,
             "counts": counts,
             "stopped": stopped,
             "warnings": warnings,
@@ -3126,6 +3163,7 @@ fn update_command(
                 updated,
                 left: 0,
                 installed_already,
+                folded: folded_count,
             }
         };
         let (kind, summary) = check.summary(of, &folder_name);

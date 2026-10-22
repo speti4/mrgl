@@ -337,7 +337,16 @@ entry of the same source, which the install path falls back to only when no entr
 that source any more (task 100; an install earlier in the run took its folders over, say), it says a
 warning that names that entry, `QuestieClassic not updated: Questie, a second entry of github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2`, and leaves
 both entries as they are; the summary counts either as `1 installed already`. The words are the core's
-(`AlreadyInstalled::update_line`), and the window's update says them too (task 099). Right after the check,
+(`AlreadyInstalled::update_line`), and the window's update says them too (task 099). An install that takes
+every folder of another entry over drops that entry and names it in `Installed::folded` (task 108, the
+core's `Folded`: the dropped entry's name, version and folders, the addon it joined and that addon's
+version), next to the warnings `<entry> lost 1 folder to <addon>` and `<entry> is no longer managed: <addon>
+replaced every folder of it`. When a release zip of one source carries the folder of a second entry of that
+source, `update --all` updates the first entry and then, for the second, installs nothing and says the
+core's line (`Folded::update_line`) through the voice: `SeveralFolders_Options folded into SeveralFolders:
+SeveralFolders 1.2.3 ships its folder SeveralFolders_Options in _forever_, SeveralFolders_Options has no
+entry of its own now`; the summary counts it as `1 folded into another entry`, neither updated nor
+failed, and the sidecar holds the one entry after. Right after the check,
 before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
 as the window's check does (task 087, below): a source gone, a failed check and an addon left before the
 rate limit are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
@@ -346,10 +355,11 @@ that cannot be written is a warning (`the answers of this check are not kept for
 no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installed `addon` block and the
 interface check of the installed addon, `interface_mismatch` and `interface_out_of_date` (task 082, below),
 `installed_already` (task 089: the entry the install path found at the pick's version, as an `addon` block
-with `same_entry` and the line as `message`; `null` otherwise), the document's `updated` and
-`installed_already` counts, the `counts` per state (`rate-limited` the sum over the sources), `stopped` (a
-list of the `BudgetStop`s, one per source that stopped, each with its `source` and its `message`; empty
-when the check asked about every addon, task 101) and the warnings. An
+with `same_entry` and the line as `message`; `null` otherwise), `folded_into` (task 108: the addon an
+install earlier in the run folded the entry into, `{ name, version, folders, message }`; `null` otherwise),
+the document's `updated`, `installed_already` and `folded` counts, the `counts` per state (`rate-limited` the
+sum over the sources), `stopped` (a list of the `BudgetStop`s, one per source that stopped, each with its
+`source` and its `message`; empty when the check asked about every addon, task 101) and the warnings. An
 update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
 a rate limit is a warning in the summary (`2 not checked (Wago's rate limit)`), not a failure: exit code 0.
 
