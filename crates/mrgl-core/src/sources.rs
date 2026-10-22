@@ -116,6 +116,10 @@ pub enum SourceSpec {
     GitHub { owner: String, repo: String },
     /// `wago:<id>`: a Wago Addons project, by its id of letters and digits (`X-Wago-ID` in a TOC).
     Wago { id: String },
+    /// A Wago page address, `https://addons.wago.io/addons/<slug>` (task 105): the addon by its slug, which
+    /// the router turns into `wago:<id>` through the keyless slug list of the target's game version
+    /// ([`Source::canonical_spec`]) before anything is installed or recorded.
+    WagoPage { slug: String },
     /// `wowi:<id>`: a WoWInterface project, by its number (`X-WoWI-ID` in a TOC).
     WowInterface { id: String },
     /// `curse:<id>`: a CurseForge project, by its number (`X-Curse-Project-ID` in a TOC).
@@ -131,8 +135,8 @@ const WAGO_FORM: &str =
 const WOWI_FORM: &str = "expected wowi:<id>, the number of the addon's page address (www.wowinterface.com/downloads/info<id>)";
 /// The hint of a `curse:` spec without an id.
 const CURSE_FORM: &str = "expected curse:<id>, the addon's project id, a number (the X-Curse-Project-ID line of its TOC)";
-/// The hint of a Wago page address: it names the addon by its slug, which is not the id.
-const WAGO_PAGE: &str = "a Wago page names the addon by its slug, not its id: use wago:<id>, the X-Wago-ID line of the addon's TOC";
+/// The hint of a Wago address that is no addon's page (task 105).
+const WAGO_PAGE: &str = "expected https://addons.wago.io/addons/<slug>, the address of the addon's page, or wago:<id>, the X-Wago-ID line of the addon's TOC";
 /// The hint of a CurseForge page address with a slug.
 const CURSE_PAGE: &str = "a CurseForge page names the addon by its slug, not its id: use curse:<id>, the project id on the page or the X-Curse-Project-ID line of the addon's TOC";
 
@@ -140,8 +144,9 @@ impl SourceSpec {
     /// Parses a spec (task 092): `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>` or `curse:<id>`, or a
     /// page address that carries the id: `https://github.com/<owner>/<repo>` (with or without `.git` and a
     /// trailing slash), `https://www.wowinterface.com/downloads/info<id>[-<name>.html]` and
-    /// `https://www.curseforge.com/projects/<id>`. A Wago page (`addons.wago.io/addons/<slug>`) and a
-    /// CurseForge addon page (`curseforge.com/wow/addons/<slug>`) name a slug, which is not the id, and are
+    /// `https://www.curseforge.com/projects/<id>`. A Wago page (`addons.wago.io/addons/<slug>`, task 105)
+    /// names a slug, read as [`SourceSpec::WagoPage`] for the router to turn into `wago:<id>`; a CurseForge
+    /// addon page (`curseforge.com/wow/addons/<slug>`) names a slug only its keyed API knows, and is
     /// refused with a hint that says where the id is. Anything else is an error that names the accepted
     /// shape.
     pub fn parse(text: &str) -> Result<SourceSpec> {
@@ -200,7 +205,12 @@ impl SourceSpec {
                     .ok_or_else(|| error(CURSE_FORM)),
                 None => Err(error(CURSE_PAGE)),
             },
-            "addons.wago.io" => Err(error(WAGO_PAGE)),
+            "addons.wago.io" => path
+                .strip_prefix("addons/")
+                .and_then(|rest| rest.split('/').next())
+                .and_then(wago_slug)
+                .map(|slug| SourceSpec::WagoPage { slug })
+                .ok_or_else(|| error(WAGO_PAGE)),
             _ => Err(error(SPEC_FORMS)),
         }
     }
@@ -209,7 +219,7 @@ impl SourceSpec {
     pub fn kind(&self) -> SourceKind {
         match self {
             SourceSpec::GitHub { .. } => SourceKind::GitHub,
-            SourceSpec::Wago { .. } => SourceKind::Wago,
+            SourceSpec::Wago { .. } | SourceSpec::WagoPage { .. } => SourceKind::Wago,
             SourceSpec::WowInterface { .. } => SourceKind::WowInterface,
             SourceSpec::CurseForge { .. } => SourceKind::CurseForge,
         }
@@ -221,6 +231,7 @@ impl SourceSpec {
         match self {
             SourceSpec::GitHub { repo, .. } => Some(repo),
             SourceSpec::Wago { .. }
+            | SourceSpec::WagoPage { .. }
             | SourceSpec::WowInterface { .. }
             | SourceSpec::CurseForge { .. } => None,
         }
@@ -253,6 +264,16 @@ fn wago_id(id: &str) -> Option<String> {
         .then(|| id.to_string())
 }
 
+/// A Wago slug, the last part of an addon's page address: ASCII letters, digits, `-` and `_`, at most 100.
+fn wago_slug(slug: &str) -> Option<String> {
+    (!slug.is_empty()
+        && slug.len() <= 100
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    .then(|| slug.to_string())
+}
+
 /// A WoWInterface or CurseForge id: a number above zero, written without leading zeros.
 fn number_id(id: &str) -> Option<String> {
     if id.is_empty() || id.len() > 12 || !id.chars().all(|c| c.is_ascii_digit()) {
@@ -263,11 +284,13 @@ fn number_id(id: &str) -> Option<String> {
 }
 
 impl fmt::Display for SourceSpec {
-    /// The canonical spelling: `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`, `curse:<id>`.
+    /// The canonical spelling: `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`, `curse:<id>`; a Wago page
+    /// is its address, `https://addons.wago.io/addons/<slug>`, until the router turns it into `wago:<id>`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SourceSpec::GitHub { owner, repo } => write!(f, "github:{owner}/{repo}"),
             SourceSpec::Wago { id } => write!(f, "wago:{id}"),
+            SourceSpec::WagoPage { slug } => write!(f, "https://addons.wago.io/addons/{slug}"),
             SourceSpec::WowInterface { id } => write!(f, "wowi:{id}"),
             SourceSpec::CurseForge { id } => write!(f, "curse:{id}"),
         }
@@ -569,6 +592,15 @@ pub trait Source {
     fn request_budget_for(&self, spec: &SourceSpec) -> Option<RequestBudget> {
         let _ = spec;
         self.request_budget()
+    }
+
+    /// The spec a source records for one the user typed (task 105): a Wago page address
+    /// ([`SourceSpec::WagoPage`]) becomes `wago:<id>` through the slug list of the target's game version, or
+    /// an error that names the game version it was looked up in; every other spec is its own. The default
+    /// keeps the spec.
+    fn canonical_spec(&self, spec: &SourceSpec, target: &Target) -> Result<SourceSpec> {
+        let _ = target;
+        Ok(spec.clone())
     }
 
     /// Asks about several specs of this source at once, before the update check asks them one by one
@@ -1290,7 +1322,9 @@ mod tests {
             ("wowi:0", WOWI_FORM),
             ("curse:-1", CURSE_FORM),
             ("curse:1234567890123", CURSE_FORM),
-            ("https://addons.wago.io/addons/details", WAGO_PAGE),
+            ("https://addons.wago.io/", WAGO_PAGE),
+            ("https://addons.wago.io/addons/bad%20slug", WAGO_PAGE),
+            ("https://addons.wago.io/wa/abc", WAGO_PAGE),
             ("https://www.curseforge.com/wow/addons/details", CURSE_PAGE),
             (
                 "https://www.wowinterface.com/downloads/fileinfo.php",
@@ -1343,6 +1377,13 @@ mod tests {
                 "curse:3358",
             ),
             (
+                "https://addons.wago.io/addons/details/versions?stability=stable",
+                SourceSpec::WagoPage {
+                    slug: "details".into(),
+                },
+                "https://addons.wago.io/addons/details",
+            ),
+            (
                 "https://WWW.GitHub.com/Questie/Questie?tab=readme",
                 SourceSpec::GitHub {
                     owner: "Questie".into(),
@@ -1365,18 +1406,24 @@ mod tests {
 
     #[test]
     fn a_spec_knows_its_source_and_its_name_hint() {
-        let kinds: Vec<(SourceKind, Option<String>)> =
-            ["github:o/Repo", "wago:abc", "wowi:1", "curse:2"]
-                .into_iter()
-                .map(|text| {
-                    let spec = SourceSpec::parse(text).unwrap();
-                    (spec.kind(), spec.name_hint().map(str::to_string))
-                })
-                .collect();
+        let kinds: Vec<(SourceKind, Option<String>)> = [
+            "github:o/Repo",
+            "wago:abc",
+            "https://addons.wago.io/addons/a-b",
+            "wowi:1",
+            "curse:2",
+        ]
+        .into_iter()
+        .map(|text| {
+            let spec = SourceSpec::parse(text).unwrap();
+            (spec.kind(), spec.name_hint().map(str::to_string))
+        })
+        .collect();
         assert_eq!(
             kinds,
             [
                 (SourceKind::GitHub, Some("Repo".to_string())),
+                (SourceKind::Wago, None),
                 (SourceKind::Wago, None),
                 (SourceKind::WowInterface, None),
                 (SourceKind::CurseForge, None),

@@ -19,8 +19,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   ones, and the no-asset error names the newest release and how many releases were looked at, task 066;
   the spec forms, `SourceSpec`: `github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>` and `curse:<id>`, and the
   page addresses an id is read from without a request, `github.com/<owner>/<repo>`,
-  `www.wowinterface.com/downloads/info<id>…` and `www.curseforge.com/projects/<id>`, while a Wago or
-  CurseForge addon page names a slug and is refused with where the id is, task 092; the router,
+  `www.wowinterface.com/downloads/info<id>…` and `www.curseforge.com/projects/<id>`, while a CurseForge
+  addon page names a slug and is refused with where the id is, task 092; a Wago page,
+  `addons.wago.io/addons/<slug>`, is `SourceSpec::WagoPage`, which the router turns into `wago:<id>` through
+  the source's `canonical_spec` before `add` and `import` resolve, install or record anything, task 105;
+  the router,
   `sources::Sources` in `sources/router.rs`, one slot per `SourceKind`, the one value the command line and
   the window build per run, `Sources::from_env`, and the window's offline view over a client that fails
   every request, `Sources::cached`: it hands each spec to its source and answers
@@ -1305,7 +1308,14 @@ when the addon has a release for `forever` and `no` when Wago answers without on
 `addons.wago.io/api/data/slugs?game_version=forever` (every addon with a release for that game version, slug
 and id) answers it without a key, and the id of a slug (`Wago::id_of_slug`), read at most once a day and
 cached under `<home>/cache/wago/slugs-<v>.json`. `list` reads the signal from the cached `forever` answer,
-else the cached slug list. The fixture answers are under `tests/fixtures/sources/addons.wago.io/`
+else the cached slug list. A Wago page address (task 105), `https://addons.wago.io/addons/<slug>` (a
+trailing path or query is dropped), parses into `SourceSpec::WagoPage`; `Source::canonical_spec` looks the
+slug up in the slug list of the target's game version (as written, else ASCII case-insensitive, without a
+key) and answers `wago:<id>`, or `no Wago addon <slug> in the slug list of game version <v>: it has no
+release for <v>, or the address names no addon` (`Error::UnknownWagoSlug`). `add` says `<address> is
+wago:<id>` and records the id, as `import` does for a list entry with the address (an unknown slug is the
+entry's failure); the resolve of a page spec looks it up first too, so a pick always names `wago:<id>`.
+Without the key the address is `source not configured` like `wago:<id>`, since the install needs the key. The fixture answers are under `tests/fixtures/sources/addons.wago.io/`
 (`api/external/addons/<id>@game_version=<v>.json`, the stub's query mapping): `MrglWg01` has a Forever and a
 retail release with a stored zip behind each (`downloads/MrglWg01/2.0.0-<v>.zip`, written by
 `zips/make-zips.py`), `MrglWg02` answers for Forever without a release, `MrglWg03` has the three

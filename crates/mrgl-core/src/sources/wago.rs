@@ -23,7 +23,9 @@
 //! The Forever signal: `yes` when the addon has a release for `forever`, `no` when Wago answers without one.
 //! The keyless public data endpoint `GET https://addons.wago.io/api/data/slugs?game_version=<v>` (the slug and
 //! id of every addon with a release for that game version) answers it without a key, and the id of a slug
-//! ([`Wago::id_of_slug`]); its lists are read once a day and cached under `cache/wago/slugs-<v>.json`.
+//! ([`Wago::id_of_slug`]); its lists are read once a day and cached under `cache/wago/slugs-<v>.json`. A Wago
+//! page address (`addons.wago.io/addons/<slug>`, task 105) becomes `wago:<id>` through that list of the
+//! target's game version ([`Source::canonical_spec`]), so the sidecar records the id.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -644,9 +646,17 @@ impl<H: Http> Wago<H> {
     }
 
     /// The id of an addon by its slug (the name of its page, `addons.wago.io/addons/<slug>`), from the slug
-    /// list of a game version, without a key; `Ok(None)` when the list does not have it.
+    /// list of a game version, without a key; the slug as written, else ASCII case-insensitive; `Ok(None)`
+    /// when the list does not have it.
     pub fn id_of_slug(&self, slug: &str, game_version: &str) -> Result<Option<String>> {
-        Ok(self.slugs(game_version)?.addons.get(slug).cloned())
+        let slugs = self.slugs(game_version)?;
+        Ok(slugs.addons.get(slug).cloned().or_else(|| {
+            slugs
+                .addons
+                .iter()
+                .find(|(listed, _)| listed.eq_ignore_ascii_case(slug))
+                .map(|(_, id)| id.clone())
+        }))
     }
 
     /// The Forever signal from what is cached, never a request: the cached `forever` answer (a release on
@@ -811,8 +821,10 @@ fn status_error(status: u16, url: &str, response: &Response, not_found: &'static
 }
 
 impl<H: Http> Source for Wago<H> {
-    /// The release the target's channel takes for its game version ([`game_version`], [`release_on`]).
+    /// The release the target's channel takes for its game version ([`game_version`], [`release_on`]); a
+    /// page address is looked up first ([`Source::canonical_spec`]), so the pick names `wago:<id>`.
     fn resolve(&self, spec: &SourceSpec, target: &Target) -> Result<Pick> {
+        let spec = &self.canonical_spec(spec, target)?;
         let id = addon_id(spec)?;
         let game = Self::game_of(spec, target)?;
         let (addon, stale) = self.addon(id, game.0)?;
@@ -832,6 +844,7 @@ impl<H: Http> Source for Wago<H> {
     /// The recent release whose label is the version (with or without a leading `v`), any stability: Wago
     /// keeps the three recent ones, an older version is not offered.
     fn resolve_version(&self, spec: &SourceSpec, target: &Target, version: &str) -> Result<Pick> {
+        let spec = &self.canonical_spec(spec, target)?;
         let id = addon_id(spec)?;
         let game = Self::game_of(spec, target)?;
         let (addon, stale) = self.addon(id, game.0)?;
@@ -900,6 +913,22 @@ impl<H: Http> Source for Wago<H> {
         })
     }
 
+    /// A page address's slug looked up in the keyless slug list of the target's game version (task 105):
+    /// `wago:<id>`, or [`Error::UnknownWagoSlug`] naming the game version; any other spec is its own.
+    fn canonical_spec(&self, spec: &SourceSpec, target: &Target) -> Result<SourceSpec> {
+        let SourceSpec::WagoPage { slug } = spec else {
+            return Ok(spec.clone());
+        };
+        let (game_version, _) = Self::game_of(spec, target)?;
+        match self.id_of_slug(slug, game_version)? {
+            Some(id) => Ok(SourceSpec::Wago { id }),
+            None => Err(Error::UnknownWagoSlug {
+                slug: slug.clone(),
+                game_version: game_version.to_string(),
+            }),
+        }
+    }
+
     /// The update check's bulk lookup (task 106): the Wago specs of the target's game version, once, with
     /// the key and while the budget has a request left; a failed lookup leaves each addon to be asked
     /// alone. The window's offline view, without a key, sends nothing.
@@ -933,7 +962,7 @@ impl<H: Http> Source for Wago<H> {
     /// A spec of another source is not this source's to answer; without the key the Wago API cannot be
     /// asked (the window's offline view excepted, which reads the cache alone).
     fn missing(&self, spec: &SourceSpec) -> Option<String> {
-        if addon_id(spec).is_err() {
+        if spec.kind() != SourceKind::Wago {
             return Some(NOT_WAGO.to_string());
         }
         (self.needs_key && self.key.is_none()).then(no_key)

@@ -113,6 +113,7 @@ target\release\mrgl.exe add github:<owner>/<repo> --flavor forever            # 
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # which asset it would be, nothing installed
 target\release\mrgl.exe add wowi:<id> --flavor retail                       # a WoWInterface project's file, no key needed
 target\release\mrgl.exe add wago:<id> --flavor forever                      # a Wago addon's release, with your MRGL_WAGO_KEY
+target\release\mrgl.exe add https://addons.wago.io/addons/<slug> --flavor forever  # the same by its Wago page, recorded as wago:<id>
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe adopt --flavor retail                               # where the addons mrgl did not install come from
 target\release\mrgl.exe adopt --flavor forever --apply                      # let mrgl manage them from now on, nothing downloaded
@@ -157,10 +158,13 @@ release notes: Quest arrows point the right way again (https://github.com/<owner
 ```
 
 A source spec names where an addon comes from: `github:<owner>/<repo>` (or the repository's address),
-`wago:<id>`, `wowi:<id>` (or the WoWInterface page, `www.wowinterface.com/downloads/info<id>…`) and
-`curse:<id>` (or `www.curseforge.com/projects/<id>`). A Wago or CurseForge addon page names the addon by a
-slug, not its id, so mrgl refuses it and says where the id is (the `X-Wago-ID` or `X-Curse-Project-ID` line
-of the addon's TOC). This build has the GitHub, the WoWInterface and the Wago sources: `add` with a spec of
+`wago:<id>` (or the addon's Wago page, `addons.wago.io/addons/<slug>`), `wowi:<id>` (or the WoWInterface
+page, `www.wowinterface.com/downloads/info<id>…`) and `curse:<id>` (or `www.curseforge.com/projects/<id>`).
+A Wago page names the addon by its slug: mrgl looks the slug up in Wago's public list of the flavor's game
+version and installs and records the addon as `wago:<id>` (a slug that list lacks says which game version
+it was looked up in). A CurseForge addon page names a slug only the keyed API knows, so mrgl refuses it and
+says where the id is (the `X-Curse-Project-ID` line of the addon's TOC, or the project id on the page).
+This build has the GitHub, the WoWInterface and the Wago sources: `add` with a spec of
 another source, or of Wago without your key, says `source not configured` and what is missing, an imported
 list reports such an entry the same way, and the update check leaves it not checked.
 

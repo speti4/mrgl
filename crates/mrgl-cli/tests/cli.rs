@@ -8585,3 +8585,123 @@ fn update_all_takes_the_wago_answers_from_one_bulk_request() {
         stdout(&output)
     );
 }
+
+// --- task 105: a Wago page address resolves to its `wago:<id>` ---
+
+#[test]
+fn add_and_import_take_a_wago_page_address_and_record_its_id() {
+    let game = Game::new("wago-page");
+    let page = "https://addons.wago.io/addons/mrgl-wago-one";
+    let output = game
+        .mrgl_wago()
+        .args(["--serious", "add", page, "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[..2],
+        [
+            "https://addons.wago.io/addons/mrgl-wago-one is wago:MrglWg01",
+            "resolving wago:MrglWg01 for forever",
+        ],
+        "{text}"
+    );
+    assert_eq!(
+        lines.last().copied(),
+        Some("installed MrglWagoOne 2.0.0 (1 folder: MrglWagoOne) into _forever_")
+    );
+    assert_eq!(
+        sidecar(&game)["addons"]["MrglWagoOne"]["source"],
+        "wago:MrglWg01"
+    );
+    assert!(game.home.join("cache/wago/slugs-forever.json").is_file());
+
+    // A slug the list of the flavor's game version does not name says which list it was looked up in.
+    let output = game
+        .mrgl_wago()
+        .args([
+            "--serious",
+            "add",
+            "https://addons.wago.io/addons/no-such-addon",
+            "--flavor",
+            "forever",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "no Wago addon no-such-addon in the slug list of game version forever: it has no release for forever, or the address names no addon"
+    );
+    // The JSON of a dry run names the id as the source.
+    let output = game
+        .mrgl_wago()
+        .args(["--json", "add", page, "--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["source"], "wago:MrglWg01");
+    assert_eq!(value["pick"]["source"], "wago:MrglWg01");
+
+    // A list entry with the address imports, and the sidecar records the id.
+    let game = Game::new("wago-page-import");
+    let list = game.root.parent().expect("the base").join("wago-page.json");
+    std::fs::write(
+        &list,
+        serde_json::json!({
+            "format": "mrgl-list",
+            "schema": 1,
+            "flavor": "wowf",
+            "addons": [
+                { "name": "MrglWagoOne", "source": page, "version": "2.0.0",
+                  "folders": ["MrglWagoOne"] },
+                { "name": "Unknown", "source": "https://addons.wago.io/addons/no-such-addon",
+                  "version": "1.0.0", "folders": ["Unknown"] },
+            ],
+        })
+        .to_string(),
+    )
+    .expect("the list");
+    let output = game
+        .mrgl_wago()
+        .args(["--json", "import"])
+        .arg(&list)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let outcomes: Vec<(&str, &str)> = value["addons"]
+        .as_array()
+        .expect("the entries")
+        .iter()
+        .map(|item| {
+            (
+                item["name"].as_str().unwrap_or_default(),
+                item["outcome"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [("MrglWagoOne", "installed"), ("Unknown", "failed")],
+        "{value}"
+    );
+    assert!(
+        value["addons"][1]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("slug list of game version forever"),
+        "{value}"
+    );
+    assert_eq!(
+        sidecar(&game)["addons"]["MrglWagoOne"]["source"],
+        "wago:MrglWg01"
+    );
+    assert!(game.addon("MrglWagoOne").join("MrglWagoOne.toc").is_file());
+}

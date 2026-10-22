@@ -97,6 +97,13 @@ pub enum Error {
     #[error("unknown source: {spec} ({hint})")]
     UnknownSource { spec: String, hint: &'static str },
 
+    /// A Wago page address whose slug the keyless slug list of the target's game version does not name
+    /// (task 105): the addon has no release for that game version, or the address names no addon.
+    #[error(
+        "no Wago addon {slug} in the slug list of game version {game_version}: it has no release for {game_version}, or the address names no addon"
+    )]
+    UnknownWagoSlug { slug: String, game_version: String },
+
     /// A spec of a source this run cannot ask (task 092): this build does not have it, or its key is not
     /// set; `missing` says which ([`crate::sources::Source::missing`]).
     #[error("source not configured: {spec} ({missing})")]

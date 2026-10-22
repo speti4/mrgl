@@ -626,3 +626,56 @@ fn a_bulk_answer_is_held_for_the_run_and_answers_without_a_request() {
     ));
     assert!(keyless.http().requests().is_empty());
 }
+
+// --- task 105: a Wago page address resolves to its `wago:<id>` ---
+
+#[test]
+fn a_page_address_turns_into_its_id_through_the_keyless_slug_list() {
+    let forever = target(FlavorId::Forever, None);
+    let page = spec("https://addons.wago.io/addons/mrgl-wago-one");
+    assert_eq!(page.kind(), SourceKind::Wago);
+    // The lookup needs no key; the source without one still says the key is missing for the install.
+    let keyless = Wago::new(FolderHttp::new(fixtures()), None, None);
+    assert_eq!(
+        keyless.canonical_spec(&page, &forever).expect("the id"),
+        spec("wago:MrglWg01")
+    );
+    assert!(keyless.missing(&page).is_some());
+    assert!(
+        keyless
+            .http()
+            .requests()
+            .iter()
+            .all(|request| request.header_value("Authorization").is_none()),
+        "the slug list goes without the key"
+    );
+    assert_eq!(
+        keyless
+            .canonical_spec(
+                &spec("https://addons.wago.io/addons/MRGL-Wago-Three"),
+                &forever
+            )
+            .expect("the id"),
+        spec("wago:MrglWg03"),
+        "a slug in other letter case"
+    );
+    let error = keyless
+        .canonical_spec(
+            &spec("https://addons.wago.io/addons/no-such-addon"),
+            &forever,
+        )
+        .expect_err("not on the list");
+    assert_eq!(
+        error.to_string(),
+        "no Wago addon no-such-addon in the slug list of game version forever: it has no release for forever, or the address names no addon"
+    );
+    // Every other spec is its own, and a resolve of the page picks for the id.
+    assert_eq!(
+        keyless
+            .canonical_spec(&spec("wago:abc"), &forever)
+            .expect("itself"),
+        spec("wago:abc")
+    );
+    let pick = wago().resolve(&page, &forever).expect("a pick");
+    assert_eq!(pick.source, "wago:MrglWg01");
+}

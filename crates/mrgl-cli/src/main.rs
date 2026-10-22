@@ -109,8 +109,9 @@ enum Command {
     /// `github:<owner>/<repo>`, or `wago:<id>`, `wowi:<id>`, `curse:<id>` once this build has that source.
     Add {
         /// The source spec (`github:<owner>/<repo>`, `wago:<id>`, `wowi:<id>`, `curse:<id>`, or a page
-        /// address with the id: github.com/<owner>/<repo>, www.wowinterface.com/downloads/info<id>,
-        /// www.curseforge.com/projects/<id>), or a zip path (a `.zip` name or an existing file).
+        /// address: github.com/<owner>/<repo>, www.wowinterface.com/downloads/info<id>,
+        /// www.curseforge.com/projects/<id>, or addons.wago.io/addons/<slug>, recorded as `wago:<id>`), or a
+        /// zip path (a `.zip` name or an existing file).
         source: String,
         /// The flavor to install into: `forever`, `retail`, `classic`, `era`, a `.flavor.info` id or a
         /// flavor folder. The installed build is read from the game folder (`MRGL_ROOT` or `mrgl root`)
@@ -1466,6 +1467,24 @@ fn addon_json(addon: &Addon, status: Option<&Status>) -> serde_json::Value {
     serde_json::Value::Object(object)
 }
 
+/// The spec `add` resolves and records for the one typed (task 105): a Wago page address becomes
+/// `wago:<id>` through the slug list of the target's game version, and a progress line says so; an unknown
+/// slug is the error that names the game version. Every other spec is its own.
+fn recorded_spec(
+    reporter: &Reporter,
+    sources: &Sources,
+    spec: SourceSpec,
+    target: &Target,
+) -> Result<SourceSpec, String> {
+    let recorded = sources
+        .canonical_spec(&spec, target)
+        .map_err(|error| error.to_string())?;
+    if recorded != spec && !reporter.json {
+        reporter.say(Kind::Progress, format!("{spec} is {recorded}"));
+    }
+    Ok(recorded)
+}
+
 /// The target of an `add`: the flavor the spec names and, when a game folder is known and holds that
 /// flavor, its installed build. A flavor folder path gives both; a name or an id alone gives the flavor
 /// only, so the pick for the progressing classic is a guess.
@@ -1522,6 +1541,12 @@ fn add_command(
         let engine = with_bound(engine_for(flavor, &mut warnings)?, max_unpacked);
         warnings.extend(adopt::curse_client_warning(&engine.flavor));
         let folder_name = engine.flavor.folder_name();
+        let spec = recorded_spec(
+            reporter,
+            &sources,
+            spec,
+            &Target::from_flavor(&engine.flavor),
+        )?;
         let SourceInstalled { pick, outcome } = engine
             .install_from_source(
                 &sources,
@@ -1584,6 +1609,7 @@ fn add_command(
     }
     let target = add_target(flavor, &mut warnings)?;
     let name = target.flavor_name().to_string();
+    let spec = recorded_spec(reporter, &sources, spec, &target)?;
     if !reporter.json {
         reporter.say(Kind::Progress, format!("resolving {spec} for {name}"));
     }
