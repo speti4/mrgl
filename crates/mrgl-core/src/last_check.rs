@@ -10,6 +10,9 @@
 //! and version, so an addon updated or reinstalled since (by the command line too) drops it; a mark (pin,
 //! ignore, the channel) keeps it, and an ignored addon's row shows the ignore instead, since the check
 //! skips it.
+//!
+//! Two writers, one rule ([`record_check`]): the window's check and update (task 078) and the command
+//! line's `mrgl update` (task 087), so what one of them found shows in the window either way.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -149,6 +152,21 @@ impl LastCheck {
     }
 }
 
+/// Takes an online check's addons into the flavor's kept answers and writes the file: the kept answers as
+/// they are, [`LastCheck::record`] over the sidecar `state`, then [`LastCheck::write`]. The window's check
+/// and the command line's `update` call it after the check, before any update is installed; a failed write
+/// is theirs to report as a warning.
+pub fn record_check(
+    home: &FlavorHome,
+    flavor: &FlavorId,
+    state: &State,
+    addons: &[AddonUpdate],
+) -> Result<()> {
+    let mut last = LastCheck::read(home, flavor);
+    last.record(state, addons);
+    last.write(home)
+}
+
 /// Whether a kept answer still speaks of the addon the sidecar has: the same source and version.
 fn applies(state: &State, name: &str, kept: &KeptAnswer) -> bool {
     state
@@ -267,6 +285,51 @@ mod tests {
         assert!(LastCheck::read(&home, &FlavorId::Forever).addons.is_empty());
         std::fs::write(LastCheck::path(&home), "{ not json").unwrap();
         assert!(LastCheck::read(&home, &FlavorId::Forever).addons.is_empty());
+        let _ = std::fs::remove_dir_all(&home_dir);
+    }
+
+    #[test]
+    fn record_check_reads_records_and_writes_in_one_call() {
+        // Task 087: the command line's `update` and the window share it.
+        let home_dir = temp_home("record");
+        let home = FlavorHome::at(&home_dir, &FlavorId::Forever);
+        let mut state = State::new(&FlavorId::Forever);
+        state.addons.insert("A".into(), entry("github:o/r", "1.0"));
+        state.addons.insert("B".into(), entry("github:o/r", "2.0"));
+        record_check(
+            &home,
+            &FlavorId::Forever,
+            &state,
+            &[checked("A", "1.0", UpdateState::SourceGone)],
+        )
+        .expect("written");
+        record_check(
+            &home,
+            &FlavorId::Forever,
+            &state,
+            &[checked("B", "2.0", UpdateState::RateLimited)],
+        )
+        .expect("written");
+        let read = LastCheck::read(&home, &FlavorId::Forever);
+        assert_eq!(
+            read.addons.keys().collect::<Vec<_>>(),
+            ["A", "B"],
+            "a check of one addon keeps the other's answer"
+        );
+        record_check(
+            &home,
+            &FlavorId::Forever,
+            &state,
+            &[checked("A", "1.0", UpdateState::UpToDate)],
+        )
+        .expect("written");
+        let read = LastCheck::read(&home, &FlavorId::Forever);
+        assert_eq!(read.addons.keys().collect::<Vec<_>>(), ["B"]);
+
+        // A folder where the file goes: the write is an error for the caller to report.
+        let _ = std::fs::remove_file(LastCheck::path(&home));
+        std::fs::create_dir_all(LastCheck::path(&home)).unwrap();
+        assert!(record_check(&home, &FlavorId::Forever, &state, &[]).is_err());
         let _ = std::fs::remove_dir_all(&home_dir);
     }
 }

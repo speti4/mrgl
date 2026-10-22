@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 11 backlog (0 ready · 0 blocked · 2 waiting · 9 ideas) · 0 in progress · 67 done · 3 dropped · 5 decisions
+**State:** 8 backlog (0 ready · 0 blocked · 2 waiting · 6 ideas) · 0 in progress · 70 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -39,14 +39,6 @@ _none_
 | 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
 
 ### Ideas
-
-#### M1 Core + CLI
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 082 | [An install and an update report the whole interface check: out of date next to …](backlog/082-install-and-update-report-the-interface-check.md) | S | 2026-10-22 |
-| 083 | [A reinstall of the installed version says it was reinstalled, not updated from …](backlog/083-a-reinstall-of-the-installed-version-says-so.md) | S | 2026-10-22 |
-| 087 | [The command line's update check writes the last-check file the window reads](backlog/087-cli-update-check-writes-the-last-check-file.md) | S | 2026-10-22 |
 
 #### M3 Toolbox
 
@@ -90,18 +82,18 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 087 | [The command line's update check writes the last-check file the window reads](done/087-cli-update-check-writes-the-last-check-file.md) | 2026-10-22 |
 | 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](done/084-stale-staging-folders-are-swept.md) | 2026-10-22 |
+| 083 | [A reinstall of the installed version says it was reinstalled, not updated from …](done/083-a-reinstall-of-the-installed-version-says-so.md) | 2026-10-22 |
+| 082 | [An install and an update report the whole interface check: out of date next to …](done/082-install-and-update-report-the-interface-check.md) | 2026-10-22 |
 | 081 | [The window's rows show the interface states scan and list mark](done/081-window-rows-show-the-interface-states.md) | 2026-10-22 |
 | 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](done/080-housekeeping-after-wave-5.md) | 2026-10-22 |
 | 079 | [Window and exe polish after the first release: the checks after an update, the …](done/079-window-and-exe-polish-after-the-first-release.md) | 2026-10-22 |
 | 078 | [The window's cached view: the Forever build signal walks the releases like the …](done/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md) | 2026-10-22 |
 | 077 | [The marks survive a reinstall under a new derived name, and the pinned line use…](done/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md) | 2026-10-22 |
 | 076 | [The dependency and interface checks say what the client says: an embedded-only …](done/076-the-checks-say-what-the-client-says.md) | 2026-10-22 |
-| 075 | [The CLI's output survives a closed pipe](done/075-cli-output-survives-a-closed-pipe.md) | 2026-10-22 |
-| 074 | [The window's toolbox: a set switch and a SavedVariables view](done/074-window-toolbox-sets-and-savedvariables.md) | 2026-10-22 |
-| 073 | [Addon sets: undo an apply, edit a stored set, --account, and uninstalled addons…](done/073-addon-sets-undo-edit-and-account.md) | 2026-10-22 |
 
-_57 more in `done/`._
+_60 more in `done/`._
 
 ### Decisions
 

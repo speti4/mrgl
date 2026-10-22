@@ -197,8 +197,14 @@ and the download is removed whatever the install returned. `Engine::resolve` is 
 a dry run, and `Engine::install_pick` the same path for a pick in hand. The link refusal of task 005 sits in
 `Engine::commit`, so a zip in hand, a source, an import, an update and a rollback all refuse to install over
 a linked addon or a junction mrgl did not make. The command line reports every install with one summary
-(the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
-interface checks).
+(the line and the `addon` block of the JSON document, with the dependency and interface checks). The line
+follows the commit's outcome (`InstallOutcome`, told by the entry the commit replaces, task 083): `installed
+OneFolder 1.0.0 (1 folder: OneFolder) into _forever_` without an entry, `updated OneFolder from 1.0.0 to
+1.1.0 (…) in _forever_` over an entry of another version, and `reinstalled OneFolder 1.1.0 (…) in _forever_`
+over an entry of the same version, whose previous version stays what it was, so `rollback` still goes back
+to it; `add <file.zip> --dry-run` says `would install`, `would update` or `would reinstall` by the same rule.
+The `addon` block carries the outcome as `outcome`: `installed`, `updated` or `reinstalled` (`null` for an
+addon found installed already, where nothing was installed).
 
 The staging folder's lifetime (task 084, `mrgl_core::staging`): every download and every unpacked zip gets
 a run folder of its own under `<flavor-id>\staging\` (`<stem>-<nanoseconds since 1970>-<attempt>`), and
@@ -268,11 +274,18 @@ each addon the source is asked about (`checking Questie against github:Questie/Q
 stop as a warning when it happens, and a plain data line per addon as soon as it is checked
 (`Questie  1.2.2 -> 1.2.3  update available`), ask once for the updates (`--yes` answers; without a
 terminal or with `--json` the command stops and says what `--yes` does, exit 1), install each through the
-one install path with the pick the check made (`AddonUpdate::request`, no second resolve) and end with the
+one install path with the pick the check made (`AddonUpdate::request`, no second resolve), say each
+install's summary line with the dependency and interface warnings of the installed addon, and end with the
 summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
-`1 update available` and writes nothing). `--json` is one `update` document: every addon with `state`,
+`1 update available` and writes nothing under `Interface\AddOns` or in the sidecar). Right after the check,
+before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
+as the window's check does (task 087, below): a source gone, a failed check and an addon left before the
+rate limit are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
+that cannot be written is a warning (`the answers of this check are not kept for the window: …`). `--json` is one `update` document: every addon with `state`,
 `latest`, `order` (the installed version against `latest`: `older`, `same`, `newer`, or `null` when there is
-no `latest` or the order cannot tell; task 077), `pick`, `updated` and the installed `addon` block, the `counts` per state, `stopped` (the
+no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installed `addon` block and the
+interface check of the installed addon, `interface_mismatch` and `interface_out_of_date` (task 082, below),
+the `counts` per state, `stopped` (the
 `BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
 update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
 the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.
@@ -281,13 +294,20 @@ The interface check (task 015) compares the `## Interface` numbers of the TOC th
 installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,
 `16001` is 1), and the addon passes when one number of the list has the build's major. A mismatch is a
 warning, never a refusal: `scan` and `list` mark the addon's line `interface mismatch` and add one warning
-line, their JSON carries `interface_mismatches`, and `add <file.zip>` and `import` add a warning after the
-install (`interface_mismatch` in their JSON). An addon that passes but whose highest number of the build's
-major is below the build's own interface number (`120100` under `12.1.5`, interface `120105`) is what the
-client lists as out of date (task 076): `scan` and `list` mark its line `out of date`, apart from the
-mismatch (an addon is one or the other), and add one warning line, and their JSON carries
+line, their JSON carries `interface_mismatches`. An addon that passes but whose highest number of the
+build's major is below the build's own interface number (`120100` under `12.1.5`, interface `120105`) is
+what the client lists as out of date (task 076): `scan` and `list` mark its line `out of date`, apart from
+the mismatch (an addon is one or the other), and add one warning line, and their JSON carries
 `interface_out_of_date`, each with `folder`, `toc`, `interfaces`, `build`, the build's `interface` and the
-TOC's `highest` number of the build's major; a number above the build's is current. An unknown build, a TOC
+TOC's `highest` number of the build's major; a number above the build's is current. After an install, `add`
+(a zip in hand or a source), `import` and `update` check the installed addon's primary folder for both
+states (`Engine::check_installed`, task 082) and say one warning line through the voice: `StaleInterface:
+interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor` for a
+mismatch, `BehindInterface: interface 16000 is out of date for the build 1.60.1.70245 (16001) of _forever_;
+the client lists it as out of date` for out of date. Their JSON carries both keys, `interface_mismatch`
+and `interface_out_of_date`, the object of the state or `null`: at the top of the `add` document, on every
+entry of the `import` document, and on every addon of the `update` document (`null` for an addon that was
+not updated). The window's update answer reads the same core check (task 079). An unknown build, a TOC
 without an `## Interface` line and a folder the flavor loads no TOC from give no warning.
 
 The addon sets (task 014, `mrgl_core::sets`) are named lists of addons per flavor, each addon `enabled` or
@@ -578,9 +598,11 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   offline rule, task 041), counts no request against the rate limit and never stamps the cache as
   confirmed. `update` is set for `update-available` only, so a newer installed version, a pin or a guess is no
   update; an addon whose answer needs the network (nothing cached) has no `check`. What the cache cannot
-  tell again is the last online check's (task 078): a check of the window keeps every addon's answer of
-  `source-gone`, `failed` or `rate-limited` in `last-check.json` under the flavor's folder of the mrgl home
-  (`mrgl_core::last_check`), and every list lays those answers over the offline ones, so a redraw after a
+  tell again is the last online check's (task 078): a check of the window, and `mrgl update --all` or
+  `mrgl update <name>` on the command line (task 087), keeps every addon's answer of `source-gone`,
+  `failed` or `rate-limited` in `last-check.json` under the flavor's folder of the mrgl home
+  (`mrgl_core::last_check::record_check`, one rule for both writers), and every list lays those answers
+  over the offline ones, so a redraw after a
   mark and a restart show them, until the next check of the addon replaces its answer (dropped for any
   other state). The file is a cache: a missing, unreadable or foreign one is no answer. An answer holds
   while the sidecar entry keeps the source and the version it was given for, so an update or a reinstall
@@ -974,9 +996,9 @@ folder, written by `mrgl root` and the window's chooser; `theme` and `serious`, 
 task 034, the second also the third source of the voice's serious switch),
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
 sidecar `state.json`, the addon sets `sets.json` (task 014), the last set apply's undo record
-`set-undo\` (task 073), the window's last online check answers
-`last-check.json` (task 078; a cache, deleting it only drops a source gone or a failed check until the next
-check),
+`set-undo\` (task 073), the last online check's answers the window shows,
+`last-check.json` (task 078, written by the window's check and by `mrgl update`, task 087; a cache,
+deleting it only drops a source gone or a failed check until the next check),
 the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves, a download waits here; every run folder is removed when its run ends, and the leftovers of a run
 that ended before that are swept, see "The staging folder's lifetime") and `cache\<addon>\<version>.zip` (the current and the previous

@@ -122,6 +122,13 @@ write("stale-interface-1.0.0.zip", [
     ("StaleInterface/core.lua", "-- an interface of another major than the fixture builds (task 015)\n"),
 ])
 
+# The Forever fixture build is 1.60.1 (interface 16001); 16000 is of its expansion and behind it: the client's
+# `Out of date` (tasks 076, 082).
+write("behind-interface-1.0.0.zip", [
+    ("BehindInterface/BehindInterface.toc", toc("Behind Interface", "1.0.0", interface="16000")),
+    ("BehindInterface/core.lua", "-- an interface one patch behind the Forever fixture build (task 082)\n"),
+])
+
 write("escaping-path.zip", [
     ("Escape/Escape.toc", toc("Escape", "0.1.0")),
     ("Escape/../../Outside.lua", "-- must never be written\n"),

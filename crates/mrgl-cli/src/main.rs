@@ -31,10 +31,11 @@ use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{
-    AlreadyInstalled, Engine, Installed, InstalledChecks, Mark, Metadata, PickInstalled, PickStep,
-    SourceInstalled, SourceRequest,
+    AlreadyInstalled, Engine, InstallOutcome, Installed, InstalledChecks, Mark, Metadata,
+    PickInstalled, PickStep, SourceInstalled, SourceRequest,
 };
 use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
+use mrgl_core::last_check;
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
@@ -1277,6 +1278,7 @@ fn add_command(
                 "addon": summary.addon,
                 "client_warning": client_warning,
                 "interface_mismatch": summary.mismatch,
+                "interface_out_of_date": summary.out_of_date,
                 "warnings": warnings,
             }));
             return Ok(());
@@ -1284,9 +1286,7 @@ fn add_command(
         for warning in client_warning.iter().chain(&warnings) {
             reporter.say(Kind::Warning, warning);
         }
-        if let Some(mismatch) = &summary.mismatch {
-            reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
-        }
+        summary.say_interface(reporter, &folder_name);
         if let Some(status) = forever.as_ref() {
             let (kind, text) = forever_message(status);
             reporter.say(kind, text);
@@ -1401,18 +1401,44 @@ fn install_step(
 }
 
 /// What every install path reports about an addon it installed (task 055): the `addon` block of the
-/// JSON document, the interface check of the primary folder (task 015) and the plain summary line.
+/// JSON document, the interface check of the primary folder (tasks 015, 082: a mismatch or out of date)
+/// and the plain summary line.
 struct InstallSummary {
     addon: serde_json::Value,
     mismatch: Option<InterfaceMismatch>,
+    out_of_date: Option<InterfaceOutOfDate>,
     line: String,
+}
+
+impl InstallSummary {
+    /// The interface check's warning after the install, at most one line (an addon is a mismatch or out
+    /// of date, never both).
+    fn interface_lines(&self, folder_name: &str) -> Vec<String> {
+        self.mismatch
+            .iter()
+            .map(|mismatch| mismatch.after_install_line(folder_name))
+            .chain(
+                self.out_of_date
+                    .iter()
+                    .map(|out_of_date| out_of_date.after_install_line(folder_name)),
+            )
+            .collect()
+    }
+
+    /// Says the interface check's warning through the voice.
+    fn say_interface(&self, reporter: &Reporter, folder_name: &str) {
+        for line in self.interface_lines(folder_name) {
+            reporter.say(Kind::Warning, line);
+        }
+    }
 }
 
 /// The one summary of an install, for `add <file.zip>`, `add github:` and `update` (task 055): the
 /// engine's warnings and those of the dependency check of the installed folders (task 029) go to
 /// `warnings`; the `addon` block names the addon as the sidecar records it now; the line is `installed
-/// <name> <version> (<folders>) into <flavor folder>`, or `updated <name> from <previous> to <version>
-/// (<folders>) in <flavor folder>`, with the folders of the previous version that went.
+/// <name> <version> (<folders>) into <flavor folder>`, `updated <name> from <previous> to <version>
+/// (<folders>) in <flavor folder>`, or `reinstalled <name> <version> (<folders>) in <flavor folder>` for the
+/// version the sidecar recorded already (task 083), with the folders of the previous version that went.
 fn install_summary(
     engine: &Engine,
     installed: &Installed,
@@ -1431,11 +1457,13 @@ fn install_summary(
     let InstalledChecks {
         dependencies,
         mismatch,
+        out_of_date,
         ..
     } = checks;
     let addon = serde_json::json!({
         "name": installed.name,
         "version": installed.version,
+        "outcome": installed.outcome,
         "previous_version": installed.previous_version,
         "source": source,
         "folders": installed.folders,
@@ -1448,12 +1476,16 @@ fn install_summary(
         count_folders(installed.folders.len()),
         installed.folders.join(", ")
     );
-    let mut line = match &installed.previous_version {
-        Some(previous) => format!(
+    let mut line = match (installed.outcome, &installed.previous_version) {
+        (InstallOutcome::Reinstalled, _) => format!(
+            "reinstalled {} {} ({folders}) in {folder_name}",
+            installed.name, installed.version
+        ),
+        (InstallOutcome::Updated, Some(previous)) => format!(
             "updated {} from {previous} to {} ({folders}) in {folder_name}",
             installed.name, installed.version
         ),
-        None => format!(
+        _ => format!(
             "installed {} {} ({folders}) into {folder_name}",
             installed.name, installed.version
         ),
@@ -1468,6 +1500,7 @@ fn install_summary(
     InstallSummary {
         addon,
         mismatch,
+        out_of_date,
         line,
     }
 }
@@ -1479,12 +1512,15 @@ fn already_installed_summary(current: &AlreadyInstalled, folder_name: &str) -> I
         addon: serde_json::json!({
             "name": current.name,
             "version": current.entry.version,
+            // Nothing was installed (task 083: the outcome of an install, `null` here).
+            "outcome": null,
             "previous_version": current.entry.previous_version,
             "source": current.entry.source,
             "folders": current.entry.folders,
             "removed_folders": [],
         }),
         mismatch: None,
+        out_of_date: None,
         line: format!(
             "{} {} is installed already in {folder_name} from {}, nothing to do",
             current.name, current.entry.version, current.entry.source
@@ -1642,10 +1678,11 @@ fn add_zip(
         engine
             .refuse_links(&loaded.state, &staged.folders())
             .map_err(|error| error.to_string())?;
-        let previous = loaded
-            .state
-            .entry(&staged.name)
-            .map(|(_, entry)| entry.version.clone());
+        // What the install would record (task 083): a reinstall of the recorded version keeps the entry's
+        // previous version, as the commit does.
+        let replaced = loaded.state.entry(&staged.name).map(|(_, entry)| entry);
+        let outcome = InstallOutcome::of(replaced, &staged.version);
+        let previous = InstallOutcome::previous_version(replaced, &staged.version);
         let folders = staged.folders();
         if reporter.json {
             reporter.document(serde_json::json!({
@@ -1655,6 +1692,7 @@ fn add_zip(
                 "addon": {
                     "name": staged.name,
                     "version": staged.version,
+                    "outcome": outcome,
                     "previous_version": previous,
                     "source": staged.source,
                     "folders": folders,
@@ -1666,12 +1704,15 @@ fn add_zip(
             for warning in &warnings {
                 reporter.say(Kind::Warning, warning);
             }
-            let what = match &previous {
-                Some(previous) => format!(
+            let what = match (outcome, &previous) {
+                (InstallOutcome::Reinstalled, _) => {
+                    format!("reinstall {} {}", staged.name, staged.version)
+                }
+                (InstallOutcome::Updated, Some(previous)) => format!(
                     "update {} from {previous} to {}",
                     staged.name, staged.version
                 ),
-                None => format!("install {} {}", staged.name, staged.version),
+                _ => format!("install {} {}", staged.name, staged.version),
             };
             reporter.say(
                 Kind::Success,
@@ -1698,6 +1739,7 @@ fn add_zip(
             "addon": summary.addon,
             "client_warning": installed.client_warning,
             "interface_mismatch": summary.mismatch,
+            "interface_out_of_date": summary.out_of_date,
             "warnings": warnings,
         }));
         return Ok(());
@@ -1705,10 +1747,8 @@ fn add_zip(
     for warning in installed.client_warning.iter().chain(&warnings) {
         reporter.say(Kind::Warning, warning);
     }
-    reporter.say(Kind::Success, summary.line);
-    if let Some(mismatch) = &summary.mismatch {
-        reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
-    }
+    reporter.say(Kind::Success, &summary.line);
+    summary.say_interface(reporter, &folder_name);
     Ok(())
 }
 
@@ -2384,12 +2424,13 @@ fn import_command(
         for warning in &warnings {
             reporter.say(Kind::Warning, warning);
         }
-        for mismatch in report
-            .items
-            .iter()
-            .filter_map(|item| item.interface_mismatch.as_ref())
-        {
-            reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
+        for item in &report.items {
+            if let Some(mismatch) = &item.interface_mismatch {
+                reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
+            }
+            if let Some(out_of_date) = &item.interface_out_of_date {
+                reporter.say(Kind::Warning, out_of_date.after_install_line(&folder_name));
+            }
         }
         let counts: Vec<String> = [
             (Outcome::Installed, "installed"),
@@ -2467,7 +2508,7 @@ fn import_line(item: &list_file::Imported) -> String {
 
 /// What `update` did with one addon the check found an update for.
 enum Applied {
-    Updated(InstallSummary),
+    Updated(Box<InstallSummary>),
     Failed(String),
 }
 
@@ -2521,6 +2562,20 @@ fn update_command(
     })
     .map_err(|error| error.to_string())?;
     warnings.extend(check.warnings.iter().cloned());
+    // Task 087: what the check found that the cache cannot tell again (a source gone, a failed check, the
+    // stop before the rate limit) is kept for the window, as its own check keeps it (task 078), and an
+    // addon the check answered otherwise drops its kept answer; a dry run is a check too.
+    let state = engine
+        .load_state()
+        .map(|loaded| loaded.state)
+        .unwrap_or_else(|_| State::new(&engine.flavor.id));
+    if let Err(error) =
+        last_check::record_check(&engine.home, &engine.flavor.id, &state, &check.addons)
+    {
+        warnings.push(format!(
+            "the answers of this check are not kept for the window: {error}"
+        ));
+    }
     // Task 041: a pick from the cached release list, offline, is a warning here as on `add`.
     warnings.extend(
         check
@@ -2586,13 +2641,15 @@ fn update_command(
                     let summary = install_summary(&engine, &installed, &pick.source, &mut warnings);
                     if !reporter.json {
                         reporter.say(Kind::Success, &summary.line);
+                        // Task 082: the interface check of the updated addon, as `add` says it.
+                        summary.say_interface(reporter, &folder_name);
                     }
-                    Applied::Updated(summary)
+                    Applied::Updated(Box::new(summary))
                 }
                 Ok(SourceInstalled {
                     outcome: PickInstalled::AlreadyInstalled(current),
                     ..
-                }) => Applied::Updated(already_installed_summary(&current, &folder_name)),
+                }) => Applied::Updated(Box::new(already_installed_summary(&current, &folder_name))),
                 Err(error) => {
                     let line = format!("{}: {error}", addon.name);
                     if !reporter.json {
@@ -2628,13 +2685,24 @@ fn update_command(
             .iter()
             .map(|addon| {
                 let mut value = serde_json::to_value(addon).unwrap_or_default();
-                let (updated, installed, error) = match applied.get(&addon.name) {
-                    Some(Applied::Updated(summary)) => (true, Some(summary.addon.clone()), None),
-                    Some(Applied::Failed(line)) => (false, None, Some(line.clone())),
-                    None => (false, None, None),
+                let summary = match applied.get(&addon.name) {
+                    Some(Applied::Updated(summary)) => Some(summary),
+                    _ => None,
                 };
-                value["updated"] = updated.into();
-                value["addon"] = installed.into();
+                let error = match applied.get(&addon.name) {
+                    Some(Applied::Failed(line)) => Some(line.clone()),
+                    _ => None,
+                };
+                value["updated"] = summary.is_some().into();
+                value["addon"] = summary.map(|summary| summary.addon.clone()).into();
+                // Task 082: the interface check of the updated addon, `null` when it passes or was not
+                // updated.
+                value["interface_mismatch"] =
+                    serde_json::to_value(summary.and_then(|summary| summary.mismatch.as_ref()))
+                        .unwrap_or_default();
+                value["interface_out_of_date"] =
+                    serde_json::to_value(summary.and_then(|summary| summary.out_of_date.as_ref()))
+                        .unwrap_or_default();
                 value["error"] = error.into();
                 value
             })

@@ -1836,6 +1836,7 @@ fn add_github_updates_another_version_and_json_is_one_document() {
         serde_json::json!({
             "name": "Questie",
             "version": "1.2.3",
+            "outcome": "installed",
             "previous_version": null,
             "source": "github:Questie/Questie",
             "folders": ["Questie"],
@@ -3951,6 +3952,232 @@ fn scan_and_list_mark_an_out_of_date_toc_apart_from_an_interface_mismatch() {
     }
 }
 
+// --- task 082: `add <file.zip>`, `import` and `update` report the whole interface check ---
+
+/// The after-install line of the out-of-date fixture zip (16000 under the Forever fixture build 1.60.1).
+const BEHIND_LINE: &str = "BehindInterface: interface 16000 is out of date for the build 1.60.1.70245 (16001) of _forever_; the client lists it as out of date";
+/// The after-install line of the mismatch fixture zip (110207, another major).
+const STALE_LINE: &str = "StaleInterface: interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor";
+
+/// The `interface_out_of_date` object of the out-of-date fixture zip.
+fn behind_json() -> serde_json::Value {
+    serde_json::json!({
+        "folder": "BehindInterface",
+        "toc": "BehindInterface.toc",
+        "interfaces": [16000],
+        "build": "1.60.1.70245",
+        "interface": 16001,
+        "highest": 16000,
+    })
+}
+
+/// The `interface_mismatch` object of the mismatch fixture zip.
+fn stale_json() -> serde_json::Value {
+    serde_json::json!({
+        "folder": "StaleInterface",
+        "toc": "StaleInterface.toc",
+        "interfaces": [110207],
+        "build": "1.60.1.70245",
+        "major": 1,
+    })
+}
+
+#[test]
+fn add_reports_an_out_of_date_install_next_to_the_mismatch() {
+    let game = Game::new("add-out-of-date");
+    for (zip, summary, warning) in [
+        (
+            "behind-interface-1.0.0.zip",
+            "installed BehindInterface 1.0.0 (1 folder: BehindInterface) into _forever_",
+            BEHIND_LINE,
+        ),
+        (
+            "stale-interface-1.0.0.zip",
+            "installed StaleInterface 1.0.0 (1 folder: StaleInterface) into _forever_",
+            STALE_LINE,
+        ),
+    ] {
+        let output = game
+            .mrgl()
+            .args(["--serious", "add"])
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let text = stdout(&output);
+        let lines: Vec<&str> = text.lines().skip(1).collect();
+        assert_eq!(lines, [summary, warning], "{zip}: {text}");
+    }
+
+    for (zip, mismatch, out_of_date) in [
+        (
+            "behind-interface-1.0.0.zip",
+            serde_json::Value::Null,
+            behind_json(),
+        ),
+        (
+            "stale-interface-1.0.0.zip",
+            stale_json(),
+            serde_json::Value::Null,
+        ),
+        (
+            "one-folder-1.0.0.zip",
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        ),
+    ] {
+        let output = game
+            .mrgl()
+            .args(["--json", "add"])
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("one JSON document");
+        assert_eq!(value["interface_mismatch"], mismatch, "{zip}");
+        assert_eq!(value["interface_out_of_date"], out_of_date, "{zip}");
+    }
+}
+
+#[test]
+fn import_reports_an_out_of_date_install_next_to_the_mismatch() {
+    for (zip, name, warning, mismatch, out_of_date) in [
+        (
+            "behind-interface-1.0.0.zip",
+            "BehindInterface",
+            BEHIND_LINE,
+            serde_json::Value::Null,
+            behind_json(),
+        ),
+        (
+            "stale-interface-1.0.0.zip",
+            "StaleInterface",
+            STALE_LINE,
+            stale_json(),
+            serde_json::Value::Null,
+        ),
+    ] {
+        for json in [false, true] {
+            let game = Game::new(&format!("import-interface-{name}-{json}"));
+            let base = game.root.parent().expect("the base").to_path_buf();
+            let stub = stub_with_forever_zip(&base, zip);
+            let list = write_list(
+                &game,
+                "list.json",
+                &[(name, "github:Questie/Questie", "1.2.3")],
+            );
+            let output = game
+                .mrgl()
+                .env("MRGL_HTTP_STUB", &stub)
+                .arg(if json { "--json" } else { "--serious" })
+                .arg("import")
+                .arg(&list)
+                .args(["--flavor", "forever"])
+                .output()
+                .expect("run mrgl");
+            assert!(output.status.success(), "{}", stderr_last_line(&output));
+            if json {
+                let value: serde_json::Value =
+                    serde_json::from_slice(&output.stdout).expect("one JSON document");
+                let item = &value["addons"][0];
+                assert_eq!(item["outcome"], "installed", "{value}");
+                assert_eq!(item["interface_mismatch"], mismatch, "{zip}");
+                assert_eq!(item["interface_out_of_date"], out_of_date, "{zip}");
+            } else {
+                let text = stdout(&output);
+                let lines: Vec<&str> = text.lines().collect();
+                let installed = format!("{name}  installed 1.2.3 from github:Questie/Questie");
+                assert_eq!(
+                    lines,
+                    [
+                        "importing 1 addon from list.json into _forever_",
+                        installed.as_str(),
+                        warning,
+                        "imported 1 addon of list.json into _forever_: 1 installed",
+                    ],
+                    "{text}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn update_reports_the_interface_check_of_an_updated_addon() {
+    // One game each: the stub serves one zip behind the one release of `Questie/Questie`.
+    for (name, zip, warning) in [
+        ("BehindInterface", "behind-interface-1.0.0.zip", BEHIND_LINE),
+        ("StaleInterface", "stale-interface-1.0.0.zip", STALE_LINE),
+    ] {
+        let game = managed_game(
+            &format!("update-interface-{name}"),
+            &[(name, "github:Questie/Questie", "1.2.2", "")],
+        );
+        let base = game.root.parent().expect("the base").to_path_buf();
+        let stub = stub_with_forever_zip(&base, zip);
+        let output = game
+            .mrgl()
+            .env("MRGL_HTTP_STUB", &stub)
+            .args(["--serious", "update", name, "--yes", "--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let text = stdout(&output);
+        let lines: Vec<&str> = text
+            .lines()
+            .skip_while(|line| !line.starts_with("updated "))
+            .collect();
+        let updated = format!("updated {name} from 1.2.2 to 1.2.3 (1 folder: {name}) in _forever_");
+        assert_eq!(
+            lines,
+            [updated.as_str(), warning, "1 addon updated"],
+            "{text}"
+        );
+    }
+
+    // The JSON document carries both keys per addon: the check of the updated one, `null` for the rest.
+    let game = managed_game(
+        "update-interface-json",
+        &[
+            ("BehindInterface", "github:Questie/Questie", "1.2.2", ""),
+            ("Plain", "github:Example/Prerelease", "1.0.0", ""),
+        ],
+    );
+    let stub = stub_with_forever_zip(
+        game.root.parent().expect("the base"),
+        "behind-interface-1.0.0.zip",
+    );
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args(["--json", "update", "--all", "--yes", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let addon = |name: &str| {
+        value["addons"]
+            .as_array()
+            .expect("the addons")
+            .iter()
+            .find(|addon| addon["name"] == name)
+            .unwrap_or_else(|| panic!("{name} in {value}"))
+            .clone()
+    };
+    let behind = addon("BehindInterface");
+    assert_eq!(behind["updated"], true, "{value}");
+    assert_eq!(behind["interface_out_of_date"], behind_json());
+    assert_eq!(behind["interface_mismatch"], serde_json::Value::Null);
+    let plain = addon("Plain");
+    assert_eq!(plain["updated"], false);
+    assert_eq!(plain["interface_out_of_date"], serde_json::Value::Null);
+    assert_eq!(plain["interface_mismatch"], serde_json::Value::Null);
+}
+
 // --- task 021: `pin`, `unpin`, `ignore`, `unignore`, `channel` and their marks in `list` ---
 
 /// Runs `mrgl --serious <args> --flavor forever` in a game and returns the output.
@@ -4308,6 +4535,93 @@ fn rollback_puts_the_previous_version_back_pins_it_and_goes_forward_again() {
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     assert_eq!(stdout(&output).lines().count(), 4, "{}", stdout(&output));
     assert!(stdout_last_line(&output).starts_with("rolled back OneFolder from 1.1.0 to 1.0.0"));
+}
+
+#[test]
+fn a_reinstall_of_the_installed_version_says_so_and_keeps_the_rollback() {
+    // Task 083: the zip of the version the sidecar records is a reinstall, not an update from the previous
+    // version to the same one; the previous version stays for `rollback`.
+    let game = Game::new("reinstall");
+    add_in(&game, &["one-folder-1.0.0.zip"]);
+    let add = |zip: &str, args: &[&str]| {
+        let output = game
+            .mrgl()
+            .args(args)
+            .arg("add")
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        output
+    };
+    let output = add("one-folder-1.0.0.zip", &["--serious"]);
+    assert_eq!(
+        stdout_last_line(&output),
+        "reinstalled OneFolder 1.0.0 (1 folder: OneFolder) in _forever_",
+        "a reinstall of the first install"
+    );
+    let output = add("one-folder-1.1.0.zip", &["--serious"]);
+    assert_eq!(
+        stdout_last_line(&output),
+        "updated OneFolder from 1.0.0 to 1.1.0 (1 folder: OneFolder) in _forever_",
+        "a real update still says updated"
+    );
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(zips().join("one-folder-1.1.0.zip"))
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "dry run: would reinstall OneFolder 1.1.0 (1 folder: OneFolder) in _forever_"
+    );
+    let output = add("one-folder-1.1.0.zip", &["--serious"]);
+    assert_eq!(
+        stdout_last_line(&output),
+        "reinstalled OneFolder 1.1.0 (1 folder: OneFolder) in _forever_"
+    );
+    // The murloc speaks on the reinstall too: the line goes through the voice.
+    let output = add("one-folder-1.1.0.zip", &[]);
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 4, "two two-line messages: {text}");
+    assert_eq!(
+        lines[3],
+        "reinstalled OneFolder 1.1.0 (1 folder: OneFolder) in _forever_"
+    );
+
+    let output = add("one-folder-1.1.0.zip", &["--json"]);
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["addon"]["outcome"], "reinstalled");
+    assert_eq!(value["addon"]["version"], "1.1.0");
+    assert_eq!(value["addon"]["previous_version"], "1.0.0");
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(zips().join("one-folder-1.1.0.zip"))
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["addon"]["outcome"], "reinstalled");
+    assert_eq!(value["addon"]["previous_version"], "1.0.0");
+    assert_eq!(
+        sidecar(&game)["addons"]["OneFolder"]["previous_version"],
+        "1.0.0"
+    );
+
+    let output = run_in(&game, &["rollback", "onefolder"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "rolled back OneFolder from 1.1.0 to 1.0.0 (1 folder: OneFolder) in _forever_; pinned at 1.0.0, `mrgl unpin OneFolder` lets updates reach it again"
+    );
 }
 
 #[test]
@@ -5702,6 +6016,153 @@ fn update_stops_before_the_rate_limit_with_the_reset_time_and_counts_the_rest() 
     assert_eq!(value["stopped"]["message"], stop.as_str());
     assert_eq!(value["addons"][1]["state"], "rate-limited");
     assert_eq!(value["addons"][1]["latest"], serde_json::Value::Null);
+}
+
+// --- task 087: `update` writes the last-check file the window reads ---
+
+/// The kept answers of the `_forever_` flavor of a game, by addon name: the state and the version each was
+/// given for; the file's head is checked on the way.
+fn kept_answers(game: &Game) -> std::collections::BTreeMap<String, (String, String)> {
+    let path = game.home.join("wowf").join("last-check.json");
+    let text = std::fs::read_to_string(&path).expect("the last-check file");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    assert_eq!(
+        (&value["format"], &value["schema"], &value["flavor"]),
+        (
+            &serde_json::json!("mrgl-last-check"),
+            &serde_json::json!(1),
+            &serde_json::json!("wowf")
+        ),
+        "{text}"
+    );
+    value["addons"]
+        .as_object()
+        .expect("the addons")
+        .iter()
+        .map(|(name, kept)| {
+            assert!(kept["checked_at"].is_string(), "{text}");
+            (
+                name.clone(),
+                (
+                    kept["state"].as_str().expect("a state").to_string(),
+                    kept["version"].as_str().expect("a version").to_string(),
+                ),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn update_keeps_a_gone_source_for_the_window_until_it_answers_again() {
+    let game = managed_game(
+        "last-check",
+        &[
+            ("Gone", "github:Example/Missing", "1.2.3", ""),
+            ("Questie", "github:Questie/Questie", "1.2.3", ""),
+        ],
+    );
+    let base = game.root.parent().expect("the base").to_path_buf();
+    let kept = |state: &str, version: &str| (state.to_string(), version.to_string());
+
+    // Offline with nothing cached: both checks fail, and both answers are kept.
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", base.join("no-such-stub"))
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        kept_answers(&game),
+        std::collections::BTreeMap::from([
+            ("Gone".to_string(), kept("failed", "1.2.3")),
+            ("Questie".to_string(), kept("failed", "1.2.3")),
+        ])
+    );
+
+    // Online: the 404 replaces the failed answer, and an addon up to date drops its own.
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        kept_answers(&game),
+        std::collections::BTreeMap::from([("Gone".to_string(), kept("source-gone", "1.2.3"))])
+    );
+    let text =
+        std::fs::read_to_string(game.home.join("wowf").join("last-check.json")).expect("the file");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let gone = &value["addons"]["Gone"];
+    assert_eq!(gone["source"], "github:Example/Missing");
+    assert!(
+        gone["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.ends_with("no such repository, or it is private")),
+        "{text}"
+    );
+
+    // `update <name>` writes the file too: the source answers again, with the installed version, so the
+    // kept answer goes while the version stays the same.
+    let stub = base.join("stub-found-back");
+    let _ = std::fs::remove_dir_all(&stub);
+    copy_tree(&releases(), &stub);
+    let repos = stub.join("api.github.com").join("repos");
+    std::fs::create_dir_all(repos.join("Example").join("Missing")).expect("the repository");
+    std::fs::copy(
+        repos.join("Questie").join("Questie").join("releases.json"),
+        repos.join("Example").join("Missing").join("releases.json"),
+    )
+    .expect("the release list");
+    let output = game
+        .mrgl()
+        .env("MRGL_HTTP_STUB", &stub)
+        .args([
+            "--serious",
+            "update",
+            "Gone",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout(&output)
+            .lines()
+            .any(|line| line == "Gone  1.2.3  up to date"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(kept_answers(&game), std::collections::BTreeMap::new());
+}
+
+#[test]
+fn update_warns_when_the_last_check_file_cannot_be_written_and_goes_on() {
+    let game = managed_game(
+        "last-check-blocked",
+        &[("Gone", "github:Example/Missing", "1.2.3", "")],
+    );
+    // A folder where the file goes: the write fails, the check stands.
+    std::fs::create_dir_all(game.home.join("wowf").join("last-check.json"))
+        .expect("the blocking folder");
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(
+        text.lines().any(|line| line
+            .starts_with("the answers of this check are not kept for the window: ")),
+        "{text}"
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "dry run: 1 source gone; nothing written"
+    );
 }
 
 // --- task 057: `import --exact` installs the version the list names ---

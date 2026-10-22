@@ -38,13 +38,14 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
 use crate::dependencies::{self, AddonDependencies};
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
-use crate::interface::{self, InterfaceMismatch};
+use crate::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use crate::scan;
 use crate::sources::{Channel, Pick, Source, SourceSpec, Target};
 use crate::staging::{self, RunDir};
@@ -131,12 +132,49 @@ impl Drop for Staged {
     }
 }
 
+/// Which kind of install a commit was (task 083), told by the entry it replaced: none, one of another
+/// version, or one of the same version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallOutcome {
+    /// The sidecar had no entry for the addon.
+    Installed,
+    /// The entry recorded another version, which is the previous version now.
+    Updated,
+    /// The entry recorded the same version: the folders are written again and the entry's previous
+    /// version stays what it was.
+    Reinstalled,
+}
+
+impl InstallOutcome {
+    /// The outcome of installing `version` over the entry `replaced` (the one the commit replaces).
+    pub fn of(replaced: Option<&Entry>, version: &str) -> InstallOutcome {
+        match replaced {
+            None => InstallOutcome::Installed,
+            Some(entry) if entry.version == version => InstallOutcome::Reinstalled,
+            Some(_) => InstallOutcome::Updated,
+        }
+    }
+
+    /// The previous version the new entry records: the replaced entry's version on an update, its own
+    /// previous version on a reinstall (tasks 022, 077), none on a first install.
+    pub fn previous_version(replaced: Option<&Entry>, version: &str) -> Option<String> {
+        replaced.and_then(|entry| match InstallOutcome::of(Some(entry), version) {
+            InstallOutcome::Reinstalled => entry.previous_version.clone(),
+            _ => Some(entry.version.clone()),
+        })
+    }
+}
+
 /// What an install did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installed {
     pub name: String,
     pub version: String,
-    /// The version that was installed before, when the addon was managed already.
+    /// A first install, an update from another version or a reinstall of the recorded one (task 083).
+    pub outcome: InstallOutcome,
+    /// The version that was installed before, when the addon was managed already; on a reinstall the
+    /// entry's previous version, kept for `rollback`, not the version installed again.
     pub previous_version: Option<String>,
     /// The folders written, the primary one first.
     pub folders: Vec<String>,
@@ -363,12 +401,15 @@ pub struct InstalledChecks {
     pub dependencies: Vec<AddonDependencies>,
     /// The primary folder names no interface of the flavor's build (task 015).
     pub mismatch: Option<InterfaceMismatch>,
+    /// The primary folder names only interface numbers of the build's major below the build's own: the
+    /// client's `Out of date` (tasks 076, 082). Never set together with `mismatch`.
+    pub out_of_date: Option<InterfaceOutOfDate>,
     /// Why there is no check: the flavor's folder could not be scanned.
     pub warnings: Vec<String>,
 }
 
 impl InstalledChecks {
-    /// The warning lines, in order: a scan that failed, each missing dependency, the interface mismatch.
+    /// The warning lines, in order: a scan that failed, each missing dependency, then the interface check.
     pub fn lines(&self, folder_name: &str) -> Vec<String> {
         let mut lines = self.warnings.clone();
         lines.extend(
@@ -376,12 +417,22 @@ impl InstalledChecks {
                 .iter()
                 .filter_map(AddonDependencies::warning),
         );
-        lines.extend(
-            self.mismatch
-                .iter()
-                .map(|mismatch| mismatch.after_install_line(folder_name)),
-        );
+        lines.extend(self.interface_lines(folder_name));
         lines
+    }
+
+    /// The interface check's warning after an install (tasks 015, 076, 082): the mismatch or the out-of-date
+    /// line, at most one, since an addon is never both.
+    pub fn interface_lines(&self, folder_name: &str) -> Vec<String> {
+        self.mismatch
+            .iter()
+            .map(|mismatch| mismatch.after_install_line(folder_name))
+            .chain(
+                self.out_of_date
+                    .iter()
+                    .map(|out_of_date| out_of_date.after_install_line(folder_name)),
+            )
+            .collect()
     }
 }
 
@@ -453,8 +504,9 @@ impl Engine {
     }
 
     /// The checks an install reports about the folders it just installed, the command line's summary and
-    /// the window's update alike (tasks 015, 029, 079): the dependency check of those folders against the
-    /// flavor as it is now, and the interface check of the first one, the primary folder. One scan; a scan
+    /// the window's update alike (tasks 015, 029, 079, 082): the dependency check of those folders against
+    /// the flavor as it is now, and the interface check of the first one, the primary folder (a mismatch
+    /// or out of date). One scan; a scan
     /// that fails is a warning and no check.
     pub fn check_installed(&self, folders: &[String]) -> InstalledChecks {
         let scan = match scan::scan_flavor(&self.flavor) {
@@ -472,15 +524,18 @@ impl Engine {
             .into_iter()
             .filter(|check| installed(&check.folder))
             .collect();
-        let mismatch = folders.first().and_then(|primary| {
+        let primary = folders.first().and_then(|primary| {
             scan.addons
                 .iter()
                 .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
-                .and_then(|addon| interface::check_addon(addon, self.flavor.version))
         });
+        let mismatch = primary.and_then(|addon| interface::check_addon(addon, self.flavor.version));
+        let out_of_date =
+            primary.and_then(|addon| interface::out_of_date_addon(addon, self.flavor.version));
         InstalledChecks {
             dependencies,
             mismatch,
+            out_of_date,
             warnings: Vec::new(),
         }
     }
@@ -601,13 +656,9 @@ impl Engine {
                 files.insert(format!("{}/{path}", addon.folder), hash.clone());
             }
         }
-        let previous_version = previous.as_ref().and_then(|(_, entry)| {
-            if entry.version == staged.version {
-                entry.previous_version.clone()
-            } else {
-                Some(entry.version.clone())
-            }
-        });
+        let replaced = previous.as_ref().map(|(_, entry)| entry);
+        let outcome = InstallOutcome::of(replaced, &staged.version);
+        let previous_version = InstallOutcome::previous_version(replaced, &staged.version);
         let entry = Entry {
             source: staged.source.clone(),
             version: staged.version.clone(),
@@ -649,6 +700,7 @@ impl Engine {
         Ok(Installed {
             name: staged.name.clone(),
             version: staged.version.clone(),
+            outcome,
             previous_version,
             folders: new_folders,
             removed_folders: stale,
