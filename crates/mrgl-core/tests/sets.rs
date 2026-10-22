@@ -756,6 +756,7 @@ fn an_apply_round_trips_through_undo_byte_for_byte() {
 
     let error = sets::undo_apply(&flavor, &path).expect_err("nothing yet");
     assert!(matches!(&error, Error::NothingToUndo { .. }), "{error}");
+    assert_eq!(sets::undo_record(&flavor, &path).expect("read"), None);
 
     let applied =
         sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
@@ -769,6 +770,21 @@ fn an_apply_round_trips_through_undo_byte_for_byte() {
     assert_eq!(record["set"], "raid");
     assert_eq!(record["files"].as_array().map(Vec::len), Some(3));
     let applied_tree = snapshot(&wtf_of(&root));
+    // Task 085: the record as the window reads it, before the undo, without a write.
+    let named = sets::undo_record(&flavor, &path)
+        .expect("read")
+        .expect("a record");
+    assert_eq!((named.set.as_str(), named.files.len()), ("raid", 3));
+    assert_eq!(
+        named
+            .files
+            .iter()
+            .filter(|file| file.kept.is_none())
+            .count(),
+        1,
+        "the file the apply created"
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), applied_tree);
     assert!(applied_tree.contains_key(NEWBIE));
 
     // A second apply of the same set changes nothing and keeps the record of the first.

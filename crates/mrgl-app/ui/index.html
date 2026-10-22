@@ -73,8 +73,11 @@
               <label class="field">Set <select id="set-picker"></select></label>
               <label class="field">Apply to <select id="target-picker"></select></label>
               <button id="apply-set" type="button" class="primary">Apply</button>
+              <button id="undo-set" type="button" class="secondary">Undo</button>
             </div>
+            <p id="undo-note" class="muted undo-note"></p>
             <ul id="set-addons" class="set-addons" aria-label="The addons of the set"></ul>
+            <p class="muted set-hint">A chip toggles its addon between enabled and disabled in the set, its × drops it; only the set changes, no AddOns.txt.</p>
             <ul id="set-changes" class="set-changes" aria-label="What the last apply changed" hidden></ul>
           </section>
           <section class="tool-card" aria-labelledby="savedvars-title">

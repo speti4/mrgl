@@ -458,14 +458,33 @@
     fillSelect(targetPicker, targets, pickedTarget);
     targetPicker.disabled = characters.length === 0 || toolboxBusy;
 
+    // The set's addons as chips (task 085): the chip toggles enabled and disabled in the set, its `×`
+    // drops the addon; both write sets.json only.
     const addons = $("set-addons");
     addons.replaceChildren();
     for (const addon of Toolbox.setAddons(set)) {
       const item = document.createElement("li");
       item.className = `set-addon set-${addon.state}`;
       item.classList.toggle("not-installed", !addon.installed);
-      item.textContent = addon.name;
-      item.title = addon.note ? `${addon.state}, ${addon.note}` : addon.state;
+      const controls = Toolbox.chipActions(set, addon, toolboxBusy);
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "chip-toggle";
+      toggle.textContent = controls.toggle.label;
+      toggle.title = controls.toggle.title;
+      toggle.disabled = !controls.toggle.enabled;
+      toggle.dataset.addon = addon.name;
+      toggle.dataset.action = controls.toggle.action;
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "chip-drop";
+      drop.textContent = "×";
+      drop.title = controls.drop.title;
+      drop.setAttribute("aria-label", controls.drop.label);
+      drop.disabled = !controls.drop.enabled;
+      drop.dataset.addon = addon.name;
+      drop.dataset.action = controls.drop.action;
+      item.append(toggle, drop);
       addons.append(item);
     }
 
@@ -475,8 +494,18 @@
     applyButton.disabled = !apply.enabled;
     applyButton.title = apply.title;
 
+    const undo = Toolbox.undoButton(toolbox, toolboxBusy);
+    const undoButton = $("undo-set");
+    undoButton.textContent = undo.label;
+    undoButton.disabled = !undo.enabled;
+    undoButton.title = undo.title;
+    $("undo-note").textContent = Toolbox.undoNote(toolbox ? toolbox.undo : null);
+
     const changes = $("set-changes");
-    const lines = Toolbox.changeLines(entry ? entry.changes : []);
+    const lines = [
+      ...Toolbox.changeLines(entry ? entry.changes : []),
+      ...Toolbox.undoneLines(entry ? entry.undone : null),
+    ];
     changes.hidden = lines.length === 0;
     changes.replaceChildren();
     for (const line of lines) {
@@ -521,7 +550,9 @@
   // Keeps a toolbox answer's toolbox and changes (an answer without a toolbox leaves the drawn one) and
   // says its messages in order, the summary last.
   function applyToolboxAnswer(flavorId, answer) {
-    if (answer && answer.toolbox) toolboxes[flavorId] = { toolbox: answer.toolbox, changes: answer.changes || [] };
+    if (answer && answer.toolbox) {
+      toolboxes[flavorId] = { toolbox: answer.toolbox, changes: answer.changes || [], undone: answer.undone || null };
+    }
     for (const message of (answer && answer.messages) || []) say(message);
   }
 
@@ -588,6 +619,24 @@
     if (!set) return;
     const target = Toolbox.targetOf(pickedTarget, entry.toolbox.characters);
     toolboxWrite(flavor, `applying set ${set.name}`, () => Data.applySet(flavor.id, set.name, target));
+  });
+
+  $("undo-set").addEventListener("click", () => {
+    const flavor = selected();
+    const entry = flavor && toolboxes[flavor.id];
+    if (!entry || !entry.toolbox.undo) return;
+    toolboxWrite(flavor, `the undo of set ${entry.toolbox.undo.set}`, () => Data.undoSet(flavor.id));
+  });
+
+  // A chip's toggle or `×` (task 085): one edit of the set the picker shows.
+  $("set-addons").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action]");
+    const flavor = selected();
+    const entry = flavor && toolboxes[flavor.id];
+    const set = entry && Toolbox.pickSet(entry.toolbox.sets, pickedSet);
+    if (!button || !set) return;
+    const { addon, action } = button.dataset;
+    toolboxWrite(flavor, `editing set ${set.name}`, () => Data.editSet(flavor.id, set.name, addon, action));
   });
 
   $("clean-savedvars").addEventListener("click", () => {

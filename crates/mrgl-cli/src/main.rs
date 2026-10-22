@@ -40,7 +40,7 @@ use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
-use mrgl_core::sets::{self, AddonSet, AddonState};
+use mrgl_core::sets::{self, AddonSet};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
@@ -3319,23 +3319,7 @@ fn report_undone(
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
     }
-    let mut summary = format!(
-        "undid the apply of set {} to {folder_name} ({}): {} put back",
-        undone.set,
-        undone.applied_at,
-        count_addons_txt(undone.restored.len())
-    );
-    if !undone.removed.is_empty() {
-        summary.push_str(&format!(
-            ", {} the apply created removed",
-            count_addons_txt(undone.removed.len())
-        ));
-    }
-    let kind = if warnings.is_empty() {
-        Kind::Success
-    } else {
-        Kind::Warning
-    };
+    let (kind, summary) = undone.summary(&folder_name);
     reporter.say(kind, summary);
 }
 
@@ -3364,45 +3348,12 @@ fn report_edited(
         }));
         return;
     }
-    if edited.after.is_some() && !edited.installed {
-        warnings.push(format!(
-            "{} is not installed in {folder_name}; the set keeps it all the same",
-            edited.addon
-        ));
-    }
+    warnings.extend(edited.not_installed(&folder_name));
     for warning in &warnings {
         reporter.say(Kind::Warning, warning);
     }
-    let (name, addon, count) = (&edited.name, &edited.addon, count_set(&edited.set));
-    let summary = match (edited.before, edited.after) {
-        _ if !edited.changed => {
-            let state = edited.after.map(AddonState::as_str).unwrap_or("dropped");
-            reporter.say(
-                Kind::Nothing,
-                format!("set {name} of {folder_name} has {addon} {state} already, nothing changed"),
-            );
-            return;
-        }
-        (None, Some(state)) => {
-            format!("added {addon} to set {name} of {folder_name}, {state}: {count}")
-        }
-        (Some(before), Some(state)) => {
-            format!("{addon} is {state} in set {name} of {folder_name} now, was {before}: {count}")
-        }
-        (_, None) => format!("dropped {addon} from set {name} of {folder_name}: {count}"),
-    };
-    reporter.say(
-        Kind::Success,
-        format!("{summary}; no AddOns.txt was touched"),
-    );
-}
-
-fn count_addons_txt(count: usize) -> String {
-    if count == 1 {
-        "1 AddOns.txt".to_string()
-    } else {
-        format!("{count} AddOns.txt files")
-    }
+    let (kind, summary) = edited.summary(&folder_name);
+    reporter.say(kind, summary);
 }
 
 /// The target of `--character` and `--realm` (task 027): one character, or every character without them.
@@ -3422,17 +3373,10 @@ fn characters_text(target: &sets::Target, characters: &[sets::Character]) -> Str
     }
 }
 
-/// `3 addons (2 enabled, 1 disabled)`.
+/// `3 addons (2 enabled, 1 disabled)`: the core's [`AddonSet::counted`], the line the window's edit
+/// summary uses too.
 fn count_set(set: &AddonSet) -> String {
-    let addons = match set.addons.len() {
-        1 => "1 addon".to_string(),
-        count => format!("{count} addons"),
-    };
-    format!(
-        "{addons} ({} enabled, {} disabled)",
-        set.enabled(),
-        set.disabled()
-    )
+    set.counted()
 }
 
 fn count_characters(count: usize) -> String {

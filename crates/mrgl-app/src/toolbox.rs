@@ -1,14 +1,15 @@
 //! The window's toolbox of a flavor (task 074): the addon sets with the characters a set can be applied to
-//! (tasks 014 and 027), and the SavedVariables with their sizes and the cleanup of the orphans (task 025).
-//! Plain functions over the core, which take the game root, the flavor and the mrgl home folder as
-//! arguments, so `tests/toolbox.rs` runs them on a made-up flavor without a window; the commands of
-//! [`crate::commands`] call them on a blocking thread.
+//! (tasks 014 and 027), the undo of the last apply, the edit of a stored set and the account of a
+//! character that sits under two accounts (task 085 over task 073), and the SavedVariables with their
+//! sizes and the cleanup of the orphans (task 025). Plain functions over the core, which take the game
+//! root, the flavor and the mrgl home folder as arguments, so `tests/toolbox.rs` runs them on a made-up
+//! flavor without a window; the commands of [`crate::commands`] call them on a blocking thread.
 //!
-//! Both writes run the running-client guard of task 023 first (`client::ensure_client_not_running`) and
-//! answer its refusal through the voice before anything else happens; the core's `sets::apply_set` and
-//! `savedvars::clean_orphans` call the same guard again before their first write. The summaries of an
-//! apply, a listing and a cleanup are the core's (`Applied::summary`, `Listing::summary`,
-//! `Cleaned::summary`, task 086), the lines `mrgl set apply` and `mrgl savedvars` print too.
+//! The `WTF` writes (the apply, the undo, the cleanup) run the running-client guard of task 023 first
+//! (`client::ensure_client_not_running`) and answer its refusal through the voice before anything else
+//! happens; the core calls the same guard again before its first write. An edit writes `sets.json` only
+//! and runs while the client runs, as on the command line. Every summary is the core's (`Applied`,
+//! `Undone`, `Edited`, `Listing` and `Cleaned`, tasks 085 and 086), the line the command line prints too.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +19,7 @@ use mrgl_core::client;
 use mrgl_core::flavor::{self, Flavor};
 use mrgl_core::savedvars::{self, CleanupBy, SavedVariablesFile, Status};
 use mrgl_core::scan;
-use mrgl_core::sets::{self, AddonState, Character, Target};
+use mrgl_core::sets::{self, AddonState, Character, SetEdit, Target, UndoRecord, Undone};
 use mrgl_core::voice::{Kind, Voice};
 use mrgl_core::zip_entry::size_text;
 use serde::Serialize;
@@ -70,6 +71,9 @@ pub struct ToolboxView {
     pub sets_note: Message,
     /// The characters of the flavor's `WTF` folder, sorted; a set goes to every one of them or to one.
     pub characters: Vec<CharacterView>,
+    /// What an undo puts back: the last apply that changed a file (task 085); `None` when there is
+    /// nothing to undo.
+    pub undo: Option<UndoView>,
     pub saved_variables: SavedVariablesView,
     /// The client running from the flavor folder, as a warning: both writes are refused while it runs.
     /// `None` when no client runs.
@@ -98,21 +102,84 @@ pub struct SetAddon {
 }
 
 /// A character a set can be applied to. The account folder's name is left out, as in the command line's
-/// plain lines: on an older install it is the login name.
+/// plain lines (on an older install it is the login name), unless another account has a character of the
+/// same realm and name: then the pick needs it (task 085).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CharacterView {
     pub name: String,
     pub realm: String,
     /// `<realm>/<character>`.
     pub label: String,
+    /// The account folder's name, only when the realm and the name sit under two accounts.
+    pub account: Option<String>,
 }
 
 impl CharacterView {
-    fn of(character: &Character) -> CharacterView {
+    /// A character as the window names it, among the flavor's characters `all`.
+    fn among(character: &Character, all: &[Character]) -> CharacterView {
+        CharacterView::of_parts(&character.account, &character.realm, &character.name, all)
+    }
+
+    fn of_parts(account: &str, realm: &str, name: &str, all: &[Character]) -> CharacterView {
+        let same = |a: &str, b: &str| a.to_lowercase() == b.to_lowercase();
+        let twin = all.iter().any(|other| {
+            !same(&other.account, account) && same(&other.realm, realm) && same(&other.name, name)
+        });
         CharacterView {
-            name: character.name.clone(),
-            realm: character.realm.clone(),
-            label: character.label(),
+            name: name.to_string(),
+            realm: realm.to_string(),
+            label: format!("{realm}/{name}"),
+            account: twin.then(|| account.to_string()),
+        }
+    }
+}
+
+/// An undo of the last apply (task 085): in the toolbox, what pressing it puts back; in an answer, what it
+/// put back.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct UndoView {
+    /// The set that was applied, its name as stored.
+    pub set: String,
+    /// When it was applied, RFC 3339 in UTC.
+    pub applied_at: String,
+    /// The characters whose `AddOns.txt` goes back to what it was before the apply.
+    pub restore: Vec<CharacterView>,
+    /// The characters whose `AddOns.txt` the apply created, which the undo removes.
+    pub remove: Vec<CharacterView>,
+}
+
+impl UndoView {
+    fn of_record(record: &UndoRecord, all: &[Character]) -> UndoView {
+        let (kept, created): (Vec<_>, Vec<_>) =
+            record.files.iter().partition(|file| file.kept.is_some());
+        let views = |files: Vec<&sets::UndoFile>| -> Vec<CharacterView> {
+            files
+                .iter()
+                .map(|file| {
+                    CharacterView::of_parts(&file.account, &file.realm, &file.character, all)
+                })
+                .collect()
+        };
+        UndoView {
+            set: record.set.clone(),
+            applied_at: record.applied_at.clone(),
+            restore: views(kept),
+            remove: views(created),
+        }
+    }
+
+    fn of_undone(undone: &Undone, all: &[Character]) -> UndoView {
+        let views = |characters: &[Character]| -> Vec<CharacterView> {
+            characters
+                .iter()
+                .map(|character| CharacterView::among(character, all))
+                .collect()
+        };
+        UndoView {
+            set: undone.set.clone(),
+            applied_at: undone.applied_at.clone(),
+            restore: views(&undone.restored),
+            remove: views(&undone.removed),
         }
     }
 }
@@ -184,12 +251,13 @@ pub struct SetAddonChange {
 }
 
 /// The answer of the toolbox commands: the toolbox as it is now (`None` when the flavor cannot be read),
-/// what an apply changed per character, the zip a cleanup wrote, and the messages in order, the warnings
-/// first and the summary last.
+/// what an apply changed per character, what an undo put back, the zip a cleanup wrote, and the messages
+/// in order, the warnings first and the summary last.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ToolboxAnswer {
     pub toolbox: Option<ToolboxView>,
     pub changes: Vec<ChangeView>,
+    pub undone: Option<UndoView>,
     pub zip: Option<String>,
     pub messages: Vec<Message>,
 }
@@ -200,20 +268,32 @@ impl ToolboxAnswer {
         ToolboxAnswer {
             toolbox: None,
             changes: Vec::new(),
+            undone: None,
             zip: None,
             messages: vec![message],
+        }
+    }
+
+    /// An answer with the toolbox as it is now and its messages, nothing else.
+    fn drawn(toolbox: Option<ToolboxView>, messages: Vec<Message>) -> ToolboxAnswer {
+        ToolboxAnswer {
+            toolbox,
+            changes: Vec::new(),
+            undone: None,
+            zip: None,
+            messages,
         }
     }
 }
 
 /// The refusal of a toolbox write while another one runs.
 pub fn busy_line() -> &'static str {
-    "a set apply or a SavedVariables cleanup is running already; wait for it to end"
+    "a set apply, undo or edit or a SavedVariables cleanup is running already; wait for it to end"
 }
 
 /// The refusal of an update run while a toolbox write goes.
 pub fn toolbox_busy_line() -> &'static str {
-    "a set apply or a SavedVariables cleanup is running; the update waits until it ends"
+    "a set apply, undo or edit or a SavedVariables cleanup is running; the update waits until it ends"
 }
 
 /// The refusal of a cleanup while an update runs: an install swaps addon folders, and a folder that is
@@ -244,12 +324,7 @@ pub fn load(root: &Path, flavor_id: &str, home: Option<&Path>, voice: Voice) -> 
     };
     let mut messages = Vec::new();
     let view = view_of(&flavor, home, voice, &mut messages);
-    ToolboxAnswer {
-        toolbox: Some(view),
-        changes: Vec::new(),
-        zip: None,
-        messages,
-    }
+    ToolboxAnswer::drawn(Some(view), messages)
 }
 
 /// The toolbox as it is now, after a write: what cannot be read again is left to the next load.
@@ -326,13 +401,27 @@ fn view_of(
         }
     };
 
-    let characters = match sets::characters(flavor) {
-        Ok(characters) => characters.iter().map(CharacterView::of).collect(),
+    let all = match sets::characters(flavor) {
+        Ok(characters) => characters,
         Err(error) => {
             messages.push(say(Kind::Error, error.to_string()));
             Vec::new()
         }
     };
+    let characters = all
+        .iter()
+        .map(|character| CharacterView::among(character, &all))
+        .collect();
+
+    let undo = home.and_then(|home| {
+        match sets::undo_record(flavor, &sets::sets_path_at(home, &flavor.id)) {
+            Ok(record) => record.map(|record| UndoView::of_record(&record, &all)),
+            Err(error) => {
+                messages.push(say(Kind::Error, error.to_string()));
+                None
+            }
+        }
+    });
 
     let saved_variables = match savedvars::list_saved_variables(flavor) {
         Ok(listing) => {
@@ -376,6 +465,7 @@ fn view_of(
         sets,
         sets_note,
         characters,
+        undo,
         saved_variables,
         client,
     }
@@ -393,41 +483,61 @@ fn guard(flavor: &Flavor, voice: Voice) -> Result<(), Message> {
         .map_err(|error| Message::new(voice, Kind::Error, error.to_string()))
 }
 
+/// A pick's text: trimmed, `None` when empty.
+fn picked(text: Option<&str>) -> Option<&str> {
+    text.map(str::trim).filter(|text| !text.is_empty())
+}
+
 /// The target of the window's pick: every character without a name, else the one character
-/// [`sets::find_character`] finds by name (and realm) among the flavor's characters, pinned to its exact
-/// name and realm.
+/// [`sets::find_character_in_account`] finds by name (and realm) among the flavor's characters, within the
+/// account when the pick names one (task 085), pinned to its exact name and realm.
 fn target_of(
     flavor: &Flavor,
     character: Option<&str>,
     realm: Option<&str>,
+    account: Option<&str>,
 ) -> mrgl_core::error::Result<Target> {
-    let Some(name) = character.map(str::trim).filter(|name| !name.is_empty()) else {
+    let Some(name) = picked(character) else {
         return Ok(Target::EveryCharacter);
     };
-    let realm = realm.map(str::trim).filter(|realm| !realm.is_empty());
     let characters = sets::characters(flavor)?;
     if characters.is_empty() {
         return Err(mrgl_core::Error::NoCharacters {
             path: backup::wtf_dir(flavor),
         });
     }
-    let found = sets::find_character(&characters, name, realm, &flavor.id)?;
+    let found = sets::find_character_in_account(
+        &characters,
+        name,
+        picked(realm),
+        picked(account),
+        &flavor.id,
+    )?;
     Ok(Target::Character {
         name: found.name,
         realm: Some(found.realm),
     })
 }
 
+/// The window's pick of characters for an apply (tasks 074 and 085): every character without a name, else
+/// one by name, with its realm, and its account when the same realm and name sit under two accounts.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Pick<'a> {
+    pub character: Option<&'a str>,
+    pub realm: Option<&'a str>,
+    pub account: Option<&'a str>,
+}
+
 /// Applies a stored set to every character of the flavor (`character` is `None`) or to the one the
-/// window picked, through `sets::apply_set`: the guard first, then the pick, then the apply, which writes
-/// only the `AddOns.txt` files that change. The answer carries the toolbox as it is now, what changed per
-/// character, and the not-installed warning and the summary of `mrgl set apply`.
+/// window picked, through `sets::apply_set_in_account`: the guard first, then the pick, then the apply,
+/// which writes only the `AddOns.txt` files that change. The answer carries the toolbox as it is now (with
+/// the undo of this apply), what changed per character, and the not-installed warning and the summary of
+/// `mrgl set apply`.
 pub fn apply(
     root: &Path,
     flavor_id: &str,
     set: &str,
-    character: Option<&str>,
-    realm: Option<&str>,
+    pick: Pick<'_>,
     home: Option<&Path>,
     voice: Voice,
 ) -> ToolboxAnswer {
@@ -436,12 +546,8 @@ pub fn apply(
         Err(message) => return ToolboxAnswer::refused(message),
     };
     let say = |kind: Kind, plain: String| Message::new(voice, kind, plain);
-    let refused = |message: Message| ToolboxAnswer {
-        toolbox: view_after(&flavor, home, voice),
-        changes: Vec::new(),
-        zip: None,
-        messages: vec![message],
-    };
+    let refused =
+        |message: Message| ToolboxAnswer::drawn(view_after(&flavor, home, voice), vec![message]);
     if let Err(message) = guard(&flavor, voice) {
         return refused(message);
     }
@@ -451,15 +557,17 @@ pub fn apply(
             format!("no set applied: {}", mrgl_core::Error::NoHome),
         ));
     };
-    let target = match target_of(&flavor, character, realm) {
+    let account = picked(pick.account);
+    let target = match target_of(&flavor, pick.character, pick.realm, account) {
         Ok(target) => target,
         Err(error) => return refused(say(Kind::Error, error.to_string())),
     };
     let path = sets::sets_path_at(home, &flavor.id);
-    let applied = match sets::apply_set(&flavor, &path, set, &target) {
+    let applied = match sets::apply_set_in_account(&flavor, &path, set, &target, account) {
         Ok(applied) => applied,
         Err(error) => return refused(say(Kind::Error, error.to_string())),
     };
+    let all = sets::characters(&flavor).unwrap_or_default();
 
     let folder_name = flavor.folder_name();
     let mut messages = Vec::new();
@@ -478,7 +586,7 @@ pub fn apply(
         .characters
         .iter()
         .map(|change| ChangeView {
-            character: CharacterView::of(&change.character),
+            character: CharacterView::among(&change.character, &all),
             changed: change
                 .changed
                 .iter()
@@ -491,11 +599,99 @@ pub fn apply(
         })
         .collect();
     ToolboxAnswer {
-        toolbox: view_after(&flavor, Some(home), voice),
         changes,
-        zip: None,
-        messages,
+        ..ToolboxAnswer::drawn(view_after(&flavor, Some(home), voice), messages)
     }
+}
+
+/// Undoes the last apply that changed a file (task 085 over task 073), through `sets::undo_apply`: the
+/// guard first, then the undo, which puts every `AddOns.txt` the apply replaced back byte for byte and
+/// removes the ones it created. The answer carries the toolbox as it is now (nothing left to undo),
+/// `undone`, and the warnings and the summary of `mrgl set undo`.
+pub fn undo(root: &Path, flavor_id: &str, home: Option<&Path>, voice: Voice) -> ToolboxAnswer {
+    let flavor = match read(root, flavor_id, voice) {
+        Ok(flavor) => flavor,
+        Err(message) => return ToolboxAnswer::refused(message),
+    };
+    let say = |kind: Kind, plain: String| Message::new(voice, kind, plain);
+    let refused =
+        |message: Message| ToolboxAnswer::drawn(view_after(&flavor, home, voice), vec![message]);
+    if let Err(message) = guard(&flavor, voice) {
+        return refused(message);
+    }
+    let Some(home) = home else {
+        return refused(say(
+            Kind::Error,
+            format!("nothing undone: {}", mrgl_core::Error::NoHome),
+        ));
+    };
+    let undone = match sets::undo_apply(&flavor, &sets::sets_path_at(home, &flavor.id)) {
+        Ok(undone) => undone,
+        Err(error) => return refused(say(Kind::Error, error.to_string())),
+    };
+    let mut messages: Vec<Message> = undone
+        .warnings
+        .iter()
+        .map(|warning| say(Kind::Warning, warning.clone()))
+        .collect();
+    messages.push(said(voice, undone.summary(&flavor.folder_name())));
+    let all = sets::characters(&flavor).unwrap_or_default();
+    ToolboxAnswer {
+        undone: Some(UndoView::of_undone(&undone, &all)),
+        ..ToolboxAnswer::drawn(view_after(&flavor, Some(home), voice), messages)
+    }
+}
+
+/// Enables, disables or drops one addon of a stored set (task 085 over task 073), through
+/// `sets::edit_set`: `sets.json` only, no `AddOns.txt` is touched, so it is not behind the running-client
+/// guard, as `mrgl set enable|disable|drop` is not. `action` is `enable`, `disable` or `drop`. The answer
+/// carries the toolbox as it is now, and the not-installed warning and the summary of the command line.
+pub fn edit(
+    root: &Path,
+    flavor_id: &str,
+    set: &str,
+    addon: &str,
+    action: &str,
+    home: Option<&Path>,
+    voice: Voice,
+) -> ToolboxAnswer {
+    let flavor = match read(root, flavor_id, voice) {
+        Ok(flavor) => flavor,
+        Err(message) => return ToolboxAnswer::refused(message),
+    };
+    let say = |kind: Kind, plain: String| Message::new(voice, kind, plain);
+    let refused =
+        |message: Message| ToolboxAnswer::drawn(view_after(&flavor, home, voice), vec![message]);
+    let edit = match action {
+        "enable" => SetEdit::Enable,
+        "disable" => SetEdit::Disable,
+        "drop" => SetEdit::Drop,
+        other => {
+            return refused(say(
+                Kind::Error,
+                format!("no set edit {other}: enable, disable or drop"),
+            ));
+        }
+    };
+    let Some(home) = home else {
+        return refused(say(
+            Kind::Error,
+            format!("no set edited: {}", mrgl_core::Error::NoHome),
+        ));
+    };
+    let path = sets::sets_path_at(home, &flavor.id);
+    let edited = match sets::edit_set(&flavor, &path, set, addon, edit) {
+        Ok(edited) => edited,
+        Err(error) => return refused(say(Kind::Error, error.to_string())),
+    };
+    let folder_name = flavor.folder_name();
+    let mut messages: Vec<Message> = edited
+        .not_installed(&folder_name)
+        .into_iter()
+        .map(|warning| say(Kind::Warning, warning))
+        .collect();
+    messages.push(said(voice, edited.summary(&folder_name)));
+    ToolboxAnswer::drawn(view_after(&flavor, Some(home), voice), messages)
 }
 
 /// Moves the flavor's orphan SavedVariables, with their `.bak` files, into `SavedVariables-<date>.zip` in
@@ -510,10 +706,8 @@ pub fn clean(root: &Path, flavor_id: &str, home: Option<&Path>, voice: Voice) ->
     };
     let say = |kind: Kind, plain: String| Message::new(voice, kind, plain);
     let answer = |messages: Vec<Message>, zip: Option<String>| ToolboxAnswer {
-        toolbox: view_after(&flavor, home, voice),
-        changes: Vec::new(),
         zip,
-        messages,
+        ..ToolboxAnswer::drawn(view_after(&flavor, home, voice), messages)
     };
     if let Err(message) = guard(&flavor, voice) {
         return answer(vec![message], None);

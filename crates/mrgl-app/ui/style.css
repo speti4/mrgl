@@ -452,12 +452,57 @@ code {
 }
 .set-disabled {
   --set-color: var(--muted);
-  text-decoration: line-through;
 }
 /* An addon of the set with no folder under Interface\AddOns: the apply writes its line all the same. */
 .set-addon.not-installed {
   border-style: dashed;
   background: transparent;
+}
+/* The edit controls of a chip (task 085): the name toggles enabled and disabled in the set, the × drops
+   the addon. Both inherit the chip's color, so a state looks the same as before. */
+.set-addon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding-right: 0.2rem;
+}
+.chip-toggle,
+.chip-drop {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  line-height: inherit;
+}
+.set-disabled .chip-toggle {
+  text-decoration: line-through;
+}
+.chip-drop {
+  width: 1.1rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+.chip-toggle:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.chip-drop:hover:not(:disabled) {
+  opacity: 1;
+  background: color-mix(in srgb, var(--set-color) 25%, transparent);
+}
+.chip-toggle:focus-visible,
+.chip-drop:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.set-hint,
+.undo-note {
+  margin: 0;
+  font-size: 0.8rem;
+}
+.set-addons:empty + .set-hint,
+.undo-note:empty {
+  display: none;
 }
 .set-changes {
   margin: 0;

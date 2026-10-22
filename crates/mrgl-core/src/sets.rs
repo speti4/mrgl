@@ -515,6 +515,16 @@ impl AddonSet {
         self.count(AddonState::Disabled)
     }
 
+    /// `3 addons (2 enabled, 1 disabled)`, for a plain line.
+    pub fn counted(&self) -> String {
+        format!(
+            "{} ({} enabled, {} disabled)",
+            count_noun(self.addons.len(), "addon"),
+            self.enabled(),
+            self.disabled()
+        )
+    }
+
     fn count(&self, state: AddonState) -> usize {
         self.addons
             .values()
@@ -1275,6 +1285,48 @@ pub struct Undone {
     pub warnings: Vec<String>,
 }
 
+impl Undone {
+    /// The summary of an undo in the voice's terms (task 085: `mrgl set undo` and the window's toolbox
+    /// share it, as task 086 has the apply's): the set, when it was applied, the files put back and the
+    /// ones removed. A warning when the undo has warnings of its own, a success otherwise.
+    pub fn summary(&self, folder_name: &str) -> (Kind, String) {
+        let mut summary = format!(
+            "undid the apply of set {} to {folder_name} ({}): {} put back",
+            self.set,
+            self.applied_at,
+            count_addons_txt(self.restored.len())
+        );
+        if !self.removed.is_empty() {
+            summary.push_str(&format!(
+                ", {} the apply created removed",
+                count_addons_txt(self.removed.len())
+            ));
+        }
+        let kind = if self.warnings.is_empty() {
+            Kind::Success
+        } else {
+            Kind::Warning
+        };
+        (kind, summary)
+    }
+}
+
+/// `1 AddOns.txt`, `2 AddOns.txt files`.
+fn count_addons_txt(count: usize) -> String {
+    if count == 1 {
+        format!("1 {ADDONS_TXT}")
+    } else {
+        format!("{count} {ADDONS_TXT} files")
+    }
+}
+
+/// The record of the last apply that changed a file, as [`undo_apply`] would read it, without writing
+/// anything (task 085: the window names what an undo puts back before it is pressed). `None` when there is
+/// nothing to undo; a record [`undo_apply`] would refuse is its error ([`Error::SetUndoUnreadable`]).
+pub fn undo_record(flavor: &Flavor, sets_path: &Path) -> Result<Option<UndoRecord>> {
+    Ok(read_undo(&undo_dir_of(sets_path), flavor)?.map(|(record, _)| record))
+}
+
 /// Undoes the last apply that changed a file (task 073): every `AddOns.txt` it replaced is put back byte
 /// for byte and every one it created is removed, then the record is forgotten, so a second undo has
 /// nothing to do ([`Error::NothingToUndo`]). In this order: the record read (every kept file with it), the
@@ -1401,6 +1453,51 @@ pub struct Edited {
     pub set: AddonSet,
     /// Whether the addon has a folder under `Interface\AddOns`.
     pub installed: bool,
+}
+
+impl Edited {
+    /// The warning about an addon the set keeps that has no folder under `Interface\AddOns`, so a typo
+    /// shows; `None` for an installed or a dropped addon (task 085: `mrgl set enable|disable|drop` and the
+    /// window share it).
+    pub fn not_installed(&self, folder_name: &str) -> Option<String> {
+        (self.after.is_some() && !self.installed).then(|| {
+            format!(
+                "{} is not installed in {folder_name}; the set keeps it all the same",
+                self.addon
+            )
+        })
+    }
+
+    /// The summary of an edit in the voice's terms (task 085, shared as [`Edited::not_installed`] is):
+    /// what changed in the set and its count after, ending "no AddOns.txt was touched"; nothing to say for
+    /// an edit to the state the addon has already.
+    pub fn summary(&self, folder_name: &str) -> (Kind, String) {
+        let (name, addon, count) = (&self.name, &self.addon, self.set.counted());
+        let summary = match (self.before, self.after) {
+            _ if !self.changed => {
+                let state = self.after.map(AddonState::as_str).unwrap_or("dropped");
+                return (
+                    Kind::Nothing,
+                    format!(
+                        "set {name} of {folder_name} has {addon} {state} already, nothing changed"
+                    ),
+                );
+            }
+            (None, Some(state)) => {
+                format!("added {addon} to set {name} of {folder_name}, {state}: {count}")
+            }
+            (Some(before), Some(state)) => {
+                format!(
+                    "{addon} is {state} in set {name} of {folder_name} now, was {before}: {count}"
+                )
+            }
+            (_, None) => format!("dropped {addon} from set {name} of {folder_name}: {count}"),
+        };
+        (
+            Kind::Success,
+            format!("{summary}; no {ADDONS_TXT} was touched"),
+        )
+    }
 }
 
 /// Enables, disables or drops one addon of a stored set (task 073), in `sets.json` only: no `AddOns.txt`

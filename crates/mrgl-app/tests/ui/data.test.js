@@ -105,21 +105,34 @@ test("the preferences go to their commands, a missing change as null", async () 
 });
 
 test("the toolbox calls go to their commands, every character as a null target", async () => {
-  const answer = { toolbox: null, changes: [], zip: null, messages: [] };
-  const { calls, invoke } = fake({ toolbox: answer, apply_set: answer, clean_saved_variables: answer });
+  const answer = { toolbox: null, changes: [], undone: null, zip: null, messages: [] };
+  const { calls, invoke } = fake({
+    toolbox: answer,
+    apply_set: answer,
+    undo_set: answer,
+    edit_set: answer,
+    clean_saved_variables: answer,
+  });
   const Data = create(invoke);
   assert.equal(await Data.toolbox("wowf"), answer);
   await Data.applySet("wowf", "raid");
-  await Data.applySet("wowf", "raid", { character: null, realm: null });
+  await Data.applySet("wowf", "raid", { character: null, realm: null, account: "MRGLTWIN" });
   await Data.applySet("wowf", "raid", { character: "Grrlwave", realm: "Second Realm" });
   await Data.applySet("wowf", "raid", { character: "Grrlwave" });
+  await Data.applySet("wowf", "raid", { character: "Mrglina", realm: "Made-up Realm", account: "MRGLTWIN" });
+  assert.equal(await Data.undoSet("wowf"), answer);
+  assert.equal(await Data.editSet("wowf", "raid", "RaidFrames", "disable"), answer);
   assert.equal(await Data.cleanSavedVariables("wowf"), answer);
+  const none = { character: null, realm: null, account: null };
   assert.deepEqual(calls, [
     ["toolbox", { flavor: "wowf" }],
-    ["apply_set", { flavor: "wowf", set: "raid", character: null, realm: null }],
-    ["apply_set", { flavor: "wowf", set: "raid", character: null, realm: null }],
-    ["apply_set", { flavor: "wowf", set: "raid", character: "Grrlwave", realm: "Second Realm" }],
-    ["apply_set", { flavor: "wowf", set: "raid", character: "Grrlwave", realm: null }],
+    ["apply_set", Object.assign({ flavor: "wowf", set: "raid" }, none)],
+    ["apply_set", Object.assign({ flavor: "wowf", set: "raid" }, none)],
+    ["apply_set", { flavor: "wowf", set: "raid", character: "Grrlwave", realm: "Second Realm", account: null }],
+    ["apply_set", { flavor: "wowf", set: "raid", character: "Grrlwave", realm: null, account: null }],
+    ["apply_set", { flavor: "wowf", set: "raid", character: "Mrglina", realm: "Made-up Realm", account: "MRGLTWIN" }],
+    ["undo_set", { flavor: "wowf" }],
+    ["edit_set", { flavor: "wowf", set: "raid", addon: "RaidFrames", action: "disable" }],
     ["clean_saved_variables", { flavor: "wowf" }],
   ]);
 });
