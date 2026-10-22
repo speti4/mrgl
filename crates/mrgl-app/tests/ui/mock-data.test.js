@@ -11,7 +11,7 @@ Data.settings.delay = 0;
 
 // The keys of the contract (the header of ui/mock-data.js); `src/list.rs` serializes the same ones, which its
 // tests hold it to.
-const ROW_KEYS = ["folder", "name", "version", "linked", "source", "managed", "guessed", "update", "check", "channel", "pinned", "ignored", "forever", "missing"];
+const ROW_KEYS = ["folder", "name", "version", "linked", "source", "managed", "guessed", "update", "check", "channel", "pinned", "ignored", "forever", "missing", "interface_check"];
 const FLAVOR_KEYS = ["id", "name", "folder", "version", "interface", "version_source", "version_file", "curse_client", "addons_folder", "warnings", "addons"];
 const EVENT_KEYS = ["phase", "folder", "index", "total", "check", "message"];
 
@@ -167,6 +167,19 @@ test("the other calls of the contract answer in the voice's shape", async () => 
   const refused = await Data.resolve("wowf", "RaidLogger");
   assert.equal(refused.pick, null);
   assert.equal(refused.message.kind, "error");
+});
+
+test("one row of each interface state, in the core's words for the flavor's build (task 081)", async () => {
+  const { flavors } = await Data.flavors();
+  const marked = flavors.flatMap((flavor) => flavor.addons.filter((row) => row.interface_check).map((row) => ({ flavor, row })));
+  for (const state of State.INTERFACE_STATES) assert.ok(marked.some(({ row }) => row.interface_check.state === state), `no row ${state}`);
+  for (const { flavor, row } of marked) {
+    const mark = State.interfaceMark(row);
+    assert.deepEqual(Object.keys(row.interface_check).sort(), ["label", "line", "state"], row.folder);
+    assert.equal(mark.label, State.interfaceLabelOf(row.interface_check.state), row.folder);
+    assert.ok(mark.title.startsWith(`${row.folder}: interface `), mark.title);
+    assert.ok(mark.title.includes(`for the build ${flavor.version}`), mark.title);
+  }
 });
 
 test("a row names its missing dependencies and a stale note", async () => {

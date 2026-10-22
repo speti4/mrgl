@@ -22,6 +22,8 @@
   --state-linked: #7b4fb3;
   --state-guess: var(--info);
   --state-unmanaged: #8a9795;
+  --interface-mismatch: var(--bad);
+  --interface-out-of-date: var(--warn);
   --shadow: 0 6px 24px rgba(20, 32, 31, 0.18);
 }
 @media (prefers-color-scheme: dark) {
@@ -625,6 +627,21 @@ code {
   color: var(--state-color);
   background: color-mix(in srgb, var(--state-color) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--state-color) 40%, transparent);
+}
+
+/* The interface mark (task 081): `interface mismatch` or `out of date`, a pill of its own under the state's,
+   as `scan` and `list` append the mark to the addon's line; its token feeds the pill and the legend's dot. */
+.interface-mismatch {
+  --state-color: var(--interface-mismatch);
+}
+.interface-out-of-date {
+  --state-color: var(--interface-out-of-date);
+}
+.interface-mark {
+  margin-top: 0.15rem;
+}
+.interface-mark:empty {
+  display: none;
 }
 
 /* The step of an update run a row is at (task 010), under its pill. */

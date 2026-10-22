@@ -1078,10 +1078,12 @@ fn with_interface_note(
         .iter()
         .any(|mismatch| mismatch.folder == addon.folder)
     {
-        line.push_str("  interface mismatch");
+        line.push_str("  ");
+        line.push_str(InterfaceMismatch::LABEL);
     }
     if out_of_date.iter().any(|stale| stale.folder == addon.folder) {
-        line.push_str("  out of date");
+        line.push_str("  ");
+        line.push_str(InterfaceOutOfDate::LABEL);
     }
     line
 }

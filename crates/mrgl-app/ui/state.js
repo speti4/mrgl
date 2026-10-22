@@ -1,5 +1,6 @@
-// An addon row's one state from the facts the data carries, and the class and label it is drawn with.
-// Pure, so `tests/ui/state.test.js` runs it under Node.
+// An addon row's one state from the facts the data carries, and the class and label it is drawn with; the
+// interface mark the core sets on a row (task 081) next to it. Pure, so `tests/ui/state.test.js` runs it
+// under Node.
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
   else root.State = factory();
@@ -57,5 +58,44 @@
     return (addons || []).some((addon) => Boolean(addon && addon.forever));
   }
 
-  return { STATES, SOURCES, stateOf, classOf, labelOf, sourceClass, countUpdates, hasForeverNotes };
+  // The interface states of the core (task 081), in the order the legend lists them, with the marks `scan`
+  // and `list` append to an addon's line: a TOC for another expansion (015), an older interface of the
+  // build's own (076, the client's words).
+  const INTERFACE_STATES = ["mismatch", "out-of-date"];
+
+  const INTERFACE_LABELS = {
+    mismatch: "interface mismatch",
+    "out-of-date": "out of date",
+  };
+
+  // The mark a row draws for its `interface_check`: the class, the mark's words (the core's label, else the
+  // table's) and the warning's plain line for the title; null for a current row or an unknown state.
+  function interfaceMark(addon) {
+    const fact = addon && addon.interface_check;
+    if (!fact || !INTERFACE_STATES.includes(fact.state)) return null;
+    return {
+      state: fact.state,
+      className: `interface-${fact.state}`,
+      label: fact.label || INTERFACE_LABELS[fact.state],
+      title: fact.line || "",
+    };
+  }
+
+  function interfaceLabelOf(state) {
+    return INTERFACE_LABELS[state] || "";
+  }
+
+  return {
+    STATES,
+    SOURCES,
+    INTERFACE_STATES,
+    stateOf,
+    classOf,
+    labelOf,
+    sourceClass,
+    countUpdates,
+    hasForeverNotes,
+    interfaceMark,
+    interfaceLabelOf,
+  };
 });
