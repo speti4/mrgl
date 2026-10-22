@@ -2850,9 +2850,9 @@ impl InstalledAlready {
 /// check made, and the summary that counts every state (`2 addons updated, 12 up to date, 1 pinned, 1
 /// ignored`). `--dry-run` checks and writes nothing. An update or a check that fails does not stop the
 /// others; the command then ends with exit code 1. Task 068: a progress line before each addon the source
-/// is asked about and its data line as soon as it is checked; a stop before GitHub's rate limit is one
-/// warning line with the reset time, and the addons it leaves are counted (`2 not checked (rate limit)`),
-/// a warning, not a failure.
+/// is asked about and its data line as soon as it is checked; a stop before a source's rate limit is one
+/// warning line with the reset time, and the addons it leaves are counted per source (task 101: `2 not
+/// checked (GitHub's rate limit)`, the other sources still asked), a warning, not a failure.
 fn update_command(
     reporter: &Reporter,
     name: Option<&str>,
@@ -3067,12 +3067,17 @@ fn update_command(
                 (key, check.count(*state).into())
             })
             .collect();
-        // Task 068: the stop before the rate limit, with its line; `null` when the check asked about every addon.
-        let stopped = check.stopped.as_ref().map(|stop| {
-            let mut value = serde_json::to_value(stop).unwrap_or_default();
-            value["message"] = stop.line().into();
-            value
-        });
+        // Tasks 068, 101: the stops before a source's rate limit, one per source with its line; empty when
+        // the check asked about every addon.
+        let stopped: Vec<serde_json::Value> = check
+            .stopped
+            .iter()
+            .map(|stop| {
+                let mut value = serde_json::to_value(stop).unwrap_or_default();
+                value["message"] = stop.line().into();
+                value
+            })
+            .collect();
         reporter.document(serde_json::json!({
             "kind": "update",
             "flavor": &engine.flavor,

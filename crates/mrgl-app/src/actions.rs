@@ -91,7 +91,8 @@ pub enum Phase {
     Checking,
     /// The addon's check is done; the event carries its [`CheckFact`].
     Checked,
-    /// The check stopped before the source's request limit (task 068); sent once.
+    /// The check stopped asking a source before its request limit (task 068); sent once per source that
+    /// stopped, the other sources still asked (task 101).
     Stopped,
     /// The addon's update starts.
     Updating,

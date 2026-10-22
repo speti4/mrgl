@@ -291,24 +291,30 @@ version. The order is the GitHub source's cached release list (`Source::listed_v
 no request) where it lists both versions, else `update::lenient_order`: a leading `v` dropped, the numbers
 before the first `-` or `+` compared as numbers (`1.2` is `1.2.0`), and on equal numbers a version with a
 suffix before one without (`2.0.0-beta` before `2.0.0`); when neither can tell, another version counts as
-an update. `rate-limited`: not asked, the check stopped before the request limit (below). An addon whose
+an update. `rate-limited`: not asked, the check stopped asking the addon's source before its request limit
+(below). An addon whose
 folders were deleted by hand is left out with a warning.
 
 `update::check` takes a progress callback, `&mut dyn FnMut(CheckProgress)`, the one the command line and
 the window (task 010) share: `Checking { index, total, name, source }` before an addon the source is asked
 about, `Checked { index, total, addon }` after every addon with its `AddonUpdate`, and `Stopped { stop }`
-when the check stops before the request limit. The request budget: without a token the GitHub source counts
-the API requests of its run against the 60 an hour (`Source::request_budget`), and once an answer names
+once per source when the check stops asking that source before its request limit. The request budget:
+without a token the GitHub source counts the API requests of its run against the 60 an hour
+(`Source::request_budget`), and once an answer names
 `x-ratelimit-remaining` that count, less the requests since, takes over with the answer's reset time (a
-429 leaves nothing); an asset download is not counted, a token turns the budget off. Before each addon
-that needs a request the check reads the budget, and with nothing left it stops asking: the addons left
-are `rate-limited`, and `UpdateCheck::stopped` (`BudgetStop`) carries the limit, the requests sent, the
-reset time and how many addons it left, with its line `stopped the check before GitHub's rate limit of 60
-requests an hour without a token: 2 addons not checked, the limit resets at <local time> (local time); set
-MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour` (`within the hour` when no answer named
-the reset). `mrgl update --all` and `mrgl update <name>` print a progress line through the voice before
-each addon the source is asked about (`checking Questie against github:Questie/Questie (10 of 12)`), the
-stop as a warning when it happens, and a plain data line per addon as soon as it is checked
+429 leaves nothing); an asset download is not counted, a token turns the budget off; the Wago source keeps
+a budget of its own (below). Before each addon that needs a request the check reads the budget of the
+addon's source (`Source::request_budget_for`), and with nothing left it stops asking that source alone
+(task 101): the addons of that source left are `rate-limited` (`not asked before GitHub's rate limit`), and
+the addons of the other sources go on being asked. `UpdateCheck::stopped` holds one `BudgetStop` per source
+that stopped, in the order they stopped, each with its source (`github`, `wago`), the limit, the requests
+sent, the reset time and how many addons of that source it left, with its line `stopped asking GitHub
+before its rate limit of 60 requests an hour without a token: 2 addons not checked, the limit resets at
+<local time> (local time); set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour` (`within
+the hour` when no answer named the reset), and the summary counts the addons left per source (`2 not
+checked (GitHub's rate limit)`). `mrgl update --all` and `mrgl update <name>` print a progress line through the voice before
+each addon the source is asked about (`checking Questie against github:Questie/Questie (10 of 12)`), each
+source's stop as a warning when it happens, and a plain data line per addon as soon as it is checked
 (`Questie  1.2.2 -> 1.2.3  update available`), ask once for the updates (`--yes` answers; without a
 terminal or with `--json` the command stops and says what `--yes` does, exit 1), install each through the
 one install path with the pick the check made (`AddonUpdate::request`, no second resolve), say each
@@ -331,10 +337,11 @@ no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installe
 interface check of the installed addon, `interface_mismatch` and `interface_out_of_date` (task 082, below),
 `installed_already` (task 089: the entry the install path found at the pick's version, as an `addon` block
 with `same_entry` and the line as `message`; `null` otherwise), the document's `updated` and
-`installed_already` counts, the `counts` per state, `stopped` (the
-`BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
+`installed_already` counts, the `counts` per state (`rate-limited` the sum over the sources), `stopped` (a
+list of the `BudgetStop`s, one per source that stopped, each with its `source` and its `message`; empty
+when the check asked about every addon, task 101) and the warnings. An
 update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
-the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.
+a rate limit is a warning in the summary (`2 not checked (Wago's rate limit)`), not a failure: exit code 0.
 
 The interface check (task 015) compares the `## Interface` numbers of the TOC the flavor loads with the
 installed build: an interface number's major version is the number divided by 10000 (`120105` is 12,
@@ -843,8 +850,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   `update-available` addon through the one install path (`Engine::install_from_source` with the check's own
   pick, task 055). Each takes a Tauri channel (`tauri::ipc::Channel`) and sends one event per step as it
   happens: `{ phase, folder, index, total, check, message }`, the phase `checking`, `checked` (with the
-  addon's `check`), `stopped` (the request budget's stop line of task 068, a warning, sent once and not
-  repeated in the answer), `updating`, `downloading`, `installing`, `updated`, `installed-already` or
+  addon's `check`), `stopped` (the request budget's stop line of task 068, a warning, sent once per source
+  that stopped, task 101, and not repeated in the answer), `updating`, `downloading`, `installing`, `updated`, `installed-already` or
   `failed` (an error), the folder the addon's first one, the message in the voice. `installed-already`
   (task 099) is the install path's "installed already" answer in the command line's words of task 089
   (`AlreadyInstalled::update_line` of the core, which both say): the nothing-to-do line under the addon's
@@ -1270,11 +1277,11 @@ fetched with the same key when it is on `addons.wago.io`. A 401 is `Wago answere
 MRGL_WAGO_KEY is missing or not accepted: …`; an answer without a release for the game version is `no asset
 for flavor <flavor> in wago:<id> game version <v> (Wago lists no stable, beta or alpha release for it)`. Every
 request to Wago's host counts against the limit its answers name (`x-ratelimit-limit`, 60 until one says,
-and `x-ratelimit-remaining`): the update check reads it before each addon and stops at none left,
-`stopped the check before Wago's rate limit of 60 requests: <n> addons not checked, the limit resets after a
-short wait (Wago does not say when); run the check again then` (the words for the limit's window come with
-the budget, `RequestBudget::window` and `resets`). The answers are cached per addon, one per game version,
-under `<home>/cache/wago/<id>.json` with `checked_at`, and the offline rule of the GitHub source holds; the
+and `x-ratelimit-remaining`): the update check reads it before each Wago addon and, at none left, stops
+asking Wago while the other sources are still asked (task 101), `stopped asking Wago before its rate limit
+of 60 requests: <n> addons not checked, the limit resets after a short wait (Wago does not say when); run
+the check again then` (the words for the limit's window come with the budget, `RequestBudget::window` and
+`resets`). The answers are cached per addon, one per game version, under `<home>/cache/wago/<id>.json` with `checked_at`, and the offline rule of the GitHub source holds; the
 window's offline view (`Sources::cached`) has no key and reads that cache alone. The Forever signal is `yes`
 when the addon has a release for `forever` and `no` when Wago answers without one; the keyless data endpoint
 `addons.wago.io/api/data/slugs?game_version=forever` (every addon with a release for that game version, slug

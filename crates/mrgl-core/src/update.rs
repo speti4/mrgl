@@ -10,9 +10,11 @@
 //! Task 068: an installed version newer than the current release (a deleted release, a channel switch) is
 //! [`UpdateState::InstalledNewer`], not an update; the order is the source's release list where it lists
 //! both versions, else [`lenient_order`]. The check reports every addon through a [`CheckProgress`]
-//! callback, the one the command line and the window share, and stops before a source's request limit
-//! ([`Source::request_budget`]: the GitHub API's 60 requests an hour without a token): the addons it leaves
-//! are [`UpdateState::RateLimited`] and [`UpdateCheck::stopped`] says when the limit resets.
+//! callback, the one the command line and the window share, and stops asking a source before its request
+//! limit ([`Source::request_budget_for`]: the GitHub API's 60 requests an hour without a token, Wago's 60).
+//! Task 101 keeps the stop per source: the addons of that source it leaves are [`UpdateState::RateLimited`],
+//! the other sources go on being asked, and [`UpdateCheck::stopped`] holds one [`BudgetStop`] per source
+//! that stopped, with when its limit resets.
 
 use std::cmp::Ordering;
 
@@ -22,7 +24,9 @@ use crate::error::{Error, Result};
 use crate::install::{Engine, SourceRequest, Wanted};
 use crate::list_file::EntrySource;
 use crate::scan;
-use crate::sources::{Channel, Pick, RequestBudget, Source, SourceSpec, Target, source_gone};
+use crate::sources::{
+    Channel, Pick, RequestBudget, Source, SourceKind, SourceSpec, Target, source_gone,
+};
 use crate::state::Entry;
 use crate::voice::Kind;
 
@@ -50,7 +54,8 @@ pub enum UpdateState {
     NotChecked,
     /// The source could not be asked: offline, a rate limit, a server error.
     Failed,
-    /// Not asked: the check stopped before the source's request limit ([`UpdateCheck::stopped`]).
+    /// Not asked: the check stopped asking the addon's source before its request limit
+    /// ([`UpdateCheck::stopped`]); the other sources were still asked (task 101).
     RateLimited,
 }
 
@@ -219,15 +224,18 @@ impl AddonUpdate {
 pub struct UpdateCheck {
     pub addons: Vec<AddonUpdate>,
     pub warnings: Vec<String>,
-    /// The check stopped before the source's request limit (task 068); `None` when it asked about every
-    /// addon it had to.
-    pub stopped: Option<BudgetStop>,
+    /// The sources the check stopped asking before their request limit (tasks 068, 101), one stop per
+    /// source in the order they stopped; empty when it asked about every addon it had to.
+    pub stopped: Vec<BudgetStop>,
 }
 
-/// Why the check stopped before asking about every addon (task 068): the source's request limit was
-/// reached in this run, so the addons left are not asked about rather than refused one by one.
+/// Why the check stopped asking a source before every addon of it was asked (task 068): the source's
+/// request limit was reached in this run, so its addons left are not asked about rather than refused one by
+/// one. Task 101: the stop is the source's alone, the check goes on asking the other sources.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BudgetStop {
+    /// The source whose limit it is (`github`, `wago` in the JSON).
+    pub source: SourceKind,
     /// The host whose limit it is (`GitHub`).
     pub host: &'static str,
     /// The requests the limit allows an hour.
@@ -236,7 +244,7 @@ pub struct BudgetStop {
     pub sent: u32,
     /// When the limit resets, in Unix seconds, when the source said.
     pub reset: Option<i64>,
-    /// How many addons the check left: [`UpdateState::RateLimited`].
+    /// How many addons of the source the check left: [`UpdateState::RateLimited`].
     pub not_checked: usize,
     /// How to get a larger limit.
     pub hint: String,
@@ -249,8 +257,9 @@ pub struct BudgetStop {
 }
 
 impl BudgetStop {
-    fn of(budget: RequestBudget, not_checked: usize) -> BudgetStop {
+    fn of(source: SourceKind, budget: RequestBudget, not_checked: usize) -> BudgetStop {
         BudgetStop {
+            source,
             host: budget.host,
             limit: budget.limit,
             sent: budget.sent,
@@ -262,7 +271,8 @@ impl BudgetStop {
         }
     }
 
-    /// The one line of the stop: the limit, the addons left and when the limit resets, in local time.
+    /// The one line of the stop: the source and its limit, the addons of it left and when the limit
+    /// resets, in local time.
     pub fn line(&self) -> String {
         let addons = match self.not_checked {
             1 => "1 addon".to_string(),
@@ -276,7 +286,7 @@ impl BudgetStop {
             None => format!("the limit resets {}", self.resets),
         };
         format!(
-            "stopped the check before {}'s rate limit of {} requests{}: {addons} not checked, {reset}; {}",
+            "stopped asking {} before its rate limit of {} requests{}: {addons} not checked, {reset}; {}",
             self.host, self.limit, self.window, self.hint
         )
     }
@@ -294,8 +304,8 @@ pub enum CheckProgress<'a> {
         name: &'a str,
         source: &'a str,
     },
-    /// The check stops before the source's request limit; every addon left that needs a request follows
-    /// as [`UpdateState::RateLimited`].
+    /// The check stops asking a source before its request limit; every addon of that source left that
+    /// needs a request follows as [`UpdateState::RateLimited`]. Sent once per source (task 101).
     Stopped { stop: &'a BudgetStop },
     /// An addon's check is done, whatever its state; sent for every addon, in the sidecar's order.
     Checked {
@@ -392,6 +402,10 @@ impl UpdateCheck {
             .into_iter()
             .filter(|state| *state != UpdateState::UpdateAvailable)
         {
+            if state == UpdateState::RateLimited {
+                parts.extend(self.rate_limited_parts());
+                continue;
+            }
             let count = self.count(state);
             if count > 0 {
                 parts.push(format!("{count} {}", state.label()));
@@ -428,6 +442,33 @@ impl UpdateCheck {
     }
 }
 
+impl UpdateCheck {
+    /// The addons left before a rate limit, counted per source (task 101): `2 not checked (Wago's rate
+    /// limit)`, in the order of the sources; an addon whose spec cannot be read counts under the plain label.
+    fn rate_limited_parts(&self) -> Vec<String> {
+        let mut counts: std::collections::BTreeMap<Option<SourceKind>, usize> =
+            std::collections::BTreeMap::new();
+        for addon in self
+            .addons
+            .iter()
+            .filter(|addon| addon.state == UpdateState::RateLimited)
+        {
+            let kind = match EntrySource::of(&addon.source) {
+                EntrySource::Spec(spec) => Some(spec.kind()),
+                _ => None,
+            };
+            *counts.entry(kind).or_default() += 1;
+        }
+        counts
+            .into_iter()
+            .map(|(kind, count)| match kind {
+                Some(kind) => format!("{count} not checked ({}'s rate limit)", kind.name()),
+                None => format!("{count} {}", UpdateState::RateLimited.label()),
+            })
+            .collect()
+    }
+}
+
 /// `1 addon`, `2 addons`.
 fn count_addons(count: usize) -> String {
     match count {
@@ -439,8 +480,9 @@ fn count_addons(count: usize) -> String {
 /// Checks the managed addons of the engine's flavor against their sources, or the one addon `only` names
 /// (by name, else by one of its folders), reporting each through `progress`. An addon whose folders were
 /// deleted by hand is left out with a warning; a name the sidecar does not know is an error that says
-/// whether the folder exists. Before each request the source's request budget is read: with nothing left,
-/// the check stops asking and the addons left are [`UpdateState::RateLimited`]. Nothing is written.
+/// whether the folder exists. Before each request the budget of the addon's source is read: with nothing
+/// left, the check stops asking that source, its addons left are [`UpdateState::RateLimited`] and the other
+/// sources are still asked (task 101). Nothing is written.
 pub fn check<S: Source + ?Sized>(
     engine: &Engine,
     source: &S,
@@ -499,36 +541,37 @@ pub fn check_until<S: Source + ?Sized>(
     };
     let total = entries.len();
     let mut addons = Vec::with_capacity(total);
-    let mut stopped: Option<BudgetStop> = None;
+    // Task 101: one stop per source, so a source's used-up limit leaves the other sources asked.
+    let mut stopped: Vec<BudgetStop> = Vec::new();
     for (position, (name, entry)) in entries.iter().enumerate() {
         if cancelled() {
             break;
         }
         let index = position + 1;
         let asks = asks_source(source, entry);
+        let kind = asks.as_ref().map(SourceSpec::kind);
         if let Some(spec) = asks.as_ref()
-            && stopped.is_none()
+            && !stopped.iter().any(|stop| Some(stop.source) == kind)
             && let Some(budget) = source.request_budget_for(spec)
             && budget.remaining == 0
         {
             let not_checked = entries[position..]
                 .iter()
-                .filter(|(_, entry)| asks_source(source, entry).is_some())
+                .filter(|(_, entry)| {
+                    asks_source(source, entry).is_some_and(|spec| Some(spec.kind()) == kind)
+                })
                 .count();
-            let stop = BudgetStop::of(budget, not_checked);
+            let stop = BudgetStop::of(spec.kind(), budget, not_checked);
             progress(CheckProgress::Stopped { stop: &stop });
-            stopped = Some(stop);
+            stopped.push(stop);
         }
-        let addon = match &stopped {
-            Some(stop) if asks.is_some() => {
+        let addon = match stopped.iter().find(|stop| Some(stop.source) == kind) {
+            Some(stop) => {
                 let mut addon = unchecked(name, entry, UpdateState::RateLimited);
-                addon.detail = Some(format!(
-                    "the check stopped before {}'s rate limit",
-                    stop.host
-                ));
+                addon.detail = Some(format!("not asked before {}'s rate limit", stop.host));
                 addon
             }
-            _ => {
+            None => {
                 if asks.is_some() {
                     progress(CheckProgress::Checking {
                         index,
@@ -787,7 +830,7 @@ mod tests {
             addon(
                 UpdateState::RateLimited,
                 None,
-                Some("the check stopped before GitHub's rate limit"),
+                Some("not asked before GitHub's rate limit"),
             ),
         ]
         .iter()
@@ -808,7 +851,7 @@ mod tests {
                 "Thing  1.0.0  source gone: no release in x",
                 "Thing  1.0.0  not checked: a zip in hand",
                 "Thing  1.0.0  check failed: cannot reach y",
-                "Thing  1.0.0  not checked (rate limit): the check stopped before GitHub's rate limit",
+                "Thing  1.0.0  not checked (rate limit): not asked before GitHub's rate limit",
             ]
         );
     }
@@ -875,6 +918,7 @@ mod tests {
     #[test]
     fn the_stop_line_names_the_limit_the_addons_left_and_the_reset() {
         let mut stop = BudgetStop {
+            source: SourceKind::GitHub,
             host: "GitHub",
             limit: 60,
             sent: 60,
@@ -886,7 +930,11 @@ mod tests {
         };
         assert_eq!(
             stop.line(),
-            "stopped the check before GitHub's rate limit of 60 requests an hour without a token: 1 addon not checked, the limit resets within the hour; set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour"
+            "stopped asking GitHub before its rate limit of 60 requests an hour without a token: 1 addon not checked, the limit resets within the hour; set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour"
+        );
+        assert_eq!(
+            serde_json::to_value(&stop).expect("serializes")["source"],
+            "github"
         );
         stop.reset = Some(1_792_598_400);
         stop.not_checked = 12;
@@ -911,7 +959,7 @@ mod tests {
                 addon(UpdateState::Pinned, Some("1.1.0"), None),
             ],
             warnings: Vec::new(),
-            stopped: None,
+            stopped: Vec::new(),
         };
         let summary = |of| check.summary(of, "_forever_");
         assert_eq!(
@@ -983,6 +1031,32 @@ mod tests {
             (
                 Kind::Nothing,
                 "nothing updated: 3 installed already, 1 up to date, 1 pinned".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn the_summary_counts_the_addons_left_before_a_rate_limit_per_source() {
+        let limited = |source: &str| AddonUpdate {
+            source: source.to_string(),
+            ..addon(UpdateState::RateLimited, None, None)
+        };
+        let check = UpdateCheck {
+            addons: vec![
+                addon(UpdateState::UpToDate, Some("1.0.0"), None),
+                limited("wago:abc"),
+                limited("github:Example/Thing"),
+                limited("wago:def"),
+            ],
+            warnings: Vec::new(),
+            stopped: Vec::new(),
+        };
+        assert_eq!(
+            check.summary(SummaryOf::Check, "_forever_"),
+            (
+                Kind::Warning,
+                "checked _forever_: 1 up to date, 1 not checked (GitHub's rate limit), 2 not checked (Wago's rate limit)"
+                    .to_string()
             )
         );
     }

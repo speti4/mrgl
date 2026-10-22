@@ -6082,7 +6082,7 @@ fn update_json_is_one_document_with_every_state_and_count() {
             "guess-only": 1, "source-gone": 2, "not-checked": 2, "rate-limited": 0, "failed": 0,
         })
     );
-    assert_eq!(value["stopped"], serde_json::Value::Null);
+    assert_eq!(value["stopped"], serde_json::json!([]));
     let states: Vec<(&str, &str)> = value["addons"]
         .as_array()
         .expect("the addons")
@@ -6286,7 +6286,7 @@ fn update_stops_before_the_rate_limit_with_the_reset_time_and_counts_the_rest() 
     .expect("the headers");
     let before = game_snapshot(&game);
     let stop = format!(
-        "stopped the check before GitHub's rate limit of 60 requests an hour without a token: 2 addons not checked, the limit resets at {} (local time); set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour",
+        "stopped asking GitHub before its rate limit of 60 requests an hour without a token: 2 addons not checked, the limit resets at {} (local time); set MRGL_GITHUB_TOKEN to a token of your own for 5000 requests an hour",
         mrgl_core::sources::local_time_text(reset)
     );
     let output = game
@@ -6311,11 +6311,11 @@ fn update_stops_before_the_rate_limit_with_the_reset_time_and_counts_the_rest() 
             "checking Alpha against github:Example/Notes (1 of 5)",
             "Alpha  2.0.0 -> 2.1.0  update available",
             stop.as_str(),
-            "Bravo  1.2.2  not checked (rate limit): the check stopped before GitHub's rate limit",
+            "Bravo  1.2.2  not checked (rate limit): not asked before GitHub's rate limit",
             "Charlie  1.0.0  not checked: a zip in hand; a newer zip goes in with mrgl add <zip>",
-            "Delta  1.0.0  not checked (rate limit): the check stopped before GitHub's rate limit",
+            "Delta  1.0.0  not checked (rate limit): not asked before GitHub's rate limit",
             "Echo  1.0.0  ignored, not checked",
-            "dry run: 1 update available, 1 ignored, 1 not checked, 2 not checked (rate limit); nothing written",
+            "dry run: 1 update available, 1 ignored, 1 not checked, 2 not checked (GitHub's rate limit); nothing written",
         ],
         "{text}"
     );
@@ -6367,12 +6367,14 @@ fn update_stops_before_the_rate_limit_with_the_reset_time_and_counts_the_rest() 
         serde_json::from_slice(&output.stdout).expect("one JSON document");
     assert_eq!(value["counts"]["rate-limited"], 2);
     assert_eq!(value["counts"]["update-available"], 1);
-    assert_eq!(value["stopped"]["host"], "GitHub");
-    assert_eq!(value["stopped"]["limit"], 60);
-    assert_eq!(value["stopped"]["sent"], 1);
-    assert_eq!(value["stopped"]["reset"], reset);
-    assert_eq!(value["stopped"]["not_checked"], 2);
-    assert_eq!(value["stopped"]["message"], stop.as_str());
+    assert_eq!(value["stopped"].as_array().map(Vec::len), Some(1));
+    assert_eq!(value["stopped"][0]["source"], "github");
+    assert_eq!(value["stopped"][0]["host"], "GitHub");
+    assert_eq!(value["stopped"][0]["limit"], 60);
+    assert_eq!(value["stopped"][0]["sent"], 1);
+    assert_eq!(value["stopped"][0]["reset"], reset);
+    assert_eq!(value["stopped"][0]["not_checked"], 2);
+    assert_eq!(value["stopped"][0]["message"], stop.as_str());
     assert_eq!(value["addons"][1]["state"], "rate-limited");
     assert_eq!(value["addons"][1]["latest"], serde_json::Value::Null);
 }
@@ -8272,10 +8274,10 @@ fn import_takes_a_wago_entry_and_update_stops_before_wagos_rate_limit() {
             "checking the managed addons of _forever_ against their sources",
             "checking Five against wago:MrglWg05 (1 of 3)",
             "Five  0.9.0 -> 1.0.0  update available",
-            "stopped the check before Wago's rate limit of 60 requests: 2 addons not checked, the limit resets after a short wait (Wago does not say when); run the check again then",
-            "One  1.0.0  not checked (rate limit): the check stopped before Wago's rate limit",
-            "Three  3.0.0  not checked (rate limit): the check stopped before Wago's rate limit",
-            "dry run: 1 update available, 2 not checked (rate limit); nothing written",
+            "stopped asking Wago before its rate limit of 60 requests: 2 addons not checked, the limit resets after a short wait (Wago does not say when); run the check again then",
+            "One  1.0.0  not checked (rate limit): not asked before Wago's rate limit",
+            "Three  3.0.0  not checked (rate limit): not asked before Wago's rate limit",
+            "dry run: 1 update available, 2 not checked (Wago's rate limit); nothing written",
         ],
         "{text}"
     );
@@ -8299,4 +8301,135 @@ fn import_takes_a_wago_entry_and_update_stops_before_wagos_rate_limit() {
             == "One  1.0.0  not checked: source not configured: wago:MrglWg01 (MRGL_WAGO_KEY is not set: the Wago API needs your own key, `mrgl key set wago` stores it)"),
         "{text}"
     );
+}
+
+// --- task 101: the update check stops per source at a rate limit ---
+
+impl Game {
+    /// `mrgl` against one stub of the GitHub answers and the sources of tasks 094 and 095 together, with the
+    /// made-up Wago key.
+    fn mrgl_every_source(&self) -> Command {
+        let stub = self.home.join("stub-every-source");
+        if !stub.is_dir() {
+            copy_tree(&releases(), &stub);
+            copy_tree(&sources_stub(), &stub);
+        }
+        let mut command = self.mrgl();
+        command
+            .env("MRGL_HTTP_STUB", &stub)
+            .env("MRGL_WAGO_KEY", WAGO_TEST_KEY);
+        command
+    }
+}
+
+#[test]
+fn update_stops_asking_wago_at_its_rate_limit_and_goes_on_asking_github() {
+    // The first Wago answer says no request is left: the Wago entry after it is not asked, the GitHub entry
+    // after that is.
+    let game = managed_game(
+        "budget-per-source",
+        &[
+            ("Five", "wago:MrglWg05", "1.0.0", ""),
+            ("Late", "wago:MrglWg02", "1.0.0", ""),
+            ("Questie", "github:Questie/Questie", "1.2.2", ""),
+        ],
+    );
+    let stop = "stopped asking Wago before its rate limit of 60 requests: 1 addon not checked, the limit resets after a short wait (Wago does not say when); run the check again then";
+    let output = game
+        .mrgl_every_source()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "checking the managed addons of _forever_ against their sources",
+            "checking Five against wago:MrglWg05 (1 of 3)",
+            "Five  1.0.0  up to date",
+            stop,
+            "Late  1.0.0  not checked (rate limit): not asked before Wago's rate limit",
+            "checking Questie against github:Questie/Questie (3 of 3)",
+            "Questie  1.2.2 -> 1.2.3  update available",
+            "dry run: 1 update available, 1 up to date, 1 not checked (Wago's rate limit); nothing written",
+        ],
+        "{text}"
+    );
+
+    // The JSON names the source of the stop, and the GitHub entry as checked.
+    let output = game
+        .mrgl_every_source()
+        .args([
+            "--json",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let states: Vec<(&str, &str)> = value["addons"]
+        .as_array()
+        .expect("the addons")
+        .iter()
+        .map(|addon| {
+            (
+                addon["name"].as_str().unwrap_or_default(),
+                addon["state"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("Five", "up-to-date"),
+            ("Late", "rate-limited"),
+            ("Questie", "update-available"),
+        ]
+    );
+    assert_eq!(value["counts"]["rate-limited"], 1);
+    assert_eq!(value["stopped"].as_array().map(Vec::len), Some(1));
+    assert_eq!(value["stopped"][0]["source"], "wago");
+    assert_eq!(value["stopped"][0]["host"], "Wago");
+    assert_eq!(value["stopped"][0]["not_checked"], 1);
+    assert_eq!(value["stopped"][0]["message"], stop);
+    assert_eq!(
+        value["addons"][1]["detail"],
+        "not asked before Wago's rate limit"
+    );
+
+    // `update --all` agrees: the GitHub update goes in, the Wago entry stays not checked, exit code 0.
+    let output = game
+        .mrgl_every_source()
+        .args([
+            "--serious",
+            "update",
+            "--all",
+            "--yes",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    assert!(text.lines().any(|line| line == stop), "{text}");
+    assert_eq!(
+        stdout_last_line(&output),
+        "1 addon updated, 1 up to date, 1 not checked (Wago's rate limit)"
+    );
+    assert_eq!(sidecar(&game)["addons"]["Questie"]["version"], "1.2.3");
+    assert_eq!(sidecar(&game)["addons"]["Late"]["version"], "1.0.0");
 }
