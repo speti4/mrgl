@@ -828,6 +828,7 @@ fn suffix_tokens(suffix: &str) -> Vec<SuffixToken> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

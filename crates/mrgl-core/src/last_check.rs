@@ -207,6 +207,7 @@ fn write_at(path: &Path, last: &LastCheck) -> Result<()> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::sources::Channel;

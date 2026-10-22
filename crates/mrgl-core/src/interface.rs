@@ -186,6 +186,7 @@ pub fn out_of_date_scan(scan: &Scan) -> Vec<InterfaceOutOfDate> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::scan::TocFile;

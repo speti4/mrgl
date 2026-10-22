@@ -20,6 +20,10 @@
 //! entries, the `.curseclient` guard and the warning of `add`, `import` and `update` in a folder the
 //! CurseForge app manages) task 098.
 
+// The `coverage(off)` attribute of the documented exclusions (docs/development.md, "Coverage"); the feature
+// gate exists only under cargo-llvm-cov's nightly cfg, so the stable build never sees it.
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 use std::collections::BTreeMap;
 use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
@@ -3842,6 +3846,7 @@ fn count_characters(count: usize) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

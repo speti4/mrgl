@@ -105,6 +105,23 @@ cargo deny check      # Cargo.toml, Cargo.lock, deny.toml, about.toml
 uvx zizmor .github    # .github/
 ```
 
+When code or tests change, the coverage measurement the `coverage` job repeats ([docs/development.md,
+"Coverage"](docs/development.md#coverage)): the two installs once, then the run and the check, which fails below
+the floors or when an exclusion in the code is missing from the list in the docs. It runs the whole suite once
+more under instrumentation, so expect about twice the time of `cargo test`:
+
+```powershell
+# Once: the nightly of scripts/coverage-toolchain.txt and cargo-llvm-cov in the version of
+# scripts/cargo-llvm-cov-version.txt.
+rustup toolchain install --profile minimal --component llvm-tools-preview (Get-Content scripts/coverage-toolchain.txt -Raw).Trim()
+cargo install cargo-llvm-cov --version (Get-Content scripts/cargo-llvm-cov-version.txt -Raw).Trim() --locked
+# Every time: the nightly's name from the pin file, the summary as JSON, the table and the floors.
+$nightly = (Get-Content scripts/coverage-toolchain.txt -Raw).Trim()
+cargo "+$nightly" llvm-cov --workspace --branch --locked --json --summary-only --output-path target/llvm-cov/summary.json
+python -I scripts/coverage-check.py target/llvm-cov/summary.json
+cargo "+$nightly" llvm-cov report --branch --html --open    # the lines a test misses, file by file
+```
+
 CI (`.github/workflows/ci.yml` and `commit-rules.yml`) runs all of them on every push to `main` and every pull
 request, and one more that a Windows machine cannot: the `non-windows` job compiles the `cfg(not(windows))`
 branches on Linux, so a change to a Windows-only path keeps its non-Windows twin in step. A change in behavior comes with a test: Rust tests sit beside the code or under each crate's

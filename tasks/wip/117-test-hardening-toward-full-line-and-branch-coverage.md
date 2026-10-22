@@ -45,7 +45,7 @@ Manager calls are excluded with their reason.
 
 ## Steps
 
-1. [ ] The exclusion attribute (`cfg_attr(coverage_nightly, coverage(off))` with a `// coverage: off —`
+1. [x] The exclusion attribute (`cfg_attr(coverage_nightly, coverage(off))` with a `// coverage: off —`
        reason line), the `unexpected_cfgs` lint, the two pin files, `scripts/coverage-check.py` with the
        floors and the exclusion register, the `coverage` CI job, the docs (pull request 1)
 2. [ ] The core's seams (a process list for the client guards, the key store from the environment with a
@@ -61,6 +61,11 @@ Manager calls are excluded with their reason.
 
 - 2026-10-22 — Started on the branch of pull request 1. Measured with nightly 1.101.0 (2026-10-21) and
   cargo-llvm-cov 0.9.1: 89.60% lines (2338 missed of 22470), 79.64% branches (511 of 2510).
+- 2026-10-22 — Pull request 1: the exclusion attribute with its reason line and the `unexpected_cfgs`
+  declaration, the two pins, `scripts/coverage-check.py` (the table, the floors, the register against the
+  docs list), the `coverage` job, the docs. With the test modules excluded the baseline is 86.33% lines
+  (2204 missed of 16122) and 81.53% branches (437 of 2366); the floors start at 86.0 / 81.0. Four reasoned
+  exclusions: the window's `main` and `run`, `choose_root`, the Credential Manager module.
 
 ## Deviations from the plan
 

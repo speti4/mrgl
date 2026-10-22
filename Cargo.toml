@@ -73,6 +73,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Time",
 ] }
 
+# The cfgs cargo-llvm-cov sets (`coverage` always, `coverage_nightly` on nightly), declared so the stable build's
+# `unexpected_cfgs` lint knows them (docs/development.md, "Coverage"); the three crates inherit this table.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
+
 # The release builds (the zip of task 001's release script): fat LTO and one codegen unit for size and speed,
 # symbols stripped. Panics keep unwinding (the default), so a panic in a command can be caught and reported
 # rather than aborting the process outright.

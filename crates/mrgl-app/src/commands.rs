@@ -119,6 +119,8 @@ pub struct RootChoice {
 }
 
 /// The folder dialog, then the chosen game root remembered in `config.json` as `mrgl root <folder>` does.
+// coverage: off — the native folder dialog; the choice itself is `choose`, tested without a dialog
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[tauri::command]
 pub async fn choose_root(app: tauri::AppHandle) -> RootChoice {
     blocking(
@@ -817,6 +819,7 @@ pub async fn adopt_apply(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

@@ -834,6 +834,7 @@ impl<H: Http> Source for CurseForge<H> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::flavor::BuildVersion;

@@ -17,6 +17,9 @@ crate-type = ["lib"]
 name = "mrgl-app"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 mrgl-core.workspace = true
 tauri.workspace = true

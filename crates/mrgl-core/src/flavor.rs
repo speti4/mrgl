@@ -502,6 +502,7 @@ pub fn list_flavors(root: &Path) -> Result<Vec<Flavor>> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

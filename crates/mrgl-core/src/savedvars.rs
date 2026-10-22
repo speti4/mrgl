@@ -573,6 +573,7 @@ fn read_full(reader: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

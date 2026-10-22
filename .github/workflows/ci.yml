@@ -1,7 +1,7 @@
 # Tests on Windows, the format check and the changelog check on Linux, the oldest supported Rust on Windows, a
-# check of the non-Windows code on Linux, the dependency policy and the workflow lint on every push to main and
-# every pull request; the ruleset on `main` requires them, so no path filter skips them (the commit rules have
-# their own workflow, commit-rules.yml). The repo is public from its first commit (D-004), so the Windows
+# check of the non-Windows code on Linux, the dependency policy, the workflow lint and the coverage measurement
+# on every push to main and every pull request; the ruleset on `main` requires them (coverage not yet), so no
+# path filter skips them (the commit rules have their own workflow, commit-rules.yml). The repo is public from its first commit (D-004), so the Windows
 # runners cost nothing and run on every change; a macOS job joins with the macOS preview (M6). A tag also packs and publishes the portable Windows zip, its
 # checksum, its build provenance attestation and the notes from the changelog, with the license page inside the
 # zip. The toolchain is the stable version `rust-toolchain.toml` pins, installed by the runner's own rustup
@@ -138,6 +138,41 @@ jobs:
           accepted = sorted(tomllib.load(open("about.toml", "rb"))["accepted"])
           raise SystemExit(0 if allow == accepted else f"deny.toml allows {allow}, about.toml accepts {accepted}")
           '
+
+  # Line and branch coverage of the three crates (task 117): the tests once more under cargo-llvm-cov on the
+  # nightly of scripts/coverage-toolchain.txt (branch coverage is nightly-only), the summary as JSON, and
+  # scripts/coverage-check.py prints the table into the job summary and fails below its floors or when an
+  # exclusion in the code and the list in docs/development.md differ. The stable toolchain of the local action
+  # builds cargo-llvm-cov (pinned in scripts/cargo-llvm-cov-version.txt, installed as the release job installs
+  # cargo-about); the nightly only runs the measurement. No Rust cache, as in the msrv job: llvm-cov builds in
+  # its own target folder anyway. Not a required check until the floors read 100.
+  coverage:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/install-rust-toolchain
+      - name: Install the coverage nightly
+        shell: bash
+        run: |
+          nightly="$(tr -d '[:space:]' < scripts/coverage-toolchain.txt)"
+          test -n "$nightly"
+          rustup toolchain install --no-self-update --profile minimal --component llvm-tools-preview "$nightly"
+          echo "COVERAGE_TOOLCHAIN=$nightly" >> "$GITHUB_ENV"
+      - name: Install cargo-llvm-cov
+        shell: pwsh
+        run: cargo install cargo-llvm-cov --version (Get-Content scripts/cargo-llvm-cov-version.txt -Raw).Trim() --locked
+      - name: Measure
+        shell: bash
+        run: |
+          cargo "+$COVERAGE_TOOLCHAIN" llvm-cov --workspace --branch --locked --no-report
+          cargo "+$COVERAGE_TOOLCHAIN" llvm-cov report --branch --json --summary-only --output-path target/llvm-cov/summary.json
+          cargo "+$COVERAGE_TOOLCHAIN" llvm-cov report --branch --show-missing-lines
+      - name: The table and the floors
+        shell: bash
+        run: python -I scripts/coverage-check.py target/llvm-cov/summary.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   # zizmor over the workflows, the local action and dependabot.yml; findings fail the job as annotations. No SARIF upload to code
   # scanning: an uploaded finding would not fail this required check.
