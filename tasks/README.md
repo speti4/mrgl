@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 6 backlog (0 ready · 0 blocked · 2 waiting · 4 ideas) · 0 in progress · 65 done · 3 dropped · 5 decisions
+**State:** 13 backlog (0 ready · 0 blocked · 2 waiting · 11 ideas) · 0 in progress · 65 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -39,6 +39,28 @@ _none_
 | 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
 
 ### Ideas
+
+#### M1 Core + CLI
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 082 | [An install and an update report the whole interface check: out of date next to …](backlog/082-install-and-update-report-the-interface-check.md) | S | 2026-10-22 |
+| 083 | [A reinstall of the installed version says it was reinstalled, not updated from …](backlog/083-a-reinstall-of-the-installed-version-says-so.md) | S | 2026-10-22 |
+| 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](backlog/084-stale-staging-folders-are-swept.md) | S | 2026-10-22 |
+| 087 | [The command line's update check writes the last-check file the window reads](backlog/087-cli-update-check-writes-the-last-check-file.md) | S | 2026-10-22 |
+
+#### M2 Window MVP
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 081 | [The window's rows show the interface states scan and list mark](backlog/081-window-rows-show-the-interface-states.md) | S | 2026-10-22 |
+
+#### M3 Toolbox
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 085 | [The window's toolbox undoes an apply, edits a set and names the account](backlog/085-window-toolbox-undo-edit-and-account.md) | M | 2026-10-22 |
+| 086 | [One summary line of set apply and savedvars in the core, shared by the command …](backlog/086-one-set-and-savedvars-summary-in-the-core.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
