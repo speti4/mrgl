@@ -316,6 +316,13 @@ then the `serious` preference in `config.json` that the window's switch writes (
 vocabulary breaks no test. The vocabulary and the rules are in [nerglish.md](nerglish.md); the decision is
 D-005.
 
+The command line writes every line through one helper (`emit` in `mrgl-cli/src/main.rs`, task 075): the
+`Reporter`'s messages, data lines and JSON documents and `export`'s list on stdout, its warnings and errors on
+stderr. A closed pipe on either (`BrokenPipe`, os error 232 on Windows: the reader of
+`mrgl list --json | head -c 200` is gone) ends the run there, quietly and with exit code 0, since nobody
+reads the rest; any other write error panics as `println!` would. A new output site writes through `emit`
+too, never through `println!`.
+
 ## The doctor
 
 `mrgl doctor [--flavor <flavor>] [--root <folder>]` prints the diagnostic report a bug report asks for (task

@@ -1,6 +1,7 @@
 //! The `mrgl` command line. Every human-readable line goes through the voice (D-005): a murloc line and a
 //! plain English line, `--serious` or `MRGL_SERIOUS=1` for the plain line alone, `--json` for machines.
-//! Exit codes: 0 success, 1 an error the plain line explains, 2 a usage error (clap's own).
+//! Exit codes: 0 success, 1 an error the plain line explains, 2 a usage error (clap's own); a reader that
+//! closes the pipe early ends the run with 0 ([`emit`], task 075).
 //!
 //! `scan`, `list` and `root` are task 002, the game root discovery behind them is task 020;
 //! `add github:<owner>/<repo>` resolves a release (task 003) and installs it (task 040); `add <file.zip>` and
@@ -321,7 +322,54 @@ fn parse_channel(text: &str) -> Result<Channel, String> {
     Channel::parse(text).ok_or_else(|| format!("unknown channel {text}: stable or prerelease"))
 }
 
-/// Prints the two-line messages, the plain data lines, or JSON when asked.
+/// Where the command line writes.
+#[derive(Debug, Clone, Copy)]
+enum Stream {
+    Stdout,
+    Stderr,
+}
+
+/// Windows' `ERROR_NO_DATA`, "the pipe is being closed": a write into a pipe whose reader is gone.
+#[cfg(windows)]
+const ERROR_NO_DATA: i32 = 232;
+
+/// Whether a write failed because the reader closed the pipe (`mrgl list --json | head -c 200`).
+fn is_closed_pipe(error: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    if error.raw_os_error() == Some(ERROR_NO_DATA) {
+        return true;
+    }
+    error.kind() == std::io::ErrorKind::BrokenPipe
+}
+
+/// The one writer of the command line (task 075): every line and document goes to stdout or stderr
+/// through here. A closed pipe ends the run: nobody is left to read the rest, so the process exits quietly
+/// with code 0 instead of panicking as `println!` does. Any other write error panics as `println!` would.
+fn emit(stream: Stream, text: std::fmt::Arguments<'_>) {
+    use std::io::Write;
+    let written = match stream {
+        Stream::Stdout => {
+            let mut out = std::io::stdout().lock();
+            out.write_fmt(text).and_then(|()| out.flush())
+        }
+        Stream::Stderr => {
+            let mut err = std::io::stderr().lock();
+            err.write_fmt(text).and_then(|()| err.flush())
+        }
+    };
+    if let Err(error) = written {
+        if is_closed_pipe(&error) {
+            std::process::exit(0);
+        }
+        let name = match stream {
+            Stream::Stdout => "stdout",
+            Stream::Stderr => "stderr",
+        };
+        panic!("failed printing to {name}: {error}");
+    }
+}
+
+/// Prints the two-line messages, the plain data lines, or JSON when asked, through [`emit`].
 struct Reporter {
     voice: Voice,
     json: bool,
@@ -331,9 +379,12 @@ impl Reporter {
     fn say(&self, kind: Kind, plain: impl std::fmt::Display) {
         if self.json {
             let value = serde_json::json!({ "kind": kind.as_str(), "message": plain.to_string() });
-            println!("{value}");
+            emit(Stream::Stdout, format_args!("{value}\n"));
         } else {
-            println!("{}", self.voice.say(kind, plain));
+            emit(
+                Stream::Stdout,
+                format_args!("{}\n", self.voice.say(kind, plain)),
+            );
         }
     }
 
@@ -341,21 +392,30 @@ impl Reporter {
         if self.json {
             let value =
                 serde_json::json!({ "kind": Kind::Error.as_str(), "message": plain.to_string() });
-            eprintln!("{value}");
+            emit(Stream::Stderr, format_args!("{value}\n"));
         } else {
-            eprintln!("{}", self.voice.say(Kind::Error, plain));
+            self.say_on_stderr(Kind::Error, plain);
         }
+    }
+
+    /// A two-line message on stderr whatever the mode (the warnings and the summary of `export` without a
+    /// file, whose stdout is the list).
+    fn say_on_stderr(&self, kind: Kind, plain: impl std::fmt::Display) {
+        emit(
+            Stream::Stderr,
+            format_args!("{}\n", self.voice.say(kind, plain)),
+        );
     }
 
     /// A plain data line (one addon of a listing); human mode only, the JSON document carries the data.
     fn line(&self, text: impl std::fmt::Display) {
-        println!("{text}");
+        emit(Stream::Stdout, format_args!("{text}\n"));
     }
 
     /// The one JSON document of a command; its `kind` is a fixed name.
     fn document(&self, value: serde_json::Value) {
         debug_assert!(value.get("kind").is_some(), "a document names its kind");
-        println!("{value}");
+        emit(Stream::Stdout, format_args!("{value}\n"));
     }
 }
 
@@ -368,9 +428,12 @@ fn main() -> ExitCode {
 
     if cli.version {
         if cli.json {
-            println!(
-                "{}",
-                serde_json::json!({ "name": "mrgl", "version": VERSION })
+            emit(
+                Stream::Stdout,
+                format_args!(
+                    "{}\n",
+                    serde_json::json!({ "name": "mrgl", "version": VERSION })
+                ),
             );
         } else {
             reporter.say(Kind::Banner, format!("mrgl {VERSION}"));
@@ -2200,16 +2263,11 @@ fn export_command(
         Kind::Success
     };
     let Some(file) = file else {
-        print!("{}", list.to_json());
+        emit(Stream::Stdout, format_args!("{}", list.to_json()));
         for warning in &warnings {
-            eprintln!("{}", reporter.voice.say(Kind::Warning, warning));
+            reporter.say_on_stderr(Kind::Warning, warning);
         }
-        eprintln!(
-            "{}",
-            reporter
-                .voice
-                .say(kind, format!("exported {count} of {folder_name}"))
-        );
+        reporter.say_on_stderr(kind, format!("exported {count} of {folder_name}"));
         return Ok(());
     };
     for warning in &warnings {

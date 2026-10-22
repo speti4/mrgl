@@ -6573,3 +6573,41 @@ fn list_shows_the_curated_note_of_a_partly_restricted_addon() {
     );
     assert_eq!(forever["stale"], status.stale);
 }
+
+// --- task 075: the output survives a closed pipe ---
+
+#[test]
+fn list_json_into_a_reader_that_closes_early_ends_quietly_with_exit_0() {
+    use std::io::Read;
+    // Enough addons that the JSON document outgrows the pipe's buffer, so `mrgl` is still writing when the
+    // reader goes, as `mrgl list --json | head -c 200` does.
+    let game = Game::new("closed-pipe");
+    for index in 0..600 {
+        game.by_hand(&format!("ByHand{index:04}"));
+    }
+    let mut child = game
+        .mrgl()
+        .args(["--json", "list", "--flavor", "forever"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run mrgl");
+    let mut start = [0u8; 200];
+    child
+        .stdout
+        .take()
+        .expect("the stdout pipe")
+        .read_exact(&mut start)
+        .expect("the start of the document");
+    assert!(
+        start.starts_with(b"{"),
+        "{}",
+        String::from_utf8_lossy(&start)
+    );
+    // The reader is dropped here: the pipe closes with the rest of the document unwritten.
+    let output = child.wait_with_output().expect("mrgl ends");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_eq!(stderr, "", "nothing is said about the closed pipe");
+}
