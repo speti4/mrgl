@@ -217,7 +217,8 @@ lock keeps the run's own folders and those of another running mrgl on the same f
 the command line); the hour keeps a folder made a moment ago that is not locked yet, and a run of an mrgl
 from before task 084, which takes no lock; `previous\` holds the folders an interrupted or failed swap moved
 aside, perhaps the only copy of the version installed before, so that folder stays until it is removed by
-hand. A leftover that cannot be removed is a warning on the install's result, never an error.
+hand, and `mrgl doctor` names it with its age, its size and what to do with it (task 088, see
+[The doctor](#the-doctor)). A leftover that cannot be removed is a warning on the install's result, never an error.
 
 The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
 request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
@@ -497,6 +498,16 @@ The lines, with the JSON field in brackets:
   is a file that cannot be opened at all.
 - `  cache: <size> in <n> files` or `empty` (`cache`: `bytes`, `files`, `reason`): the install engine's zips
   under `<home>\<flavor-id>\cache\`, links and junctions not followed.
+- `  kept staging: <folder> (<age> old, <size> in <n> files; previous: <names>)`, one line per folder, then
+  once `  kept staging advice: <what to do>` (`kept_staging[]`: `path`, `created`, `age_seconds`, `bytes`,
+  `files`, `previous`, `advice`; task 088): every run folder under `<home>\<flavor-id>\staging\` that holds
+  a `previous\` folder, the addon folders an interrupted or failed swap moved aside, which the sweep of task
+  084 never removes (`mrgl_core::staging::kept`). A folder whose lock a running mrgl holds is a swap in
+  progress and is left out. The age comes from the time in the folder's name, else its modified time
+  (`created` in UTC); the size counts every file under it, links and junctions not followed. The advice
+  says to copy a folder from `previous\` back into `Interface\AddOns` when that addon is missing or broken,
+  then delete the staging folder: the doctor names it, the user decides, and mrgl never removes it. No line
+  and an empty list when there is none.
 - `  client: running (<exe>, pid <n>)`, `not running` or `unknown (<reason>)` (`client`: `status`, `pid`,
   `exe`, `reason`): whether a process runs from the flavor folder (task 023); `unknown` when the process list
   cannot be taken.
@@ -506,8 +517,8 @@ The lines, with the JSON field in brackets:
   game folder).
 
 The summary names what needs a look: no game root, a missing flavor folder, an AddOns folder that takes no
-write, a sidecar that is rebuilt or unreadable, a process list that cannot be taken, a used-up rate limit and
-the warnings. The tests run the report offline: the core's tests hand it a fixed process list, an in-memory
+write, a sidecar that is rebuilt or unreadable, a kept staging folder, a process list that cannot be taken, a
+used-up rate limit and the warnings. The tests run the report offline: the core's tests hand it a fixed process list, an in-memory
 HTTP stub and a fixed WebView2 and Windows answer; the end-to-end tests stub the WebView2 version with a
 `webview2=<version>` item of `MRGL_DISCOVERY` and the Windows version with a
 `windows=<display version>,<build>.<ubr>` item (`windows=24H2,26100.1234`, a part may be left out; any other

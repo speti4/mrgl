@@ -2,7 +2,8 @@
 //! (task 009) copies the same text. One [`Report`] holds every fact a bug report needs: the Windows version
 //! (task 051), the game root and how it was found, each flavor's `.flavor.info` id and build (with the file
 //! the build came from, task 019), whether `Interface\AddOns` is writable, the state sidecar's state, the
-//! size of the flavor's zip cache, the WebView2 runtime's version, the GitHub rate limit left, which API keys
+//! size of the flavor's zip cache, the run folders under its `staging\` kept for the addon folders a failed
+//! swap moved aside (task 088), the WebView2 runtime's version, the GitHub rate limit left, which API keys
 //! are set (by name, never a value) and whether the client runs from the flavor folder (task 023).
 //! [`Report::lines`] is the plain block a user pastes, the derived `Serialize` is the `--json` document.
 //!
@@ -35,6 +36,7 @@ use crate::home;
 use crate::scan;
 use crate::sources::github::{API_URL, TOKEN_ENV};
 use crate::sources::{self, Http, Request};
+use crate::staging;
 use crate::state::{self, FlavorHome};
 use crate::voice::Kind;
 use crate::zip_entry;
@@ -526,6 +528,28 @@ pub struct CacheCheck {
     pub reason: Option<String>,
 }
 
+/// What to do with a kept staging folder (task 088): the report names it, the user decides.
+pub const KEPT_STAGING_ADVICE: &str = "a failed swap moved the addon folders under previous aside; if one of those addons is missing or broken in Interface\\AddOns, copy its folder back from there, then delete the staging folder (mrgl never removes it)";
+
+/// A run folder under the flavor's `staging\` that the sweep keeps because it holds a `previous\` folder
+/// (task 088, [`staging::kept`]): the addon folders an interrupted or failed swap moved aside.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct KeptStaging {
+    /// The run folder, the profile folder as `~`.
+    pub path: String,
+    /// When it was made, RFC 3339 in UTC; `None` when neither its name nor the file system says.
+    pub created: Option<String>,
+    /// Its age in whole seconds when the report was made.
+    pub age_seconds: Option<u64>,
+    /// The bytes and files under it, links and junctions not followed.
+    pub bytes: Option<u64>,
+    pub files: Option<u64>,
+    /// The names under its `previous\` folder.
+    pub previous: Vec<String>,
+    /// What to do with it: [`KEPT_STAGING_ADVICE`].
+    pub advice: &'static str,
+}
+
 /// Whether the game client runs from one flavor folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -568,6 +592,8 @@ pub struct FlavorReport {
     pub addons: AddonsCheck,
     pub sidecar: SidecarCheck,
     pub cache: CacheCheck,
+    /// The run folders under `staging\` kept for their `previous\` folder (task 088).
+    pub kept_staging: Vec<KeptStaging>,
     pub client: ClientCheck,
     pub warnings: Vec<String>,
 }
@@ -712,6 +738,7 @@ fn flavor_report(flavor: &Flavor, inputs: &Inputs, probes: &Probes<'_>) -> Flavo
         addons: addons_check(&flavor.folder, redactor),
         sidecar: sidecar_check(inputs.home.as_deref(), &flavor.id, redactor),
         cache: cache_check(inputs.home.as_deref(), &flavor.id, redactor),
+        kept_staging: kept_staging(inputs.home.as_deref(), &flavor.id, redactor),
         client: client_check(probes.processes, &flavor.folder, redactor),
         warnings: flavor
             .warnings
@@ -750,6 +777,7 @@ fn missing_flavor(
         },
         sidecar: sidecar_check(inputs.home.as_deref(), id, redactor),
         cache: cache_check(inputs.home.as_deref(), id, redactor),
+        kept_staging: kept_staging(inputs.home.as_deref(), id, redactor),
         client: client_check(probes.processes, &folder, redactor),
         warnings: vec![format!(
             "no flavor folder {folder_name} with a .flavor.info under the game root"
@@ -849,6 +877,51 @@ fn cache_check(home: Option<&Path>, id: &FlavorId, redactor: &Redactor) -> Cache
             files: None,
             reason: Some(redactor.text(&format!("{}: {error}", dir.display()))),
         },
+    }
+}
+
+/// The run folders under the flavor's `staging\` kept for their `previous\` folder (task 088), with their
+/// age and size; none without a home folder.
+fn kept_staging(home: Option<&Path>, id: &FlavorId, redactor: &Redactor) -> Vec<KeptStaging> {
+    let Some(home) = home else {
+        return Vec::new();
+    };
+    let now = std::time::SystemTime::now();
+    staging::kept(&FlavorHome::at(home, id).staging_dir())
+        .into_iter()
+        .map(|run| {
+            let (bytes, files) = folder_size(&run.path)
+                .map(|(bytes, files)| (Some(bytes), Some(files)))
+                .unwrap_or((None, None));
+            KeptStaging {
+                path: redactor.path(&run.path),
+                created: run.created.map(crate::backup::rfc3339_utc),
+                age_seconds: run.created.map(|created| {
+                    now.duration_since(created)
+                        .map(|age| age.as_secs())
+                        .unwrap_or(0)
+                }),
+                bytes,
+                files,
+                previous: run.previous,
+                advice: KEPT_STAGING_ADVICE,
+            }
+        })
+        .collect()
+}
+
+/// An age for a human: `less than a minute`, `5 minutes`, `2 hours`, `3 days`, whole units rounded down.
+fn age_text(seconds: u64) -> String {
+    let (count, unit) = match seconds {
+        0..60 => return "less than a minute".to_string(),
+        60..3600 => (seconds / 60, "minute"),
+        3600..86400 => (seconds / 3600, "hour"),
+        _ => (seconds / 86400, "day"),
+    };
+    if count == 1 {
+        format!("1 {unit}")
+    } else {
+        format!("{count} {unit}s")
     }
 }
 
@@ -967,6 +1040,31 @@ impl FlavorReport {
             "  cache: {}",
             with_reason(&cache, self.cache.reason.as_ref())
         ));
+        for kept in &self.kept_staging {
+            let age = kept
+                .age_seconds
+                .map(|seconds| format!("{} old", age_text(seconds)))
+                .unwrap_or_else(|| "age unknown".to_string());
+            let size = match (kept.bytes, kept.files) {
+                (Some(bytes), Some(1)) => format!("{} in 1 file", zip_entry::size_text(bytes)),
+                (Some(bytes), Some(files)) => {
+                    format!("{} in {files} files", zip_entry::size_text(bytes))
+                }
+                _ => "size unknown".to_string(),
+            };
+            let previous = if kept.previous.is_empty() {
+                "nothing".to_string()
+            } else {
+                kept.previous.join(", ")
+            };
+            lines.push(format!(
+                "  kept staging: {} ({age}, {size}; previous: {previous})",
+                kept.path
+            ));
+        }
+        if !self.kept_staging.is_empty() {
+            lines.push(format!("  kept staging advice: {KEPT_STAGING_ADVICE}"));
+        }
         let client = match (self.client.status, self.client.pid, &self.client.exe) {
             (ClientStatus::Running, Some(pid), Some(exe)) => {
                 let name = Path::new(exe)
@@ -1011,6 +1109,11 @@ impl FlavorReport {
                 concerns.push(format!("the sidecar of {} is unreadable", self.folder))
             }
             _ => {}
+        }
+        match self.kept_staging.len() {
+            0 => {}
+            1 => concerns.push(format!("a kept staging folder of {}", self.folder)),
+            count => concerns.push(format!("{count} kept staging folders of {}", self.folder)),
         }
         if self.client.status == ClientStatus::Unknown {
             concerns.push("the process list is unreadable".to_string());
@@ -1101,8 +1204,8 @@ impl Report {
     }
 
     /// What a reader should look at: no game root, a missing flavor, an AddOns folder that takes no
-    /// write, a sidecar that is rebuilt or unreadable, an unreadable process list, a used-up rate limit
-    /// and every warning.
+    /// write, a sidecar that is rebuilt or unreadable, a kept staging folder (task 088), an unreadable
+    /// process list, a used-up rate limit and every warning.
     pub fn concerns(&self) -> Vec<String> {
         let mut concerns = Vec::new();
         if self.root.is_none() {
@@ -1487,6 +1590,149 @@ mod tests {
         );
         assert!(!root.join("_classic_era_").exists(), "nothing created");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // Task 088: the run folders under `staging\` that the sweep keeps for their `previous\` folder.
+
+    /// A folder under `staging\` as a run two hours ago would have named it, with one file in it.
+    fn planted_run(staging: &Path, stem: &str) -> PathBuf {
+        let nanos = (std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60))
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after 1970")
+            .as_nanos();
+        let dir = staging.join(format!("{stem}-{nanos}-0"));
+        std::fs::create_dir_all(&dir).expect("the run folder");
+        std::fs::write(dir.join("left.txt"), "left over\n").expect("a file");
+        dir
+    }
+
+    #[test]
+    fn a_staging_folder_kept_for_its_previous_folders_is_named_with_its_age_size_and_advice() {
+        let base = temp_dir("kept-staging");
+        let profile = base.join("Users").join("someone");
+        let root = game_root(&base);
+        let home = profile.join("AppData").join("Local").join("mrgl");
+        let staging = FlavorHome::at(&home, &FlavorId::Forever).staging_dir();
+        let kept = planted_run(&staging, "Kept.zip");
+        let previous = kept.join(staging::PREVIOUS_DIR).join("OneFolder");
+        std::fs::create_dir_all(&previous).expect("the previous folder");
+        std::fs::write(previous.join("OneFolder.toc"), "## Interface: 16001\n").expect("a TOC");
+        let plain = planted_run(&staging, "Plain.zip");
+        let run = |only: FlavorId| {
+            report(
+                Inputs {
+                    root: Some(GameRoot {
+                        path: root.clone(),
+                        origin: RootOrigin::Flag,
+                    }),
+                    only: Some(only),
+                    home: Some(home.clone()),
+                    redactor: Redactor::new(Some(&profile)),
+                    ..Inputs::default()
+                },
+                &Probes {
+                    processes: &FixedProcesses::new(Vec::<(u32, PathBuf)>::new()),
+                    http: &MapHttp::new().answer(
+                        "https://api.github.com/rate_limit",
+                        200,
+                        RATE_LIMIT,
+                    ),
+                    runtime: &FixedRuntime::default(),
+                },
+            )
+        };
+        let report = run(FlavorId::Forever);
+        let name = kept.file_name().expect("a name").to_string_lossy();
+        let line = format!(
+            "  kept staging: ~{sep}AppData{sep}Local{sep}mrgl{sep}wowf{sep}staging{sep}{name} (2 hours old, 30 B in 2 files; previous: OneFolder)",
+            sep = std::path::MAIN_SEPARATOR
+        );
+        let lines = report.lines();
+        let at = lines
+            .iter()
+            .position(|one| *one == line)
+            .unwrap_or_else(|| panic!("missing {line:?} in {lines:#?}"));
+        assert_eq!(
+            lines[at + 1],
+            format!("  kept staging advice: {KEPT_STAGING_ADVICE}")
+        );
+        let plain_name = plain.file_name().expect("a name").to_string_lossy();
+        assert!(
+            !lines.iter().any(|one| one.contains(plain_name.as_ref())),
+            "a folder without previous is not named: {lines:#?}"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|one| one.starts_with("  kept staging"))
+                .count(),
+            2
+        );
+
+        let value = serde_json::to_value(&report).expect("serializes");
+        let kept_json = &value["flavors"][0]["kept_staging"];
+        assert_eq!(kept_json.as_array().map(Vec::len), Some(1), "{kept_json}");
+        assert!(
+            kept_json[0]["path"]
+                .as_str()
+                .is_some_and(|path| path.starts_with('~') && path.ends_with(name.as_ref())),
+            "{kept_json}"
+        );
+        assert_eq!(kept_json[0]["bytes"], 30);
+        assert_eq!(kept_json[0]["files"], 2);
+        assert_eq!(kept_json[0]["previous"], serde_json::json!(["OneFolder"]));
+        assert_eq!(kept_json[0]["advice"], KEPT_STAGING_ADVICE);
+        let age = kept_json[0]["age_seconds"].as_u64().expect("an age");
+        assert!((7200..7260).contains(&age), "{age}");
+        assert!(
+            kept_json[0]["created"]
+                .as_str()
+                .is_some_and(|created| created.ends_with('Z')),
+            "{kept_json}"
+        );
+        let (kind, summary) = report.summary();
+        assert_eq!(kind, Kind::Warning);
+        assert!(
+            summary.contains("a kept staging folder of _forever_"),
+            "{summary}"
+        );
+        assert!(
+            !serde_json::to_string(&report)
+                .expect("serializes")
+                .contains(&profile.display().to_string()),
+            "no profile path"
+        );
+
+        // Without the previous folder the run folder is the sweep's, and the doctor says nothing of it.
+        std::fs::remove_dir_all(kept.join(staging::PREVIOUS_DIR)).expect("removes");
+        let report = run(FlavorId::Forever);
+        assert_eq!(report.flavors[0].kept_staging, []);
+        assert!(
+            !report
+                .lines()
+                .iter()
+                .any(|one| one.starts_with("  kept staging")),
+        );
+        assert!(!report.summary().1.contains("kept staging"));
+        let value = serde_json::to_value(&report).expect("serializes");
+        assert_eq!(value["flavors"][0]["kept_staging"], serde_json::json!([]));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn an_age_reads_in_whole_units() {
+        for (seconds, text) in [
+            (0, "less than a minute"),
+            (59, "less than a minute"),
+            (60, "1 minute"),
+            (3599, "59 minutes"),
+            (3600, "1 hour"),
+            (7300, "2 hours"),
+            (86400, "1 day"),
+            (3 * 86400 + 5, "3 days"),
+        ] {
+            assert_eq!(age_text(seconds), text, "{seconds}");
+        }
     }
 
     #[test]

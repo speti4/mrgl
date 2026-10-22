@@ -210,7 +210,8 @@ says `Dependency missing` and does not load the addon, so mrgl names it missing 
 has the details per addon under `dependencies`.
 
 Something not working? `mrgl doctor` prints what a bug report needs: the game folder and how it was found,
-each flavor's build, AddOns folder, sidecar, cache and running client, the WebView2 version, the GitHub rate
+each flavor's build, AddOns folder, sidecar, cache, running client and any staging folder kept with the addon
+folders a failed update moved aside (with what to do with it), the WebView2 version, the GitHub rate
 limit and which API keys are set (never their values). Paths under your profile folder show as `~`; paste the
 block into the [bug report](https://github.com/speti4/mrgl/issues/new?template=bug-report.yml).
 
