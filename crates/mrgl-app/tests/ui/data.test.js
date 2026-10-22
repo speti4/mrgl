@@ -103,3 +103,23 @@ test("the preferences go to their commands, a missing change as null", async () 
     ["set_preferences", { theme: null, serious: false }],
   ]);
 });
+
+test("the toolbox calls go to their commands, every character as a null target", async () => {
+  const answer = { toolbox: null, changes: [], zip: null, messages: [] };
+  const { calls, invoke } = fake({ toolbox: answer, apply_set: answer, clean_saved_variables: answer });
+  const Data = create(invoke);
+  assert.equal(await Data.toolbox("wowf"), answer);
+  await Data.applySet("wowf", "raid");
+  await Data.applySet("wowf", "raid", { character: null, realm: null });
+  await Data.applySet("wowf", "raid", { character: "Grrlwave", realm: "Second Realm" });
+  await Data.applySet("wowf", "raid", { character: "Grrlwave" });
+  assert.equal(await Data.cleanSavedVariables("wowf"), answer);
+  assert.deepEqual(calls, [
+    ["toolbox", { flavor: "wowf" }],
+    ["apply_set", { flavor: "wowf", set: "raid", character: null, realm: null }],
+    ["apply_set", { flavor: "wowf", set: "raid", character: null, realm: null }],
+    ["apply_set", { flavor: "wowf", set: "raid", character: "Grrlwave", realm: "Second Realm" }],
+    ["apply_set", { flavor: "wowf", set: "raid", character: "Grrlwave", realm: null }],
+    ["clean_saved_variables", { flavor: "wowf" }],
+  ]);
+});

@@ -2,6 +2,10 @@
 //! with its TOC files ([`crate::toc`]), the one the flavor loads, its source hints (`X-Curse-Project-ID`,
 //! `X-Wago-ID`, `X-WoWI-ID`) and whether it is a junction. The scan never writes. Whether the state
 //! sidecar knows an addon is task 004's layer on top of this.
+//!
+//! The client's own addons (`Blizzard_…`) are never in an AddOns folder: [`CLIENT_ADDON_PREFIX`] and
+//! [`is_client_addon`] are the one rule the dependency check (a required `Blizzard_` name is met) and the
+//! SavedVariables (a `Blizzard_` file is never an orphan) share (task 080).
 
 use std::path::{Path, PathBuf};
 
@@ -10,6 +14,17 @@ use serde::Serialize;
 use crate::error::{Error, Result};
 use crate::flavor::{self, Flavor};
 use crate::toc::{self, Toc, TocName, TocSuffix};
+
+/// The name prefix of the client's own addons (`Blizzard_Communities`, `Blizzard_AuctionHouseUI`), which no
+/// AddOns folder holds, compared ASCII case-insensitively ([`is_client_addon`]).
+pub const CLIENT_ADDON_PREFIX: &str = "Blizzard_";
+
+/// Whether a name (an addon folder, a required dependency, a SavedVariables file's addon) is one of the
+/// client's own addons: it starts with [`CLIENT_ADDON_PREFIX`], ASCII case-insensitive.
+pub fn is_client_addon(name: &str) -> bool {
+    name.get(..CLIENT_ADDON_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CLIENT_ADDON_PREFIX))
+}
 
 /// One `.toc` file of an addon folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -148,6 +163,14 @@ pub fn scan_addons(dir: &Path, chain: &[Option<TocSuffix>]) -> Result<Addons> {
         .sort_by_key(|addon| addon.folder.to_ascii_lowercase());
     result.skipped.sort_by_key(|name| name.to_ascii_lowercase());
     Ok(result)
+}
+
+/// A folder that is itself an addon (task 062): a TOC named after it, the base `<Folder>.toc` or one with
+/// a known suffix, read as [`scan_addons`] reads every subfolder. `None` when the folder has no such TOC,
+/// has no name (a drive root) or cannot be read.
+pub fn read_addon_folder(path: &Path, chain: &[Option<TocSuffix>]) -> Option<Addon> {
+    let folder = path.file_name()?.to_string_lossy().into_owned();
+    read_addon(path, folder, false, chain).ok().flatten()
 }
 
 /// One addon folder; `Ok(None)` when it holds no TOC of its own; `Err` with the plain reason when it

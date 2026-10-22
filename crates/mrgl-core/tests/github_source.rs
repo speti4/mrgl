@@ -496,7 +496,10 @@ fn the_forever_build_is_read_back_from_the_cache_alone() {
     let retail_only = spec("github:Example/MainlineOnly");
     let by_name = spec("github:Example/NoReleaseJson");
     // Nothing cached yet: unknown, and no request.
-    assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Unknown);
+    assert_eq!(
+        github.cached_forever_build(&questie, Channel::Stable),
+        ForeverBuild::Unknown
+    );
     assert!(github.http().requests().is_empty());
 
     github
@@ -509,9 +512,18 @@ fn the_forever_build_is_read_back_from_the_cache_alone() {
         .resolve(&by_name, &target(FlavorId::Forever, None))
         .expect("by name");
     let requests = github.http().requests().len();
-    assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Yes);
-    assert_eq!(github.cached_forever_build(&retail_only), ForeverBuild::No);
-    assert_eq!(github.cached_forever_build(&by_name), ForeverBuild::Unknown);
+    assert_eq!(
+        github.cached_forever_build(&questie, Channel::Stable),
+        ForeverBuild::Yes
+    );
+    assert_eq!(
+        github.cached_forever_build(&retail_only, Channel::Stable),
+        ForeverBuild::No
+    );
+    assert_eq!(
+        github.cached_forever_build(&by_name, Channel::Stable),
+        ForeverBuild::Unknown
+    );
     assert_eq!(
         github.http().requests().len(),
         requests,
@@ -527,9 +539,15 @@ fn the_forever_build_is_read_back_from_the_cache_alone() {
     let text = std::fs::read_to_string(&cached).expect("the release.json is cached");
     assert!(text.contains(r#""release":"v1.2.3""#), "{text}");
     std::fs::write(&cached, text.replace("v1.2.3", "v1.2.2")).unwrap();
-    assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Unknown);
+    assert_eq!(
+        github.cached_forever_build(&questie, Channel::Stable),
+        ForeverBuild::Unknown
+    );
     std::fs::write(&cached, "{ not json").unwrap();
-    assert_eq!(github.cached_forever_build(&questie), ForeverBuild::Unknown);
+    assert_eq!(
+        github.cached_forever_build(&questie, Channel::Stable),
+        ForeverBuild::Unknown
+    );
     let _ = std::fs::remove_dir_all(&cache);
 }
 
@@ -1222,6 +1240,48 @@ fn a_newest_release_without_a_forever_asset_is_passed_for_the_one_before() {
         "{error}"
     );
     let _ = std::fs::remove_dir_all(&stub);
+}
+
+#[test]
+fn the_cached_forever_build_walks_past_the_newest_release_as_the_resolve_does() {
+    // Task 078: the Forever build from the cache alone is the one of the release the resolve takes.
+    let stub = stub_with_a_classic_only_release("cached-walk");
+    let cache = temp_cache("cached-walk-cache");
+    let github = GitHub::new(FolderHttp::new(&stub), None, Some(cache.clone()));
+    let spec = spec("github:o/r");
+    assert_eq!(
+        github.cached_forever_build(&spec, Channel::Stable),
+        ForeverBuild::Unknown,
+        "nothing cached yet"
+    );
+    let pick = github
+        .resolve(&spec, &target(FlavorId::Forever, None))
+        .expect("the release before");
+    assert_eq!(pick.release, "v1.9.0");
+    let requests = github.http().requests().len();
+    assert_eq!(
+        github.cached_forever_build(&spec, Channel::Stable),
+        ForeverBuild::Yes,
+        "v2.0.0 has no Forever zip, v1.9.0 has"
+    );
+    assert_eq!(
+        github.http().requests().len(),
+        requests,
+        "the cache answers without a request"
+    );
+    // The prerelease channel's newest release has a Forever zip by its name only: a guess.
+    assert_eq!(
+        github.cached_forever_build(&spec, Channel::Prerelease),
+        ForeverBuild::Unknown
+    );
+    // The release.json of v1.9.0 gone from the cache: the walk cannot tell.
+    std::fs::remove_file(cache.join("o/r/release-json/tag-v1.9.0.json")).expect("cached per tag");
+    assert_eq!(
+        github.cached_forever_build(&spec, Channel::Stable),
+        ForeverBuild::Unknown
+    );
+    let _ = std::fs::remove_dir_all(&stub);
+    let _ = std::fs::remove_dir_all(&cache);
 }
 
 /// A page of 30 stable releases with Forever zips, `v<major>.0.<n>` from 29 down to 0.

@@ -1,5 +1,5 @@
 //! The IPC commands the UI calls (`ui/data.js` behind `window.Data`). Each one is a thin wrapper over
-//! `mrgl-core` and the plain functions of [`crate::list`]; the text they return is already in the voice's
+//! `mrgl-core` and the plain functions of [`crate::list`], [`crate::actions`] and [`crate::toolbox`]; the text they return is already in the voice's
 //! shape, so the UI prints and never composes a murloc line of its own. A command that reads the disk or the
 //! network runs on a blocking thread, so the window stays responsive while it works.
 
@@ -21,6 +21,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::actions::{self, ActionAnswer, Plan, UpdateEvent, UpdateRun};
 use crate::list::{self, FlavorsAnswer, ResolveAnswer};
+use crate::toolbox::{self, ToolboxAnswer, ToolboxRun};
 
 /// A message as the UI shows it: the kind (it picks the place, `ui/voice.js`), the murloc line (empty when
 /// serious) and the plain line.
@@ -378,6 +379,22 @@ pub fn preferences_answer(
     }
 }
 
+/// The theme the native window takes for a theme preference (task 079), so the title bar matches the
+/// page: `light` and `dark` set it, `auto` (and anything else) leaves the system's, `None`.
+pub fn native_theme(theme: &str) -> Option<tauri::Theme> {
+    match theme {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    }
+}
+
+/// Gives the window the native theme of a theme preference, at start and on every change of it. A theme
+/// the platform cannot set is no error: the title bar keeps the system's, the page is drawn all the same.
+pub fn apply_native_theme(window: &tauri::WebviewWindow, theme: &str) {
+    let _ = window.set_theme(native_theme(theme));
+}
+
 /// The preferences of this process.
 #[tauri::command]
 pub fn preferences() -> PreferencesAnswer {
@@ -388,9 +405,11 @@ pub fn preferences() -> PreferencesAnswer {
 }
 
 /// Stores the given preferences in `config.json` (a missing one stays as it is) and answers with them as
-/// they apply; the error is the message that says why nothing was stored.
+/// they apply; the error is the message that says why nothing was stored. The window takes the theme as
+/// it applies ([`apply_native_theme`], task 079).
 #[tauri::command]
 pub fn set_preferences(
+    window: tauri::WebviewWindow,
     theme: Option<String>,
     serious: Option<bool>,
 ) -> Result<PreferencesAnswer, Message> {
@@ -403,10 +422,9 @@ pub fn set_preferences(
                 format!("preferences not saved: {error}"),
             )
         })?;
-    Ok(preferences_answer(
-        std::env::var_os(core_voice::SERIOUS_ENV).as_deref(),
-        stored,
-    ))
+    let answer = preferences_answer(std::env::var_os(core_voice::SERIOUS_ENV).as_deref(), stored);
+    apply_native_theme(&window, &answer.theme);
+    Ok(answer)
 }
 
 /// The engine of a flavor of this process's game root, or the message that says why there is none.
@@ -436,6 +454,14 @@ async fn update_run(
 ) -> ActionAnswer {
     blocking(
         move || {
+            // A cleanup reads the AddOns folders an install swaps; it is quick, so the run waits for it.
+            if app.state::<ToolboxRun>().is_running() {
+                return ActionAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::toolbox_busy_line(),
+                ));
+            }
             let run = app.state::<UpdateRun>();
             let Some(_guard) = run.start() else {
                 return ActionAnswer::refused(Message::new(
@@ -559,6 +585,105 @@ pub async fn mark(
     .await
 }
 
+/// The game root of this process, or the message that says why there is none.
+fn root_of_process(flavor: &str) -> Result<PathBuf, Message> {
+    let refused = |plain: String| Message::new(voice(), Kind::Error, plain);
+    discover::resolve_root_of_process(None)
+        .map_err(|error| refused(error.to_string()))?
+        .root
+        .map(|root| root.path)
+        .ok_or_else(|| {
+            refused(format!(
+                "no flavor {flavor}: no game root; choose the game folder"
+            ))
+        })
+}
+
+/// The toolbox of a flavor (task 074): its sets with their addons, its characters, its SavedVariables with
+/// their sizes and orphans, and whether its client runs. Reads only.
+#[tauri::command]
+pub async fn toolbox(flavor: String) -> ToolboxAnswer {
+    blocking(
+        move || match root_of_process(&flavor) {
+            Ok(root) => toolbox::load(&root, &flavor, home_dir().as_deref(), voice()),
+            Err(message) => ToolboxAnswer::refused(message),
+        },
+        ToolboxAnswer::refused,
+    )
+    .await
+}
+
+/// Applies a stored set to every character of a flavor, or to the one `character` (and `realm`) names
+/// (task 074 over tasks 014 and 027); refused while the client runs (task 023) and while another toolbox
+/// write goes.
+#[tauri::command]
+pub async fn apply_set(
+    app: tauri::AppHandle,
+    flavor: String,
+    set: String,
+    character: Option<String>,
+    realm: Option<String>,
+) -> ToolboxAnswer {
+    blocking(
+        move || {
+            let run = app.state::<ToolboxRun>();
+            let Some(_guard) = run.start() else {
+                return ToolboxAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::busy_line(),
+                ));
+            };
+            match root_of_process(&flavor) {
+                Ok(root) => toolbox::apply(
+                    &root,
+                    &flavor,
+                    &set,
+                    character.as_deref(),
+                    realm.as_deref(),
+                    home_dir().as_deref(),
+                    voice(),
+                ),
+                Err(message) => ToolboxAnswer::refused(message),
+            }
+        },
+        ToolboxAnswer::refused,
+    )
+    .await
+}
+
+/// Moves a flavor's orphan SavedVariables into the dated zip of its backups folder (task 074 over task
+/// 025); refused while the client runs (task 023), while an update runs (an install swaps addon folders,
+/// which the orphan rule reads) and while another toolbox write goes.
+#[tauri::command]
+pub async fn clean_saved_variables(app: tauri::AppHandle, flavor: String) -> ToolboxAnswer {
+    blocking(
+        move || {
+            if app.state::<UpdateRun>().is_running() {
+                return ToolboxAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::updating_line(),
+                ));
+            }
+            let run = app.state::<ToolboxRun>();
+            let Some(_guard) = run.start() else {
+                return ToolboxAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::busy_line(),
+                ));
+            };
+            match root_of_process(&flavor) {
+                Ok(root) => toolbox::clean(&root, &flavor, home_dir().as_deref(), voice()),
+                Err(message) => ToolboxAnswer::refused(message),
+            }
+        },
+        ToolboxAnswer::refused,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,6 +735,26 @@ mod tests {
         assert!(!answer.serious);
         assert_eq!(answer.serious_source, "default");
         assert_eq!(answer.stored.theme, None);
+    }
+
+    #[test]
+    fn the_window_takes_the_theme_the_preference_applies() {
+        // Task 079: the native title bar follows the page's theme, `auto` leaves the system's.
+        let theme_of = |stored: Option<&str>| {
+            let answer = preferences_answer(
+                None,
+                home::Preferences {
+                    theme: stored.map(str::to_string),
+                    serious: None,
+                },
+            );
+            native_theme(&answer.theme)
+        };
+        assert_eq!(theme_of(Some("light")), Some(tauri::Theme::Light));
+        assert_eq!(theme_of(Some("dark")), Some(tauri::Theme::Dark));
+        assert_eq!(theme_of(Some("auto")), None);
+        assert_eq!(theme_of(None), None, "no stored theme is auto");
+        assert_eq!(native_theme("sepia"), None, "an unknown theme is auto");
     }
 
     #[test]

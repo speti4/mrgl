@@ -49,9 +49,14 @@ BOM in a fixture survives every checkout.
   all (`no-addon`). `.gitignore` allows zips here and nowhere else.
 - `dependencies/` — a third made-up game folder for the dependency check (task 029): a `.build.info` row
   and a `_forever_` flavor whose `Needy` requires `LibMet` (an addon folder of its own: met), `LibEmbedded`
-  (a folder under `Needy/Libs/`: embedded) and `LibMissing` (nowhere: missing), with `libmet` repeated in
-  lower case and an optional `LibOptional` that is never reported; `NolibBuild` carries a
-  `Libs/LibEmbedded` folder that counts as embedded until a test's sidecar marks the addon a `nolib` build.
+  (a folder under `Needy/Libs/` only: embedded, and missing, since the client does not count it, task 076)
+  and `LibMissing` (nowhere: missing), with `libmet` repeated in lower case and an optional `LibOptional`,
+  embedded under `Needy/Libs/` too, that is never reported; `NolibBuild` carries a `Libs/LibEmbedded`
+  folder that the check names as embedded until a test's sidecar marks the addon a `nolib` build.
+- `interface/` — a fourth made-up game folder for the interface states (task 076): a `.build.info` row for
+  `wow` at `12.1.5.70448` (interface 120105) and a `_retail_` flavor with `Current` (`120105, 50504`),
+  `Behind` (`120100`, one interface number behind the build: out of date) and `Elsewhere` (`110207`, another
+  expansion: an interface mismatch).
 - `client-exe/` — a second made-up game folder for the build version fallback (task 019): its `.build.info`
   has a row for `wow` only, and the flavor folders hold client exe stubs written by `make-stubs.py` next to
   them (deterministic; `python -I crates/mrgl-core/tests/fixtures/client-exe/make-stubs.py` rewrites the

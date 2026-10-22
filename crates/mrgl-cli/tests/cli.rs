@@ -2568,8 +2568,9 @@ fn add_dry_run_of_a_release_with_an_empty_body_shows_no_notes() {
 
 // --- task 029: the dependency check in `list` and after `add` ---
 
-/// The synthetic game folder of the dependency check: `Needy` with a met, an embedded and a missing
-/// required dependency, `LibMet`, and `NolibBuild` with a library folder inside.
+/// The synthetic game folder of the dependency check: `Needy` with a met, an embedded-only and a missing
+/// required dependency, `LibMet`, and `NolibBuild` with a library folder inside. An embedded-only
+/// dependency is missing (task 076): the client does not count a library inside an addon's own folder.
 fn dependency_fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/dependencies/_forever_")
 }
@@ -2588,9 +2589,10 @@ fn list_warns_about_a_missing_dependency_and_marks_the_line() {
         lines,
         [
             "LibMet  1.0.0  16001  unmanaged",
-            "Needy  1.0.0  16001  unmanaged  missing: LibMissing",
-            "NolibBuild  1.0.0  16001  unmanaged",
-            "Needy needs the missing dependency LibMissing: install it or the addon does not load",
+            "Needy  1.0.0  16001  unmanaged  missing: LibEmbedded, LibMissing",
+            "NolibBuild  1.0.0  16001  unmanaged  missing: LibEmbedded",
+            "Needy needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside Needy, and the client does not count a library inside an addon's own folder)",
+            "NolibBuild needs the missing dependency LibEmbedded: install it or the addon does not load (LibEmbedded is only embedded inside NolibBuild, and the client does not count a library inside an addon's own folder)",
             "3 addons in _forever_ (wowf 1.60.1.70245): 0 managed by mrgl, 3 unmanaged",
         ],
         "{text}"
@@ -2623,7 +2625,7 @@ fn list_json_carries_the_dependencies_of_every_addon() {
             "required": ["LibMet", "LibEmbedded", "LibMissing", "Blizzard_Something"],
             "met": ["LibMet", "Blizzard_Something"],
             "embedded": ["LibEmbedded"],
-            "missing": ["LibMissing"],
+            "missing": ["LibEmbedded", "LibMissing"],
             "nolib": null,
         })
     );
@@ -2634,7 +2636,8 @@ fn list_json_carries_the_dependencies_of_every_addon() {
     assert_eq!(
         value["warnings"],
         serde_json::json!([
-            "Needy needs the missing dependency LibMissing: install it or the addon does not load"
+            "Needy needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside Needy, and the client does not count a library inside an addon's own folder)",
+            "NolibBuild needs the missing dependency LibEmbedded: install it or the addon does not load (LibEmbedded is only embedded inside NolibBuild, and the client does not count a library inside an addon's own folder)"
         ])
     );
 }
@@ -2706,7 +2709,7 @@ fn add_warns_after_the_install_when_a_dependency_is_missing() {
         lines,
         [
             "installing needs-library-1.0.0.zip into _forever_",
-            "NeedsLibrary needs the missing dependency LibMissing: install it or the addon does not load",
+            "NeedsLibrary needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside NeedsLibrary, and the client does not count a library inside an addon's own folder)",
             "installed NeedsLibrary 1.0.0 (1 folder: NeedsLibrary) into _forever_",
         ],
         "{text}"
@@ -2735,7 +2738,10 @@ fn add_warns_after_the_install_when_a_dependency_is_missing() {
         serde_json::json!(["Blizzard_Something"]),
         "the client's own addon (task 064)"
     );
-    assert_eq!(dependencies["missing"], serde_json::json!(["LibMissing"]));
+    assert_eq!(
+        dependencies["missing"],
+        serde_json::json!(["LibEmbedded", "LibMissing"])
+    );
     assert_eq!(
         dependencies["nolib"],
         serde_json::Value::Null,
@@ -3333,6 +3339,116 @@ fn link_and_unlink_json_are_one_document_each() {
     assert_eq!(value["kept"], serde_json::json!([]));
 }
 
+/// A copy of the synthetic addon folder of `mrgl-core` (`single-addon/SoloAddon`: a TOC with the Forever
+/// suffix only and an embedded `LibSolo` with a TOC of its own) next to the game folder (task 062).
+#[cfg(windows)]
+fn solo_copy(game: &Game) -> PathBuf {
+    let solo = game
+        .root
+        .parent()
+        .expect("the base folder")
+        .join("repos")
+        .join("SoloAddon");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../mrgl-core/tests/fixtures/single-addon/SoloAddon"),
+        &solo,
+    );
+    solo
+}
+
+#[cfg(windows)]
+#[test]
+fn link_and_unlink_take_a_single_addon_folder() {
+    let game = Game::new("link-single");
+    let solo = solo_copy(&game);
+    let dev = dev_copy(&game);
+    let before = snapshot(&solo);
+
+    let output = game
+        .mrgl()
+        .args(["--serious", "link"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(
+        lines[0],
+        format!("linking the addon folder {} into _forever_", solo.display())
+    );
+    assert!(
+        lines[1].starts_with("linked the addon SoloAddon from "),
+        "{text}"
+    );
+    assert!(lines[1].ends_with("SoloAddon into _forever_"), "{text}");
+    assert_eq!(addons_listing(&game), ["SoloAddon"]);
+
+    // Again: nothing new, said as such.
+    let output = game
+        .mrgl()
+        .args(["--serious", "link"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert!(
+        stdout_last_line(&output).ends_with(" into _forever_ already"),
+        "{}",
+        stdout(&output)
+    );
+
+    // The JSON names the shape; a development folder still links its subfolders.
+    let output = game
+        .mrgl()
+        .args(["--json", "link"])
+        .arg(&dev)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["shape"], "development-folder");
+    assert_eq!(value["linked"].as_array().expect("linked").len(), 2);
+    assert_eq!(
+        addons_listing(&game),
+        ["DevAddon", "OneFolder", "SoloAddon"]
+    );
+    let output = game
+        .mrgl()
+        .args(["--json", "link"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["shape"], "addon-folder");
+    assert_eq!(value["linked"][0]["name"], "SoloAddon");
+    assert_eq!(value["linked"][0]["already_linked"], true);
+    assert_eq!(value["without_toc"], serde_json::json!([]));
+
+    // Unlinking the addon folder takes its one junction; the development folder's stay.
+    let output = game
+        .mrgl()
+        .args(["--serious", "unlink"])
+        .arg(&solo)
+        .args(["--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let last = stdout_last_line(&output);
+    assert!(last.starts_with("unlinked 1 addon of "), "{last}");
+    assert!(last.ends_with(" from _forever_: SoloAddon"), "{last}");
+    assert_eq!(addons_listing(&game), ["DevAddon", "OneFolder"]);
+    assert_eq!(snapshot(&solo), before, "the addon folder");
+    let state = std::fs::read_to_string(game.state_path()).expect("the sidecar");
+    assert!(!state.contains("SoloAddon"), "{state}");
+}
+
 #[cfg(windows)]
 #[test]
 fn link_skips_a_real_folder_with_a_warning_and_never_replaces_it() {
@@ -3747,6 +3863,92 @@ fn the_interface_warning_fires_after_an_install_and_in_list() {
             "major": 1,
         }])
     );
+}
+
+/// The synthetic game folder of the interface states (task 076): `_retail_` at `12.1.5.70448` (interface
+/// 120105) with `Behind` (120100), `Current` (120105, 50504) and `Elsewhere` (110207).
+fn interface_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../mrgl-core/tests/fixtures/interface/_retail_")
+}
+
+#[test]
+fn scan_and_list_mark_an_out_of_date_toc_apart_from_an_interface_mismatch() {
+    let summary = "1 addon is out of date for the build 12.1.5.70448 (interface 120105): Behind (120100); the client lists it as out of date";
+    let mismatch = "1 addon names no interface of the build 12.1.5.70448: Elsewhere (110207); made for another flavor or an older version of the game?";
+    let output = mrgl()
+        .args(["--serious", "scan"])
+        .arg(interface_fixture())
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "Behind  1.0.0  120100  out of date",
+            "Current  1.0.0  120105,50504",
+            "Elsewhere  1.0.0  110207  interface mismatch",
+            mismatch,
+            summary,
+            "3 addons in _retail_ (wow 12.1.5.70448)",
+        ],
+        "{text}"
+    );
+    let output = mrgl()
+        .args(["--serious", "list", "--flavor"])
+        .arg(interface_fixture())
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "Behind  1.0.0  120100  unmanaged  out of date",
+            "Current  1.0.0  120105,50504  unmanaged",
+            "Elsewhere  1.0.0  110207  unmanaged  interface mismatch",
+            mismatch,
+            summary,
+            "3 addons in _retail_ (wow 12.1.5.70448): 0 managed by mrgl, 3 unmanaged",
+        ],
+        "{text}"
+    );
+    for command in ["scan", "list"] {
+        let mut run = mrgl();
+        run.args(["--json", command]);
+        if command == "list" {
+            run.arg("--flavor");
+        }
+        let output = run.arg(interface_fixture()).output().expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("one JSON document");
+        assert_eq!(
+            value["interface_out_of_date"],
+            serde_json::json!([{
+                "folder": "Behind",
+                "toc": "Behind.toc",
+                "interfaces": [120100],
+                "build": "12.1.5.70448",
+                "interface": 120105,
+                "highest": 120100,
+            }]),
+            "{command}"
+        );
+        assert_eq!(
+            value["interface_mismatches"],
+            serde_json::json!([{
+                "folder": "Elsewhere",
+                "toc": "Elsewhere.toc",
+                "interfaces": [110207],
+                "build": "12.1.5.70448",
+                "major": 12,
+            }]),
+            "{command}"
+        );
+    }
 }
 
 // --- task 021: `pin`, `unpin`, `ignore`, `unignore`, `channel` and their marks in `list` ---
@@ -5292,6 +5494,95 @@ fn update_one_addon_takes_the_same_path_and_names_an_unknown_one() {
     }
 }
 
+// --- task 077: a pinned addon newer than the current release is read against the version order ---
+
+#[test]
+fn update_reports_a_pin_newer_than_the_current_release_without_is_out() {
+    // `Held` is pinned at the prerelease of `Example/Prerelease` on the stable channel (the release list's
+    // order), `Kept` at a version the list no longer has (the lenient order), `Behind` below the release.
+    let game = managed_game(
+        "update-pinned-newer",
+        &[
+            (
+                "Behind",
+                "github:Example/Notes",
+                "2.0.0",
+                r#", "pinned": "2.0.0""#,
+            ),
+            (
+                "Held",
+                "github:Example/Prerelease",
+                "1.1.0-beta",
+                r#", "pinned": "1.1.0-beta""#,
+            ),
+            (
+                "Kept",
+                "github:Example/Prerelease",
+                "1.5.0",
+                r#", "pinned": "1.5.0""#,
+            ),
+        ],
+    );
+    let before = game_snapshot(&game);
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.starts_with("checking "))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "Behind  2.0.0  pinned at 2.0.0, 2.1.0 is out, left alone",
+            "Held  1.1.0-beta  pinned at 1.1.0-beta, newer than the current release 1.0.0, left alone",
+            "Kept  1.5.0  pinned at 1.5.0, newer than the current release 1.0.0 (1.5.0 is no longer listed), left alone",
+            "dry run: 3 pinned; nothing written",
+        ],
+        "{text}"
+    );
+    assert!(!text.contains("1.0.0 is out"), "{text}");
+    assert_eq!(game_snapshot(&game), before, "a dry run writes nothing");
+
+    let output = game
+        .mrgl()
+        .args([
+            "--json",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let facts: Vec<(&str, &str, &str, &str)> = value["addons"]
+        .as_array()
+        .expect("the addons")
+        .iter()
+        .map(|addon| {
+            (
+                addon["name"].as_str().expect("a name"),
+                addon["state"].as_str().expect("a state"),
+                addon["latest"].as_str().expect("the current release"),
+                addon["order"].as_str().expect("the order"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        facts,
+        [
+            ("Behind", "pinned", "2.1.0", "older"),
+            ("Held", "pinned", "1.0.0", "newer"),
+            ("Kept", "pinned", "1.0.0", "newer"),
+        ]
+    );
+    assert_eq!(value["addons"][2]["detail"], "1.5.0 is no longer listed");
+}
+
 // --- task 068: the update check stops before GitHub's rate limit without a token ---
 
 #[test]
@@ -5971,6 +6262,7 @@ fn set_save_list_show_apply_and_remove_speak_plain_lines() {
         stdout(&output).lines().collect::<Vec<_>>(),
         [
             "left out of set everyday, the characters disagree on them: BossTimers, QuestArrows",
+            "set everyday names addons that are not installed in _forever_, kept in the set all the same: BagSorter, RaidFrames",
             "saved set everyday of _forever_ from 2 characters: 2 addons (2 enabled, 0 disabled)",
         ]
     );
@@ -6077,6 +6369,10 @@ fn set_json_is_one_document_per_command() {
         serde_json::json!(["BossTimers", "QuestArrows"])
     );
     assert_eq!(value["replaced"], false);
+    assert_eq!(
+        value["not_installed"],
+        serde_json::json!(["BagSorter", "RaidFrames"])
+    );
 
     let output = set_run(&root, &home, &["--json", "set", "apply", "everyday"]);
     assert!(output.status.success(), "{output:?}");
@@ -6329,6 +6625,292 @@ fn set_apply_to_one_character_is_refused_while_the_client_runs() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// Task 073: `set undo`, `set enable|disable|drop`, `--account` and the save warning, over the same
+// `addon-sets` tree.
+
+#[test]
+fn set_undo_puts_the_last_apply_back_byte_for_byte() {
+    let (root, home) = temp_game_root_with_sets("undo");
+    let wtf = root.join("_forever_").join("WTF");
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "save",
+            "raid",
+            "--character",
+            "Mrgltest",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let before = snapshot(&wtf);
+
+    let output = set_run(&root, &home, &["--serious", "set", "apply", "raid"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_ne!(snapshot(&wtf), before);
+    assert!(
+        home.join("wowf")
+            .join("set-undo")
+            .join("undo.json")
+            .is_file()
+    );
+
+    let output = set_run(&root, &home, &["--serious", "set", "undo"]);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(
+        lines[0],
+        "Second Realm/Grrlwave: AddOns.txt put back as it was"
+    );
+    assert!(
+        lines[1].starts_with("undid the apply of set raid to _forever_ (20"),
+        "{text}"
+    );
+    assert!(lines[1].ends_with("): 1 AddOns.txt put back"), "{text}");
+    assert_eq!(snapshot(&wtf), before, "byte for byte");
+
+    let output = set_run(&root, &home, &["--serious", "set", "undo"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "nothing to undo in _forever_: no set apply is recorded; an apply that changes a file keeps what it replaced, and an undo puts it back once"
+    );
+
+    let output = set_run(&root, &home, &["--json", "set", "apply", "raid"]);
+    assert!(output.status.success(), "{output:?}");
+    let output = set_run(&root, &home, &["--json", "set", "undo"]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "set-undo");
+    assert_eq!(value["name"], "raid");
+    assert_eq!(value["restored"].as_array().map(Vec::len), Some(1));
+    assert_eq!(value["restored"][0]["name"], "Grrlwave");
+    assert_eq!(value["removed"], serde_json::json!([]));
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    assert_eq!(snapshot(&wtf), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn set_undo_is_refused_while_the_client_runs() {
+    let (root, home) = temp_game_root_with_sets("undo-client");
+    let wtf = root.join("_forever_").join("WTF");
+    let output = set_run(&root, &home, &["--serious", "set", "save", "everyday"]);
+    assert!(output.status.success(), "{output:?}");
+    let before = snapshot(&wtf);
+    let output = set_run(&root, &home, &["--serious", "set", "apply", "everyday"]);
+    assert!(output.status.success(), "{output:?}");
+    let applied = snapshot(&wtf);
+    let Some(mut child) = spawn_stand_in(&root.join("_forever_")) else {
+        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        return;
+    };
+    let output = set_run(&root, &home, &["--serious", "set", "undo"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        format!(
+            "the client is running in _forever_ (client-stand-in.exe, pid {}): close the game first, nothing under WTF is written while it runs",
+            child.id()
+        )
+    );
+    assert_eq!(snapshot(&wtf), applied, "nothing was written");
+    child.stop();
+    let output = set_run(&root, &home, &["--serious", "set", "undo"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(snapshot(&wtf), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn set_enable_disable_and_drop_edit_one_addon_of_a_stored_set() {
+    let (root, home) = temp_game_root_with_sets("edit");
+    let wtf = root.join("_forever_").join("WTF");
+    std::fs::create_dir_all(root.join("_forever_/Interface/AddOns/BagSorter")).expect("addon");
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--serious",
+            "set",
+            "save",
+            "raid",
+            "--character",
+            "Mrgltest",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let before = snapshot(&wtf);
+
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "disable", "raid", "bagsorter"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "BagSorter is disabled in set raid of _forever_ now, was enabled: 4 addons (2 enabled, 2 disabled); no AddOns.txt was touched"
+        ]
+    );
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "disable", "raid", "BagSorter"],
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "set raid of _forever_ has BagSorter disabled already, nothing changed"
+    );
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "enable", "raid", "NewMeter"],
+    );
+    assert_eq!(
+        stdout(&output).lines().collect::<Vec<_>>(),
+        [
+            "NewMeter is not installed in _forever_; the set keeps it all the same",
+            "added NewMeter to set raid of _forever_, enabled: 5 addons (3 enabled, 2 disabled); no AddOns.txt was touched",
+        ]
+    );
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "drop", "raid", "QuestArrows"],
+    );
+    assert_eq!(
+        stdout_last_line(&output),
+        "dropped QuestArrows from set raid of _forever_: 4 addons (3 enabled, 1 disabled); no AddOns.txt was touched"
+    );
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "drop", "raid", "QuestArrows"],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "set raid (flavor forever) has no addon QuestArrows; its addons: BagSorter, BossTimers, NewMeter, RaidFrames"
+    );
+
+    let output = set_run(
+        &root,
+        &home,
+        &["--json", "set", "enable", "raid", "BagSorter"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["kind"], "set-edit");
+    assert_eq!(value["name"], "raid");
+    assert_eq!(value["addon"], "BagSorter");
+    assert_eq!(value["action"], "enable");
+    assert_eq!(value["before"], "disabled");
+    assert_eq!(value["after"], "enabled");
+    assert_eq!(value["changed"], true);
+    assert_eq!(value["installed"], true);
+    assert_eq!(
+        value["set"]["addons"],
+        serde_json::json!({
+            "BagSorter": "enabled",
+            "BossTimers": "enabled",
+            "NewMeter": "enabled",
+            "RaidFrames": "enabled",
+        })
+    );
+    assert_eq!(snapshot(&wtf), before, "an edit never touches WTF");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn set_account_picks_a_character_under_two_accounts() {
+    let (root, home) = temp_game_root_with_sets("account");
+    let wtf = root.join("_forever_").join("WTF");
+    let twin = "Account/MRGLTWO/Fixture Realm/Mrgltest/AddOns.txt";
+    std::fs::create_dir_all(wtf.join("Account/MRGLTWO/Fixture Realm/Mrgltest")).expect("a twin");
+    std::fs::write(wtf.join(twin), b"BagSorter: enabled\r\n").expect("its file");
+    let output = set_run(&root, &home, &["--serious", "set", "save", "everyday"]);
+    assert!(output.status.success(), "{output:?}");
+    let mut file: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(home.join("wowf").join("sets.json")).expect("sets.json"),
+    )
+    .expect("JSON");
+    file["sets"]["raid"] = serde_json::json!({
+        "saved_at": "2026-10-22T00:00:00Z",
+        "addons": { "BagSorter": "disabled" },
+    });
+    std::fs::write(home.join("wowf").join("sets.json"), file.to_string()).expect("written");
+    let before = snapshot(&wtf);
+
+    let args = |extra: &[&'static str]| {
+        let mut args = vec![
+            "--serious",
+            "set",
+            "apply",
+            "raid",
+            "--character",
+            "Mrgltest",
+            "--realm",
+            "Fixture Realm",
+        ];
+        args.extend_from_slice(extra);
+        args
+    };
+    let output = set_run(&root, &home, &args(&[]));
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr_last_line(&output),
+        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLSETS), Fixture Realm (MRGLTWO); the same realm is under more than one account: name one with --account"
+    );
+    assert_eq!(snapshot(&wtf), before, "nothing was written");
+
+    let output = set_run(&root, &home, &args(&["--account", "mrgltwo"]));
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        stdout_last_line(&output),
+        "applied set raid to Fixture Realm/Mrgltest of _forever_: 1 addon line changed"
+    );
+    let after = snapshot(&wtf);
+    assert_eq!(after[SETS_FIRST], before[SETS_FIRST], "the other account");
+    assert_eq!(after[twin], b"BagSorter: disabled\r\n");
+
+    let output = set_run(
+        &root,
+        &home,
+        &[
+            "--json",
+            "set",
+            "save",
+            "twin",
+            "--character",
+            "Mrgltest",
+            "--account",
+            "MRGLTWO",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["characters"][0]["account"], "MRGLTWO");
+    assert_eq!(
+        value["set"]["addons"],
+        serde_json::json!({ "BagSorter": "disabled" })
+    );
+
+    let output = set_run(
+        &root,
+        &home,
+        &["--serious", "set", "apply", "raid", "--account", "MRGLTWO"],
+    );
+    assert_eq!(output.status.code(), Some(2), "--account needs --character");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // --- task 058: the curated Forever note of a partly restricted addon in `list` ---
 
 #[test]
@@ -6391,4 +6973,60 @@ fn list_shows_the_curated_note_of_a_partly_restricted_addon() {
         "https://github.com/michaelnpsp/Grid2/issues/471"
     );
     assert_eq!(forever["stale"], status.stale);
+}
+
+// --- task 075: the output survives a closed pipe ---
+
+#[test]
+fn list_json_into_a_reader_that_closes_early_ends_quietly_with_exit_0() {
+    use std::io::Read;
+    // Enough addons that the JSON document outgrows the pipe's buffer, so `mrgl` is still writing when the
+    // reader goes, as `mrgl list --json | head -c 200` does.
+    let game = Game::new("closed-pipe");
+    for index in 0..600 {
+        game.by_hand(&format!("ByHand{index:04}"));
+    }
+    let mut child = game
+        .mrgl()
+        .args(["--json", "list", "--flavor", "forever"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run mrgl");
+    let mut start = [0u8; 200];
+    child
+        .stdout
+        .take()
+        .expect("the stdout pipe")
+        .read_exact(&mut start)
+        .expect("the start of the document");
+    assert!(
+        start.starts_with(b"{"),
+        "{}",
+        String::from_utf8_lossy(&start)
+    );
+    // The reader is dropped here: the pipe closes with the rest of the document unwritten.
+    let output = child.wait_with_output().expect("mrgl ends");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_eq!(stderr, "", "nothing is said about the closed pipe");
+}
+
+/// Task 079: `mrgl.exe` carries the workspace version in its file properties, the `VS_VERSION_INFO`
+/// resource `build.rs` writes next to the icon, read back from the built exe by the core's own PE reader.
+#[cfg(all(windows, target_env = "msvc"))]
+#[test]
+fn the_exe_carries_the_workspace_version_in_its_properties() {
+    let number = |text: &str| text.parse::<u32>().expect("a version number");
+    let expected = mrgl_core::flavor::BuildVersion {
+        major: number(env!("CARGO_PKG_VERSION_MAJOR")),
+        minor: number(env!("CARGO_PKG_VERSION_MINOR")),
+        patch: number(env!("CARGO_PKG_VERSION_PATCH")),
+        build: 0,
+    };
+    let read = mrgl_core::pe::read_file_version(Path::new(env!("CARGO_BIN_EXE_mrgl")))
+        .expect("the exe has a version resource");
+    assert_eq!(read, expected);
+    assert_eq!(mrgl_core::VERSION, env!("CARGO_PKG_VERSION"), "one version");
 }

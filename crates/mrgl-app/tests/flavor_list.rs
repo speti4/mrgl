@@ -15,6 +15,7 @@ use mrgl_core::home;
 use mrgl_core::sources::github::{self, GitHub};
 use mrgl_core::sources::{Channel, FolderHttp, SourceSpec};
 use mrgl_core::state::{Entry, FlavorHome, State};
+use mrgl_core::update::VersionOrder;
 use mrgl_core::voice::Voice;
 
 const BUILD_INFO: &str = "Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|Version!STRING:0|Tags!STRING:0|Product!STRING:0\n\
@@ -86,7 +87,12 @@ impl Fixture {
         fixture.addon(
             "_retail_",
             "Needy",
-            "## Interface: 120105\n## Version: 0.1\n## Dependencies: LibGone, Plain, Blizzard_Something\n",
+            "## Interface: 120105\n## Version: 0.1\n## Dependencies: LibGone, Plain, Blizzard_Something, LibInside\n",
+        );
+        // A library only embedded inside Needy: the client does not count it (task 076).
+        fixture.write(
+            "World of Warcraft/_retail_/Interface/AddOns/Needy/Libs/LibInside/LibInside.lua",
+            "-- embedded\n",
         );
         fixture.addon("_retail_", "Plain", "## Interface: 120105\n## Version: 3\n");
         fixture.addon(
@@ -300,8 +306,8 @@ fn the_retail_rows_carry_their_states_facts() {
     let needy = row(retail, "Needy");
     assert_eq!(
         needy.missing,
-        ["LibGone"],
-        "Plain is an addon of its own, Blizzard_Something the client's (task 064)"
+        ["LibGone", "LibInside"],
+        "Plain is an addon of its own, Blizzard_Something the client's (task 064), LibInside only embedded (task 076)"
     );
     assert_eq!(needy.name, "Needy", "no title: the folder");
 
@@ -353,6 +359,111 @@ fn every_forever_row_carries_its_forever_status() {
     assert!(loose.guessed && !loose.managed);
     assert_eq!(loose.source.as_ref().expect("a hint").kind, "curseforge");
     assert_eq!(loose.version, None);
+}
+
+/// The repository of task 066 under a stub folder of the fixture's own: its newest stable release is built
+/// for classic only, the one before it has the Forever zip, above both a draft and a beta.
+fn write_classic_only_newest_release(fixture: &Fixture) -> PathBuf {
+    let entry = |tag: &str, prerelease: bool, draft: bool, assets: &[&str]| {
+        let assets: Vec<serde_json::Value> = assets
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name,
+                    "browser_download_url": format!("https://github.test/{tag}/{name}"),
+                })
+            })
+            .collect();
+        serde_json::json!({ "tag_name": tag, "prerelease": prerelease, "draft": draft, "assets": assets })
+    };
+    let list = serde_json::json!([
+        entry("v4.0.0", false, true, &["A-v4.0.0-forever.zip"]),
+        entry("v3.0.0-beta", true, false, &["A-v3.0.0-beta-forever.zip"]),
+        entry(
+            "v2.0.0",
+            false,
+            false,
+            &["A-v2.0.0-classic.zip", "release.json"]
+        ),
+        entry(
+            "v1.9.0",
+            false,
+            false,
+            &["A-v1.9.0-forever.zip", "release.json"]
+        ),
+        entry("v1.8.0", false, false, &["A-v1.8.0-forever.zip"]),
+    ]);
+    fixture.write(
+        "stub/api.github.com/repos/o/r/releases.json",
+        &list.to_string(),
+    );
+    fixture.write(
+        "stub/github.test/v2.0.0/release.json",
+        r#"{"releases":[{"filename":"A-v2.0.0-classic.zip","metadata":[{"flavor":"classic","interface":11507}]}]}"#,
+    );
+    fixture.write(
+        "stub/github.test/v1.9.0/release.json",
+        r#"{"releases":[{"filename":"A-v1.9.0-forever.zip","metadata":[{"flavor":"forever","interface":16001}]}]}"#,
+    );
+    fixture.dir.join("stub")
+}
+
+#[test]
+fn the_forever_build_offline_is_the_one_of_the_release_the_resolve_takes() {
+    // Task 078: a repository whose newest release has no Forever zip shows the Forever build of the
+    // release before it, the one the resolve installs, and no update past it.
+    let fixture = Fixture::game_named("walk");
+    let home = fixture.home();
+    let stub = write_classic_only_newest_release(&fixture);
+    fixture.addon(
+        "_forever_",
+        "Walker",
+        "## Interface: 16001\n## Version: 1.8.0\n",
+    );
+    let flavor_home = FlavorHome::at(&home, &FlavorId::Forever);
+    let mut forever = flavor_home
+        .read_state(&FlavorId::Forever)
+        .expect("sidecar")
+        .state;
+    forever
+        .addons
+        .insert("Walker".into(), entry("github:o/r", "1.8.0", &["Walker"]));
+    flavor_home.write_state(&forever).expect("forever sidecar");
+    // The cache a check or an install leaves: the list and the release.json of each release it read.
+    let source = GitHub::new(
+        FolderHttp::new(stub),
+        None,
+        Some(home.join(github::CACHE_SUBDIR)),
+    );
+    let spec = SourceSpec::parse("github:o/r").expect("spec");
+    let pick = mrgl_core::sources::Source::resolve(
+        &source,
+        &spec,
+        &mrgl_core::sources::Target::new(FlavorId::Forever),
+    )
+    .expect("the release before the newest");
+    assert_eq!(pick.release, "v1.9.0");
+
+    let answer = list::load(
+        Some(fixture.game_root()),
+        Vec::new(),
+        Some(&home),
+        Voice::new(false),
+    );
+    let walker = row(flavor(&answer.flavors, "wowf"), "Walker");
+    assert_eq!(
+        walker.forever.as_ref().expect("a status").build.as_str(),
+        "yes",
+        "v2.0.0 is built for classic only, v1.9.0 has the Forever zip"
+    );
+    let update = walker
+        .update
+        .as_ref()
+        .expect("the update the resolve installs");
+    assert_eq!(
+        (update.version.as_str(), update.release.as_str()),
+        ("1.9.0", "v1.9.0")
+    );
 }
 
 #[test]
@@ -601,6 +712,15 @@ fn the_rows_take_the_offline_checks_answer_in_its_version_order() {
         "Switched".into(),
         entry("github:Example/Prerelease", "1.1.0-beta", &["Switched"]),
     );
+    // Task 077: the same prerelease, pinned: the pin is read against the same order, so no release is out.
+    fixture.addon(
+        "_forever_",
+        "Held",
+        "## Interface: 16001\n## Version: 1.1.0-beta\n",
+    );
+    let mut held = entry("github:Example/Prerelease", "1.1.0-beta", &["Held"]);
+    held.pin(None);
+    forever.addons.insert("Held".into(), held);
     flavor_home.write_state(&forever).expect("forever sidecar");
     let source = fixture_source(&home);
     let spec = SourceSpec::parse("github:Example/Prerelease").expect("spec");
@@ -636,6 +756,20 @@ fn the_rows_take_the_offline_checks_answer_in_its_version_order() {
     assert_eq!(
         switched.channel.map(|channel| channel.as_str()),
         Some("stable")
+    );
+    let held = row(forever, "Held");
+    let check = held.check.as_ref().expect("the offline check of a pin");
+    assert_eq!(
+        (check.label, check.latest.as_deref(), check.order),
+        ("pinned", Some("1.0.0"), Some(VersionOrder::Newer))
+    );
+    assert_eq!(
+        check.line,
+        "Held  1.1.0-beta  pinned at 1.1.0-beta, newer than the current release 1.0.0, left alone"
+    );
+    assert_eq!(
+        serde_json::to_value(check).expect("serializes")["order"],
+        "newer"
     );
     let questie = row(forever, "Questie");
     assert_eq!(

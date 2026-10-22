@@ -9,6 +9,12 @@
 //! primary TOC of an addon the flavor loads at all; one it loads nothing from carries its own flag in a
 //! listing). A TOC without an `## Interface` line and a flavor whose build is unknown give no warning:
 //! there is nothing to compare.
+//!
+//! Out of date (task 076): a TOC that passes the major check but whose highest interface number of the
+//! build's major is below the build's own interface number (`120100` under `12.1.5`, interface `120105`)
+//! is what the client lists as `Out of date` and loads only with out-of-date addons allowed. It is a state
+//! of its own, apart from the mismatch: an addon is one or the other, never both. A number above the
+//! build's (a TOC written for the next patch) is current.
 
 use serde::Serialize;
 
@@ -49,6 +55,43 @@ impl InterfaceMismatch {
             self.build
         )
     }
+
+    /// The warning after an install whose addon names no interface of the flavor's build: the line, the
+    /// flavor folder, and that the zip may be for another flavor.
+    pub fn after_install_line(&self, folder_name: &str) -> String {
+        format!(
+            "{} of {folder_name}; the zip may be for another flavor",
+            self.line()
+        )
+    }
+}
+
+/// An addon whose loaded TOC names the build's major version, but only interface numbers below the
+/// build's own: the client's `Out of date`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InterfaceOutOfDate {
+    /// The addon folder under `Interface\AddOns`.
+    pub folder: String,
+    /// The TOC file the numbers come from.
+    pub toc: String,
+    /// The TOC's `## Interface` numbers.
+    pub interfaces: Vec<u32>,
+    /// The flavor's build, `12.1.5.70448`.
+    pub build: String,
+    /// The build's interface number, `120105`: the one the TOC falls short of.
+    pub interface: u32,
+    /// The TOC's highest interface number of the build's major version, `120100`.
+    pub highest: u32,
+}
+
+impl InterfaceOutOfDate {
+    /// The plain line: `Behind: interface 120100 is out of date for the build 12.1.5.70448 (120105)`.
+    pub fn line(&self) -> String {
+        format!(
+            "{}: interface {} is out of date for the build {} ({})",
+            self.folder, self.highest, self.build, self.interface
+        )
+    }
 }
 
 /// The major version an interface number stands for: `120105` is 12, `16001` is 1.
@@ -87,6 +130,42 @@ pub fn check_scan(scan: &Scan) -> Vec<InterfaceMismatch> {
     scan.addons
         .iter()
         .filter_map(|addon| check_addon(addon, scan.flavor.version))
+        .collect()
+}
+
+/// The highest of the numbers with the build's major version, when it is below the build's interface
+/// number; `None` when one is current or newer, or none has the build's major (a mismatch, not this).
+pub fn out_of_date_highest(interfaces: &[u32], build: BuildVersion) -> Option<u32> {
+    let highest = interfaces
+        .iter()
+        .copied()
+        .filter(|interface| interface_major(*interface) == build.major)
+        .max()?;
+    (highest < build.interface()).then_some(highest)
+}
+
+/// Checks one scanned addon for the client's `Out of date`; `None` when it is current, a mismatch, the
+/// build is unknown or the flavor loads nothing from the folder.
+pub fn out_of_date_addon(addon: &Addon, build: Option<BuildVersion>) -> Option<InterfaceOutOfDate> {
+    let build = build?;
+    addon.chosen.as_ref()?;
+    let toc = addon.primary_toc()?;
+    let highest = out_of_date_highest(&toc.toc.interface, build)?;
+    Some(InterfaceOutOfDate {
+        folder: addon.folder.clone(),
+        toc: toc.file.clone(),
+        interfaces: toc.toc.interface.clone(),
+        build: build.to_string(),
+        interface: build.interface(),
+        highest,
+    })
+}
+
+/// Every addon of a scan the client lists as `Out of date`, in the scan's order.
+pub fn out_of_date_scan(scan: &Scan) -> Vec<InterfaceOutOfDate> {
+    scan.addons
+        .iter()
+        .filter_map(|addon| out_of_date_addon(addon, scan.flavor.version))
         .collect()
 }
 
@@ -179,6 +258,67 @@ mod tests {
             let scan = crate::scan::scan(&fixtures.join(flavor)).expect("the fixture scans");
             assert!(!scan.addons.is_empty(), "{flavor}");
             assert_eq!(check_scan(&scan), [], "{flavor}");
+            assert_eq!(out_of_date_scan(&scan), [], "{flavor}");
         }
+    }
+
+    #[test]
+    fn a_lower_number_of_the_builds_major_is_out_of_date_and_not_a_mismatch() {
+        let retail = build("12.1.5.70448");
+        let behind = addon("Behind", "120100", true);
+        assert_eq!(check_addon(&behind, retail), None, "the major matches");
+        let stale = out_of_date_addon(&behind, retail).expect("out of date");
+        assert_eq!(stale.folder, "Behind");
+        assert_eq!(stale.toc, "Behind.toc");
+        assert_eq!(stale.interfaces, [120100]);
+        assert_eq!(stale.build, "12.1.5.70448");
+        assert_eq!((stale.interface, stale.highest), (120105, 120100));
+        assert_eq!(
+            stale.line(),
+            "Behind: interface 120100 is out of date for the build 12.1.5.70448 (120105)"
+        );
+        assert_eq!(
+            out_of_date_addon(&addon("Listed", "50504, 120100, 120001", true), retail)
+                .map(|stale| stale.highest),
+            Some(120100),
+            "the highest number of the build's major counts"
+        );
+        assert_eq!(
+            out_of_date_addon(&addon("Current", "120105", true), retail),
+            None
+        );
+        assert_eq!(
+            out_of_date_addon(&addon("Both", "120100, 120105", true), retail),
+            None,
+            "one current number is enough"
+        );
+        assert_eq!(
+            out_of_date_addon(&addon("Ahead", "120200", true), retail),
+            None,
+            "a newer number is current"
+        );
+        let elsewhere = addon("Elsewhere", "110207", true);
+        assert_eq!(
+            out_of_date_addon(&elsewhere, retail),
+            None,
+            "a mismatch only"
+        );
+        assert!(check_addon(&elsewhere, retail).is_some());
+        assert_eq!(out_of_date_addon(&behind, None), None, "an unknown build");
+        assert_eq!(
+            out_of_date_addon(&addon("Unloaded", "120100", false), retail),
+            None
+        );
+        let mut empty = addon("NoInterface", "", true);
+        empty.tocs[0].toc = parse_toc("## Title: No Interface\n");
+        assert_eq!(out_of_date_addon(&empty, retail), None);
+        assert_eq!(
+            out_of_date_highest(
+                &[16000],
+                BuildVersion::parse("1.60.1.70245").expect("a build")
+            ),
+            Some(16000),
+            "Forever's 1.60.1 is interface 16001"
+        );
     }
 }

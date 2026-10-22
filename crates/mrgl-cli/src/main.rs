@@ -1,6 +1,7 @@
 //! The `mrgl` command line. Every human-readable line goes through the voice (D-005): a murloc line and a
 //! plain English line, `--serious` or `MRGL_SERIOUS=1` for the plain line alone, `--json` for machines.
-//! Exit codes: 0 success, 1 an error the plain line explains, 2 a usage error (clap's own).
+//! Exit codes: 0 success, 1 an error the plain line explains, 2 a usage error (clap's own); a reader that
+//! closes the pipe early ends the run with 0 ([`emit`], task 075).
 //!
 //! `scan`, `list` and `root` are task 002, the game root discovery behind them is task 020;
 //! `add github:<owner>/<repo>` resolves a release (task 003) and installs it (task 040); `add <file.zip>` and
@@ -14,7 +15,7 @@
 //! zip, then pinned) is task 022; `savedvars` (the SavedVariables sizes and the orphan cleanup) is task
 //! 025; every source-backed install takes the one install path of the engine (task 055); `update` (the
 //! update check and `update --all`) is task 006; `set` (the addon sets) is task 014, its
-//! `--character` and `--realm` task 027.
+//! `--character` and `--realm` task 027, `set undo`, `set enable|disable|drop` and `--account` task 073.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, IsTerminal};
@@ -30,15 +31,15 @@ use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{
-    AlreadyInstalled, Engine, Installed, Mark, Metadata, PickInstalled, PickStep, SourceInstalled,
-    SourceRequest,
+    AlreadyInstalled, Engine, Installed, InstalledChecks, Mark, Metadata, PickInstalled, PickStep,
+    SourceInstalled, SourceRequest,
 };
-use mrgl_core::interface::{self, InterfaceMismatch};
+use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use mrgl_core::link;
 use mrgl_core::list_file::{self, ListFile, Outcome};
 use mrgl_core::savedvars::{self, SavedVariablesFile, Status as SavedStatus};
 use mrgl_core::scan::{self, Addon, Scan};
-use mrgl_core::sets::{self, AddonSet};
+use mrgl_core::sets::{self, AddonSet, AddonState};
 use mrgl_core::sources::github::GitHub;
 use mrgl_core::sources::{self, Channel, Source, SourceSpec, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
@@ -143,9 +144,11 @@ enum Command {
         #[arg(long)]
         flavor: Option<String>,
     },
-    /// Link the addons of a development folder into a flavor with junctions (no admin rights needed).
+    /// Link the addons of a development folder, or one addon folder, into a flavor with junctions (no
+    /// admin rights needed).
     Link {
-        /// A folder whose subfolders are addons (each with its TOC).
+        /// A folder whose subfolders are addons (each with its TOC), or an addon folder (a TOC named after
+        /// it).
         folder: PathBuf,
         /// The flavor id or folder.
         #[arg(long)]
@@ -153,7 +156,7 @@ enum Command {
     },
     /// Remove the junctions `link` made.
     Unlink {
-        /// The development folder `link` was given.
+        /// The development folder or the addon folder `link` was given.
         folder: PathBuf,
         /// The flavor id or folder.
         #[arg(long)]
@@ -301,8 +304,8 @@ enum Command {
         clean: bool,
     },
     /// Addon sets: save the enabled and disabled addons of the characters' AddOns.txt under a name, apply
-    /// a set to every character, list, show or remove sets (the toolbox). An apply is refused while the
-    /// client runs.
+    /// a set to every character, undo the last apply, edit, list, show or remove sets (the toolbox). An
+    /// apply and an undo are refused while the client runs.
     Set {
         #[command(subcommand)]
         action: SetAction,
@@ -321,7 +324,54 @@ fn parse_channel(text: &str) -> Result<Channel, String> {
     Channel::parse(text).ok_or_else(|| format!("unknown channel {text}: stable or prerelease"))
 }
 
-/// Prints the two-line messages, the plain data lines, or JSON when asked.
+/// Where the command line writes.
+#[derive(Debug, Clone, Copy)]
+enum Stream {
+    Stdout,
+    Stderr,
+}
+
+/// Windows' `ERROR_NO_DATA`, "the pipe is being closed": a write into a pipe whose reader is gone.
+#[cfg(windows)]
+const ERROR_NO_DATA: i32 = 232;
+
+/// Whether a write failed because the reader closed the pipe (`mrgl list --json | head -c 200`).
+fn is_closed_pipe(error: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    if error.raw_os_error() == Some(ERROR_NO_DATA) {
+        return true;
+    }
+    error.kind() == std::io::ErrorKind::BrokenPipe
+}
+
+/// The one writer of the command line (task 075): every line and document goes to stdout or stderr
+/// through here. A closed pipe ends the run: nobody is left to read the rest, so the process exits quietly
+/// with code 0 instead of panicking as `println!` does. Any other write error panics as `println!` would.
+fn emit(stream: Stream, text: std::fmt::Arguments<'_>) {
+    use std::io::Write;
+    let written = match stream {
+        Stream::Stdout => {
+            let mut out = std::io::stdout().lock();
+            out.write_fmt(text).and_then(|()| out.flush())
+        }
+        Stream::Stderr => {
+            let mut err = std::io::stderr().lock();
+            err.write_fmt(text).and_then(|()| err.flush())
+        }
+    };
+    if let Err(error) = written {
+        if is_closed_pipe(&error) {
+            std::process::exit(0);
+        }
+        let name = match stream {
+            Stream::Stdout => "stdout",
+            Stream::Stderr => "stderr",
+        };
+        panic!("failed printing to {name}: {error}");
+    }
+}
+
+/// Prints the two-line messages, the plain data lines, or JSON when asked, through [`emit`].
 struct Reporter {
     voice: Voice,
     json: bool,
@@ -331,9 +381,12 @@ impl Reporter {
     fn say(&self, kind: Kind, plain: impl std::fmt::Display) {
         if self.json {
             let value = serde_json::json!({ "kind": kind.as_str(), "message": plain.to_string() });
-            println!("{value}");
+            emit(Stream::Stdout, format_args!("{value}\n"));
         } else {
-            println!("{}", self.voice.say(kind, plain));
+            emit(
+                Stream::Stdout,
+                format_args!("{}\n", self.voice.say(kind, plain)),
+            );
         }
     }
 
@@ -341,21 +394,30 @@ impl Reporter {
         if self.json {
             let value =
                 serde_json::json!({ "kind": Kind::Error.as_str(), "message": plain.to_string() });
-            eprintln!("{value}");
+            emit(Stream::Stderr, format_args!("{value}\n"));
         } else {
-            eprintln!("{}", self.voice.say(Kind::Error, plain));
+            self.say_on_stderr(Kind::Error, plain);
         }
+    }
+
+    /// A two-line message on stderr whatever the mode (the warnings and the summary of `export` without a
+    /// file, whose stdout is the list).
+    fn say_on_stderr(&self, kind: Kind, plain: impl std::fmt::Display) {
+        emit(
+            Stream::Stderr,
+            format_args!("{}\n", self.voice.say(kind, plain)),
+        );
     }
 
     /// A plain data line (one addon of a listing); human mode only, the JSON document carries the data.
     fn line(&self, text: impl std::fmt::Display) {
-        println!("{text}");
+        emit(Stream::Stdout, format_args!("{text}\n"));
     }
 
     /// The one JSON document of a command; its `kind` is a fixed name.
     fn document(&self, value: serde_json::Value) {
         debug_assert!(value.get("kind").is_some(), "a document names its kind");
-        println!("{value}");
+        emit(Stream::Stdout, format_args!("{value}\n"));
     }
 }
 
@@ -368,9 +430,12 @@ fn main() -> ExitCode {
 
     if cli.version {
         if cli.json {
-            println!(
-                "{}",
-                serde_json::json!({ "name": "mrgl", "version": VERSION })
+            emit(
+                Stream::Stdout,
+                format_args!(
+                    "{}\n",
+                    serde_json::json!({ "name": "mrgl", "version": VERSION })
+                ),
             );
         } else {
             reporter.say(Kind::Banner, format!("mrgl {VERSION}"));
@@ -608,6 +673,7 @@ fn report_scan(
         }
     };
     let mismatches = interface::check_scan(scan);
+    let out_of_date = interface::out_of_date_scan(scan);
     // `classify` keeps the scan's order: one status per addon, or none at all for `scan`.
     let statuses = list.as_ref().map(|view| view.state.classify(scan));
     let status_of = |index: usize| statuses.as_ref().map(|statuses| &statuses[index]);
@@ -633,7 +699,7 @@ fn report_scan(
         }
         mark_dependencies(dependencies, &addon.folder, &mut line, &mut object);
         mark_forever(forever, addon, Some(&mut line), Some(&mut object));
-        lines.push(with_interface_note(line, addon, &mismatches));
+        lines.push(with_interface_note(line, addon, &mismatches, &out_of_date));
         objects.push(object);
     }
     if reporter.json {
@@ -644,6 +710,7 @@ fn report_scan(
             "skipped": &scan.skipped,
             "client_running": client,
             "interface_mismatches": &mismatches,
+            "interface_out_of_date": &out_of_date,
             "warnings": warnings,
         });
         if let (Some(view), Some(managed)) = (&list, managed) {
@@ -677,6 +744,9 @@ fn report_scan(
         reporter.say(Kind::Warning, warning);
     }
     if let Some(warning) = interface_summary(&mismatches) {
+        reporter.say(Kind::Warning, warning);
+    }
+    if let Some(warning) = out_of_date_summary(&out_of_date) {
         reporter.say(Kind::Warning, warning);
     }
     let mut build = match scan.flavor.version {
@@ -894,33 +964,6 @@ fn check_dependencies(scan: &Scan, warnings: &mut Vec<String>) -> Vec<AddonDepen
     checks
 }
 
-/// The dependency check after an install (task 029): the flavor's folder as it is now, the results of the
-/// folders just installed, and a warning line for each with a missing required dependency.
-fn installed_dependencies(
-    engine: &Engine,
-    folders: &[String],
-    warnings: &mut Vec<String>,
-) -> Vec<AddonDependencies> {
-    let scan = match scan::scan_flavor(&engine.flavor) {
-        Ok(scan) => scan,
-        Err(error) => {
-            warnings.push(error.to_string());
-            return Vec::new();
-        }
-    };
-    let state = engine.load_state().ok().map(|loaded| loaded.state);
-    let checks: Vec<AddonDependencies> = dependencies::check(&scan, state.as_ref())
-        .into_iter()
-        .filter(|check| {
-            folders
-                .iter()
-                .any(|folder| folder.eq_ignore_ascii_case(&check.folder))
-        })
-        .collect();
-    warnings.extend(checks.iter().filter_map(AddonDependencies::warning));
-    checks
-}
-
 /// Task 011: the Forever status of every managed addon of a Forever listing, by its primary folder in lower
 /// case; `None` for another flavor. Offline: the build signal comes from the GitHub source's cache alone (the
 /// release list and the `release.json` the last `add` fetched), so without a cached list it is `unknown`.
@@ -947,7 +990,7 @@ fn forever_statuses(
             continue;
         };
         let build = match SourceSpec::parse(&entry.source) {
-            Ok(spec) => github.cached_forever_build(&spec),
+            Ok(spec) => github.cached_forever_build(&spec, entry.channel()),
             Err(_) => ForeverBuild::Unknown,
         };
         statuses.insert(
@@ -1023,17 +1066,22 @@ fn forever_message(status: &ForeverStatus) -> (Kind, String) {
 }
 
 /// The interface check of task 015 on an addon line: `interface mismatch` appended when the addon's TOC
-/// names no interface of the flavor's build.
+/// names no interface of the flavor's build, `out of date` (task 076, the client's words) when it names
+/// only lower ones of the build's major version.
 fn with_interface_note(
     mut line: String,
     addon: &Addon,
     mismatches: &[InterfaceMismatch],
+    out_of_date: &[InterfaceOutOfDate],
 ) -> String {
     if mismatches
         .iter()
         .any(|mismatch| mismatch.folder == addon.folder)
     {
         line.push_str("  interface mismatch");
+    }
+    if out_of_date.iter().any(|stale| stale.folder == addon.folder) {
+        line.push_str("  out of date");
     }
     line
 }
@@ -1056,22 +1104,24 @@ fn interface_summary(mismatches: &[InterfaceMismatch]) -> Option<String> {
     ))
 }
 
-/// The warning after an install whose addon names no interface of the flavor's build.
-fn interface_after_install(mismatch: &InterfaceMismatch, folder_name: &str) -> String {
-    format!(
-        "{} of {folder_name}; the zip may be for another flavor",
-        mismatch.line()
-    )
-}
-
-/// The interface check of a freshly installed addon, by its primary folder; a scan that fails gives none.
-fn installed_mismatch(engine: &Engine, primary: Option<&String>) -> Option<InterfaceMismatch> {
-    let primary = primary?;
-    let scan = scan::scan_flavor(&engine.flavor).ok()?;
-    scan.addons
+/// The warning under a listing with out-of-date addons (task 076): how many, the build and its interface,
+/// each folder's highest number of the build's major.
+fn out_of_date_summary(out_of_date: &[InterfaceOutOfDate]) -> Option<String> {
+    let first = out_of_date.first()?;
+    let (count, them) = match out_of_date.len() {
+        1 => ("1 addon is".to_string(), "it"),
+        count => (format!("{count} addons are"), "them"),
+    };
+    let each: Vec<String> = out_of_date
         .iter()
-        .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
-        .and_then(|addon| interface::check_addon(addon, engine.flavor.version))
+        .map(|stale| format!("{} ({})", stale.folder, stale.highest))
+        .collect();
+    Some(format!(
+        "{count} out of date for the build {} (interface {}): {}; the client lists {them} as out of date",
+        first.build,
+        first.interface,
+        each.join(", ")
+    ))
 }
 
 /// One addon as a JSON object, the one builder of `scan` and `list`: the scan's fields (`folder`, `path`,
@@ -1201,10 +1251,7 @@ fn add_command(
             reporter.say(Kind::Warning, warning);
         }
         if let Some(mismatch) = &summary.mismatch {
-            reporter.say(
-                Kind::Warning,
-                interface_after_install(mismatch, &folder_name),
-            );
+            reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
         }
         if let Some(status) = forever.as_ref() {
             let (kind, text) = forever_message(status);
@@ -1335,8 +1382,19 @@ fn install_summary(
     warnings: &mut Vec<String>,
 ) -> InstallSummary {
     warnings.extend(installed.warnings.iter().cloned());
-    let dependencies = installed_dependencies(engine, &installed.folders, warnings);
-    let mismatch = installed_mismatch(engine, installed.folders.first());
+    let checks = engine.check_installed(&installed.folders);
+    warnings.extend(checks.warnings.iter().cloned());
+    warnings.extend(
+        checks
+            .dependencies
+            .iter()
+            .filter_map(AddonDependencies::warning),
+    );
+    let InstalledChecks {
+        dependencies,
+        mismatch,
+        ..
+    } = checks;
     let addon = serde_json::json!({
         "name": installed.name,
         "version": installed.version,
@@ -1610,10 +1668,7 @@ fn add_zip(
     }
     reporter.say(Kind::Success, summary.line);
     if let Some(mismatch) = &summary.mismatch {
-        reporter.say(
-            Kind::Warning,
-            interface_after_install(mismatch, &folder_name),
-        );
+        reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
     }
     Ok(())
 }
@@ -1657,19 +1712,21 @@ fn remove_command(reporter: &Reporter, name: &str, flavor: Option<&str>) -> Resu
 }
 
 /// `mrgl link <folder> --flavor <id>` (task 005): a junction under `Interface\AddOns` for every addon of a
-/// development folder, recorded as `link:<folder>`; a name in the way is a warning, never replaced.
+/// development folder, or for the one addon a folder with a TOC named after it is (task 062), recorded as
+/// `link:<folder>`; a name in the way is a warning, never replaced.
 fn link_command(reporter: &Reporter, folder: &Path, flavor: Option<&str>) -> Result<(), String> {
     link::ensure_supported().map_err(|error| error.to_string())?;
     let mut warnings = Vec::new();
     let engine = engine_for(flavor, &mut warnings)?;
     let folder_name = engine.flavor.folder_name();
     if !reporter.json {
+        let what = match link::shape_of(folder) {
+            link::Shape::AddonFolder => "the addon folder",
+            link::Shape::DevelopmentFolder => "the addons of",
+        };
         reporter.say(
             Kind::Progress,
-            format!(
-                "linking the addons of {} into {folder_name}",
-                folder.display()
-            ),
+            format!("linking {what} {} into {folder_name}", folder.display()),
         );
     }
     let linked = link::link(&engine, folder).map_err(|error| error.to_string())?;
@@ -1679,6 +1736,7 @@ fn link_command(reporter: &Reporter, folder: &Path, flavor: Option<&str>) -> Res
             "kind": "link",
             "flavor": &engine.flavor,
             "folder": linked.folder,
+            "shape": linked.shape,
             "source": linked.source,
             "linked": linked.linked,
             "skipped": linked.skipped,
@@ -1706,6 +1764,31 @@ fn link_command(reporter: &Reporter, folder: &Path, flavor: Option<&str>) -> Res
         .iter()
         .filter(|addon| addon.already_linked)
         .count();
+    if linked.shape == link::Shape::AddonFolder
+        && let [addon] = linked.linked.as_slice()
+    {
+        let (kind, summary) = if addon.already_linked {
+            (
+                Kind::Nothing,
+                format!(
+                    "{} is linked from {} into {folder_name} already",
+                    addon.name,
+                    linked.folder.display()
+                ),
+            )
+        } else {
+            (
+                Kind::Success,
+                format!(
+                    "linked the addon {} from {} into {folder_name}",
+                    addon.name,
+                    linked.folder.display()
+                ),
+            )
+        };
+        reporter.say(kind, summary);
+        return Ok(());
+    }
     let mut summary = if names.is_empty() {
         format!(
             "linked no addon from {} into {folder_name}",
@@ -2170,16 +2253,11 @@ fn export_command(
         Kind::Success
     };
     let Some(file) = file else {
-        print!("{}", list.to_json());
+        emit(Stream::Stdout, format_args!("{}", list.to_json()));
         for warning in &warnings {
-            eprintln!("{}", reporter.voice.say(Kind::Warning, warning));
+            reporter.say_on_stderr(Kind::Warning, warning);
         }
-        eprintln!(
-            "{}",
-            reporter
-                .voice
-                .say(kind, format!("exported {count} of {folder_name}"))
-        );
+        reporter.say_on_stderr(kind, format!("exported {count} of {folder_name}"));
         return Ok(());
     };
     for warning in &warnings {
@@ -2272,10 +2350,7 @@ fn import_command(
             .iter()
             .filter_map(|item| item.interface_mismatch.as_ref())
         {
-            reporter.say(
-                Kind::Warning,
-                interface_after_install(mismatch, &folder_name),
-            );
+            reporter.say(Kind::Warning, mismatch.after_install_line(&folder_name));
         }
         let counts: Vec<String> = [
             (Outcome::Installed, "installed"),
@@ -2757,9 +2832,13 @@ enum SetAction {
         /// The realm of `--character`, for a name more than one realm has.
         #[arg(long, requires = "character")]
         realm: Option<String>,
+        /// The account folder of `--character`, for a realm and name under more than one account.
+        #[arg(long, requires = "character")]
+        account: Option<String>,
     },
     /// Apply a set to every character, or to one with `--character`: exactly the set's addons get its
-    /// state in AddOns.txt, every other line stays as it is. Refused while the client runs.
+    /// state in AddOns.txt, every other line stays as it is; the files it replaces are kept for `set
+    /// undo`. Refused while the client runs.
     Apply {
         /// The set's name.
         name: String,
@@ -2772,6 +2851,46 @@ enum SetAction {
         /// The realm of `--character`, for a name more than one realm has.
         #[arg(long, requires = "character")]
         realm: Option<String>,
+        /// The account folder of `--character`, for a realm and name under more than one account.
+        #[arg(long, requires = "character")]
+        account: Option<String>,
+    },
+    /// Put back the AddOns.txt files the last apply replaced, byte for byte, and remove the ones it
+    /// created; once. Refused while the client runs.
+    Undo {
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Enable one addon in a stored set (added when the set does not have it); no AddOns.txt is touched.
+    Enable {
+        /// The set's name.
+        name: String,
+        /// The addon's folder name.
+        addon: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Disable one addon in a stored set (added when the set does not have it); no AddOns.txt is touched.
+    Disable {
+        /// The set's name.
+        name: String,
+        /// The addon's folder name.
+        addon: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
+    },
+    /// Drop one addon from a stored set, so an apply leaves its lines alone; no AddOns.txt is touched.
+    Drop {
+        /// The set's name.
+        name: String,
+        /// The addon's folder name.
+        addon: String,
+        /// The flavor id or folder.
+        #[arg(long)]
+        flavor: Option<String>,
     },
     /// List the flavor's sets.
     List {
@@ -2797,13 +2916,18 @@ enum SetAction {
     },
 }
 
-/// `mrgl set save|apply|list|show|remove … --flavor <id>` (task 014): the sets live in `sets.json` under
-/// the flavor's folder of the mrgl home; an apply rewrites the characters' `AddOns.txt` and is refused
-/// while the client runs (task 023), before anything is written.
+/// `mrgl set save|apply|undo|enable|disable|drop|list|show|remove … --flavor <id>` (tasks 014 and 073):
+/// the sets live in `sets.json` under the flavor's folder of the mrgl home; an apply rewrites the
+/// characters' `AddOns.txt` and keeps what it replaced for `undo`, and both are refused while the client
+/// runs (task 023), before anything is written; an edit changes `sets.json` only.
 fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
     let spec = match &action {
         SetAction::Save { flavor, .. }
         | SetAction::Apply { flavor, .. }
+        | SetAction::Undo { flavor }
+        | SetAction::Enable { flavor, .. }
+        | SetAction::Disable { flavor, .. }
+        | SetAction::Drop { flavor, .. }
         | SetAction::List { flavor }
         | SetAction::Show { flavor, .. }
         | SetAction::Remove { flavor, .. } => flavor.clone(),
@@ -2824,11 +2948,13 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             name,
             character,
             realm,
+            account,
             ..
         } => {
             let target = set_target(character, realm);
-            let saved = sets::save_set(&flavor, &path, &name, &target)
-                .map_err(|error| error.to_string())?;
+            let saved =
+                sets::save_set_in_account(&flavor, &path, &name, &target, account.as_deref())
+                    .map_err(|error| error.to_string())?;
             warnings.extend(saved.warnings.iter().cloned());
             if reporter.json {
                 reporter.document(serde_json::json!({
@@ -2840,6 +2966,7 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
                     "replaced": saved.replaced,
                     "characters": &saved.characters,
                     "conflicts": &saved.conflicts,
+                    "not_installed": &saved.not_installed,
                     "warnings": warnings,
                 }));
                 return Ok(());
@@ -2849,6 +2976,13 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
                     "left out of set {}, the characters disagree on them: {}",
                     saved.name,
                     saved.conflicts.join(", ")
+                ));
+            }
+            if !saved.not_installed.is_empty() {
+                warnings.push(format!(
+                    "set {} names addons that are not installed in {folder_name}, kept in the set all the same: {}",
+                    saved.name,
+                    saved.not_installed.join(", ")
                 ));
             }
             warn(&warnings);
@@ -2867,6 +3001,7 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             name,
             character,
             realm,
+            account,
             ..
         } => {
             let target = set_target(character, realm);
@@ -2886,9 +3021,30 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
                     format!("applying set {name} to {whom} of {folder_name}"),
                 );
             }
-            let applied = sets::apply_set(&flavor, &path, &name, &target)
-                .map_err(|error| error.to_string())?;
+            let applied =
+                sets::apply_set_in_account(&flavor, &path, &name, &target, account.as_deref())
+                    .map_err(|error| error.to_string())?;
             report_applied(reporter, &flavor, &target, &applied, warnings);
+        }
+        SetAction::Undo { .. } => {
+            let undone = sets::undo_apply(&flavor, &path).map_err(|error| error.to_string())?;
+            warnings.extend(undone.warnings.iter().cloned());
+            report_undone(reporter, &flavor, &undone, warnings);
+        }
+        SetAction::Enable { name, addon, .. } => {
+            let edited = sets::edit_set(&flavor, &path, &name, &addon, sets::SetEdit::Enable)
+                .map_err(|error| error.to_string())?;
+            report_edited(reporter, &flavor, &edited, warnings);
+        }
+        SetAction::Disable { name, addon, .. } => {
+            let edited = sets::edit_set(&flavor, &path, &name, &addon, sets::SetEdit::Disable)
+                .map_err(|error| error.to_string())?;
+            report_edited(reporter, &flavor, &edited, warnings);
+        }
+        SetAction::Drop { name, addon, .. } => {
+            let edited = sets::edit_set(&flavor, &path, &name, &addon, sets::SetEdit::Drop)
+                .map_err(|error| error.to_string())?;
+            report_edited(reporter, &flavor, &edited, warnings);
         }
         SetAction::List { .. } => {
             let file = sets::read_sets_at(&path, &flavor.id).map_err(|error| error.to_string())?;
@@ -3091,6 +3247,141 @@ fn report_applied(
                 applied.name
             ),
         ),
+    }
+}
+
+/// The outcome of `set undo` (task 073): one data line per character, the warnings and the summary; or
+/// the one JSON document.
+fn report_undone(
+    reporter: &Reporter,
+    flavor: &Flavor,
+    undone: &sets::Undone,
+    warnings: Vec<String>,
+) {
+    let folder_name = flavor.folder_name();
+    if reporter.json {
+        let listed = |characters: &[sets::Character]| -> Vec<serde_json::Value> {
+            characters
+                .iter()
+                .map(|character| {
+                    serde_json::json!({
+                        "account": &character.account,
+                        "realm": &character.realm,
+                        "name": &character.name,
+                        "addons_txt": character.addons_txt(),
+                    })
+                })
+                .collect()
+        };
+        reporter.document(serde_json::json!({
+            "kind": "set-undo",
+            "flavor": flavor,
+            "name": &undone.set,
+            "applied_at": &undone.applied_at,
+            "restored": listed(&undone.restored),
+            "removed": listed(&undone.removed),
+            "warnings": warnings,
+        }));
+        return;
+    }
+    for character in &undone.restored {
+        reporter.line(format!(
+            "{}: AddOns.txt put back as it was",
+            character.label()
+        ));
+    }
+    for character in &undone.removed {
+        reporter.line(format!(
+            "{}: AddOns.txt removed, the apply had created it",
+            character.label()
+        ));
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let mut summary = format!(
+        "undid the apply of set {} to {folder_name} ({}): {} put back",
+        undone.set,
+        undone.applied_at,
+        count_addons_txt(undone.restored.len())
+    );
+    if !undone.removed.is_empty() {
+        summary.push_str(&format!(
+            ", {} the apply created removed",
+            count_addons_txt(undone.removed.len())
+        ));
+    }
+    let kind = if warnings.is_empty() {
+        Kind::Success
+    } else {
+        Kind::Warning
+    };
+    reporter.say(kind, summary);
+}
+
+/// The outcome of `set enable|disable|drop` (task 073): a warning for an addon that is not installed and
+/// the summary; or the one JSON document.
+fn report_edited(
+    reporter: &Reporter,
+    flavor: &Flavor,
+    edited: &sets::Edited,
+    mut warnings: Vec<String>,
+) {
+    let folder_name = flavor.folder_name();
+    if reporter.json {
+        reporter.document(serde_json::json!({
+            "kind": "set-edit",
+            "flavor": flavor,
+            "name": &edited.name,
+            "addon": &edited.addon,
+            "action": edited.edit,
+            "before": edited.before,
+            "after": edited.after,
+            "changed": edited.changed,
+            "installed": edited.installed,
+            "set": &edited.set,
+            "warnings": warnings,
+        }));
+        return;
+    }
+    if edited.after.is_some() && !edited.installed {
+        warnings.push(format!(
+            "{} is not installed in {folder_name}; the set keeps it all the same",
+            edited.addon
+        ));
+    }
+    for warning in &warnings {
+        reporter.say(Kind::Warning, warning);
+    }
+    let (name, addon, count) = (&edited.name, &edited.addon, count_set(&edited.set));
+    let summary = match (edited.before, edited.after) {
+        _ if !edited.changed => {
+            let state = edited.after.map(AddonState::as_str).unwrap_or("dropped");
+            reporter.say(
+                Kind::Nothing,
+                format!("set {name} of {folder_name} has {addon} {state} already, nothing changed"),
+            );
+            return;
+        }
+        (None, Some(state)) => {
+            format!("added {addon} to set {name} of {folder_name}, {state}: {count}")
+        }
+        (Some(before), Some(state)) => {
+            format!("{addon} is {state} in set {name} of {folder_name} now, was {before}: {count}")
+        }
+        (_, None) => format!("dropped {addon} from set {name} of {folder_name}: {count}"),
+    };
+    reporter.say(
+        Kind::Success,
+        format!("{summary}; no AddOns.txt was touched"),
+    );
+}
+
+fn count_addons_txt(count: usize) -> String {
+    if count == 1 {
+        "1 AddOns.txt".to_string()
+    } else {
+        format!("{count} AddOns.txt files")
     }
 }
 

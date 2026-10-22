@@ -86,7 +86,8 @@ body {
   display: none !important;
 }
 button,
-input {
+input,
+select {
   font: inherit;
   color: inherit;
 }
@@ -325,6 +326,175 @@ code {
   border-left: 3px solid var(--warn);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   font-size: 0.85rem;
+}
+
+/* ---- the tabs of a flavor (task 074): the addon list and the toolbox */
+
+.view-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: 0.35rem 0.8rem;
+  margin-bottom: -1px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.tab:hover {
+  color: var(--fg);
+}
+.tab[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.addons-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- the toolbox (task 074): a card for the sets, a card for the SavedVariables */
+
+.toolbox-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  padding: 0.9rem 1.25rem 1.25rem;
+}
+.toolbox-view .warnings {
+  margin: 0;
+}
+.tool-card {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.8rem 1rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  min-width: 0;
+}
+.tool-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.tool-form .check {
+  font-size: 0.85rem;
+}
+/* A message laid out in the panel: the plain line after a dot in the kind's color. */
+.note {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.note::before {
+  content: "\25CF";
+  margin-right: 0.4rem;
+  color: var(--kind-color, var(--muted));
+}
+.note:empty {
+  display: none;
+}
+.tool-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+}
+.field {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.field select {
+  min-width: 12rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.field select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.set-addons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.set-addon {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  padding: 0 0.55rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--set-color) 40%, transparent);
+  color: var(--set-color);
+  background: color-mix(in srgb, var(--set-color) 14%, transparent);
+}
+.set-enabled {
+  --set-color: var(--ok);
+}
+.set-disabled {
+  --set-color: var(--muted);
+  text-decoration: line-through;
+}
+/* An addon of the set with no folder under Interface\AddOns: the apply writes its line all the same. */
+.set-addon.not-installed {
+  border-style: dashed;
+  background: transparent;
+}
+.set-changes {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.savedvars-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.savedvars-table th {
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.savedvars-table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.savedvars-table .size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.savedvars-orphan .savedvars-status {
+  color: var(--warn);
+  font-weight: 600;
+}
+.savedvars-client .savedvars-status,
+.savedvars-unknown .savedvars-status {
+  color: var(--muted);
 }
 
 /* ---- the list: a header line, one row per addon */

@@ -8,14 +8,28 @@ your game client.
 [![Latest release](https://img.shields.io/github/v/release/speti4/mrgl)](https://github.com/speti4/mrgl/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/speti4/mrgl)](LICENSE)
 
-Planned output (M1):
+A run of `update --all` over two managed addons, one of them behind its release:
 
 ```text
-> mrgl update --all --flavor forever
+> mrgl update --all --flavor forever --yes
 Mrrrgl… mrgl mrgl.
-checking 14 addons in _forever_ against their sources
+checking the managed addons of _forever_ against their sources
+Mrrrgl… mrgl mrgl.
+checking Plain against github:Example/Prerelease (1 of 2)
+Plain  1.0.0  up to date
+Mrrrgl… mrgl mrgl.
+checking Questie against github:Questie/Questie (2 of 2)
+Questie  1.2.2 -> 1.2.3  update available
+Mrrrgl… mrgl mrgl.
+updating Questie from 1.2.2 to 1.2.3
+Mrrrgl… mrgl mrgl.
+downloading Questie-v1.2.3-forever.zip
+Mrrrgl… mrgl mrgl.
+installing Questie-v1.2.3-forever.zip into _forever_
 Mrglglglgl!
-2 addons updated, 12 up to date
+updated Questie from 1.2.2 to 1.2.3 (1 folder: Questie) in _forever_
+Mrglglglgl!
+1 addon updated, 1 up to date
 ```
 
 ## What it will do
@@ -40,14 +54,18 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
   checking as it goes, and without a GitHub token it stops before the 60 requests an hour run out, with the
   time the limit resets, instead of failing addon after addon. The window does the same per flavor: "Check
   for updates", "Update all" with a progress bar per addon and a cancel that lets the addon in flight
-  finish, and on each row its update, pin, ignore and release channel.
+  finish, and on each row its update, pin, ignore and release channel; what its last check found that
+  needs the network to know again (a source gone, a failed check, the addons left before the rate limit)
+  stays on the rows across a mark and a restart until the next check.
 - **A known-good set on another machine.** `mrgl export` writes the managed addons into a list file and
   `mrgl import` installs it elsewhere, at the current releases, or with `--exact` at the versions the list
   names; a version the source no longer offers is reported and skipped.
 - **A toolbox, not only a manager.** WTF backup and restore, addon sets (a raid set, a levelling set: the
   enabled addons of every character switched with one command), the SavedVariables sizes with the cleanup
   of files whose addon is gone, a junction link for the addons you develop yourself, and a window on top of
-  it all.
+  it all. The window's Toolbox tab of each flavor applies a saved set to every character or to one picked
+  by name, and lists the SavedVariables with their sizes and the orphans, which one button moves into a
+  dated backup zip; both refuse while the game runs.
 - **Lists instead of a catalog.** An exported list names sources and versions only, so a friend can import
   it: a zip in hand or a linked folder stays out of it, and a list that names a local path is refused. The
   repo keeps a Forever starter list, the usual addons whose GitHub releases carry a Forever build, at
@@ -82,7 +100,7 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 ```powershell
 cargo build --release
 target\release\mrgl.exe --version
-target\release\mrgl-app.exe                                                 # the window: every flavor's addons, their updates and states
+target\release\mrgl-app.exe                                                 # the window: every flavor's addons, their updates and states, its toolbox
 target\release\mrgl.exe list --flavor forever                               # what is installed, managed by mrgl or not
 target\release\mrgl.exe root "D:\Games\World of Warcraft"                   # remember a game folder installed elsewhere
 target\release\mrgl.exe add github:<owner>/<repo> --flavor forever            # install the release's Forever asset
@@ -90,6 +108,7 @@ target\release\mrgl.exe add github:<owner>/<repo> --flavor forever --dry-run  # 
 target\release\mrgl.exe add SomeAddon-1.2.3.zip --flavor forever            # install a zip in hand
 target\release\mrgl.exe remove SomeAddon --flavor forever                   # remove an addon mrgl installed
 target\release\mrgl.exe link D:\dev\my-addons --flavor forever              # a junction per addon you develop
+target\release\mrgl.exe link D:\dev\MyAddon --flavor forever                # or one addon whose repo is its folder
 target\release\mrgl.exe unlink D:\dev\my-addons --flavor forever            # exactly those junctions go again
 target\release\mrgl.exe pin SomeAddon 1.2.0 --flavor forever                # keep it at 1.2.0 (no version: the installed one)
 target\release\mrgl.exe unpin SomeAddon --flavor forever                    # let updates reach it again
@@ -107,6 +126,8 @@ target\release\mrgl.exe savedvars --clean --flavor forever                  # th
 target\release\mrgl.exe set save raid --flavor forever                     # the characters' enabled addons as the set "raid"
 target\release\mrgl.exe set apply raid --flavor forever                    # every character's AddOns.txt switched to it
 target\release\mrgl.exe set apply raid --character Mrgl --flavor forever   # one character only (--realm for a name on two realms)
+target\release\mrgl.exe set undo --flavor forever                          # the AddOns.txt files the last apply replaced, back
+target\release\mrgl.exe set disable raid BagSorter --flavor forever        # edit a stored set (enable, disable, drop one addon)
 target\release\mrgl.exe set list --flavor forever                          # the sets so far (show and remove take a name)
 target\release\mrgl.exe doctor                                             # the diagnostic report for a bug report
 target\release\mrgl.exe export --flavor forever --to forever-addons.json    # the managed addons as a list file
@@ -137,7 +158,8 @@ addon.
 
 On Forever, `add --dry-run` and `list` show a Forever note for each addon. `forever build: yes`, `no` or
 `unknown` says whether the addon's source publishes a Forever build at all: its `release.json` names one,
-names other flavors only, or nothing says. A curated note, when there is one, says why an addon with a
+names other flavors only, or nothing says. `list` looks at the release an install would take: the newest one
+of the addon's channel with a Forever zip, past a newer release built for other flavors only. A curated note, when there is one, says why an addon with a
 Forever build still only half works there (Forever hides combat values from addons), with the date it was
 verified and its source; a note older than 90 days is marked stale. `list` stays offline and reads what the
 last `add` of the same source fetched, so before that the build is `unknown`. The notes live in
@@ -164,6 +186,11 @@ apply is refused while the game client runs, since the game writes those files a
 `--character <name>` (with `--realm <realm>` when two realms have a character of that name) applies a set
 to that one character and leaves the others as they are, so a raid character and a levelling alt of the
 same flavor can each have their own set; on `set save` it takes the set from that character alone.
+`--account <name>` tells apart a realm and name that sit under two account folders. An apply keeps the
+`AddOns.txt` files it replaced, so `set undo` puts the last apply back byte for byte (refused while the
+game runs, like the apply); `set enable`, `set disable` and `set drop <set> <addon>` change one addon of a
+stored set without touching any `AddOns.txt`, and `set save` keeps an addon that is no longer installed,
+with a warning that names it.
 
 `list` and `add` check every addon's required dependencies (the TOC's `## Dependencies` and
 `## RequiredDeps`) and name what the game will not find, as a warning, never a refusal:
@@ -173,10 +200,10 @@ Mrgl? Mrgl…
 Needy needs the missing dependency LibMissing: install it or the addon does not load
 ```
 
-A dependency counts as there when an addon folder of that name is installed, when it is one of the game's
-own `Blizzard_` addons, or when the addon carries the library inside its own folder (a release that is not
-a `nolib` build). `--json` has the details per addon
-under `dependencies`.
+A dependency counts as there when an addon folder of that name is installed or when it is one of the game's
+own `Blizzard_` addons. A library the addon carries only inside its own folder does not count: the game
+says `Dependency missing` and does not load the addon, so mrgl names it missing too and says why. `--json`
+has the details per addon under `dependencies`.
 
 Something not working? `mrgl doctor` prints what a bug report needs: the game folder and how it was found,
 each flavor's build, AddOns folder, sidecar, cache and running client, the WebView2 version, the GitHub rate
@@ -185,13 +212,17 @@ block into the [bug report](https://github.com/speti4/mrgl/issues/new?template=b
 
 `link` makes a directory junction under `Interface\AddOns` for every subfolder of a development folder that
 has a TOC named after it (no admin rights needed), so the game loads your addons straight from your repo. A
+folder that is itself an addon (a TOC named after it, `MyAddon.toc` or `MyAddon_Forever.toc`) is linked as
+that one addon, so a repository that is the addon folder needs no parent. A
 folder of the same name already there is skipped, never replaced; an install never writes over a linked
 addon, and `unlink` removes exactly the junctions `link` made, never a folder and never a file of yours.
 
 An exported list carries each managed addon's source and version; `import` installs the current release of
 every `github:` entry the flavor does not have yet, and leaves the others alone (a zip in hand stays on the
 machine it came from, a linked folder is linked again). `list` and an install warn when an addon's
-`## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor.
+`## Interface` names no interface of the flavor's build, the first sign of a zip for another flavor;
+`scan` and `list` mark an addon `out of date` when its interface is from the flavor's expansion but older
+than the installed build, as the game's own addon list does after a patch.
 
 ## Documentation
 

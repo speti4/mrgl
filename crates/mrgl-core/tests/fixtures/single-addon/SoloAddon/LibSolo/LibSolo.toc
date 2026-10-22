@@ -1,0 +1,4 @@
+## Interface: 11508
+## Title: LibSolo
+
+LibSolo.lua

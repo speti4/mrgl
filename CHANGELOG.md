@@ -7,6 +7,31 @@ not the list. The summary under a heading is written by hand and kept by the gen
 
 ## Unreleased
 
+<!-- The summary above is written by hand; the list below is generated from tasks/done/ by scripts/changelog.py. -->
+
+### M1 Core + CLI
+
+- The CLI's output survives a closed pipe ([075](https://github.com/speti4/mrgl/blob/main/tasks/done/075-cli-output-survives-a-closed-pipe.md))
+- The dependency and interface checks say what the client says: an embedded-only dependency is missing, a lower interface number is out of date ([076](https://github.com/speti4/mrgl/blob/main/tasks/done/076-the-checks-say-what-the-client-says.md))
+- The marks survive a reinstall under a new derived name, and the pinned line uses the version order ([077](https://github.com/speti4/mrgl/blob/main/tasks/done/077-marks-survive-a-reinstall-and-the-pinned-line-orders-versions.md))
+
+### M2 Window MVP
+
+- The window's cached view: the Forever build signal walks the releases like the resolve, and the last online answer is kept ([078](https://github.com/speti4/mrgl/blob/main/tasks/done/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md))
+- Window and exe polish after the first release: the checks after an update, the title bar theme, the CLI exe's version ([079](https://github.com/speti4/mrgl/blob/main/tasks/done/079-window-and-exe-polish-after-the-first-release.md))
+
+### M3 Toolbox
+
+- `link` takes a single addon folder as well as a development folder ([062](https://github.com/speti4/mrgl/blob/main/tasks/done/062-link-takes-a-single-addon-folder.md))
+- Addon sets: undo an apply, edit a stored set, `--account`, and uninstalled addons on save ([073](https://github.com/speti4/mrgl/blob/main/tasks/done/073-addon-sets-undo-edit-and-account.md))
+- The window's toolbox: a set switch and a SavedVariables view ([074](https://github.com/speti4/mrgl/blob/main/tasks/done/074-window-toolbox-sets-and-savedvariables.md))
+
+### Project housekeeping
+
+- Housekeeping after the M1 fixes: one `Blizzard_` prefix, the doctor's formatter alias, the voice sample in the docs ([080](https://github.com/speti4/mrgl/blob/main/tasks/done/080-housekeeping-after-wave-5.md))
+
+## 0.1.0 — 2026-10-22
+
 The first release, 0.1.0: one portable zip with the `mrgl` command line and the `mrgl-app` window, both with
 the murloc icon, nothing to install. The command line scans every flavor, installs and updates addons from
 GitHub releases flavor-correctly (a zip in hand too), pins, ignores, rolls back, links development folders,

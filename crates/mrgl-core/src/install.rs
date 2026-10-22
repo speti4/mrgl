@@ -36,8 +36,10 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 
 use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
+use crate::dependencies::{self, AddonDependencies};
 use crate::error::{Error, Result};
 use crate::flavor::{Flavor, FlavorId};
+use crate::interface::{self, InterfaceMismatch};
 use crate::scan;
 use crate::sources::{Channel, Pick, Source, SourceSpec, Target};
 use crate::state::{self, Entry, FlavorHome, LoadedState, State};
@@ -342,6 +344,35 @@ impl Default for Processes {
     }
 }
 
+/// What [`Engine::check_installed`] found about the folders of an install.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InstalledChecks {
+    /// The dependency check of each installed folder (task 029).
+    pub dependencies: Vec<AddonDependencies>,
+    /// The primary folder names no interface of the flavor's build (task 015).
+    pub mismatch: Option<InterfaceMismatch>,
+    /// Why there is no check: the flavor's folder could not be scanned.
+    pub warnings: Vec<String>,
+}
+
+impl InstalledChecks {
+    /// The warning lines, in order: a scan that failed, each missing dependency, the interface mismatch.
+    pub fn lines(&self, folder_name: &str) -> Vec<String> {
+        let mut lines = self.warnings.clone();
+        lines.extend(
+            self.dependencies
+                .iter()
+                .filter_map(AddonDependencies::warning),
+        );
+        lines.extend(
+            self.mismatch
+                .iter()
+                .map(|mismatch| mismatch.after_install_line(folder_name)),
+        );
+        lines
+    }
+}
+
 /// The engine for one flavor: its game folder and its folder under the mrgl home.
 #[derive(Debug, Clone)]
 pub struct Engine {
@@ -409,6 +440,39 @@ impl Engine {
         self.home.read_state(&self.flavor.id)
     }
 
+    /// The checks an install reports about the folders it just installed, the command line's summary and
+    /// the window's update alike (tasks 015, 029, 079): the dependency check of those folders against the
+    /// flavor as it is now, and the interface check of the first one, the primary folder. One scan; a scan
+    /// that fails is a warning and no check.
+    pub fn check_installed(&self, folders: &[String]) -> InstalledChecks {
+        let scan = match scan::scan_flavor(&self.flavor) {
+            Ok(scan) => scan,
+            Err(error) => {
+                return InstalledChecks {
+                    warnings: vec![error.to_string()],
+                    ..InstalledChecks::default()
+                };
+            }
+        };
+        let state = self.load_state().ok().map(|loaded| loaded.state);
+        let installed = |folder: &str| folders.iter().any(|one| one.eq_ignore_ascii_case(folder));
+        let dependencies = dependencies::check(&scan, state.as_ref())
+            .into_iter()
+            .filter(|check| installed(&check.folder))
+            .collect();
+        let mismatch = folders.first().and_then(|primary| {
+            scan.addons
+                .iter()
+                .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
+                .and_then(|addon| interface::check_addon(addon, self.flavor.version))
+        });
+        InstalledChecks {
+            dependencies,
+            mismatch,
+            warnings: Vec::new(),
+        }
+    }
+
     /// Unpacks a zip into a fresh folder under `staging\`, refusing any entry that would land outside it,
     /// finds the addon folders and settles the name and the version. Nothing in the game folder changes.
     pub fn stage(&self, zip: &Path, metadata: &Metadata) -> Result<Staged> {
@@ -466,11 +530,15 @@ impl Engine {
     /// linked addon or a junction mrgl did not make is refused (tasks 005 and 067,
     /// [`Engine::refuse_links`]): here, so no path that stages and commits can skip it, and a dropped
     /// folder is never moved aside into the staging folder and deleted with it.
+    /// The entry replaced is the one of the staged name, else the one that records the same addon under
+    /// another name (task 077, [`renamed_entry`]): its pin, ignored mark, channel and previous version
+    /// carry over to the new name, and its cached zips move to the new name's cache folder.
     pub fn commit(&self, mut staged: Staged, state: &mut State) -> Result<Installed> {
+        let new_folders = staged.folders();
         let previous = state
             .entry(&staged.name)
+            .or_else(|| renamed_entry(state, &staged.name, &new_folders))
             .map(|(name, entry)| (name.to_string(), entry.clone()));
-        let new_folders = staged.folders();
         let stale: Vec<String> = previous
             .iter()
             .flat_map(|(_, entry)| entry.folders.iter())
@@ -542,12 +610,25 @@ impl Engine {
             previous.as_ref().map(|(_, entry)| entry),
             &mut warnings,
         );
+        let renamed = previous
+            .as_ref()
+            .map(|(old_name, _)| old_name.clone())
+            .filter(|old_name| !old_name.eq_ignore_ascii_case(&staged.name));
         if let Some((old_name, _)) = &previous {
             state.addons.remove(old_name);
+        }
+        if let Some(old_name) = &renamed {
+            warnings.push(format!(
+                "{old_name} is managed as {} now, with its marks and its previous version",
+                staged.name
+            ));
         }
         take_over_folders(state, &staged.name, &new_folders, &mut warnings);
         state.addons.insert(staged.name.clone(), entry);
         self.home.write_state(state)?;
+        if let Some(old_name) = &renamed {
+            self.carry_cache(old_name, &staged.name, &mut warnings);
+        }
         self.cache_zip(&staged, previous_version.as_deref(), &mut warnings);
         Ok(Installed {
             name: staged.name.clone(),
@@ -896,6 +977,33 @@ impl Engine {
         Ok(marked)
     }
 
+    /// Moves the zips an addon's cache folder keeps under its old name into the folder of its new name
+    /// (task 077), so the rollback finds the previous version's zip after a reinstall under a new name; a
+    /// zip the new folder has already stays where it is. Best effort: a failure is a warning, the install
+    /// stands, and the old folder goes once it is empty.
+    fn carry_cache(&self, old_name: &str, new_name: &str, warnings: &mut Vec<String>) {
+        let from = self.home.addon_cache_dir(old_name);
+        let Ok(entries) = std::fs::read_dir(&from) else {
+            return;
+        };
+        let to = self.home.addon_cache_dir(new_name);
+        for entry in entries.flatten() {
+            let target = to.join(entry.file_name());
+            if target.exists() {
+                continue;
+            }
+            let moved =
+                std::fs::create_dir_all(&to).and_then(|()| std::fs::rename(entry.path(), &target));
+            if let Err(error) = moved {
+                warnings.push(format!(
+                    "the cached zip of {old_name} could not move to {}: {error}",
+                    target.display()
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir(&from);
+    }
+
     /// Copies the zip into `cache\<addon>\<version>.zip` and prunes the folder to this version and the
     /// previous one. Best effort: a failure is a warning, the install stands.
     fn cache_zip(
@@ -997,6 +1105,22 @@ fn keep_marks(
         ));
     }
     entry
+}
+
+/// The entry that records the addon a commit stages under another name (task 077): a zip in hand is named
+/// by the rule of task 065 now, while the sidecar may know the same folders under the name an older rule
+/// gave. It is the entry that records the folder the staged name names while its own name is a folder of
+/// the staged addon, both ASCII case-insensitive: each name points at the other's folders, so a library
+/// folder one addon ships and another addon records is never taken for the addon. A folder belongs to one
+/// entry at most, so at most one entry answers.
+fn renamed_entry<'a>(
+    state: &'a State,
+    name: &str,
+    folders: &[String],
+) -> Option<(&'a str, &'a Entry)> {
+    let (old_name, entry) = state.entry_for_folder(name)?;
+    (!old_name.eq_ignore_ascii_case(name) && contains_folder(folders, old_name))
+        .then_some((old_name, entry))
 }
 
 /// The sidecar entry of an addon from a source: the entry whose source is that spec (ASCII

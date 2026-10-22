@@ -26,6 +26,12 @@
 //                                       theme and the serious switch as they apply, which source decided the
 //                                       switch (flag | environment | file | default), what config.json stores
 //   Data.setPreferences(changes)     -> Promise<the same>          `{ theme?, serious? }` into config.json
+//   Data.toolbox(flavorId)           -> Promise<{ toolbox, changes, zip, messages }>  task 074: the flavor's
+//                                       sets, characters and SavedVariables, and whether its client runs
+//   Data.applySet(flavorId, set, target)  -> the same            a stored set into the AddOns.txt of every
+//                                       character, or of the one `target` `{ character, realm }` names
+//   Data.cleanSavedVariables(flavorId)    -> the same            the orphan SavedVariables into the dated
+//                                       zip; both writes are refused while the client runs (task 023)
 //
 // A message is `{ kind, murloc, plain }` as `mrgl_core::voice` says it: the kind picks the murloc line, the
 // plain line carries every fact, and a serious voice sends the murloc line empty (D-005). The murloc table
@@ -56,15 +62,32 @@
 //     source: { kind, id } | null,              github | wago | wowi | curseforge | zip | linked
 //     managed, guessed,                         a sidecar entry; a source known only from a TOC hint
 //     update: { version, release, prerelease } | null,  the update the check found
-//     check: { state, label, latest, detail, line } | null,  the check's answer: offline from the cache,
-//                                               or the window's last check; state as `UpdateState` says it
+//     check: { state, label, latest, order, detail, line } | null,  the check's answer: offline from the
+//                                               cache, or the window's last check; state as `UpdateState`
+//                                               says it, order older | same | newer | null (077)
 //     channel: stable | prerelease | null,      021, null for an unmanaged addon
 //     pinned: string | null, ignored,           021
 //     forever: { build, note, kind, verified, source, stale } | null,  011, on every row of Forever only:
 //                                               build yes | no | unknown, a curated note or null
-//     missing: [string] }                       029: the required dependencies no folder answers
+//     missing: [string] }                       029: the required dependencies no addon folder answers (076: an embedded one too)
 //
 // The view derives the row's one state from these flags (`state.js`); the data never names a state.
+//
+// A toolbox answer (task 074, `src/toolbox.rs`): the toolbox as it is now (null when the flavor cannot be
+// read), what an apply changed per character, the zip a cleanup wrote, and the messages, the summary last:
+//
+//   { toolbox: { flavor, folder,                the flavor's id and folder
+//                sets: [{ name, saved_at, enabled, disabled,
+//                         addons: [{ name, state, installed }] }],  state enabled | disabled
+//                sets_note,                     a message: how many sets, or none yet
+//                characters: [{ name, realm, label }],  label `<realm>/<name>`; no account
+//                saved_variables: { files: [{ addon, place, realm, character, bytes, size, lua, bak,
+//                                             status }],          installed | orphan | client | unknown
+//                                   bytes, size, orphans, orphan_bytes, orphan_size, summary },
+//                client } | null,               a warning message while the client runs, else null
+//     changes: [{ character: { name, realm, label }, changed: [{ name, state }], created }],
+//     zip: string | null,
+//     messages: [message] }
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
   else root.Data = factory();
@@ -104,15 +127,20 @@
     "rate-limited": "not checked (rate limit)",
   };
 
-  // A check's answer for a row, with the data line the check writes.
+  // A check's answer for a row, with the data line the check writes; the order of the installed version
+  // against the made-up release is the row's `newer` mark, else the same or an older one.
   function checkFact(row, state, latest, detail) {
     const versions = state === "update-available" ? `${row.version} -> ${latest}` : row.version;
+    const order = !latest ? null : latest === row.version ? "same" : row.newer ? "newer" : "older";
     let text = LABELS[state];
-    if (state === "pinned") text = `pinned at ${row.pinned}, ${latest && latest !== row.version ? `${latest} is out, left alone` : "up to date"}`;
+    if (state === "pinned") {
+      const against = { newer: `newer than the current release ${latest}, left alone`, older: `${latest} is out, left alone`, same: "up to date" };
+      text = `pinned at ${row.pinned}, ${against[order]}`;
+    }
     if (state === "installed-newer") text = `newer than the current release ${latest}, left alone`;
     if (state === "ignored") text = "ignored, not checked";
     if (detail && ["not-checked", "source-gone", "failed", "rate-limited"].includes(state)) text = `${text}: ${detail}`;
-    return { state, label: LABELS[state], latest: latest || null, detail: detail || null, line: `${row.name}  ${versions}  ${text}` };
+    return { state, label: LABELS[state], latest: latest || null, order, detail: detail || null, line: `${row.name}  ${versions}  ${text}` };
   }
 
   // What the made-up check answers for a managed row: GitHub rows from the made-up current release, the
@@ -237,6 +265,7 @@
       addons: [
         addon("Questie", "Questie", "11.2.3", { source: github("Questie/Questie"), managed: true, latest: "11.2.0", newer: true }),
         addon("pfQuest", "pfQuest", "6.4.1", { source: github("shagu/pfQuest"), managed: true, latest: "6.5.0" }),
+        addon("AtlasLootClassic", "AtlasLoot Classic", "v5.0.0-beta", { source: github("Hoizame/AtlasLootClassic"), managed: true, pinned: "v5.0.0-beta", latest: "v4.9.0", newer: true }),
         addon("Bartender4", "Bartender4", "4.15.7", { source: curseforge("4525"), guessed: true }),
         addon("RaidLogger", "Raid Logger", "0.9", { missing: ["LibRaidLog"] }),
       ],
@@ -485,6 +514,246 @@
     return Promise.resolve({ flavor, messages: [say(changed ? "success" : "nothing", line)] });
   }
 
+  // ---- the toolbox (task 074): made-up characters, sets and SavedVariables per flavor. Retail's client
+  // "runs", so the refusal of both writes shows in the sketch.
+
+  const HOME = "%LOCALAPPDATA%\\mrgl";
+
+  // A byte count as `size_text` of the core writes it.
+  function sizeText(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KB", "MB", "GB", "TB", "PB"];
+    let value = bytes / 1024;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return `${value.toFixed(1)} ${units[unit]}`;
+  }
+
+  const count = (n, noun) => (n === 0 ? `no ${noun}s` : n === 1 ? `1 ${noun}` : `${n} ${noun}s`);
+
+  // One flavor's made-up toolbox: two characters with their AddOns.txt, two sets, the SavedVariables.
+  function toolboxState(flavor) {
+    const folders = flavor.addons.map((addon) => addon.folder);
+    const characters = [
+      { name: "Mrglina", realm: "Made-up Realm", addons: {} },
+      { name: "Grrlwave", realm: "Second Realm", addons: {} },
+    ];
+    for (const character of characters) for (const folder of folders) character.addons[folder] = "enabled";
+    if (folders[1]) characters[1].addons[folders[1]] = "disabled";
+    const raid = {};
+    for (const folder of folders.slice(0, 3)) raid[folder] = "enabled";
+    if (folders[3]) raid[folders[3]] = "disabled";
+    const levelling = {};
+    if (folders[0]) levelling[folders[0]] = "disabled";
+    if (folders[1]) levelling[folders[1]] = "enabled";
+    levelling.QuestHelperOld = "enabled";
+    const file = (addon, place, bytes, status, bak) => ({
+      addon,
+      place,
+      realm: place === "account-wide" ? null : place.split(" / ")[0],
+      character: place === "account-wide" ? null : place.split(" / ")[1],
+      bytes,
+      size: sizeText(bytes),
+      lua: true,
+      bak: Boolean(bak),
+      status,
+    });
+    const files = [
+      ...folders.map((folder, index) =>
+        file(folder, "account-wide", 4096 * (folders.length - index) + 517, "installed", index % 2 === 0)
+      ),
+      file("OldDamageMeter", "account-wide", 2621440, "orphan", true),
+      file("Blizzard_Console", "account-wide", 812, "client"),
+      file("RetiredBags", "Second Realm / Grrlwave", 18944, "orphan"),
+    ].sort((a, b) => b.bytes - a.bytes);
+    return {
+      characters,
+      sets: {
+        raid: { saved_at: "2026-10-20T19:02:11Z", addons: raid },
+        levelling: { saved_at: "2026-10-21T08:40:00Z", addons: levelling },
+      },
+      files,
+      client: flavor.id === "wow" ? { exe: "Wow.exe", pid: 4242 } : null,
+    };
+  }
+
+  const toolboxStates = new Map();
+
+  function toolboxStateOf(flavor) {
+    if (!toolboxStates.has(flavor.id)) toolboxStates.set(flavor.id, toolboxState(flavor));
+    return toolboxStates.get(flavor.id);
+  }
+
+  function refusal(flavor, client) {
+    return `the client is running in ${flavor.folder} (${client.exe}, pid ${client.pid}): close the game first, nothing under WTF is written while it runs`;
+  }
+
+  function installedOf(flavor) {
+    return new Set(flavor.addons.map((addon) => addon.folder.toLowerCase()));
+  }
+
+  // The toolbox of a flavor, in the shape of `ToolboxView`.
+  function toolboxView(flavor) {
+    const state = toolboxStateOf(flavor);
+    const installed = installedOf(flavor);
+    const sets = Object.keys(state.sets)
+      .sort()
+      .map((name) => {
+        const set = state.sets[name];
+        const addons = Object.keys(set.addons)
+          .sort()
+          .map((addon) => ({ name: addon, state: set.addons[addon], installed: installed.has(addon.toLowerCase()) }));
+        return {
+          name,
+          saved_at: set.saved_at,
+          enabled: addons.filter((addon) => addon.state === "enabled").length,
+          disabled: addons.filter((addon) => addon.state === "disabled").length,
+          addons,
+        };
+      });
+    const files = state.files;
+    const bytes = files.reduce((sum, item) => sum + item.bytes, 0);
+    const orphans = files.filter((item) => item.status === "orphan");
+    const orphanBytes = orphans.reduce((sum, item) => sum + item.bytes, 0);
+    const counted = files.length === 1 ? "1 SavedVariables file" : `${files.length} SavedVariables files`;
+    const summary =
+      files.length === 0
+        ? say("nothing", `no SavedVariables files in the WTF folder of ${flavor.folder}`)
+        : orphans.length === 0
+          ? say("success", `${counted} of ${flavor.folder}, ${sizeText(bytes)} in all, no orphans`)
+          : say(
+              "warning",
+              `${counted} of ${flavor.folder}, ${sizeText(bytes)} in all; ${count(orphans.length, "orphan")} (${sizeText(orphanBytes)}) have no addon folder: the cleanup moves them into a backup zip`
+            );
+    return {
+      flavor: flavor.id,
+      folder: flavor.folder,
+      sets,
+      sets_note: say("success", `${sets.length} sets of ${flavor.folder} in ${HOME}\\${flavor.id}\\sets.json`),
+      characters: state.characters.map((character) => ({
+        name: character.name,
+        realm: character.realm,
+        label: `${character.realm}/${character.name}`,
+      })),
+      saved_variables: {
+        files: files.map((item) => Object.assign({}, item)),
+        bytes,
+        size: sizeText(bytes),
+        orphans: orphans.length,
+        orphan_bytes: orphanBytes,
+        orphan_size: sizeText(orphanBytes),
+        summary,
+      },
+      client: state.client ? say("warning", refusal(flavor, state.client)) : null,
+    };
+  }
+
+  function toolboxAnswer(flavor, messages, extra) {
+    return Object.assign({ toolbox: toolboxView(flavor), changes: [], zip: null, messages }, extra || {});
+  }
+
+  function noFlavor(flavorId) {
+    return {
+      toolbox: null,
+      changes: [],
+      zip: null,
+      messages: [say("error", `no flavor ${flavorId}: no such flavor folder under ${ROOT}`)],
+    };
+  }
+
+  function toolbox(flavorId) {
+    const flavor = flavors.find((item) => item.id === flavorId);
+    return Promise.resolve(flavor ? toolboxAnswer(flavor, []) : noFlavor(flavorId));
+  }
+
+  // The made-up apply, with the lines of `mrgl set apply`.
+  function applySet(flavorId, setName, target) {
+    const flavor = flavors.find((item) => item.id === flavorId);
+    if (!flavor) return Promise.resolve(noFlavor(flavorId));
+    const state = toolboxStateOf(flavor);
+    if (state.client) return Promise.resolve(toolboxAnswer(flavor, [say("error", refusal(flavor, state.client))]));
+    const name = Object.keys(state.sets).find((key) => key.toLowerCase() === String(setName).toLowerCase());
+    if (!name) {
+      const known = Object.keys(state.sets).sort().join(", ");
+      return Promise.resolve(
+        toolboxAnswer(flavor, [say("error", `set not found: ${setName} (flavor ${flavor.folder}); the saved sets: ${known}`)])
+      );
+    }
+    const one = Boolean(target && target.character);
+    const chosen = one
+      ? state.characters.filter(
+          (character) =>
+            character.name.toLowerCase() === target.character.toLowerCase() &&
+            (!target.realm || character.realm.toLowerCase() === target.realm.toLowerCase())
+        )
+      : state.characters;
+    if (one && chosen.length !== 1) {
+      const known = state.characters.map((character) => `${character.name} (${character.realm})`).join(", ");
+      return Promise.resolve(
+        toolboxAnswer(flavor, [
+          say("error", `character not found: ${target.character} (flavor ${flavor.folder}); the characters: ${known}`),
+        ])
+      );
+    }
+    const set = state.sets[name].addons;
+    const changes = chosen.map((character) => {
+      const changed = [];
+      for (const addon of Object.keys(set).sort()) {
+        if (character.addons[addon] !== set[addon]) {
+          character.addons[addon] = set[addon];
+          changed.push({ name: addon, state: set[addon] });
+        }
+      }
+      const label = `${character.realm}/${character.name}`;
+      return { character: { name: character.name, realm: character.realm, label }, changed, created: false };
+    });
+    const lines = changes.reduce((sum, change) => sum + change.changed.length, 0);
+    const installed = installedOf(flavor);
+    const missing = Object.keys(set)
+      .sort()
+      .filter((addon) => !installed.has(addon.toLowerCase()));
+    const messages = [];
+    if (missing.length) {
+      messages.push(
+        say(
+          "warning",
+          `set ${name} names addons that are not installed in ${flavor.folder}, their lines are written all the same: ${missing.join(", ")}`
+        )
+      );
+    }
+    const whom = one ? changes[0].character.label : count(changes.length, "character");
+    const matched = one ? `${whom} of ${flavor.folder}` : `every character of ${flavor.folder} (${whom})`;
+    messages.push(
+      lines === 0
+        ? say("nothing", `set ${name} already matches ${matched}, nothing written`)
+        : say("success", `applied set ${name} to ${whom} of ${flavor.folder}: ${lines} addon line${lines === 1 ? "" : "s"} changed`)
+    );
+    return Promise.resolve(toolboxAnswer(flavor, messages, { changes }));
+  }
+
+  // The made-up cleanup, with the lines of `mrgl savedvars --clean`.
+  function cleanSavedVariables(flavorId) {
+    const flavor = flavors.find((item) => item.id === flavorId);
+    if (!flavor) return Promise.resolve(noFlavor(flavorId));
+    const state = toolboxStateOf(flavor);
+    if (state.client) return Promise.resolve(toolboxAnswer(flavor, [say("error", refusal(flavor, state.client))]));
+    const moved = state.files.filter((item) => item.status === "orphan");
+    if (moved.length === 0) {
+      return Promise.resolve(
+        toolboxAnswer(flavor, [say("nothing", `no orphans in the SavedVariables of ${flavor.folder}, nothing moved`)])
+      );
+    }
+    state.files = state.files.filter((item) => item.status !== "orphan");
+    const files = moved.reduce((sum, item) => sum + (item.lua ? 1 : 0) + (item.bak ? 1 : 0), 0);
+    const bytes = moved.reduce((sum, item) => sum + item.bytes, 0);
+    const zip = `${HOME}\\backups\\${flavor.id}\\SavedVariables-2026-10-22.zip`;
+    const line = `moved ${count(moved.length, "orphan")} of ${flavor.folder} (${count(files, "file")}, ${sizeText(bytes)}) into ${zip}; unzip it into the WTF folder to put them back`;
+    return Promise.resolve(toolboxAnswer(flavor, [say("success", line)], { zip }));
+  }
+
   return {
     version,
     flavors: flavors_,
@@ -498,6 +767,9 @@
     mark,
     preferences,
     setPreferences,
+    toolbox,
+    applySet,
+    cleanSavedVariables,
     settings,
   };
 });

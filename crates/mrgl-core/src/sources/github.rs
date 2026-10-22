@@ -24,7 +24,7 @@
 //! The same release says whether the addon publishes a Forever build at all ([`forever_build`], task 011):
 //! the pick carries it, and every release's `release.json` is cached per tag next to the list (task 042), so
 //! a repeated resolve of the same release downloads it once and `list` can answer from the cache alone
-//! ([`GitHub::cached_forever_build`]), offline. Once the API has answered with the list, fresh or
+//! ([`GitHub::cached_forever_build`]), offline, for the release a Forever resolve would take (task 078). Once the API has answered with the list, fresh or
 //! confirmed unchanged, the files of tags it no longer holds are dropped (task 072).
 //!
 //! When the API cannot be reached (no network, a timeout) and the release list is cached, the resolve
@@ -329,6 +329,38 @@ pub fn forever_build(release: &Release, release_json: Option<&ReleaseJson>) -> F
     }
 }
 
+/// The Forever build of the release a Forever resolve takes on a channel (task 078): the releases of
+/// [`releases_on`], newest first, down to the first one with an asset for Forever, as the resolve walks
+/// them (task 066). `release_json` answers for a release's `release.json`: `Some(Some(_))` when it is read,
+/// `Some(None)` when the release has none or it cannot be read (the resolve falls back to the names), and
+/// `None` when it is not known (not cached), which makes the answer `Unknown`, since the resolve could not
+/// tell either. A release whose `release.json` names Forever for a zip it has is `Yes`; one with a Forever
+/// zip by its name only is `Unknown` (the resolve takes it as a guess); one without a Forever asset is
+/// passed. When none has one, the newest release's own signal ([`forever_build`]) stands, and without a
+/// release the answer is `Unknown`.
+pub fn forever_build_on<'a>(
+    releases: &'a [Release],
+    channel: Channel,
+    mut release_json: impl FnMut(&'a Release) -> Option<Option<ReleaseJson>>,
+) -> ForeverBuild {
+    let forever = Target::new(FlavorId::Forever);
+    let mut newest = None;
+    for release in releases_on(releases, channel) {
+        let Some(release_json) = release_json(release) else {
+            return ForeverBuild::Unknown;
+        };
+        let build = forever_build(release, release_json.as_ref());
+        if build == ForeverBuild::Yes {
+            return ForeverBuild::Yes;
+        }
+        if pick_by_name(release, &forever).is_some() {
+            return ForeverBuild::Unknown;
+        }
+        newest.get_or_insert(build);
+    }
+    newest.unwrap_or(ForeverBuild::Unknown)
+}
+
 /// The asset whose name ends with one of the target's keys (`-forever`, `-mists`, …, before `.zip` and an
 /// optional `-nolib`), library-included first; for retail also the zip with no flavor suffix at all, which
 /// is how the packager names it. Always a guess: nothing but a file name says what the zip is for.
@@ -491,12 +523,13 @@ impl<H: Http> GitHub<H> {
             .then_some(cached.release_json)
     }
 
-    /// Whether the repository publishes a `forever` build, from the cache alone (task 011): the cached
-    /// release list's current release and the `release.json` cached for its tag, never a request, so
-    /// `list` stays offline and fast. `Unknown` when nothing is cached, the cache is unreadable, the
-    /// current release has no `release.json`, or none is cached for its tag (the list moved on and no `add`
-    /// has fetched the new one yet).
-    pub fn cached_forever_build(&self, spec: &SourceSpec) -> ForeverBuild {
+    /// Whether the repository publishes a `forever` build, from the cache alone (task 011): the release a
+    /// Forever resolve on the channel takes from the cached release list, the newest one with an asset for
+    /// Forever (task 078, [`forever_build_on`]), with the `release.json` cached for its tag; never a
+    /// request, so `list` and the window stay offline and fast. `Unknown` when nothing is cached, the cache
+    /// is unreadable, or the walk meets a release whose `release.json` is not cached for its tag (the list
+    /// moved on and no resolve has fetched the new one yet).
+    pub fn cached_forever_build(&self, spec: &SourceSpec, channel: Channel) -> ForeverBuild {
         let SourceSpec::GitHub { owner, repo } = spec;
         let Some(cached) = self
             .cache_file(owner, repo)
@@ -505,17 +538,13 @@ impl<H: Http> GitHub<H> {
         else {
             return ForeverBuild::Unknown;
         };
-        let Some(release) = current_release(&cached.releases) else {
-            return ForeverBuild::Unknown;
-        };
-        let release_json = release
-            .release_json_asset()
-            .and_then(|asset| self.cached_release_json(owner, repo, release, asset))
-            .and_then(|raw| serde_json::from_value::<ReleaseJson>(raw).ok());
-        match release_json {
-            Some(release_json) => forever_build(release, Some(&release_json)),
-            None => ForeverBuild::Unknown,
-        }
+        forever_build_on(&cached.releases, channel, |release| {
+            let Some(asset) = release.release_json_asset() else {
+                return Some(None);
+            };
+            let raw = self.cached_release_json(owner, repo, release, asset)?;
+            Some(ReleaseJson::deserialize(&raw).ok())
+        })
     }
 
     fn api_request(&self, url: String) -> Request {
@@ -1448,6 +1477,68 @@ mod tests {
             &[("forever", 16001)],
         )]);
         assert_eq!(forever_build(&plain, Some(&missing)), ForeverBuild::No);
+    }
+
+    #[test]
+    fn the_forever_build_on_a_channel_walks_to_the_release_with_a_forever_asset() {
+        let named = |filename: &str, flavor: &str| ReleaseJson {
+            releases: vec![entry(filename, false, &[(flavor, 16001)])],
+        };
+        let mut beta = release("v3.0.0-beta", &["A-v3-forever.zip", "release.json"]);
+        beta.prerelease = true;
+        let classic = release("v2.0.0", &["A-v2-classic.zip", "release.json"]);
+        let forever = release("v1.9.0", &["A-v1.9-forever.zip", "release.json"]);
+        let releases = vec![beta, classic, forever];
+        let known = |release: &Release| {
+            Some(Some(match release.tag_name.as_str() {
+                "v3.0.0-beta" => named("A-v3-forever.zip", "forever"),
+                "v2.0.0" => named("A-v2-classic.zip", "classic"),
+                _ => named("A-v1.9-forever.zip", "forever"),
+            }))
+        };
+        // The newest stable release is built for classic only: the one before it says yes.
+        assert_eq!(
+            forever_build_on(&releases, Channel::Stable, known),
+            ForeverBuild::Yes
+        );
+        assert_eq!(
+            forever_build_on(&releases, Channel::Prerelease, known),
+            ForeverBuild::Yes
+        );
+        // A release.json the walk meets and does not know: nothing can be told.
+        let unknown_older = |release: &Release| {
+            (release.tag_name == "v2.0.0")
+                .then(|| known(release))
+                .flatten()
+        };
+        assert_eq!(
+            forever_build_on(&releases, Channel::Stable, unknown_older),
+            ForeverBuild::Unknown
+        );
+        // No release with a Forever asset: the newest one's own signal.
+        let classic_only = vec![
+            release("v2.0.0", &["A-v2-classic.zip", "release.json"]),
+            release("v1.0.0", &["A-v1-classic.zip"]),
+        ];
+        assert_eq!(
+            forever_build_on(&classic_only, Channel::Stable, |release| Some(
+                (release.tag_name == "v2.0.0").then(|| named("A-v2-classic.zip", "classic"))
+            )),
+            ForeverBuild::No
+        );
+        // A Forever zip by its name only, below a release without one: the resolve's guess, unknown.
+        let by_name = vec![
+            release("v2.0.0", &["A-v2-classic.zip"]),
+            release("v1.0.0", &["A-v1-forever.zip"]),
+        ];
+        assert_eq!(
+            forever_build_on(&by_name, Channel::Stable, |_| Some(None)),
+            ForeverBuild::Unknown
+        );
+        assert_eq!(
+            forever_build_on(&[], Channel::Stable, |_| Some(None)),
+            ForeverBuild::Unknown
+        );
     }
 
     const RELEASES_URL: &str = "https://api.github.com/repos/o/r/releases?per_page=30";

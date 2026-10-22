@@ -3,12 +3,15 @@
 //! The webview loads the static files under `ui/` (embedded at compile time) and talks to Rust through the
 //! commands in [`commands`]; `ui/data.js` calls them behind `window.Data`. Everything that does not need a
 //! webview lives in plain modules with tests ([`list`]: the flavors and their addon rows; [`actions`]: the
-//! update check, the updates and the marks); the window only
-//! shows what the core says, in the voice's two lines (D-005).
+//! update check, the updates and the marks; [`toolbox`]: a flavor's addon sets and SavedVariables, task
+//! 074); the window only shows what the core says, in the voice's two lines (D-005).
 
 pub mod actions;
 pub mod commands;
 pub mod list;
+pub mod toolbox;
+
+use tauri::Manager;
 
 /// Builds the window and runs the event loop until it closes.
 pub fn run() {
@@ -16,6 +19,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(actions::UpdateRun::default())
+        .manage(toolbox::ToolboxRun::default())
+        .setup(|app| {
+            // Task 079: the title bar follows the theme preference from the start, not the system's.
+            if let Some(window) = app.get_webview_window("main") {
+                commands::apply_native_theme(&window, &commands::preferences().theme);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::app_version,
             commands::flavors,
@@ -28,7 +39,10 @@ pub fn run() {
             commands::cancel_update,
             commands::mark,
             commands::preferences,
-            commands::set_preferences
+            commands::set_preferences,
+            commands::toolbox,
+            commands::apply_set,
+            commands::clean_saved_variables
         ])
         .run(tauri::generate_context!())
         .expect("error while running the mrgl window");

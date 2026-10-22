@@ -37,6 +37,7 @@ use crate::sources::github::{API_URL, TOKEN_ENV};
 use crate::sources::{self, Http, Request};
 use crate::state::{self, FlavorHome};
 use crate::voice::Kind;
+use crate::zip_entry;
 
 /// The WebView2 runtime's client id under the EdgeUpdate `Clients` key.
 pub const WEBVIEW2_CLIENT_ID: &str = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
@@ -898,9 +899,6 @@ fn client_check(processes: &dyn ProcessList, folder: &Path, redactor: &Redactor)
     }
 }
 
-// A byte count for a human, the core's one size formatter (task 071): `512 B`, `34.2 KB`, `1.5 MB`.
-use crate::zip_entry::size_text as bytes_text;
-
 fn with_reason(text: &str, reason: Option<&String>) -> String {
     match reason {
         Some(reason) => format!("{text} ({reason})"),
@@ -959,8 +957,10 @@ impl FlavorReport {
         ));
         let cache = match (self.cache.bytes, self.cache.files) {
             (Some(0), _) | (_, Some(0)) => "empty".to_string(),
-            (Some(bytes), Some(1)) => format!("{} in 1 file", bytes_text(bytes)),
-            (Some(bytes), Some(files)) => format!("{} in {files} files", bytes_text(bytes)),
+            (Some(bytes), Some(1)) => format!("{} in 1 file", zip_entry::size_text(bytes)),
+            (Some(bytes), Some(files)) => {
+                format!("{} in {files} files", zip_entry::size_text(bytes))
+            }
             _ => "unknown".to_string(),
         };
         lines.push(format!(
@@ -1719,9 +1719,9 @@ mod tests {
 
     #[test]
     fn a_byte_count_reads_for_a_human() {
-        assert_eq!(bytes_text(0), "0 B");
-        assert_eq!(bytes_text(1023), "1023 B");
-        assert_eq!(bytes_text(2048), "2.0 KB");
-        assert_eq!(bytes_text(3 * 1024 * 1024 / 2), "1.5 MB");
+        assert_eq!(zip_entry::size_text(0), "0 B");
+        assert_eq!(zip_entry::size_text(1023), "1023 B");
+        assert_eq!(zip_entry::size_text(2048), "2.0 KB");
+        assert_eq!(zip_entry::size_text(3 * 1024 * 1024 / 2), "1.5 MB");
     }
 }

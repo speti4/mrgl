@@ -6,11 +6,13 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
 use mrgl_app_lib::actions::{self, ActionAnswer, Phase, Plan, UpdateEvent};
+use mrgl_app_lib::list::{self, FlavorView};
 use mrgl_core::error::Result;
 use mrgl_core::flavor;
 use mrgl_core::forever::ForeverBuild;
 use mrgl_core::install::{Engine, Mark, Metadata};
 use mrgl_core::sources::{Pick, RequestBudget, Source, SourceSpec, Target};
+use mrgl_core::update::UpdateState;
 use mrgl_core::voice::Voice;
 
 const BUILD_INFO: &str = "Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|Version!STRING:0|Tags!STRING:0|Product!STRING:0\n\
@@ -124,6 +126,8 @@ impl Drop for Game {
 struct Stub {
     asked: Cell<u32>,
     budget: Option<u32>,
+    /// A spec whose repository is gone: a 404, as the GitHub source says it.
+    gone: Option<&'static str>,
 }
 
 impl Stub {
@@ -131,6 +135,7 @@ impl Stub {
         Stub {
             asked: Cell::new(0),
             budget: None,
+            gone: None,
         }
     }
 
@@ -140,6 +145,8 @@ impl Stub {
             "github:Example/Broken" => Some(("3.1.0", "no-addon.zip")),
             "github:Example/Several" => Some(("2.1.0", "several-folders-2.1.0.zip")),
             "github:Example/Wrapped" => Some(("4.0.0", "wrapped-4.0.0.zip")),
+            "github:Example/Needy" => Some(("1.0.0", "needs-library-1.0.0.zip")),
+            "github:Example/Stale" => Some(("1.0.0", "stale-interface-1.0.0.zip")),
             _ => None,
         }
     }
@@ -149,6 +156,14 @@ impl Source for Stub {
     fn resolve(&self, spec: &SourceSpec, _target: &Target) -> Result<Pick> {
         self.asked.set(self.asked.get() + 1);
         let spec = spec.to_string();
+        if self.gone == Some(spec.as_str()) {
+            return Err(mrgl_core::Error::SourceStatus {
+                host: "GitHub",
+                status: 404,
+                url: format!("https://api.github.com/repos/{}/releases", &spec[7..]),
+                hint: "no such repository, or it is private".to_string(),
+            });
+        }
         let (version, zip) = Stub::release(&spec)
             .ok_or_else(|| mrgl_core::Error::NoRelease { spec: spec.clone() })?;
         Ok(Pick {
@@ -479,8 +494,8 @@ fn a_row_update_checks_and_updates_that_addon_alone() {
 fn the_budget_stop_is_one_event_and_the_summary_counts_the_rest() {
     let game = Game::new("budget");
     let source = Stub {
-        asked: Cell::new(0),
         budget: Some(2),
+        ..Stub::new()
     };
     let (answer, events) = run_with(&game, &source, Plan::Check, None);
     let stops: Vec<&UpdateEvent> = events
@@ -511,6 +526,16 @@ fn the_budget_stop_is_one_event_and_the_summary_counts_the_rest() {
             "checked _forever_: 2 updates available, 2 not checked (rate limit)"
         )
     );
+    // The addons the stop left keep their answer for the next list (task 078).
+    let flavor = flavor::read_flavor(&game.flavor_folder()).expect("the flavor");
+    let view = list::flavor_view(flavor, Some(&game.home()), &[]);
+    let left = view
+        .addons
+        .iter()
+        .filter_map(|row| row.check.as_ref())
+        .filter(|check| check.state == UpdateState::RateLimited)
+        .count();
+    assert_eq!(left, 2);
 }
 
 #[test]
@@ -618,4 +643,131 @@ fn the_row_menu_marks_go_through_the_engine() {
         "1 addon updated, 1 failed, 1 up to date, 1 pinned"
     );
     assert_eq!(game.toc_version("OneFolder"), "1.0.0");
+}
+
+#[test]
+fn a_source_gone_stays_on_its_row_across_a_mark_and_a_restart() {
+    // Task 078: the window keeps what its last online check found until the next check replaces it.
+    let game = Game::new("kept");
+    let engine = game.engine();
+    let home = game.home();
+    let gone_of = |flavor: &FlavorView| {
+        flavor
+            .addons
+            .iter()
+            .find(|row| row.folder == "Wrapped")
+            .and_then(|row| row.check.as_ref())
+            .map(|check| (check.state, check.label))
+    };
+    let source = Stub {
+        gone: Some("github:Example/Wrapped"),
+        ..Stub::new()
+    };
+    let (answer, _) = run_with(&game, &source, Plan::Check, None);
+    let gone = Some((UpdateState::SourceGone, "source gone"));
+    assert_eq!(gone_of(answer.flavor.as_ref().expect("the flavor")), gone);
+
+    // A mark redraws the rows from the disk: the source is still gone, on the marked row too.
+    for (folder, action, value) in [
+        ("OneFolder", "pin", None),
+        ("Wrapped", "channel", Some("prerelease")),
+        ("Wrapped", "pin", None),
+    ] {
+        let mark = actions::mark_of(action, value).expect("a mark");
+        let answer = actions::mark(&engine, folder, &mark, Some(&home), Voice::new(true));
+        assert_eq!(
+            gone_of(answer.flavor.as_ref().expect("the flavor")),
+            gone,
+            "after {action} on {folder}"
+        );
+    }
+    // A restart: the list read again, with no check run.
+    let flavor = flavor::read_flavor(&game.flavor_folder()).expect("the flavor");
+    let view = list::flavor_view(flavor.clone(), Some(&home), &[]);
+    assert_eq!(gone_of(&view), gone);
+    let wrapped = view
+        .addons
+        .iter()
+        .find(|row| row.folder == "Wrapped")
+        .expect("the row");
+    let line = &wrapped.check.as_ref().expect("the kept answer").line;
+    assert!(
+        line.contains("no such repository, or it is private"),
+        "{line}"
+    );
+
+    // The next check of the addon replaces it: the repository is back.
+    let unpin = actions::mark_of("unpin", None).expect("a mark");
+    actions::mark(&engine, "Wrapped", &unpin, Some(&home), Voice::new(true));
+    let (answer, _) = run_with(&game, &Stub::new(), Plan::One("Wrapped".into()), None);
+    let back = gone_of(answer.flavor.as_ref().expect("the flavor"));
+    assert_eq!(back, Some((UpdateState::UpToDate, "up to date")));
+    let view = list::flavor_view(flavor, Some(&home), &[]);
+    assert_ne!(gone_of(&view), gone, "nothing kept once the source answers");
+}
+
+#[test]
+fn an_update_reports_the_dependency_and_interface_checks() {
+    // Task 079: the checks the command line's install summary reports, after the window's update.
+    let game = Game::new("checks");
+    let engine = game.engine();
+    for (zip, source) in [
+        ("needs-library-1.0.0.zip", "github:Example/Needy"),
+        ("stale-interface-1.0.0.zip", "github:Example/Stale"),
+    ] {
+        engine
+            .install(
+                &zips().join(zip),
+                &Metadata {
+                    source: source.to_string(),
+                    version: Some("0.9.0".to_string()),
+                    name: None,
+                    nolib: None,
+                },
+            )
+            .unwrap_or_else(|error| panic!("installing {zip}: {error}"));
+    }
+    let (answer, _) = run_with(&game, &Stub::new(), Plan::One("NeedsLibrary".into()), None);
+    let warnings: Vec<&str> = answer
+        .messages
+        .iter()
+        .filter(|message| message.kind == "warning")
+        .map(|message| message.plain.as_str())
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            // The embedded-only library counts as missing since task 076.
+            "NeedsLibrary needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside NeedsLibrary, and the client does not count a library inside an addon's own folder)"
+        ],
+        "{:?}",
+        answer.messages
+    );
+    assert_eq!(last_plain(&answer), "1 addon updated");
+    let needy = answer
+        .flavor
+        .as_ref()
+        .expect("the flavor")
+        .addons
+        .iter()
+        .find(|row| row.folder == "NeedsLibrary")
+        .expect("the row");
+    assert_eq!(needy.version.as_deref(), Some("1.0.0"));
+    assert_eq!(needy.missing, ["LibEmbedded", "LibMissing"]);
+
+    let (answer, _) = run_with(
+        &game,
+        &Stub::new(),
+        Plan::One("StaleInterface".into()),
+        None,
+    );
+    let warning = answer
+        .messages
+        .iter()
+        .find(|message| message.kind == "warning")
+        .expect("the interface warning");
+    assert_eq!(
+        warning.plain,
+        "StaleInterface: interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor"
+    );
 }

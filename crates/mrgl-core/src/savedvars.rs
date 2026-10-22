@@ -10,9 +10,9 @@
 //! ([`crate::scan`]): a folder without one is not an addon the client loads, so its file is an orphan; a
 //! folder the scan cannot read counts, since nothing can be told about it. A disabled addon keeps its folder,
 //! so it is never an orphan (`AddOns.txt` is not read). A `Blizzard_` file belongs to the client's own
-//! interface, which has no folder there, and is never an orphan. With no `Interface\AddOns` folder at all,
-//! nothing is marked an orphan and a warning says so: a missing folder says more about the path than about
-//! the addons.
+//! interface, which has no folder there, and is never an orphan ([`scan::is_client_addon`], the rule the
+//! dependency check shares). With no `Interface\AddOns` folder at all, nothing is marked an orphan and a
+//! warning says so: a missing folder says more about the path than about the addons.
 //!
 //! The cleanup is the third `WTF` write of D-002 and D-003. The guard of task 023 comes first (a running
 //! client refuses it before anything is read); then the orphans and their `.bak` files go into a dated zip,
@@ -40,8 +40,6 @@ use crate::wtf::{self, SAVED_VARIABLES_DIR, WtfFolder, link_warning};
 
 /// A cleanup zip's name: `SavedVariables-<date>.zip`, next to the `WTF` backups.
 pub const CLEANUP_PREFIX: &str = "SavedVariables-";
-/// The name prefix of the client's own SavedVariables (its built-in interface), never an orphan.
-pub const CLIENT_PREFIX: &str = "Blizzard_";
 
 /// What the AddOns folder says about a SavedVariables file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -301,7 +299,7 @@ fn collect(
             .or(pair.bak.as_ref())
             .map(|(addon, _, _)| addon.clone())
             .unwrap_or_default();
-        let status = if key.starts_with(&CLIENT_PREFIX.to_lowercase()) {
+        let status = if scan::is_client_addon(&key) {
             Status::Client
         } else {
             match installed {

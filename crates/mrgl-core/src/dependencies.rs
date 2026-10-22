@@ -3,11 +3,16 @@
 //! against a scan, ASCII case-insensitive as the client matches folder names:
 //!
 //! - **met**: a folder of that name is in the scan, an addon of its own, or the name starts with
-//!   [`CLIENT_PREFIX`] (`Blizzard_`), an addon the client itself ships, which no AddOns folder holds;
-//! - **embedded**: a folder of that name sits inside the addon's own folder (`Libs\LibStub`, at most
-//!   [`EMBED_DEPTH`] levels down), the library a build without `nolib` carries; a `nolib` build carries
-//!   none, so for an entry the sidecar marks `nolib` the check does not look inside;
-//! - **missing**: neither.
+//!   [`crate::scan::CLIENT_ADDON_PREFIX`] (`Blizzard_`), an addon the client itself ships, which no
+//!   AddOns folder holds ([`is_client_addon`], the rule `savedvars` shares);
+//! - **missing**: no addon folder of its own answers it. The client does not count a library embedded in
+//!   the addon's own folder (task 076: a required name answered only by `Libs\LibStub` shows `Dependency
+//!   missing` in the client and the addon does not load), so such a name is missing too, and the warning
+//!   says why;
+//! - **embedded**: informative, a subset of *missing*: a folder of that name sits inside the addon's own
+//!   folder (`Libs\LibStub`, at most [`EMBED_DEPTH`] levels down), the library a build without `nolib`
+//!   carries; a `nolib` build carries none, so for an entry the sidecar marks `nolib` the check does not
+//!   look inside.
 //!
 //! An optional dependency (`## OptionalDeps`) is never reported. The sidecar's `nolib` flag
 //! ([`crate::state::Entry::nolib`]) says whether an embedded library is expected; an addon without the
@@ -18,16 +23,12 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::scan::{Addon, Scan};
+use crate::scan::{Addon, Scan, is_client_addon};
 use crate::state::State;
 
 /// How many folder levels below an addon folder the check looks for an embedded library: `Libs\LibStub`
 /// is two, `Libs\Ace3\AceAddon-3.0` three.
 pub const EMBED_DEPTH: usize = 3;
-
-/// The name prefix of the client's own addons (`Blizzard_Communities`, `Blizzard_AuctionHouseUI`), ASCII
-/// case-insensitive: a required dependency of that name is met by the client, whatever the scan holds.
-pub const CLIENT_PREFIX: &str = "Blizzard_";
 
 /// The dependencies of one addon folder, as the check found them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -39,9 +40,11 @@ pub struct AddonDependencies {
     pub required: Vec<String>,
     /// The required names an addon folder of the scan answers, or the client: a `Blizzard_` name.
     pub met: Vec<String>,
-    /// The required names a folder inside the addon's own folder answers: an embedded library.
+    /// The missing names a folder inside the addon's own folder answers: an embedded library, which the
+    /// client does not count (task 076), so each is in `missing` too.
     pub embedded: Vec<String>,
-    /// The required names nothing answers: the client does not load the addon until they are installed.
+    /// The required names no addon folder of its own answers, the embedded ones included: the client does
+    /// not load the addon until they are installed.
     pub missing: Vec<String>,
     /// The sidecar's `nolib` flag of the addon: `Some(true)` a `nolib` build (no embedded library is
     /// expected, none is looked for), `Some(false)` a build with its libraries, `None` unknown.
@@ -75,6 +78,14 @@ impl AddonDependencies {
         );
         if self.nolib == Some(true) {
             line.push_str(" (a nolib build: its libraries are addons of their own)");
+        }
+        if !self.embedded.is_empty() {
+            line.push_str(&format!(
+                " ({} {} only embedded inside {}, and the client does not count a library inside an addon's own folder)",
+                self.embedded.join(", "),
+                if self.embedded.len() == 1 { "is" } else { "are" },
+                self.folder,
+            ));
         }
         Some(line)
     }
@@ -139,18 +150,12 @@ fn check_addon(
             && contains(inside.get_or_insert_with(|| subfolders(addon)), name)
         {
             result.embedded.push(name.clone());
+            result.missing.push(name.clone());
         } else {
             result.missing.push(name.clone());
         }
     }
     result
-}
-
-/// Whether a name is one of the client's own addons: it starts with [`CLIENT_PREFIX`], ASCII
-/// case-insensitive.
-pub fn is_client_addon(name: &str) -> bool {
-    name.get(..CLIENT_PREFIX.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CLIENT_PREFIX))
 }
 
 fn contains(names: &[String], name: &str) -> bool {
@@ -276,13 +281,17 @@ mod tests {
         assert_eq!(needy.required, ["LibMet", "LibEmbedded", "LibMissing"]);
         assert_eq!(needy.met, ["LibMet"]);
         assert_eq!(needy.embedded, ["LibEmbedded"]);
-        assert_eq!(needy.missing, ["LibMissing"]);
+        assert_eq!(
+            needy.missing,
+            ["LibEmbedded", "LibMissing"],
+            "the client does not count an embedded library (task 076)"
+        );
         assert_eq!(needy.nolib, None);
         assert!(needy.has_missing());
         assert_eq!(
             needy.warning().as_deref(),
             Some(
-                "Needy needs the missing dependency LibMissing: install it or the addon does not load"
+                "Needy needs the missing dependencies LibEmbedded, LibMissing: install them or the addon does not load (LibEmbedded is only embedded inside Needy, and the client does not count a library inside an addon's own folder)"
             )
         );
         let lib = &checks[0];
@@ -331,6 +340,28 @@ mod tests {
         let needy = &check_with(&scan, Some(&with_libraries), inside)[1];
         assert_eq!(needy.nolib, Some(false));
         assert_eq!(needy.embedded, ["LibEmbedded"]);
+        assert_eq!(needy.missing, ["LibEmbedded", "LibMissing"]);
+    }
+
+    #[test]
+    fn an_embedded_only_dependency_is_missing_with_the_reason() {
+        let scan = scan_of(vec![addon("Needy", Some("## Dependencies: LibEmbedded\n"))]);
+        let needy = &check_with(&scan, None, inside)[0];
+        assert_eq!(needy.required, ["LibEmbedded"]);
+        assert_eq!(needy.embedded, ["LibEmbedded"]);
+        assert_eq!(needy.missing, ["LibEmbedded"]);
+        assert_eq!(
+            needy.warning().as_deref(),
+            Some(
+                "Needy needs the missing dependency LibEmbedded: install it or the addon does not load (LibEmbedded is only embedded inside Needy, and the client does not count a library inside an addon's own folder)"
+            )
+        );
+        let optional = scan_of(vec![addon("Needy", Some("## OptionalDeps: LibEmbedded\n"))]);
+        let optional = &check_with(&optional, None, |_| panic!("no folder lookup"))[0];
+        assert!(
+            optional.required.is_empty() && optional.embedded.is_empty() && !optional.has_missing(),
+            "an optional dependency, embedded or not, is never reported"
+        );
     }
 
     #[test]

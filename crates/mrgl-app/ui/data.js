@@ -21,6 +21,12 @@
 //   Data.preferences()               -> Promise<{ theme, serious, serious_source, stored }>  `preferences`
 //   Data.setPreferences(changes)     -> Promise<the same>           `set_preferences`: `{ theme?, serious? }`
 //                                       into `config.json` (task 034); rejects with a message
+//   Data.toolbox(flavorId)           -> Promise<{ toolbox, changes, zip, messages }>  `toolbox` (074): the
+//                                       sets, the characters, the SavedVariables and the running client
+//   Data.applySet(flavorId, set, target)  -> the same            `apply_set`: `target` `{ character, realm }`
+//                                       (both null or no target: every character)
+//   Data.cleanSavedVariables(flavorId)    -> the same            `clean_saved_variables`: the orphans into
+//                                       the dated zip
 //
 // Opened in a plain browser (no Tauri global, `ui/index.html` from the disk), the module writes the script
 // tag of `mock-data.js` instead, so the page shows the sketch's made-up rows: a look at the layout without
@@ -71,6 +77,15 @@
           theme: changes && changes.theme !== undefined ? changes.theme : null,
           serious: changes && changes.serious !== undefined ? changes.serious : null,
         }),
+      toolbox: (flavorId) => invoke("toolbox", { flavor: flavorId }),
+      applySet: (flavorId, set, target) =>
+        invoke("apply_set", {
+          flavor: flavorId,
+          set,
+          character: target && target.character ? target.character : null,
+          realm: target && target.character && target.realm ? target.realm : null,
+        }),
+      cleanSavedVariables: (flavorId) => invoke("clean_saved_variables", { flavor: flavorId }),
     };
   }
 

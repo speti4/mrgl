@@ -6,27 +6,35 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
 ## Layout
 
 - `crates/mrgl-core` — the library: flavor detection (`flavor`), the AddOns scan and TOC parsing (`scan`,
-  `toc`), the sources (`sources`: the `Source` trait, the `Pick` it hands to the install engine, the `Http`
+  `toc`; `scan` also holds `CLIENT_ADDON_PREFIX` and `is_client_addon`, the one `Blizzard_` rule that the
+  dependency check and the SavedVariables share, task 080), the sources (`sources`: the `Source` trait, the `Pick` it hands to the install engine, the `Http`
   trait with the real `ureq` client and the folder-backed stub; `sources::github` reads the releases API,
   the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
   home folder, task 003; the pick carries `notes`, the release body's first line with text once its
   Markdown markers are stripped, cut at `NOTES_MAX_CHARS` (120) with an ellipsis by `sources::notes_line`,
   and `page`, the release's page, both left out when absent, task 030; the `Target` carries the addon's
   channel, and on `prerelease` the newest release that is not a draft is current, a prerelease or not,
-  task 021; later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
+  task 021; the resolve walks the channel's releases from the current one down to the first with an asset
+  for the flavor, the newest release that has one, and says so in the pick's reason when it passed newer
+  ones, and the no-asset error names the newest release and how many releases were looked at, task 066;
+  later Wago, WoWInterface and CurseForge), the install engine (`install`: a zip into
   a staging folder once every entry passed `zip_entry`, its addon folders swapped into `Interface\AddOns`
   one at a time with a revert, the previous version's zip kept; task 004; its commit and its removal ask
   the running-client check once before the first folder moves, and a running client is a warning on the
   result, never a refusal, task 038; its commit, `Engine::commit`, refuses to install over a linked addon
   or a junction it did not make before the first folder moves, so every path that stages and commits does,
-  task 055; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
+  task 055, and the guard covers the staged folders and the previous version's folders the new one drops,
+  so a dropped folder that is now a junction is refused instead of moved aside and deleted, task 067; every source-backed install takes one path, `Engine::install_from_source`, tasks 040 and 055,
   below; the rollback, `Engine::rollback`, sends the entry's previous
   version and its zip from the cache through the same stage and swap with the entry's source, pins the
   addon there and leaves both zips in the cache, so a second rollback goes forward again, task 022), the
   dev addon links (`link`, task 005: a directory junction under `Interface\AddOns` for every
   addon of a development folder, a mount-point reparse point made through the Windows API, recorded in the
-  sidecar with the source `link:<development folder>`, the TOC's version and no file list; `unlink` removes
-  exactly those junctions, never a real folder or a junction mrgl did not make; Windows-only), the state
+  sidecar with the source `link:<development folder>`, the TOC's version and no file list; a folder that is
+  itself an addon, a TOC named after it with or without a multi-TOC suffix, is linked as that one addon
+  under its own name with the source `link:<addon folder>`, and that shape wins over its subfolders, which
+  are its own, task 062, `link::shape_of` and `Linked::shape`; `unlink` removes exactly those junctions,
+  never a real folder or a junction mrgl did not make; Windows-only), the state
   sidecar (`state`, D-003; an entry's optional `pinned` version, `ignored` flag and release `channel`,
   `stable` or `prerelease`, with the queries and setters the update check and the CLI call, task 021; absent
   fields read as unpinned, not ignored, stable, and a reinstall keeps them), the toolbox (`backup`: the `WTF`
@@ -42,13 +50,22 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   a lookup trait with a stub), the
   dependency check (`dependencies`, task 029: every required name of the TOC the flavor loads, `## Dependencies`,
   `## RequiredDeps` and the other `## Dep…` lines, ASCII case-insensitive, is *met* when an addon folder of
-  that name is in the scan, *embedded* when a folder of that name sits inside the addon's own folder, at
-  most three levels down, which a build without `nolib` carries, and *missing* otherwise; an optional
-  dependency is never reported; the sidecar entry's `nolib` flag, recorded from the pick at install, turns
-  the embedded lookup off for a `nolib` build, and an entry without it is unknown, embedded possible), the
+  that name is in the scan or the name is one of the client's own `Blizzard_` addons
+  (`scan::is_client_addon`), and *missing*
+  otherwise; a missing name that a folder inside the addon's own folder answers, at most three levels down,
+  as a build without `nolib` carries it, is also listed as *embedded*, and stays missing (task 076: the
+  client does not count a library embedded in the addon's own folder, so the addon shows `Dependency
+  missing` and does not load), with the reason in its warning; an optional dependency is never reported; the
+  sidecar entry's `nolib` flag, recorded from the pick at install, turns the embedded lookup off for a
+  `nolib` build, whose warning says so instead, and an entry without it is unknown, embedded possible), the
   Forever notes (`forever`, task 011: the build signal `yes`, `no` or `unknown` that
   `sources::github::forever_build` derives from a release, and the curated `data/forever-notes.json`
-  compiled in with `include_str!`, with the stale rule), the diagnostic report (`doctor`, task 024: the
+  compiled in with `include_str!`, with the stale rule; from the cache alone,
+  `GitHub::cached_forever_build` takes the release a Forever resolve on the addon's channel would take,
+  `sources::github::forever_build_on`: the channel's releases newest first down to the first with a
+  Forever asset, as the resolve walks them since task 066, `unknown` when the walk meets a release whose
+  `release.json` is not cached, and the newest release's own signal when none has one, task 078), the
+  last online check's kept answers (`last_check`, task 078, below), the diagnostic report (`doctor`, task 024: the
   facts a bug report needs, with the profile folder as `~`, see [The doctor](#the-doctor)), the addon
   list (`list_file`, task 015: the export from the sidecar and the import through the source and the engine,
   below), the interface check (`interface`, task 015, below) and the voice table (`voice`, D-005). Synthetic
@@ -58,10 +75,18 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   entry with their sizes, the largest first, and the orphan rule: a file is an orphan when no folder of its
   name, compared without regard to case, is an addon the scan finds under `Interface\AddOns` (a folder with a
   TOC named after it, or one the scan cannot read); a disabled addon keeps its folder and is never one, a
-  `Blizzard_` file is the client's own, and with no AddOns folder at all nothing is marked. The cleanup,
+  `Blizzard_` file is the client's own (`scan::is_client_addon`), and with no AddOns folder at all nothing
+  is marked. The cleanup,
   the third `WTF` write of D-002 and D-003, runs the 023 guard first, writes the orphans and their `.bak`
   files with the backup's zip writer, entry names relative to `WTF`, and removes each file only once its
   entry, read back from the finished zip, matches it byte for byte; `backup::restore_wtf` refuses that zip.
+  `savedvars` and `sets` read `WTF` through one walk, `wtf::walk` (task 071), with the one set of its
+  folder names (`wtf::ACCOUNT_DIR`, `wtf::SAVED_VARIABLES_DIR`; `WTF` itself is `backup::WTF_DIR`): every
+  account folder, then every character folder of it, each level by name, the account's `SavedVariables`
+  never a realm, a missing folder empty, and a link or a junction a warning that is never followed
+  (`savedvars` lists it among its warnings, `sets` passes it over). The core's one size formatter is
+  `zip_entry::size_text` (`512 B`, `34.2 KB`, `1.5 MB`, in steps of 1024, up to `PB`): the zip bound's
+  messages, the CLI's listings and the doctor's report all write sizes with it (task 071).
 - `crates/mrgl-cli` — the `mrgl` executable: `scan`, `list` and `root` (task 002; `list` reads the flavor's
   sidecar through the install engine and marks every addon managed or unmanaged with `state::classify`,
   task 037, while `scan` stays the raw folder view), `add github:<owner>/<repo>
@@ -70,28 +95,39 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   it installed already), `add
   <file.zip>` and `remove` (task 004; a running client is a warning line and `client_warning` in `--json`,
   task 038), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
-  (task 024), `link <folder>` and `unlink <folder>` (task 005), `export --flavor <flavor> [--to <file>]`
+  (task 024), `link <folder>` and `unlink <folder>` (task 005; the folder is a development folder or one
+  addon folder, task 062, and `link --json` names it as `shape`, `development-folder` or `addon-folder`),
+  `export --flavor <flavor> [--to <file>]`
   and `import <file> --flavor <flavor> [--exact] [--dry-run]` (tasks 015 and 057), `pin <name> [version]`,
   `unpin`, `ignore`,
   `unignore` and `channel <name> <stable|prerelease>` on a managed addon, marked in `list` (task 021),
   `rollback <name>` (task 022), `set save|apply|list|show|remove` (task 014; `--character` on `save` and
-  `apply`, task 027; below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
+  `apply`, task 027; `set undo`, `set enable|disable|drop <set> <addon>` and `--account`, task 073;
+  below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
   below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
   `tests/`. `list` and `add <file.zip>` run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
   addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
-  `folder`, `required`, `met`, `embedded`, `missing` and `nolib` (`true`, `false` or `null` for unknown).
+  `folder`, `required`, `met`, `embedded` (a subset of `missing`), `missing` and `nolib` (`true`, `false` or
+  `null` for unknown).
   `savedvars --flavor <flavor> [--clean]` (task 025) prints a data line per SavedVariables entry (size,
   addon, `account-wide` or `realm / character`, never the account folder's name, which `--json` carries,
   `orphan` or `client`) and a summary, `--clean` moves the orphans; `--json` is the `savedvars` or the
   `savedvars-clean` document. Its `build.rs` (task 012) gives `mrgl.exe` the window's icon as a Windows
   resource, with the standard library alone: it rewrites `crates/mrgl-app/icons/icon.ico` as a compiled
   resource file (`.res`, one `RT_ICON` per image and the `RT_GROUP_ICON` that lists them) and passes it to
-  the MSVC linker, which takes a `.res` as an input file; other targets skip it.
+  the MSVC linker, which takes a `.res` as an input file; other targets skip it. The same `.res` carries the
+  version resource (task 079): an `RT_VERSION` whose `VS_VERSION_INFO` block holds the package's version,
+  the workspace one, as `major.minor.patch.0` in `VS_FIXEDFILEINFO` (the prerelease flag set for a version
+  with a suffix) and as written in `Cargo.toml` in the `FileVersion` and `ProductVersion` strings, next to
+  `FileDescription`, `InternalName`, `OriginalFilename` and `ProductName`, in one US English Unicode string
+  table; so the exe's properties show the version, as the app exe's do through `tauri-build`. A test of
+  `tests/cli.rs` reads it back from the built exe with the core's PE reader (`pe::read_file_version`).
 - `crates/mrgl-app` — the `mrgl-app` executable: the Tauri 2 window (`src/`: the IPC commands in
   `commands.rs`, the flavor list in `list.rs`, task 009; the update check, the updates and the row marks in
-  `actions.rs`, task 010), the static UI under `ui/`, the capability file and the icon; see
+  `actions.rs`, task 010; a flavor's addon sets and SavedVariables in `toolbox.rs`, task 074), the static UI
+  under `ui/`, the capability file and the icon; see
   [The UI](#the-ui).
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
   [Forever notes](#forever-notes)).
@@ -141,10 +177,12 @@ the GitHub source takes the release of the same list whose tag is the version, w
 `v`, never a draft, on any channel (`sources::github::release_of_version`), and picks its asset for the
 flavor as for the current one. An entry whose version the source no longer offers is reported (`<name>
 skipped, version <v> not offered: no release <v> in <source>`, outcome `version-not-offered` in the JSON,
-`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup sees the
-releases the release list holds: the first page, and the pages after it only while none holds a stable
-release (task 042), so a version older than the first page reads as not offered. The JSON document carries
-`exact`.
+`version not offered` in the summary, a warning) and skipped; it does not fail the run. The lookup reads the
+releases the release list holds (the first page, and the pages after it while none holds a stable release,
+task 042) and, when the version is not among them, the pages after those, `page=<n>` of the API, until the
+version turns up, a page is short (the last one) or five pages are held in all (`MAX_PAGES`, task 066);
+only then does it read as not offered. These further pages are not cached, and offline the cached list is
+all there is. The JSON document carries `exact`.
 
 The one install path (task 055) is `Engine::install_from_source` in `install`: `add github:`, `import`
 and `update` call it, the window will too. It takes a `SourceRequest` (the spec, which release, `Wanted::Current`
@@ -161,12 +199,31 @@ a linked addon or a junction mrgl did not make. The command line reports every i
 (the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
 interface checks).
 
+The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
+request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
+`BigWigs_Core` and `BigWigs_Options`); else the folder named after the zip's stem without its version and
+flavor suffix (`DBM-Core` for `DBM-Core-12.0.11-classic.zip`), else after the repository of a `github:`
+source, both ASCII case-insensitive (task 065); else the first folder by name. A source install of an addon
+the sidecar has from that source keeps the name it is recorded under. The commit replaces the entry of the
+staged name, else the entry that records the same addon under another name (task 077, `renamed_entry`): the
+entry that records the folder the staged name names while its own name is a folder of the staged addon, so a
+zip in hand recorded as `DBM-Brawlers` before task 065 and staged as `DBM-Core` now is the same addon, while
+an entry that only records one folder the zip also ships keeps its name and loses that folder. The new entry
+keeps the replaced one's pin, ignored mark and channel and takes its version as the previous one (its
+previous version when the version is the same), the zips of its cache folder move to the new name's, so
+`rollback` finds the previous version's zip, and the install says so in one warning (`DBM-Brawlers is managed
+as DBM-Core now, with its marks and its previous version`).
+
 The update check (task 006) is `update::check` in the core: every managed addon of the sidecar (or the one
 a name or a folder names) against its source's current release on the addon's own channel, one
 `UpdateState` each, read-only. `up-to-date`: the release's version is the installed one. `update-available`:
 another version, picked from metadata. `guess-only`: another version whose asset for the flavor is a guess
 by its name; it is reported, not installed, and `mrgl add <source>` installs it anyway. `pinned`: checked
-and reported with the current release, left alone. `ignored`: skipped without a request. `source-gone`: no
+and reported with the current release, left alone; its line reads the installed version against the release
+by the version order below (task 077): `pinned at 2.0.0, 2.1.0 is out, left alone` when the installed version
+is older (or the order cannot tell), `pinned at 1.1.0-beta, newer than the current release 1.0.0, left
+alone` when it is newer (with the `is no longer listed` reason as `installed-newer` has it), `pinned at
+1.0.0, up to date` when it is the same. `ignored`: skipped without a request. `source-gone`: no
 release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
 hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
 limit, a server error). `installed-newer` (task 068): the installed version is newer than the current
@@ -200,7 +257,8 @@ terminal or with `--json` the command stops and says what `--yes` does, exit 1),
 one install path with the pick the check made (`AddonUpdate::request`, no second resolve) and end with the
 summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
 `1 update available` and writes nothing). `--json` is one `update` document: every addon with `state`,
-`latest`, `pick`, `updated` and the installed `addon` block, the `counts` per state, `stopped` (the
+`latest`, `order` (the installed version against `latest`: `older`, `same`, `newer`, or `null` when there is
+no `latest` or the order cannot tell; task 077), `pick`, `updated` and the installed `addon` block, the `counts` per state, `stopped` (the
 `BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
 update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
 the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.
@@ -210,8 +268,13 @@ installed build: an interface number's major version is the number divided by 10
 `16001` is 1), and the addon passes when one number of the list has the build's major. A mismatch is a
 warning, never a refusal: `scan` and `list` mark the addon's line `interface mismatch` and add one warning
 line, their JSON carries `interface_mismatches`, and `add <file.zip>` and `import` add a warning after the
-install (`interface_mismatch` in their JSON). An unknown build, a TOC without an `## Interface` line and a
-folder the flavor loads no TOC from give no warning.
+install (`interface_mismatch` in their JSON). An addon that passes but whose highest number of the build's
+major is below the build's own interface number (`120100` under `12.1.5`, interface `120105`) is what the
+client lists as out of date (task 076): `scan` and `list` mark its line `out of date`, apart from the
+mismatch (an addon is one or the other), and add one warning line, and their JSON carries
+`interface_out_of_date`, each with `folder`, `toc`, `interfaces`, `build`, the build's `interface` and the
+TOC's `highest` number of the build's major; a number above the build's is current. An unknown build, a TOC
+without an `## Interface` line and a folder the flavor loads no TOC from give no warning.
 
 The addon sets (task 014, `mrgl_core::sets`) are named lists of addons per flavor, each addon `enabled` or
 `disabled`, in `sets.json` under the flavor's folder of the mrgl home (`<home>\<flavor-id>\sets.json`, next to
@@ -231,7 +294,8 @@ change is not written. Every new content is worked out before the first write, e
 temporary file renamed over it, and a failure part way puts the files already written back. No folder is
 deleted or moved; an addon of the set that is not installed is a warning and its line is written all the
 same. `set list`, `set show <name>` and `set remove <name>` read and edit `sets.json` only; every verb takes
-`--flavor` and `--json` (`kind` `set-save`, `set-apply`, `set-list`, `set-show`, `set-remove`).
+`--flavor` and `--json` (`kind` `set-save`, `set-apply`, `set-undo`, `set-edit`, `set-list`, `set-show`,
+`set-remove`).
 
 A set is per flavor, its target may be one character (task 027): `set apply <name> --character <name>
 [--realm <realm>]` writes that character's `AddOns.txt` only and leaves every other character's file byte for
@@ -239,9 +303,35 @@ byte, and `set save <name> --character <name>` takes the set from that one file 
 disagreement). The character is picked from the `WTF` account folders by its folder's name, ignoring case;
 `--realm` narrows a name more than one realm has. A name on two realms without `--realm` is refused with the
 realms listed, and a name no character has with the characters listed; when one realm and name are under
-two accounts the error names the accounts. The guard of task 023 holds as for every character: nothing is
+two accounts the error names the accounts, and `--account <name>` on `save` and `apply` (task 073, with
+`--character`) picks the account folder, ignoring case; an account with no character is refused with the
+accounts listed. The guard of task 023 holds as for every character: nothing is
 written while the client runs. In `mrgl_core::sets` the choice is `Target` (`EveryCharacter`, or
-`Character { name, realm }`) and `find_character` is the lookup the window can call.
+`Character { name, realm }`) and `find_character` is the lookup the window can call; the account narrows
+them through `targets_in_account`, `find_character_in_account`, `save_set_in_account` and
+`apply_set_in_account`, so `save_set`, `apply_set` and `find_character` keep their signatures and results.
+
+A set apply can be undone (task 073). Every apply that changes a file keeps an undo record under the
+flavor's folder of the mrgl home, next to `sets.json` (`<home>\<flavor-id>\set-undo\`: `undo.json`
+with `format` `mrgl-set-undo`, `schema` 1, the `flavor` id, the `set`, `applied_at` and per file the
+account, realm and character folder names, the `<n>-before.txt` copy of the bytes it replaced, absent for
+a file the apply created, and the `<n>-after.txt` copy of what it wrote). The record is the last apply's
+only: it is written into `set-undo.new\` before the first `AddOns.txt` write and moved in place of the
+one before, which is put back when the apply fails and its files are as they were; an apply that changes
+nothing leaves the record of the one before. `mrgl set undo` (`sets::undo_apply`) reads the record and
+every kept file first (a record of another flavor or schema, a name that is a path, or a missing copy is
+refused before anything is written), runs the guard of task 023, puts every replaced file back byte for
+byte and removes every file the apply created, each write through a temporary file with the files
+written so far put back on a failure, and then deletes the record, so it undoes once; a file that changed
+since the apply (the client writes it at logout) is put back all the same with a warning, and a character
+folder that is gone is passed over with one. `mrgl set enable|disable|drop <set> <addon>`
+(`sets::edit_set`) changes one addon of a stored set in `sets.json` only: the name is matched ignoring
+ASCII case and keeps the set's spelling, an enable or a disable of an addon the set does not have adds it
+(an addon that is not installed is a warning), a drop of one it does not have is refused with the set's
+addons listed, an edit to the state the addon has already writes nothing, and one that changes the set
+moves its `saved_at`; no `AddOns.txt` is touched and no undo record is written. `set save` keeps an addon
+of the characters' files that has no folder under `Interface\AddOns` and names it in a warning
+(`not_installed` in `--json`): a set is the user's data, and `set apply` already writes such a line.
 
 ## The unpacked-size bound
 
@@ -284,6 +374,13 @@ then the `serious` preference in `config.json` that the window's switch writes (
 vocabulary breaks no test. The vocabulary and the rules are in [nerglish.md](nerglish.md); the decision is
 D-005.
 
+The command line writes every line through one helper (`emit` in `mrgl-cli/src/main.rs`, task 075): the
+`Reporter`'s messages, data lines and JSON documents and `export`'s list on stdout, its warnings and errors on
+stderr. A closed pipe on either (`BrokenPipe`, os error 232 on Windows: the reader of
+`mrgl list --json | head -c 200` is gone) ends the run there, quietly and with exit code 0, since nobody
+reads the rest; any other write error panics as `println!` would. A new output site writes through `emit`
+too, never through `println!`.
+
 ## The doctor
 
 `mrgl doctor [--flavor <flavor>] [--root <folder>]` prints the diagnostic report a bug report asks for (task
@@ -293,9 +390,11 @@ two-line summary through the voice (a success when nothing needs a look, a warni
 (`mrgl_core::doctor`: `report_of_process` builds it, `Report::lines` and `Report::text` are the block), so the
 window's "copy diagnostics" action (task 009) copies the same text. It reads and never repairs: the AddOns
 probe is its one write. A fact it cannot read is a value (`unknown`, `missing`), never an error, and only an
-unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, in its long
-and its 8.3 short form) is shown with that folder as `~`, and an API key is named, never read out, so a pasted
-report carries no home folder path and no secret.
+unknown `--flavor` fails the command. Every path under the user's profile folder (`USERPROFILE`, else `HOME`,
+in its long and its 8.3 short form) is shown with that folder as `~`: matched in any case and with `\` or `/`
+(or a mix) as the separator, and only when a separator or the end of the path follows, so a folder that only
+starts with the profile's name (`someone2` next to the profile `someone`) stays as it is (task 069). An API
+key is named, never read out, so a pasted report carries no home folder path and no secret.
 
 The lines, with the JSON field in brackets:
 
@@ -379,7 +478,15 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   addon list (one row per addon: name and folder, version and the version an update brings with the note under
   it, the source badge, the state pill with the step a run is at, the Forever note slot of task 011, and a row
   menu with "Update", pin or unpin, ignore or unignore and the channel, with a progress slot per row; tasks
-  010 and 021), a legend, a status bar and the toast stack. The theme
+  010 and 021), a legend, a status bar and the toast stack. Under the header, two tabs: "Addons" (the list
+  above) and "Toolbox" (task 074), the flavor's toolbox in two cards: "Addon sets" (the set picker with each
+  set's enabled and disabled count, "Apply to" with every character or one character by name and realm, the
+  set's addons as chips, enabled first, a dashed chip for an addon with no folder, the apply button, and what
+  the last apply changed, one line per character) and "SavedVariables" (the listing's summary, an "orphans
+  only" filter, the table of addon, place, files, size and status, the largest first, and the cleanup button
+  that names the orphans it moves). A warning line over the cards names the running client; the buttons stay
+  enabled, since the core's guard answers. The toolbox is read when the tab opens and again after every
+  write. The theme
   toggle and the serious switch sit at the bottom of the sidebar, with "Game folder…" and "Copy
   diagnostics" (task 009). The theme and the switch are kept by the shell in `config.json`, not in the web
   view's storage (task 034, below).
@@ -395,13 +502,16 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   comment is the contract (`Data.version()`, `Data.flavors()`, `Data.chooseRoot()`, `Data.diagnostics()`,
   `Data.resolve(flavorId, folder)`, `Data.checkUpdates(flavorId, progress)`, `Data.updateAll(flavorId,
   progress)`, `Data.updateOne(flavorId, folder, progress)`, `Data.cancelUpdate()`, `Data.mark(flavorId,
-  folder, action, value)`, the preferences; a flavor as `flavor.rs` serializes it plus its friendly name, the
+  folder, action, value)`, the preferences, `Data.toolbox(flavorId)`, `Data.applySet(flavorId, set,
+  target)`, `Data.cleanSavedVariables(flavorId)`; a flavor as `flavor.rs` serializes it plus its friendly name, the
   source of its build, whether its `Interface\AddOns` folder is there and its addons; an addon as `scan.rs`
   gives it plus the facts of the sidecar, the sources, the update check, the Forever notes, pin / ignore /
-  channel and the missing dependencies; a progress event of a run). For a look at the page without the core,
-  open `crates/mrgl-app/ui/index.html` in a browser: without the Tauri global, `data.js` writes the mock's
-  script tag instead, and the made-up rows show, with a made-up check, update, cancel and marks (the folder
-  dialog and the clipboard need the window).
+  channel and the missing dependencies; a progress event of a run; a toolbox answer). For a look at the page
+  without the core, open `crates/mrgl-app/ui/index.html` in a browser: without the Tauri global, `data.js`
+  writes the mock's script tag instead, and the made-up rows show, with a made-up check, update, cancel and
+  marks, and a made-up toolbox per flavor whose client "runs" in retail, so the refusal of both writes shows
+  there (the folder dialog and the clipboard need the window). A browser blocks some scripts of a page opened
+  from the disk; `python -I -m http.server --directory crates/mrgl-app/ui` serves the same files.
 - The pure modules, each with a test file of the same name under `tests/ui/`: `state.js` (an addon's one state
   from its facts, with the precedence linked, update, managed, guess, unmanaged; the classes and labels),
   `search.js` (every word of the query in the name, folder, source kind or source id), `preferences.js`
@@ -409,13 +519,19 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   `MRGL_SERIOUS` decides it, and the one-time carry-over of a value the sketch kept in `localStorage`),
   `theme.js` (auto, light, dark), `flavors.js` (the navigation order and the friendly names), `actions.js`
   (task 010: a row menu's items and why one is disabled, the progress slot each event of a run moves, a
-  check's answer laid over its row, the note under a row's version) and `voice.js` (the two lines and where a
-  message goes, see [nerglish.md](nerglish.md), "The window").
+  check's answer laid over its row, the note under a row's version, whose pin reads the check's `order` as
+  the command line's pinned line does: `pinned at 1.1.0-beta, newer than the release`, or `pinned at 2.0.0,
+  2.1.0 is out`; task 077), `toolbox.js` (task 074: the target
+  picker's options and the `{ character, realm }` an option names, the set the picker shows, the set's
+  addons in their order, the state, label and title of the apply and cleanup buttons, the SavedVariables rows
+  with the "orphans only" filter, the words of a status, and the lines of what an apply changed) and
+  `voice.js` (the two lines and where a message goes, see [nerglish.md](nerglish.md), "The window").
 
 The IPC commands (`src/commands.rs`, task 009) are thin wrappers over the core and over the plain functions
-of `src/list.rs` and `src/actions.rs`, which take the game root, the mrgl home folder, the engine and the
-source as arguments, so `tests/flavor_list.rs` checks the rows on a made-up game folder and
-`tests/update_actions.rs` the update runs and the marks on a made-up flavor with a stub source, without a
+of `src/list.rs`, `src/actions.rs` and `src/toolbox.rs`, which take the game root, the mrgl home folder, the
+engine and the source as arguments, so `tests/flavor_list.rs` checks the rows on a made-up game folder,
+`tests/update_actions.rs` the update runs and the marks on a made-up flavor with a stub source, and
+`tests/toolbox.rs` the toolbox on a made-up flavor with the `WTF` tree of the addon-sets fixture, without a
 window. Every message they return is
 `{ kind, murloc, plain }`: the core's voice kind (`Kind::as_str`) picks the place in the window, and a
 serious voice sends the murloc line empty. Whatever reads the disk or the network runs on a blocking thread.
@@ -427,13 +543,22 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   sidecar (managed, the installed version, the source, pinned, ignored), a TOC hint for an unmanaged addon
   (Wago, then WoWInterface, then CurseForge, drawn as a guess), the dependency check (`missing`), and on
   every row of the Forever flavor its Forever status (`build`, `note`, `verified`, `source`, `stale`). The
-  list never goes online (task 010): a row's `check` (`state`, `label`, `latest`, `detail` and the check's
-  data `line`) and its `update` are the answer of `update::check`, with its version order (task 068), run
+  list never goes online (task 010): a row's `check` (`state`, `label`, `latest`, `order`, `detail` and the
+  check's data `line`) and its `update` are the answer of `update::check`, with its version order (task 068), run
   against the GitHub source through an `Http` that fails every request as an unreachable network does, so
   the source answers from the release list and `release.json` that the last check or install cached (its
   offline rule, task 041), counts no request against the rate limit and never stamps the cache as
   confirmed. `update` is set for `update-available` only, so a newer installed version, a pin or a guess is no
-  update; an addon whose answer needs the network (nothing cached) has no `check`. A row also carries its
+  update; an addon whose answer needs the network (nothing cached) has no `check`. What the cache cannot
+  tell again is the last online check's (task 078): a check of the window keeps every addon's answer of
+  `source-gone`, `failed` or `rate-limited` in `last-check.json` under the flavor's folder of the mrgl home
+  (`mrgl_core::last_check`), and every list lays those answers over the offline ones, so a redraw after a
+  mark and a restart show them, until the next check of the addon replaces its answer (dropped for any
+  other state). The file is a cache: a missing, unreadable or foreign one is no answer. An answer holds
+  while the sidecar entry keeps the source and the version it was given for, so an update or a reinstall
+  (by the command line too) drops it; an ignored addon shows its ignore instead. The Forever `build` is
+  `GitHub::cached_forever_build` on the addon's channel: the release the resolve would take, not the
+  channel's newest one (task 078). A row also carries its
   `channel` (`null` when unmanaged), and a flavor `addons_folder`, false when the client was never started
   for it.
 - `choose_root`: the folder dialog (`tauri-plugin-dialog`, called from Rust); a game folder, or a flavor
@@ -455,9 +580,15 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   repeated in the answer), `updating`, `downloading`, `installing`, `updated` or `failed` (an error), the
   folder the addon's first one, the message in the voice. The answer is `{ flavor, messages }`: the flavor as
   it is now (its rows read again, with the check's answer laid over them except for the addons this run
-  updated) and the warnings, then the summary, `UpdateCheck::summary` of the core, which the command line
+  updated; the answers the cache cannot give again are kept in `last-check.json` for the next list, task
+  078, and a file that cannot be written is a warning) and the warnings, then the summary, `UpdateCheck::summary` of the core, which the command line
   shares (`checked _forever_: 1 update available, 2 up to date`, `2 addons updated, 1 failed, 1 up to
-  date`). One run at a time: a second one is refused with a warning. A flavor without an AddOns folder
+  date`). After each install the run reports the checks the command line's install summary reports
+  (task 079, `Engine::check_installed`, shared with it): a missing required dependency of the installed
+  folders (`NeedsLibrary needs the missing dependency LibMissing: install it or the addon does not load`)
+  and an interface of the primary folder that is not for the build (`… of _forever_; the zip may be for
+  another flavor`), each a warning of the answer; the row, read again, carries the dependency in its
+  `missing`. One run at a time: a second one is refused with a warning. A flavor without an AddOns folder
   answers that the client has not been started for it yet. The window's "Check for updates" is the check
   alone; "Update all" and a row's "Update" run the check first, so they never install on an old answer.
 - `cancel_update`: asks the run going to stop. The cancel rule: the flag is read before each addon of the
@@ -474,8 +605,41 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   window cannot override `MRGL_SERIOUS`), and what `config.json` stores (`theme`, `serious`, next to
   `root`). The view reads them at start, writes a toggle's change at once, and carries an old
   `localStorage` value over once for a key the file does not have, then removes the old keys; a cleared
-  web view draws what the file says. Each writer of `config.json` sets only its own keys and keeps the
+  web view draws what the file says. The native window follows the theme too (task 079), so the title bar
+  matches the page: at start (the `setup` hook of `lib.rs`) and on every `set_preferences`, `light` and
+  `dark` set the window's theme (`WebviewWindow::set_theme`) and `auto` leaves the system's
+  (`commands::native_theme`); a light page on a dark system has a light title bar. Each writer of `config.json` sets only its own keys and keeps the
   others, so `mrgl root` keeps the preferences and the window keeps the root.
+- `toolbox` (task 074, `toolbox::load`): a flavor's toolbox, read only. Its sets from
+  `<home>\<flavor-id>\sets.json` (`sets::read_sets_at`: each set's name, save time, enabled and disabled
+  counts and addons, each with its state and whether a folder of its name is under `Interface\AddOns`) with
+  the note under the picker (`2 sets of _forever_ in …`, or that there is none yet, with the hint to
+  `mrgl set save <name>`; saving a set stays on the command line), its characters (`sets::characters`: name,
+  realm and the `<realm>/<character>` label; the account folder's name stays out of the answer, as out of
+  the command line's plain lines), its SavedVariables (`savedvars::list_saved_variables`: per entry the
+  addon, the place, the `.lua` and `.bak` flags, the size in bytes and as `size_text` writes it, and the
+  status `installed`, `orphan`, `client` or `unknown`; the totals and the summary `mrgl savedvars` prints,
+  with the cleanup named instead of `--clean`), and `client`, a warning with the guard's refusal line while
+  the client runs from the flavor folder (task 023). A part that cannot be read is empty, with its error
+  among the messages. The answer is `{ toolbox, changes, zip, messages }`, the same for the two writes.
+- `apply_set` (task 074 over tasks 014 and 027, `toolbox::apply`): a stored set into the `AddOns.txt` of
+  every character, or of the one `character` (and `realm`) names. The running-client guard
+  (`client::ensure_client_not_running`) comes first and its refusal is the answer (an error, nothing
+  written); then the pick is pinned to one character through `sets::find_character` (an unknown or
+  ambiguous name is the core's error), and `sets::apply_set` with its `Target` writes only the files that
+  change. The answer carries the toolbox as it is now, `changes` (per character the lines it changed or
+  added, and whether the file is new), the not-installed warning and the summary of `mrgl set apply`
+  (`applied set raid to Second Realm/Grrlwave of _forever_: 3 addon lines changed`, `set raid already
+  matches every character of _forever_ (2 characters), nothing written`).
+- `clean_saved_variables` (task 074 over task 025, `toolbox::clean`): the guard first, then
+  `savedvars::clean_orphans` into the flavor's backups folder under the mrgl home, which moves the orphans
+  and their `.bak` files into `SavedVariables-<date>.zip` and removes a file only once its copy in the zip
+  reads back equal. The answer carries the toolbox as it is now, `zip`, and the summary of `mrgl savedvars
+  --clean` (`moved 2 orphans of _forever_ (3 files, 2.5 MB) into …; unzip it into the WTF folder to put
+  them back`, or `no orphans …, nothing moved`). Refused with a warning while an update runs: an install
+  swaps addon folders, and a folder away for a moment would read as an orphan; an update run waits for a
+  toolbox write the same way. One toolbox write at a time (`toolbox::ToolboxRun`); a second one is refused
+  with a warning.
 
 The application icon is a murloc head of our own drawing (task 012; fan art within D-005, no Blizzard
 artwork, no game file): geometry in `scripts\make-icon.py`, rendered with Pillow and committed. `icon.ico`
@@ -568,7 +732,7 @@ does not move with the pin.
 `mrgl import lists\forever-starter.json --flavor forever` works from the unpacked zip without the repo (task
 012); both exes carry the murloc icon ([The UI](#the-ui)). The version is
 the workspace `Cargo.toml` one, the only place it is written: `tauri-build` stamps it into the app exe's
-properties and both exes print it. Next to the zip it writes `SHA256SUMS.txt` (the zip's SHA-256 in the
+properties, the CLI's `build.rs` into `mrgl.exe`'s (task 079), and both exes print it. Next to the zip it writes `SHA256SUMS.txt` (the zip's SHA-256 in the
 `sha256sum -c` format) and `release-notes-<version>.md`. The license page comes from
 [cargo-about](https://github.com/EmbarkStudios/cargo-about) over the crates compiled into the exes (it reads
 the graph through `cargo metadata`, which wants the sources of every platform's crates, so the script runs
@@ -674,19 +838,25 @@ a folder per URL the source asks, the release lists as the API writes them and `
 shape the BigWigs packager writes, `forever` next to other flavors, one without metadata, one repository
 without `release.json`, one with no release, one with a draft and a prerelease above the stable release),
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
-one addon folder in three versions, several folders in one archive, a TOC at the zip's root, a wrapper
+one addon folder in three versions, several folders in one archive, several whose core is not the first by
+name and no folder extended by the others (`boss-core-5.0.0.zip`, task 065), a TOC at the zip's root, a wrapper
 folder, a TOC with an interface for another build, a path that tries to escape the staging folder, an addon
-with an embedded and a missing required dependency, and a zip with no addon at all), a hand-written
+with an embedded-only and a missing required dependency, and a zip with no addon at all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
 SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made
 up from the first line, task 013), a second `WTF` tree for the addon sets (`addon-sets/WTF/`, task 014:
 two characters on two realms of one account, one `AddOns.txt` with CRLF endings, the other with LF, a line
 the client never wrote and no last line break, and the account's `SavedVariables` that is no realm), a
 third game folder for the dependency check (`dependencies/`, task
-029: a `_forever_` flavor whose addons have a met, an embedded and a missing required dependency, and a
-library folder inside an addon that a `nolib` entry in a test's sidecar turns into a missing one), and a
+029: a `_forever_` flavor whose addons have a met, an embedded-only and a missing required dependency and
+an embedded optional one, and a library folder inside an addon that a `nolib` entry in a test's sidecar
+keeps the check from looking into), a fourth game folder for the interface states (`interface/`, task 076:
+a `_retail_` flavor with a current TOC, one an interface number behind the build and one of another
+expansion), and a
 development folder for the junction links (`dev/`: two addons with a TOC and a folder without one, task
-005; the tests copy it into a temporary folder and make their junctions there). A real addon zip, a real
+005; the tests copy it into a temporary folder and make their junctions there), and a single addon folder
+for the same links (`single-addon/SoloAddon/`: a TOC with the Forever suffix only and an embedded library
+folder with a TOC of its own, task 062). A real addon zip, a real
 AddOns folder or a `WTF` folder never enters the
 repo; a manual round on a real game folder is a task of its own, and its result is a dated line in that
 task's Verification. The running-client tests copy the system's signed `ping.exe`
@@ -707,7 +877,10 @@ makes the command line answer every request from that folder instead (the URL's 
 sent to `api.github.com` only, never with an asset download. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
 request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
-`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline. Every
+`release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline.
+Whenever the API answers with the list, a 200 or a 304, the `tag-*.json` files of tags the list no longer
+holds are removed, and so is a `release-json.json` next to `releases.json`, the single file of task 011 that
+nothing reads any more (task 072); the list read offline removes nothing. Every
 fixture repository under `releases/` is classified for the Forever build in `tests/github_source.rs`, so a
 new fixture names its expected build there.
 
@@ -715,7 +888,10 @@ The release list walks its pages (task 042): when the first page of 30 holds no 
 that publishes a nightly prerelease every day), the source follows the `Link` header's `rel="next"` page,
 on `api.github.com` only, with the token, until a page holds a stable release or five pages are read
 (`sources::github::MAX_PAGES`); past the bound the newest prerelease is current, as for a repository without
-a stable release. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
+a stable release. The resolve then walks the releases its channel may take, newest first, down to the first
+with an asset for the flavor (task 066): a repository whose newest release is built for other flavors only
+resolves to the release before it, never a draft and never a prerelease on the stable channel while a
+stable release exists. The cache keeps every page read with the first page's `ETag`, so a repeated run is still one
 conditional request. A release's `release.json` is read from `release-json/tag-<tag>.json` when the file
 names the same tag and the same asset URL and size, so a repeated resolve of an unchanged release costs that
 one request and no download. A 429, or a 403 with `x-ratelimit-remaining: 0`, is the rate limit: its line
@@ -769,7 +945,10 @@ The command line and the window keep `config.json` under the mrgl home folder (`
 folder, written by `mrgl root` and the window's chooser; `theme` and `serious`, the window's preferences of
 task 034, the second also the third source of the voice's serious switch),
 `%LOCALAPPDATA%\mrgl\` (D-003), and under it one folder per flavor id (`wowf\`, `wow\`, …) with the state
-sidecar `state.json`, the addon sets `sets.json` (task 014),
+sidecar `state.json`, the addon sets `sets.json` (task 014), the last set apply's undo record
+`set-undo\` (task 073), the window's last online check answers
+`last-check.json` (task 078; a cache, deleting it only drops a source gone or a failed check until the next
+check),
 the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves; emptied after every install) and `cache\<addon>\<version>.zip` (the current and the previous
 version's zip for `mrgl rollback`; never required, deleting it only disables the rollback), and the `WTF`
@@ -848,8 +1027,11 @@ canonical source spec. To add a note, add an entry under `addons` with the restr
 one-line reason (lower case, no trailing full stop: what does not work), the day it was checked against the
 source and the source's URL, then run `cargo test`. The schema check (`forever::tests`) rejects an unknown
 field or kind, a key that is not a canonical spec, a reason over one line, a date that is no real day or lies
-in the future, and a source that is not an `https://` URL. A note whose `verified` date is more than 90 days
-old (`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
+in the future, and a source that is not an `https://` URL. The `verified` date is the day of the check where
+you are: the schema check compares it with today in UTC and allows one day of slack
+(`forever::VERIFIED_SLACK_DAYS`, task 070), so a note dated by the local day east of UTC passes between local
+and UTC midnight, while a date two days ahead fails. A note whose `verified` date is more than 90 days old
+(`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
 checks the age in CI.
 
 Where a note comes from (task 058): a public source that a page under `docs/research/` cites, an addon author's

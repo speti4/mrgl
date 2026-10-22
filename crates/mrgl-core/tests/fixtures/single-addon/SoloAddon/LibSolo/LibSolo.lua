@@ -1,0 +1,1 @@
+-- LibSolo, a library embedded in SoloAddon

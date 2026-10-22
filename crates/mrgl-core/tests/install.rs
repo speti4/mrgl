@@ -381,6 +381,111 @@ fn a_zip_without_a_folder_the_others_extend_is_named_after_its_stem_or_repositor
 }
 
 #[test]
+fn a_reinstall_under_the_derived_name_keeps_the_marks_the_previous_version_and_the_rollback() {
+    // Task 077: the sidecar knows the boss zip as `Boss-Arena`, the name the rule before task 065 gave,
+    // at 5.0.0 after 4.0.0, pinned and on the prerelease channel; the same zip in hand is `Boss-Core` now.
+    let sandbox = Sandbox::new("boss-core-renamed");
+    let as_arena = |version: &str| Metadata {
+        version: Some(version.to_string()),
+        name: Some("Boss-Arena".to_string()),
+        ..metadata("boss-core-5.0.0.zip")
+    };
+    for version in ["4.0.0", "5.0.0"] {
+        sandbox
+            .engine
+            .install(&zip("boss-core-5.0.0.zip"), &as_arena(version))
+            .expect("installs as Boss-Arena");
+    }
+    sandbox.engine.pin("Boss-Arena", None).expect("pins");
+    sandbox
+        .engine
+        .set_channel("Boss-Arena", Channel::Prerelease)
+        .expect("follows prereleases");
+    assert_eq!(
+        sandbox.cache_entries("Boss-Arena"),
+        ["4.0.0.zip", "5.0.0.zip"]
+    );
+
+    let installed = sandbox.install("boss-core-5.0.0.zip");
+    assert_eq!(installed.name, "Boss-Core");
+    assert_eq!(installed.previous_version.as_deref(), Some("4.0.0"));
+    assert_eq!(installed.removed_folders, Vec::<String>::new());
+    assert_eq!(
+        installed.warnings,
+        ["Boss-Arena is managed as Boss-Core now, with its marks and its previous version"],
+        "no folder is lost and no entry dropped"
+    );
+    let state = sandbox.state();
+    assert_eq!(state.addons.keys().collect::<Vec<_>>(), ["Boss-Core"]);
+    let entry = &state.addons["Boss-Core"];
+    assert_eq!(
+        (
+            entry.version.as_str(),
+            entry.previous_version.as_deref(),
+            entry.pinned(),
+            entry.channel(),
+        ),
+        ("5.0.0", Some("4.0.0"), Some("5.0.0"), Channel::Prerelease)
+    );
+    assert_eq!(entry.folders, ["Boss-Core", "Boss-Arena", "Boss-GUI"]);
+    assert_eq!(
+        sandbox.cache_entries("Boss-Core"),
+        ["4.0.0.zip", "5.0.0.zip"]
+    );
+    assert!(
+        !sandbox.engine.home.addon_cache_dir("Boss-Arena").exists(),
+        "the old cache folder is gone"
+    );
+
+    // The rollback finds the previous version's zip under the new name.
+    let rolled = sandbox.engine.rollback("Boss-Core").expect("rolls back");
+    assert_eq!(
+        (rolled.version.as_str(), rolled.pinned.as_str()),
+        ("4.0.0", "4.0.0")
+    );
+    assert_eq!(rolled.previous_version, "5.0.0");
+}
+
+#[test]
+fn an_entry_that_records_a_folder_of_the_zip_under_another_addon_keeps_its_name() {
+    // Task 077: `Raid` records its own folder and `Boss-Core`, as an addon that ships a copy of another's
+    // folder would; the boss zip takes `Boss-Core` over, but `Raid` is not a folder of the zip, so the
+    // entry is no older name of the boss addon: it keeps its name and its marks, and only loses the folder.
+    let sandbox = Sandbox::new("boss-core-other");
+    sandbox.install("boss-core-5.0.0.zip");
+    std::fs::create_dir_all(sandbox.addon("Raid")).expect("the folder");
+    std::fs::write(
+        sandbox.addon("Raid").join("Raid.toc"),
+        "## Interface: 16001\n## Version: 1.0\n",
+    )
+    .expect("the TOC");
+    let mut state = sandbox.state();
+    let mut raid = state.addons.remove("Boss-Core").expect("the boss entry");
+    raid.version = "1.0".to_string();
+    raid.folders = vec!["Raid".to_string(), "Boss-Core".to_string()];
+    raid.pin(None);
+    state.addons.insert("Raid".to_string(), raid);
+    sandbox
+        .engine
+        .home
+        .write_state(&state)
+        .expect("the sidecar");
+
+    let installed = sandbox.install("boss-core-5.0.0.zip");
+    assert_eq!(installed.name, "Boss-Core");
+    assert_eq!(installed.previous_version, None);
+    assert_eq!(installed.warnings, ["Raid lost 1 folder to Boss-Core"]);
+    let state = sandbox.state();
+    assert_eq!(
+        state.addons.keys().collect::<Vec<_>>(),
+        ["Boss-Core", "Raid"]
+    );
+    assert_eq!(state.addons["Raid"].folders, ["Raid"]);
+    assert_eq!(state.addons["Raid"].pinned(), Some("1.0"));
+    assert_eq!(state.addons["Boss-Core"].pinned(), None);
+}
+
+#[test]
 fn the_metadata_names_the_source_the_version_and_the_name() {
     let sandbox = Sandbox::new("metadata");
     let given = Metadata {

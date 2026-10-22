@@ -5,7 +5,9 @@
 //! and an apply with the stand-in client running (the pattern of the 023 and 063 tests: a copy of the
 //! system's `ping.exe` in the flavor folder, never a game file) is refused before anything is written.
 //! A set applied to one chosen character (task 027) leaves the other character's file byte for byte, and
-//! a name on two realms is refused with the realms listed until `realm` narrows it.
+//! a name on two realms is refused with the realms listed until `realm` narrows it. An apply round-trips
+//! through its undo byte for byte, an edit changes only the named addon, one realm and name under two
+//! accounts resolve with the account, and a save keeps an addon that is not installed (task 073).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,7 +16,7 @@ use std::process::{Child, Command, Stdio};
 
 use mrgl_core::Error;
 use mrgl_core::flavor::{self, Flavor, FlavorId};
-use mrgl_core::sets::{self, AddonState, AddonsTxt, SETS_FILE, Target};
+use mrgl_core::sets::{self, AddonState, AddonsTxt, SETS_FILE, SetEdit, Target};
 
 fn fixture_wtf() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/addon-sets/WTF")
@@ -496,6 +498,10 @@ fn a_failed_write_puts_the_files_written_before_it_back() {
         "{error}"
     );
     assert_eq!(snapshot(&wtf_of(&root)), before, "the first file is back");
+    assert!(
+        !sets::undo_dir_of(&sets_path_of(&root)).exists(),
+        "no undo record of an apply that wrote nothing in the end"
+    );
 
     #[allow(clippy::permissions_set_readonly_false)]
     permissions.set_readonly(false);
@@ -688,8 +694,17 @@ fn one_realm_under_two_accounts_names_the_accounts() {
     .expect_err("ambiguous");
     assert_eq!(
         error.to_string(),
-        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLONE), Fixture Realm (MRGLTWO); the same realm is under more than one account, which --realm cannot tell apart"
+        "character Mrgltest matches 2 characters (flavor forever): Fixture Realm (MRGLONE), Fixture Realm (MRGLTWO); the same realm is under more than one account: name one with --account"
     );
+    let found = sets::find_character_in_account(
+        &characters,
+        "Mrgltest",
+        Some("Fixture Realm"),
+        Some("mrgltwo"),
+        &FlavorId::parse("wowf"),
+    )
+    .expect("the account tells them apart");
+    assert_eq!(found.account, "MRGLTWO");
 }
 
 #[cfg(windows)]
@@ -713,5 +728,311 @@ fn an_apply_to_one_character_is_refused_while_the_client_runs() {
     assert!(matches!(&error, Error::ClientRunning { .. }), "{error}");
     assert_eq!(snapshot(&wtf_of(&root)), before, "nothing was touched");
     child.stop();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Task 073: the undo of an apply, the edit of a stored set, `--account`, and the save warning.
+
+const NEWBIE: &str = "Account/MRGLSETS/Second Realm/Newbie/AddOns.txt";
+
+#[test]
+fn an_apply_round_trips_through_undo_byte_for_byte() {
+    let root = temp_game_root("undo");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    // A character without AddOns.txt: the apply creates one, the undo removes it again.
+    std::fs::create_dir_all(wtf_of(&root).join("Account/MRGLSETS/Second Realm/Newbie"))
+        .expect("a character folder");
+    write_set(
+        &root,
+        "raid",
+        &[
+            ("RaidFrames", AddonState::Enabled),
+            ("BagSorter", AddonState::Disabled),
+            ("NewMeter", AddonState::Enabled),
+        ],
+    );
+    let before = snapshot(&wtf_of(&root));
+
+    let error = sets::undo_apply(&flavor, &path).expect_err("nothing yet");
+    assert!(matches!(&error, Error::NothingToUndo { .. }), "{error}");
+
+    let applied =
+        sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    assert_eq!(applied.characters.len(), 3);
+    let undo_dir = sets::undo_dir_of(&path);
+    assert_eq!(undo_dir, root.join("home").join("wowf").join("set-undo"));
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(undo_dir.join(sets::UNDO_FILE)).expect("the record"))
+            .expect("JSON");
+    assert_eq!(record["format"], "mrgl-set-undo");
+    assert_eq!(record["set"], "raid");
+    assert_eq!(record["files"].as_array().map(Vec::len), Some(3));
+    let applied_tree = snapshot(&wtf_of(&root));
+    assert!(applied_tree.contains_key(NEWBIE));
+
+    // A second apply of the same set changes nothing and keeps the record of the first.
+    let again = sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("again");
+    assert_eq!(again.changed(), 0);
+
+    let undone = sets::undo_apply(&flavor, &path).expect("undone");
+    assert_eq!(undone.set, "raid");
+    let restored: Vec<String> = undone.restored.iter().map(sets::Character::label).collect();
+    assert_eq!(
+        restored,
+        ["Fixture Realm/Mrgltest", "Second Realm/Grrlwave"]
+    );
+    let removed: Vec<String> = undone.removed.iter().map(sets::Character::label).collect();
+    assert_eq!(removed, ["Second Realm/Newbie"]);
+    assert!(undone.warnings.is_empty(), "{:?}", undone.warnings);
+    assert_eq!(
+        snapshot(&wtf_of(&root)),
+        before,
+        "every AddOns.txt byte for byte, the created one gone"
+    );
+    assert!(!undo_dir.exists(), "the record is used once");
+    let error = sets::undo_apply(&flavor, &path).expect_err("used once");
+    assert_eq!(
+        error.to_string(),
+        "nothing to undo in _forever_: no set apply is recorded; an apply that changes a file keeps what it replaced, and an undo puts it back once"
+    );
+
+    // Two applies: the undo puts back the second one's files only (the last apply).
+    write_set(&root, "solo", &[("QuestArrows", AddonState::Enabled)]);
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("raid");
+    let after_raid = snapshot(&wtf_of(&root));
+    sets::apply_set(&flavor, &path, "solo", &one("Mrgltest", None)).expect("solo");
+    assert_ne!(snapshot(&wtf_of(&root)), after_raid);
+    let undone = sets::undo_apply(&flavor, &path).expect("undone");
+    assert_eq!(undone.set, "solo");
+    assert_eq!(snapshot(&wtf_of(&root)), after_raid);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_undo_warns_about_a_file_changed_since_the_apply_and_puts_it_back_all_the_same() {
+    let root = temp_game_root("undo-changed");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    // The client wrote the first character's file again at logout.
+    std::fs::write(wtf_of(&root).join(FIRST), b"RaidFrames: disabled\r\n").expect("written");
+    let undone = sets::undo_apply(&flavor, &path).expect("undone");
+    assert_eq!(
+        undone.warnings,
+        [
+            "Fixture Realm/Mrgltest: AddOns.txt changed since the apply (the client writes it at logout); put back as it was before the apply all the same"
+        ]
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_undo_record_that_names_a_path_is_refused() {
+    let root = temp_game_root("undo-path");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    let record_path = sets::undo_dir_of(&path).join(sets::UNDO_FILE);
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&record_path).expect("the record")).expect("JSON");
+    record["files"][0]["realm"] = serde_json::json!("..");
+    std::fs::write(&record_path, record.to_string()).expect("written");
+    let applied = snapshot(&wtf_of(&root));
+    let error = sets::undo_apply(&flavor, &path).expect_err("refused");
+    assert!(matches!(&error, Error::SetUndoUnreadable { .. }), "{error}");
+    assert_eq!(snapshot(&wtf_of(&root)), applied, "nothing was written");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(windows)]
+#[test]
+fn an_undo_is_refused_while_the_client_runs() {
+    let root = temp_game_root("undo-client");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    let applied = snapshot(&wtf_of(&root));
+    let Some(mut child) = spawn_stand_in(&flavor.folder) else {
+        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        return;
+    };
+    let error = sets::undo_apply(&flavor, &path).expect_err("refused");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "the client is running in _forever_ (client-stand-in.exe, pid {}): close the game first, nothing under WTF is written while it runs",
+            child.id()
+        )
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), applied, "nothing was touched");
+    assert!(sets::undo_dir_of(&path).join(sets::UNDO_FILE).is_file());
+    child.stop();
+    sets::undo_apply(&flavor, &path).expect("undone");
+    assert_eq!(snapshot(&wtf_of(&root)), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_edit_changes_only_the_named_addon_in_the_sets_file() {
+    let root = temp_game_root("edit");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    std::fs::create_dir_all(root.join("_forever_/Interface/AddOns/BagSorter")).expect("addon");
+    write_set(
+        &root,
+        "raid",
+        &[
+            ("BagSorter", AddonState::Disabled),
+            ("BossTimers", AddonState::Enabled),
+        ],
+    );
+    write_set(&root, "solo", &[("QuestArrows", AddonState::Enabled)]);
+    let wtf_before = snapshot(&wtf_of(&root));
+    let sets_before = sets::read_sets_at(&path, &flavor.id).expect("read");
+
+    let edited =
+        sets::edit_set(&flavor, &path, "RAID", "bagsorter", SetEdit::Enable).expect("enabled");
+    assert_eq!(edited.name, "raid");
+    assert_eq!(edited.addon, "BagSorter", "the set's spelling");
+    assert_eq!(edited.before, Some(AddonState::Disabled));
+    assert_eq!(edited.after, Some(AddonState::Enabled));
+    assert!(edited.changed && edited.installed);
+    let file = sets::read_sets_at(&path, &flavor.id).expect("read");
+    assert_eq!(
+        file.sets["raid"].addons,
+        BTreeMap::from([
+            ("BagSorter".to_string(), AddonState::Enabled),
+            ("BossTimers".to_string(), AddonState::Enabled),
+        ])
+    );
+    assert_eq!(file.sets["solo"], sets_before.sets["solo"], "the other set");
+
+    // The state it has already: nothing is written.
+    let bytes = std::fs::read(&path).expect("sets.json");
+    let same = sets::edit_set(&flavor, &path, "raid", "BagSorter", SetEdit::Enable).expect("same");
+    assert!(!same.changed);
+    assert_eq!(std::fs::read(&path).expect("sets.json"), bytes);
+
+    // A disable of an addon the set does not have adds it; a drop takes one out.
+    let added =
+        sets::edit_set(&flavor, &path, "raid", "NewMeter", SetEdit::Disable).expect("added");
+    assert_eq!(added.before, None);
+    assert!(!added.installed);
+    let dropped =
+        sets::edit_set(&flavor, &path, "raid", "BossTimers", SetEdit::Drop).expect("dropped");
+    assert_eq!(dropped.after, None);
+    assert_eq!(
+        dropped.set.addons,
+        BTreeMap::from([
+            ("BagSorter".to_string(), AddonState::Enabled),
+            ("NewMeter".to_string(), AddonState::Disabled),
+        ])
+    );
+    let error =
+        sets::edit_set(&flavor, &path, "raid", "Missing", SetEdit::Drop).expect_err("not there");
+    assert_eq!(
+        error.to_string(),
+        "set raid (flavor forever) has no addon Missing; its addons: BagSorter, NewMeter"
+    );
+    let error =
+        sets::edit_set(&flavor, &path, "raid", "a:b", SetEdit::Enable).expect_err("no name");
+    assert!(matches!(&error, Error::AddonName { .. }), "{error}");
+    let error =
+        sets::edit_set(&flavor, &path, "nope", "BagSorter", SetEdit::Enable).expect_err("no set");
+    assert!(matches!(&error, Error::SetNotFound { .. }), "{error}");
+    assert_eq!(
+        snapshot(&wtf_of(&root)),
+        wtf_before,
+        "an edit never touches WTF"
+    );
+    assert!(
+        !sets::undo_dir_of(&path).exists(),
+        "and keeps no undo record"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The fixture with a second account folder that has the same realm and character as the first.
+fn with_twin_account(root: &Path) -> &'static str {
+    const TWIN: &str = "Account/MRGLTWO/Fixture Realm/Mrgltest/AddOns.txt";
+    let twin = wtf_of(root).join(TWIN);
+    std::fs::create_dir_all(twin.parent().expect("a folder")).expect("the twin's folder");
+    std::fs::write(&twin, b"BagSorter: enabled\r\nTwinOnly: enabled\r\n").expect("its file");
+    TWIN
+}
+
+#[test]
+fn one_realm_and_name_under_two_accounts_resolve_with_the_account() {
+    let root = temp_game_root("account");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    let twin = with_twin_account(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    let mrgltest = one("Mrgltest", Some("Fixture Realm"));
+
+    let error = sets::apply_set(&flavor, &path, "raid", &mrgltest).expect_err("ambiguous");
+    assert!(
+        error
+            .to_string()
+            .ends_with("more than one account: name one with --account"),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), before);
+
+    let applied = sets::apply_set_in_account(&flavor, &path, "raid", &mrgltest, Some("mrgltwo"))
+        .expect("the account picks one");
+    assert_eq!(applied.characters.len(), 1);
+    assert_eq!(applied.characters[0].character.account, "MRGLTWO");
+    let after = snapshot(&wtf_of(&root));
+    assert_eq!(after[FIRST], before[FIRST], "the other account's file");
+    assert_eq!(after[twin], b"BagSorter: disabled\r\nTwinOnly: enabled\r\n");
+
+    let saved = sets::save_set_in_account(
+        &flavor,
+        &path,
+        "twin",
+        &one("Mrgltest", None),
+        Some("MRGLTWO"),
+    )
+    .expect("saved from the twin");
+    assert_eq!(saved.characters.len(), 1);
+    assert!(saved.set.addons.contains_key("TwinOnly"));
+
+    let error = sets::apply_set_in_account(&flavor, &path, "raid", &mrgltest, Some("Nobody"))
+        .expect_err("no such account");
+    assert_eq!(
+        error.to_string(),
+        "no character under the account Nobody (flavor forever); the accounts with characters: MRGLSETS, MRGLTWO"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_save_keeps_an_addon_that_is_not_installed_and_names_it() {
+    let root = temp_game_root("save-missing");
+    let flavor = read(&root);
+    std::fs::create_dir_all(root.join("_forever_/Interface/AddOns/BagSorter")).expect("addon");
+    let saved = sets::save_set(
+        &flavor,
+        &sets_path_of(&root),
+        "raid",
+        &one("Mrgltest", None),
+    )
+    .expect("saved");
+    assert_eq!(
+        saved.not_installed,
+        ["BossTimers", "QuestArrows", "RaidFrames"]
+    );
+    assert_eq!(saved.set.addons.len(), 4, "every addon is kept");
+    let file = sets::read_sets_at(&sets_path_of(&root), &flavor.id).expect("read");
+    assert!(file.sets["raid"].addons.contains_key("RaidFrames"));
     let _ = std::fs::remove_dir_all(&root);
 }

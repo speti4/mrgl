@@ -101,6 +101,10 @@ test("the other flavors answer with the other kinds", async () => {
   assert.equal(summary.kind, "warning");
   assert.match(summary.plain, /^nothing updated: 1 failed, /);
   assert.match(summary.plain, /1 newer than the release/);
+  // Task 077: a pin above the current release reads as newer, in the data line and in the row's note.
+  const held = era.answer.flavor.addons.find((row) => row.pinned);
+  assert.deepEqual([held.check.state, held.check.order], ["pinned", "newer"]);
+  assert.equal(held.check.line, "AtlasLoot Classic  v5.0.0-beta  pinned at v5.0.0-beta, newer than the current release v4.9.0, left alone");
 
   const classic = await runOf((progress) => Data.checkUpdates("wow_classic", progress));
   assert.ok(classic.events.every((event) => event.phase === "checking" || event.phase === "checked"));
@@ -171,6 +175,75 @@ test("a row names its missing dependencies and a stale note", async () => {
   assert.ok(rows.every((row) => Array.isArray(row.missing)));
   assert.ok(rows.some((row) => row.missing.length > 0), "a row with a missing dependency");
   assert.ok(rows.some((row) => row.forever && row.forever.stale), "a stale Forever note");
+});
+
+// The keys of a toolbox answer (task 074); `tests/toolbox.rs` holds `src/toolbox.rs` to the same ones.
+const TOOLBOX_KEYS = ["characters", "client", "flavor", "folder", "saved_variables", "sets", "sets_note"];
+const SAVED_KEYS = ["bytes", "files", "orphan_bytes", "orphan_size", "orphans", "size", "summary"];
+const FILE_KEYS = ["addon", "bak", "bytes", "character", "lua", "place", "realm", "size", "status"];
+
+test("the toolbox of every flavor has every key of the contract", async () => {
+  const { flavors } = await Data.flavors();
+  for (const flavor of flavors) {
+    const answer = await Data.toolbox(flavor.id);
+    assert.deepEqual(Object.keys(answer).sort(), ["changes", "messages", "toolbox", "zip"]);
+    const toolbox = answer.toolbox;
+    assert.deepEqual(Object.keys(toolbox).sort(), TOOLBOX_KEYS, flavor.id);
+    assert.deepEqual(Object.keys(toolbox.saved_variables).sort(), SAVED_KEYS);
+    for (const file of toolbox.saved_variables.files) assert.deepEqual(Object.keys(file).sort(), FILE_KEYS);
+    for (const set of toolbox.sets) {
+      assert.deepEqual(Object.keys(set).sort(), ["addons", "disabled", "enabled", "name", "saved_at"]);
+      for (const addon of set.addons) assert.deepEqual(Object.keys(addon).sort(), ["installed", "name", "state"]);
+    }
+    for (const character of toolbox.characters) assert.deepEqual(Object.keys(character).sort(), ["label", "name", "realm"]);
+    assert.equal(toolbox.saved_variables.orphans, toolbox.saved_variables.files.filter((file) => file.status === "orphan").length);
+    assert.equal(Boolean(toolbox.client), flavor.id === "wow", "retail's client runs in the sketch");
+  }
+  const unknown = await Data.toolbox("wow_mrgl");
+  assert.equal(unknown.toolbox, null);
+  assert.equal(unknown.messages[0].kind, "error");
+});
+
+test("a set goes to one character and to every one, and the orphans into the zip", async () => {
+  const one = await Data.applySet("wowf", "raid", { character: "Grrlwave", realm: "Second Realm" });
+  assert.deepEqual(
+    one.messages.map((message) => [message.kind, message.plain]),
+    [["success", "applied set raid to Second Realm/Grrlwave of _forever_: 2 addon lines changed"]]
+  );
+  assert.deepEqual(one.changes.map((change) => [change.character.label, change.changed.length]), [["Second Realm/Grrlwave", 2]]);
+  const every = await Data.applySet("wowf", "raid", { character: null, realm: null });
+  assert.equal(every.messages[0].plain, "applied set raid to 2 characters of _forever_: 1 addon line changed");
+  const again = await Data.applySet("wowf", "raid");
+  assert.deepEqual(
+    [again.messages[0].kind, again.messages[0].plain],
+    ["nothing", "set raid already matches every character of _forever_ (2 characters), nothing written"]
+  );
+  const levelling = await Data.applySet("wowf", "levelling");
+  assert.deepEqual(levelling.messages.map((message) => message.kind), ["warning", "success"]);
+  assert.match(levelling.messages[0].plain, /not installed in _forever_, their lines are written all the same: QuestHelperOld$/);
+  assert.equal((await Data.applySet("wowf", "gone")).messages[0].kind, "error");
+  assert.equal((await Data.applySet("wowf", "raid", { character: "Nobody" })).messages[0].kind, "error");
+
+  const clean = await Data.cleanSavedVariables("wowf");
+  assert.equal(clean.messages[0].kind, "success");
+  assert.match(clean.messages[0].plain, /^moved 2 orphans of _forever_ \(3 files, 2\.5 MB\) into .*SavedVariables-2026-10-22\.zip; /);
+  assert.match(clean.zip, /SavedVariables-2026-10-22\.zip$/);
+  assert.equal(clean.toolbox.saved_variables.orphans, 0);
+  assert.equal(clean.toolbox.saved_variables.summary.kind, "success");
+  const nothing = await Data.cleanSavedVariables("wowf");
+  assert.deepEqual(
+    [nothing.messages[0].kind, nothing.messages[0].plain, nothing.zip],
+    ["nothing", "no orphans in the SavedVariables of _forever_, nothing moved", null]
+  );
+});
+
+test("both toolbox writes are refused while the sketch's client runs", async () => {
+  for (const answer of [await Data.applySet("wow", "raid"), await Data.cleanSavedVariables("wow")]) {
+    assert.equal(answer.messages.length, 1);
+    assert.equal(answer.messages[0].kind, "error");
+    assert.match(answer.messages[0].plain, /^the client is running in _retail_ \(Wow\.exe, pid \d+\): close the game first/);
+    assert.equal(answer.toolbox.saved_variables.orphans, 2, "nothing moved");
+  }
 });
 
 test("the mock keeps the preferences for the page's life", async () => {
