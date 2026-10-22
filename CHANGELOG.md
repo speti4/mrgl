@@ -27,6 +27,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The window's cached view: the Forever build signal walks the releases like the resolve, and the last online answer is kept ([078](https://github.com/speti4/mrgl/blob/main/tasks/done/078-the-windows-cached-view-walks-the-releases-and-keeps-the-last-answer.md))
 - Window and exe polish after the first release: the checks after an update, the title bar theme, the CLI exe's version ([079](https://github.com/speti4/mrgl/blob/main/tasks/done/079-window-and-exe-polish-after-the-first-release.md))
 - The window's rows show the interface states `scan` and `list` mark ([081](https://github.com/speti4/mrgl/blob/main/tasks/done/081-window-rows-show-the-interface-states.md))
+- The window's update reports a second entry of the same source that has the pick's version ([099](https://github.com/speti4/mrgl/blob/main/tasks/done/099-the-windows-update-reports-a-second-entry-of-the-same-source.md))
 
 ### M3 Toolbox
 

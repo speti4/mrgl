@@ -345,6 +345,38 @@ pub struct AlreadyInstalled {
     pub warnings: Vec<String>,
 }
 
+impl AlreadyInstalled {
+    /// Whether the entry found is the one of the addon `name` (ASCII case-insensitive, as the sidecar's
+    /// names are).
+    pub fn is_entry_of(&self, name: &str) -> bool {
+        self.name.eq_ignore_ascii_case(name)
+    }
+
+    /// The nothing-to-do line of an install that found the entry at the pick's version already:
+    /// `Questie 1.2.3 is installed already in _forever_ from github:Questie/Questie, nothing to do`.
+    pub fn nothing_to_do_line(&self, folder_name: &str) -> String {
+        format!(
+            "{} {} is installed already in {folder_name} from {}, nothing to do",
+            self.name, self.entry.version, self.entry.source
+        )
+    }
+
+    /// What an update of the addon `name`, installed at `version`, says about this answer (task 089; the
+    /// command line and the window share it, task 099). Under the addon's own entry (another run updated it
+    /// since the check) it is the nothing-to-do line; under another entry of the same source (a renamed
+    /// addon next to its old name) it is a warning that names that entry and says the addon stays as it is.
+    pub fn update_line(&self, name: &str, version: &str, folder_name: &str) -> (Kind, String) {
+        if self.is_entry_of(name) {
+            return (Kind::Nothing, self.nothing_to_do_line(folder_name));
+        }
+        let line = format!(
+            "{name} not updated: {}, a second entry of {}, has {} installed already in {folder_name}; {name} stays at {version}",
+            self.name, self.entry.source, self.entry.version
+        );
+        (Kind::Warning, line)
+    }
+}
+
 /// What a rollback did (task 022): the version installed now is the previous one, pinned, and the version
 /// rolled back from is the previous one in its turn, so a second rollback goes forward again.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -147,6 +147,7 @@ impl Stub {
             "github:Example/Wrapped" => Some(("4.0.0", "wrapped-4.0.0.zip")),
             "github:Example/Needy" => Some(("1.0.0", "needs-library-1.0.0.zip")),
             "github:Example/Stale" => Some(("1.0.0", "stale-interface-1.0.0.zip")),
+            "github:Example/Twice" => Some(("1.1.0", "one-folder-1.1.0.zip")),
             _ => None,
         }
     }
@@ -772,5 +773,91 @@ fn an_update_reports_the_dependency_and_interface_checks() {
     assert_eq!(
         warning.plain,
         "StaleInterface: interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor"
+    );
+}
+
+/// A flavor whose sidecar has two entries of `github:Example/Twice` (task 099): `OldOneFolder`, sorting
+/// first, at the source's current release 1.1.0 (its own folder, made by hand), and `OneFolder` at 1.0.0,
+/// installed from the fixture zip.
+fn two_entries_of_one_source(name: &str) -> Game {
+    let game = Game::bare(name);
+    std::fs::create_dir_all(game.addons()).expect("the AddOns folder");
+    let engine = game.engine();
+    engine
+        .install(
+            &zips().join("one-folder-1.0.0.zip"),
+            &Metadata {
+                source: "github:Example/Twice".to_string(),
+                version: Some("1.0.0".to_string()),
+                name: None,
+                nolib: None,
+            },
+        )
+        .expect("installing OneFolder");
+    let old = game.addons().join("OldOneFolder");
+    std::fs::create_dir_all(&old).expect("the old folder");
+    std::fs::write(
+        old.join("OldOneFolder.toc"),
+        "## Interface: 16001\n## Title: OldOneFolder\n## Version: 1.1.0\n",
+    )
+    .expect("the old TOC");
+    let mut state = engine.load_state().expect("the sidecar").state;
+    let mut entry = state.addons["OneFolder"].clone();
+    entry.version = "1.1.0".to_string();
+    entry.folders = vec!["OldOneFolder".to_string()];
+    entry.files.clear();
+    state.addons.insert("OldOneFolder".to_string(), entry);
+    engine
+        .home
+        .write_state(&state)
+        .expect("the sidecar written");
+    game
+}
+
+#[test]
+fn a_row_update_reports_a_second_entry_of_the_same_source_and_counts_it_apart() {
+    // Task 099: the one install path finds `OldOneFolder` by the source at the pick's version and installs
+    // nothing; the window says so in the command line's words (task 089) and counts it apart.
+    let game = two_entries_of_one_source("second-entry");
+    let state_path = game.home().join("wowf/state.json");
+    let before = std::fs::read_to_string(&state_path).expect("the sidecar");
+    let (answer, events) = run_with(&game, &Stub::new(), Plan::One("OneFolder".into()), None);
+    assert_eq!(
+        phases(&events),
+        [
+            (Phase::Checking, Some("OneFolder")),
+            (Phase::Checked, Some("OneFolder")),
+            (Phase::Updating, Some("OneFolder")),
+            (Phase::InstalledAlready, Some("OneFolder")),
+        ]
+    );
+    let last = &events.last().expect("an event").message;
+    assert_eq!(
+        (last.kind, last.plain.as_str()),
+        (
+            "warning",
+            "OneFolder not updated: OldOneFolder, a second entry of github:Example/Twice, has 1.1.0 installed already in _forever_; OneFolder stays at 1.0.0"
+        )
+    );
+    // The command line's summary of the same answer (task 089).
+    assert_eq!(last_plain(&answer), "nothing updated: 1 installed already");
+    assert_eq!(
+        std::fs::read_to_string(&state_path).expect("the sidecar"),
+        before,
+        "nothing written"
+    );
+    assert_eq!(game.toc_version("OneFolder"), "1.0.0");
+    // The row keeps the check's answer: the addon is as it was.
+    let row = answer
+        .flavor
+        .as_ref()
+        .expect("the flavor")
+        .addons
+        .iter()
+        .find(|row| row.folder == "OneFolder")
+        .expect("the row");
+    assert_eq!(
+        row.check.as_ref().map(|check| check.state),
+        Some(UpdateState::UpdateAvailable)
     );
 }

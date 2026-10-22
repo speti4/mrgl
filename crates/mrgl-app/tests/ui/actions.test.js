@@ -79,6 +79,11 @@ test("the progress slot follows a row through the run", () => {
   assert.equal(step("downloading", "Questie").value, 0.4);
   assert.equal(step("installing", "Questie").value, 0.75);
   assert.equal(step("updated", "Questie").value, 1);
+  assert.deepEqual(step("installed-already", "QuestieClassic"), {
+    phase: "installed-already",
+    label: "installed already",
+    value: 1,
+  });
   assert.equal(step("failed", "BigWigs").failed, true);
   const before = slots;
   const after = Actions.applyProgress(slots, { phase: "stopped", folder: null });
