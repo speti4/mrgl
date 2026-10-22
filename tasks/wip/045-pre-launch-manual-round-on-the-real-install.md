@@ -81,6 +81,29 @@ group per step; a failure is written here as a line and becomes a task through t
   restored folder is identical to the one moved aside (`diff -rq`, 97 files). Observations, not failures:
   the backup line reports the unpacked size, the list the zip's size; the zip name is local time, the list
   column UTC.
+- 2026-10-22 — with the era client running (the launcher updated it on start, so its build now comes from a
+  `.build.info` row; the exe fallback of 019 was covered by the scans before): `scan` ends with `client
+  running`; `list --json` carries `client_running` with the exe and the pid (and `null` without a client);
+  `backup --restore -y` is refused with the client's name and pid, nothing under `WTF` written. Failure: `list
+  --json | head -c 200` panics with `failed printing to stdout` (os error 232, the closed pipe) instead of
+  exiting quietly; a task.
+- 2026-10-22 — `link` of a real development folder (two addons, on another drive than the game) into
+  `_forever_`: two junctions under `Interface\AddOns` with the development folder as target; `list` shows both
+  as `managed`, `link:<folder>`, `linked`, Forever build `unknown`; `unlink` removes both, the AddOns folder
+  is empty, the development folder untouched (its git status clean), the sidecar `{}`. Observation, not a
+  failure: the version column shows the TOC's raw `@project-version@` placeholder of a packager-built addon.
+- 2026-10-22 — `savedvars --flavor era` on the real `WTF`: 40 files, sizes per account and per character, the
+  `Blizzard_*` files marked `client` and never orphans, the two orphans named are addons with no folder among
+  the 71 installed; `--clean` not run.
+- 2026-10-22 — the embedded-library dependency on the client (029's rule): a made-up addon whose only
+  `## Dependencies` entry is a library under its own `Libs\` folder, copied into the era AddOns folder.
+  `list` shows it without a dependency warning (the core counts the library as `embedded`); the client's
+  AddOn list shows it as `Dependency missing` and does not load it. Failure: the 029 rule disagrees with the
+  client, so an embedded-only required dependency is missing; a task (the reopen condition of 052). The
+  probe folder was removed afterwards; nothing of it remains under `AddOns` or `WTF`. Observation: after the
+  launcher's client update every addon with the previous interface number (11507 against 11509) shows as
+  `Out of date` in the client, while `scan` warns only about another expansion's number; whether `scan`
+  should say "out of date" for a lower number of the same expansion is a question for the follow-up list.
 
 ## Closing checklist
 
