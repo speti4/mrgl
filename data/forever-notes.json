@@ -13,5 +13,30 @@
       "source": "https://metammo.com/wow-forever/addons"
     }
   },
-  "addons": {}
+  "addons": {
+    "github:ascott18/TellMeWhen": {
+      "kind": "secret-combat-values",
+      "reason": "cooldowns are secret in combat: icons cannot sort, anchor or decide on a cooldown's state there",
+      "verified": "2026-10-22",
+      "source": "https://github.com/ascott18/TellMeWhen/issues/2503"
+    },
+    "github:dldvlpr-addons-wow/Musca-Auras": {
+      "kind": "combat-log-events",
+      "reason": "combat log triggers never fire and conditions on hidden combat data wait until combat ends: imported auras need adapting",
+      "verified": "2026-10-22",
+      "source": "https://github.com/dldvlpr-addons-wow/Musca-Auras/blob/main/README.md"
+    },
+    "github:michaelnpsp/Grid2": {
+      "kind": "secret-combat-values",
+      "reason": "auras are hidden from addons in combat: aura timers and remaining-time bars work only through the bar(auras) and text(auras) indicators",
+      "verified": "2026-10-22",
+      "source": "https://github.com/michaelnpsp/Grid2/issues/471"
+    },
+    "github:neroxrw/foreverauras": {
+      "kind": "secret-combat-values",
+      "reason": "the legacy aura trigger rarely works in combat: in-combat auras need the modern aura trigger",
+      "verified": "2026-10-22",
+      "source": "https://github.com/neroxrw/foreverauras/issues/104"
+    }
+  }
 }

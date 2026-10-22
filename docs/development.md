@@ -773,3 +773,10 @@ field or kind, a key that is not a canonical spec, a reason over one line, a dat
 in the future, and a source that is not an `https://` URL. A note whose `verified` date is more than 90 days
 old (`forever::STALE_AFTER_DAYS`) is shown as stale until someone checks it again and moves the date; nothing
 checks the age in CI.
+
+Where a note comes from (task 058): a public source that a page under `docs/research/` cites, an addon author's
+statement, a release note or the project page, never a community guide alone; an addon the sources disagree
+on stays on the research page as an open question and out of the file. The key is the spec mrgl installs the
+addon from, so an addon whose repository publishes no release zip stays on the research page too: its note
+would never meet a managed addon. The first notes and the open questions are in
+[the Forever restrictions research](research/2026-10-22-forever-addon-restrictions.md).

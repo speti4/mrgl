@@ -41,6 +41,7 @@ The repository, the task standard and the empty workspace: no app yet.
 - The install engine warns when the client runs ([038](https://github.com/speti4/mrgl/blob/main/tasks/done/038-install-warns-when-the-client-runs.md))
 - A second registry source for the game root: the Uninstall entry, and expanded values ([043](https://github.com/speti4/mrgl/blob/main/tasks/done/043-second-registry-source-for-the-game-root.md))
 - A Windows version line in the doctor report ([051](https://github.com/speti4/mrgl/blob/main/tasks/done/051-windows-version-line-in-the-doctor-report.md))
+- Forever notes for the addons the community lists as partly restricted ([058](https://github.com/speti4/mrgl/blob/main/tasks/done/058-forever-notes-for-the-partly-restricted-addons.md))
 
 ### M3 Toolbox
 

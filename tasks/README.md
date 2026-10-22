@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 13 backlog (1 ready · 0 blocked · 2 waiting · 10 ideas) · 0 in progress · 41 done · 3 dropped · 5 decisions
+**State:** 10 backlog (1 ready · 0 blocked · 2 waiting · 7 ideas) · 0 in progress · 44 done · 3 dropped · 5 decisions
 
 ### Ready
 
@@ -48,11 +48,8 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 009 | [Tauri shell with the flavor list](backlog/009-tauri-shell-with-the-flavor-list.md) | M | 2026-10-21 |
 | 010 | [Update all and update one in the window, with progress and the voice](backlog/010-update-all-and-update-one-in-the-window.md) | M | 2026-10-21 |
 | 012 | [The murloc icon and the first portable zip release](backlog/012-murloc-icon-and-first-portable-zip-release.md) | S | 2026-10-21 |
-| 034 | [Window preferences kept by the shell: theme and the serious switch out of local…](backlog/034-window-preferences-kept-by-the-shell.md) | S | 2026-10-21 |
-| 058 | [Forever notes for the addons the community lists as partly restricted](backlog/058-forever-notes-for-the-partly-restricted-addons.md) | S | 2026-10-21 |
 
 #### M3 Toolbox
 
@@ -97,6 +94,7 @@ _none_
 |---|---|---|
 | 063 | [The stand-in client of the tests is a copy of a signed system executable, not o…](done/063-stand-in-client-from-a-signed-system-exe.md) | 2026-10-22 |
 | 061 | [CI compiles the non-Windows paths of the core](done/061-ci-compiles-the-non-windows-paths.md) | 2026-10-22 |
+| 058 | [Forever notes for the addons the community lists as partly restricted](done/058-forever-notes-for-the-partly-restricted-addons.md) | 2026-10-22 |
 | 057 | [An import option that installs the listed version, not the current release](done/057-import-option-for-the-listed-version.md) | 2026-10-22 |
 | 055 | [One install path: a core helper for resolve, download and install, the link ref…](done/055-one-core-helper-for-resolve-download-and-install.md) | 2026-10-22 |
 | 051 | [A Windows version line in the doctor report](done/051-windows-version-line-in-the-doctor-report.md) | 2026-10-22 |
@@ -104,9 +102,8 @@ _none_
 | 043 | [A second registry source for the game root: the Uninstall entry, and expanded v…](done/043-second-registry-source-for-the-game-root.md) | 2026-10-22 |
 | 042 | [GitHub source: pagination past 30 releases, the rate-limit reset time, release.…](done/042-github-source-pagination-rate-limit-and-per-tag-cache.md) | 2026-10-22 |
 | 041 | [Offline resolve from the cached release list, with a warning](done/041-offline-resolve-from-the-cached-release-list.md) | 2026-10-22 |
-| 039 | [A bound on the unpacked size of a zip](done/039-bound-on-the-unpacked-size-of-a-zip.md) | 2026-10-22 |
 
-_31 more in `done/`._
+_34 more in `done/`._
 
 ### Decisions
 
