@@ -542,6 +542,8 @@ pub fn import(
                 done.warnings.extend(installed.warnings);
                 items.push(done);
             }
+            // coverage: os-begin — the engine found the addon managed after the import's own check
+            // above did not: a race between two reads of the sidecar
             Ok(SourceInstalled {
                 outcome: PickInstalled::AlreadyInstalled(current),
                 ..
@@ -553,6 +555,7 @@ pub fn import(
                     current.name, current.entry.version
                 ),
             )),
+            // coverage: os-end
             Err(error) => items.push(failed(error)),
         }
     }

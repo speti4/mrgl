@@ -1477,13 +1477,15 @@ fn unpack(zip: &Path, into: &Path, max_unpacked: u64) -> Result<BTreeMap<String,
                 .map_err(|source| io("creating a staged folder", &path, source))?;
             continue;
         }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|source| io("creating a staged folder", parent, source))?;
-        }
+        // A file entry has at least one component, so its path has a parent under the staging folder.
+        let parent = path.parent().unwrap_or(into);
+        std::fs::create_dir_all(parent)
+            .map_err(|source| io("creating a staged folder", parent, source))?;
         let entry = archive
             .by_index(checked.index)
+            // coverage: os-begin — the entry opened once already, in `checked_entries`
             .map_err(|reason| unreadable(format!("entry {}: {reason}", checked.index)))?;
+        // coverage: os-end
         let output = std::fs::File::create(&path)
             .map_err(|source| io("writing a staged file", &path, source))?;
         let hash = copy_hashing(
@@ -1492,6 +1494,7 @@ fn unpack(zip: &Path, into: &Path, max_unpacked: u64) -> Result<BTreeMap<String,
         )
         .map_err(|source| {
             zip_entry::refusal(source)
+                .map(Error::from)
                 .unwrap_or_else(|source| io("writing a staged file", &path, source))
         })?;
         files.insert(relative, hash);
@@ -1572,10 +1575,12 @@ fn find_addons(
 /// The `.toc` file names and the subfolder names directly in a folder, sorted.
 fn list_dir(dir: &Path) -> Result<(Vec<String>, Vec<String>)> {
     let io = |source| Error::Io {
+        // coverage: os-begin — a read of the staging folder the engine just unpacked
         context: "reading the staging folder",
         path: dir.to_path_buf(),
         source,
     };
+    // coverage: os-end
     let mut tocs = Vec::new();
     let mut folders = Vec::new();
     for entry in std::fs::read_dir(dir).map_err(io)? {

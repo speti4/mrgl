@@ -128,10 +128,12 @@ pub fn scan_addons(dir: &Path, chain: &[Option<TocSuffix>]) -> Result<Addons> {
     let mut result = Addons::default();
     for entry in entries {
         let entry = entry.map_err(|source| Error::Io {
+            // coverage: os-begin — an entry error mid-listing
             context: "reading the AddOns folder",
             path: dir.to_path_buf(),
             source,
         })?;
+        // coverage: os-end
         let path = entry.path();
         let folder = entry.file_name().to_string_lossy().into_owned();
         let Ok(metadata) = std::fs::symlink_metadata(&path) else {

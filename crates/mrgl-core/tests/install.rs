@@ -2162,6 +2162,19 @@ fn a_cache_that_cannot_be_removed_is_a_warning() {
     drop(lock);
 }
 
+/// A remove whose cache is gone already (removed by hand) has no warning to give (task 117).
+#[test]
+fn a_cache_gone_already_is_no_warning_on_remove() {
+    let sandbox = Sandbox::new("remove-no-cache");
+    sandbox.install("one-folder-1.0.0.zip");
+    std::fs::remove_dir_all(sandbox.engine.home.addon_cache_dir("OneFolder"))
+        .expect("the cache removed by hand");
+    let removed = sandbox.engine.remove("OneFolder").expect("removes");
+    assert!(removed.warnings.is_empty(), "{:?}", removed.warnings);
+    assert!(sandbox.folders().is_empty());
+    assert!(sandbox.state().addons.is_empty());
+}
+
 #[test]
 fn a_rollback_names_the_addons_deleted_by_hand() {
     let sandbox = Sandbox::new("rollback-dropped");

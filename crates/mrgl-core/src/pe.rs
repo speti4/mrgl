@@ -456,6 +456,12 @@ mod tests {
             *byte = 0;
         }
         assert_eq!(version(&bent), Err("no resource section".to_string()));
+        // An entry with an address and no size is no section either.
+        let mut sizeless = ERA.to_vec();
+        for byte in &mut sizeless[0xdc..0xe0] {
+            *byte = 0;
+        }
+        assert_eq!(version(&sizeless), Err("no resource section".to_string()));
         assert_eq!(
             version(NO_VERSION),
             Err("no version resource (RT_VERSION)".to_string())

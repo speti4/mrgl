@@ -1005,6 +1005,13 @@ mod tests {
             "[{\"UID\":\"1\",\"UIVersion\":\"v1\"}]",
         ));
         assert!(matches!(error, Error::NoRelease { .. }), "{error}");
+        // A download without a file name is no file either.
+        let error = resolve(MapHttp::new().answer(
+            DETAILS_URL,
+            200,
+            "[{\"UID\":\"1\",\"UIVersion\":\"v1\",\"UIDownload\":\"https://x.test/a\"}]",
+        ));
+        assert!(matches!(error, Error::NoRelease { .. }), "{error}");
         for (status, hint) in [
             (503, "the server has a problem; try again later"),
             (418, "an unexpected status"),

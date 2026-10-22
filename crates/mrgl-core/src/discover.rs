@@ -515,8 +515,10 @@ mod system {
             // (none with a null pointer, which asks for the size only).
             let needed =
                 unsafe { ExpandEnvironmentStringsW(source.as_ptr(), destination, capacity) };
+            // coverage: os-begin — the call's own failure
             if needed == 0 {
                 return None;
+                // coverage: os-end
             }
             if needed <= capacity {
                 // `needed` counts the terminating NUL.
@@ -525,7 +527,7 @@ mod system {
             }
             capacity = needed;
         }
-        None
+        None // coverage: os — a value that grew on every round
     }
 
     pub(super) fn registry_dword(hive: Hive, key: &str, value: &str) -> Option<u32> {
@@ -600,8 +602,10 @@ mod system {
                 &mut size,
             )
         };
+        // coverage: os-begin — a read that fails after the size query passed
         if status != ERROR_SUCCESS {
             return None;
+            // coverage: os-end
         }
         buffer.truncate((size as usize) / 2);
         while buffer.last() == Some(&0) {

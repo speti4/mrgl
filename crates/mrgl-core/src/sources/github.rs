@@ -1727,6 +1727,24 @@ mod tests {
     }
 
     #[test]
+    fn an_older_release_whose_release_json_is_missing_is_that_error() {
+        // The newest release has no forever asset; the older one's release.json answers 404, and that
+        // error stands instead of the count of releases looked at.
+        let list = r#"[
+            {"tag_name":"v2.0.0","assets":[{"name":"A-v2.0.0-classic.zip","browser_download_url":"https://dl.test/2"}]},
+            {"tag_name":"v1.0.0","assets":[{"name":"release.json","browser_download_url":"https://dl.test/release.json"},{"name":"A.zip","browser_download_url":"https://dl.test/1"}]}
+        ]"#;
+        let http = MapHttp::new().answer(RELEASES_URL, 200, list);
+        let error = GitHub::new(http, None, None)
+            .resolve(&spec(), &Target::new(FlavorId::Forever))
+            .unwrap_err();
+        assert!(
+            matches!(&error, Error::AssetMissing { release, asset, .. } if release == "v1.0.0" && asset == "release.json"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn a_missing_release_json_download_names_the_asset() {
         let http = MapHttp::new().answer(RELEASES_URL, 200, &releases_body(&["release.json"]));
         let error = GitHub::new(http, None, None)

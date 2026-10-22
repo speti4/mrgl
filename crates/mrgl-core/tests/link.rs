@@ -778,6 +778,41 @@ fn unlink_keeps_a_junction_it_cannot_remove() {
     // With the handle gone the junction is removed.
     let unlinked = link::unlink(&sandbox.engine, &solo).expect("unlinks");
     assert_eq!(unlinked.unlinked, ["SoloAddon"]);
+}
+
+/// A folder name in the sidecar that Windows cannot look up (task 117): the entry stays with the error
+/// as its reason, and the junction of its other folder goes all the same.
+#[cfg(windows)]
+#[test]
+fn a_folder_name_windows_cannot_look_up_keeps_the_entry() {
+    let sandbox = Sandbox::new("unlink-bad-name");
+    link::link(&sandbox.engine, &sandbox.dev).expect("links");
+    let mut state = sandbox.engine.load_state().expect("the sidecar").state;
+    state
+        .addons
+        .get_mut("OneFolder")
+        .expect("its entry")
+        .folders
+        .push("Bad<Name".to_string());
+    sandbox.engine.home.write_state(&state).expect("writes");
+
+    let unlinked = link::unlink(&sandbox.engine, &sandbox.dev).expect("unlinks");
+    assert_eq!(unlinked.unlinked, ["DevAddon"]);
+    assert_eq!(unlinked.kept.len(), 1);
+    assert_eq!(unlinked.kept[0].name, "OneFolder");
+    assert!(
+        unlinked.kept[0]
+            .reason
+            .starts_with(&format!("{}: ", sandbox.addon("Bad<Name").display())),
+        "{}",
+        unlinked.kept[0].reason
+    );
+    assert!(
+        !link::is_link(&sandbox.addon("OneFolder")),
+        "its junction is gone"
+    );
+    let state = sandbox.engine.load_state().expect("the sidecar").state;
+    assert!(state.entry("OneFolder").is_some(), "the entry stays");
     assert!(sandbox.addons_listing().is_empty());
 }
 

@@ -443,7 +443,9 @@ pub fn read_flavor(folder: &Path) -> Result<Flavor> {
                 root.join(BUILD_INFO).display()
             )),
         },
+        // coverage: os-begin — a folder with no parent is a drive root
         None => Err(format!("{} has no parent folder", folder.display())),
+        // coverage: os-end
     };
     let (version, version_source) = match from_build_info {
         Ok(version) => (Some(version), Some(VersionSource::BuildInfo)),
@@ -483,10 +485,12 @@ pub fn list_flavors(root: &Path) -> Result<Vec<Flavor>> {
     let mut flavors = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| Error::Io {
+            // coverage: os-begin — an entry error mid-listing
             context: "reading the game folder",
             path: root.to_path_buf(),
             source,
         })?;
+        // coverage: os-end
         let path = entry.path();
         if !path.is_dir() || !path.join(FLAVOR_INFO).is_file() {
             continue;

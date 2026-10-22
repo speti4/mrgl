@@ -172,11 +172,13 @@ fn write_zip(zip: &Path, fill: impl FnOnce(&mut Writer, &Path) -> Result<()>) ->
     fill(&mut writer, zip)?;
     writer
         .finish()
+        // coverage: os-begin — a write to the zip the code just created
         .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?
         .into_inner()
         .map_err(|error| io("writing the backup", zip, error.into_error()))?
         .sync_all()
         .map_err(|source| io("writing the backup", zip, source))?;
+    // coverage: os-end
     Ok(())
 }
 
@@ -206,14 +208,14 @@ fn add_folder(
     let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
         .map_err(|source| io("reading WTF", dir, source))?
         .collect::<io::Result<_>>()
-        .map_err(|source| io("reading WTF", dir, source))?;
+        .map_err(|source| io("reading WTF", dir, source))?; // coverage: os
     entries.sort_by_key(fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         let file_type = entry
             .file_type()
-            .map_err(|source| io("reading WTF", &path, source))?;
+            .map_err(|source| io("reading WTF", &path, source))?; // coverage: os
         if file_type.is_symlink() {
             stats.warnings.push(format!(
                 "left out of the backup: {} is a link, not a folder or a file",
@@ -228,14 +230,16 @@ fn add_folder(
                 .last_modified_time(dos_time(modified(&path)));
             writer
                 .add_directory(format!("{entry_name}/"), options)
+                // coverage: os-begin — a write to the zip the code just created
                 .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?;
+            // coverage: os-end
             stats.folders += 1;
             add_folder(writer, &path, &format!("{entry_name}/"), zip, stats)?;
             continue;
         }
         let metadata = entry
             .metadata()
-            .map_err(|source| io("reading WTF", &path, source))?;
+            .map_err(|source| io("reading WTF", &path, source))?; // coverage: os
         stats.bytes += add_file(writer, &path, &entry_name, &metadata, zip)?;
         stats.files += 1;
     }
@@ -264,7 +268,9 @@ fn add_file(
     if let Some(field) = extended_timestamp(modified) {
         options
             .add_extra_field(EXTENDED_TIMESTAMP, field, false)
+            // coverage: os-begin — the writer refuses only an extra field past 64 KiB
             .map_err(|reason| io("writing the backup", zip, io::Error::other(reason)))?;
+        // coverage: os-end
     }
     writer
         .start_file(entry_name, options)
@@ -383,10 +389,12 @@ pub fn list_backups(folder: &Path) -> Result<Listing> {
     };
     for entry in entries {
         let entry = entry.map_err(|source| Error::Io {
+            // coverage: os-begin — an entry error mid-listing
             context: "reading the backups folder",
             path: folder.to_path_buf(),
             source,
         })?;
+        // coverage: os-end
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
@@ -552,8 +560,7 @@ fn restore_wtf_with(
         Err(reason) => {
             // The bound's refusal (task 039) gives its own clause; anything else is the I/O error.
             let reason = match zip_entry::refusal(reason) {
-                Ok(Error::ZipTooLarge { excess, .. }) => excess.to_string(),
-                Ok(other) => other.to_string(),
+                Ok(refusal) => refusal.excess.to_string(),
                 Err(reason) => reason.to_string(),
             };
             let _ = fs::remove_dir_all(&wtf);
@@ -640,10 +647,10 @@ fn unpack(
         })?;
         let file = output
             .into_inner()
-            .map_err(|error| context("writing", &path, error.into_error()))?;
+            .map_err(|error| context("writing", &path, error.into_error()))?; // coverage: os
         if let Some(modified) = modified {
             file.set_modified(modified)
-                .map_err(|error| context("dating", &path, error))?;
+                .map_err(|error| context("dating", &path, error))?; // coverage: os
         }
         files += 1;
     }

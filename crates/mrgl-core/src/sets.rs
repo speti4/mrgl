@@ -1019,7 +1019,7 @@ pub fn apply_set_in_account(
         if matches!(error, Error::SetApplyFailed { reverted: true, .. }) {
             record.roll_back();
         } else {
-            record.keep();
+            record.keep(); // coverage: os — a put-back failed right after the path was written
         }
         return Err(error);
     }
@@ -1133,9 +1133,11 @@ impl UndoSwap {
         };
         remove_dir_if_any(&fresh).map_err(|source| failed(&fresh, source))?;
         remove_dir_if_any(&aside).map_err(|source| failed(&aside, source))?;
+        // coverage: os-begin — a write into the fresh folder the code just made
         if let Err(source) = write_undo_folder(&fresh, flavor, set, plans) {
             let _ = fs::remove_dir_all(&fresh);
             return Err(failed(&fresh, source));
+            // coverage: os-end
         }
         let had_one = dir.exists();
         if had_one && let Err(source) = fs::rename(dir, &aside) {
@@ -1143,8 +1145,10 @@ impl UndoSwap {
             return Err(failed(dir, source));
         }
         if let Err(source) = fs::rename(&fresh, dir) {
+            // coverage: os-begin — a rename back of the path moved aside a moment ago
             if had_one {
                 let _ = fs::rename(&aside, dir);
+                // coverage: os-end
             }
             let _ = fs::remove_dir_all(&fresh);
             return Err(failed(dir, source));

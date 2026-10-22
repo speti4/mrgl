@@ -1958,6 +1958,12 @@ mod tests {
             "Windows 24H2, build unknown"
         );
 
+        // A build below Windows 10 names no release by itself.
+        assert_eq!(
+            WindowsVersion::from_values(None, None, Some("9600"), None).text(),
+            "Windows, build 9600"
+        );
+
         // Nothing there.
         let absent = WindowsVersion::from_values(None, None, None, None);
         assert_eq!(absent, WindowsVersion::default());

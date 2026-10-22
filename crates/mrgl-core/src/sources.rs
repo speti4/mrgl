@@ -2103,6 +2103,11 @@ mod tests {
             stub.path_for("https://host/./a/b"),
             Path::new("stub-root").join("host").join("a").join("b")
         );
+        assert_eq!(
+            stub.path_for("https://host//a/"),
+            Path::new("stub-root").join("host").join("a"),
+            "an empty part is dropped"
+        );
         // An empty pair and a pair without a value: the pair itself is the name; `page` alone is dropped.
         assert_eq!(
             FolderHttp::query_suffix("https://h/x?b=2&&flag&page"),

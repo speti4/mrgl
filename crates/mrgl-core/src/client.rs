@@ -312,13 +312,16 @@ mod system {
             if length == 0 {
                 return None;
             }
-            if (length as usize) <= buffer.len() {
-                buffer.truncate(length as usize);
-                return Some(PathBuf::from(OsString::from_wide(&buffer)));
+            // coverage: os-begin — 1024 units hold every short form of a path this crate makes
+            if (length as usize) > buffer.len() {
+                buffer = vec![0u16; length as usize];
+                continue;
+                // coverage: os-end
             }
-            buffer = vec![0u16; length as usize];
+            buffer.truncate(length as usize);
+            return Some(PathBuf::from(OsString::from_wide(&buffer)));
         }
-        None
+        None // coverage: os — the short form grew between the two rounds
     }
 
     /// A kernel handle closed on drop.
@@ -335,8 +338,10 @@ mod system {
     pub(super) fn executables() -> std::io::Result<Vec<RunningProcess>> {
         // SAFETY: a plain call with constant flags; the process id argument is unused for a process snapshot.
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        // coverage: os-begin — the snapshot's own failure
         if snapshot == INVALID_HANDLE_VALUE {
             return Err(std::io::Error::last_os_error());
+            // coverage: os-end
         }
         let snapshot = Handle(snapshot);
         // SAFETY: PROCESSENTRY32W is a plain C struct; all-zero is a valid value, and dwSize is set
@@ -344,8 +349,10 @@ mod system {
         let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
         // SAFETY: the snapshot handle is valid and `entry` is a correctly sized, writable struct.
+        // coverage: os-begin — the walk's own failure
         if unsafe { Process32FirstW(snapshot.0, &mut entry) } == 0 {
             return Err(std::io::Error::last_os_error());
+            // coverage: os-end
         }
         let mut processes = Vec::new();
         loop {

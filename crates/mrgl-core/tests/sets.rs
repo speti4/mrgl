@@ -523,6 +523,40 @@ fn a_failed_write_puts_the_files_written_before_it_back() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The first apply of a flavor fails with every file put back (task 117): no record is left behind, so
+/// there is nothing to undo, as before the apply.
+#[cfg(windows)]
+#[test]
+fn a_failed_first_apply_leaves_no_record_behind() {
+    let root = temp_game_root("revert-first");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    let locked = wtf_of(&root).join(FIRST);
+    let mut permissions = std::fs::metadata(&locked).expect("metadata").permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&locked, permissions.clone()).expect("read-only");
+
+    let error =
+        sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("failed");
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(&locked, permissions).expect("writable again");
+    assert!(
+        matches!(&error, Error::SetApplyFailed { set, reverted: true, .. } if set == "raid"),
+        "{error}"
+    );
+    assert_eq!(snapshot(&wtf_of(&root)), before, "every file is as it was");
+    assert!(
+        !sets::undo_dir_of(&path).exists(),
+        "no record of an apply that wrote nothing"
+    );
+    let error = sets::undo_apply(&flavor, &path).expect_err("nothing to undo");
+    assert!(matches!(&error, Error::NothingToUndo { .. }), "{error}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // Task 027: a set applied to one chosen character; the other character's file stays byte for byte.
 
 fn one(name: &str, realm: Option<&str>) -> Target {
@@ -1296,12 +1330,18 @@ fn an_undo_record_of_another_format_or_flavor_or_with_a_kept_file_missing_is_ref
 
     let mut other_format = record.clone();
     other_format["format"] = serde_json::json!("mrgl-other");
+    let mut other_schema = record.clone();
+    other_schema["schema"] = serde_json::json!(2);
     let mut other_flavor = record.clone();
     other_flavor["flavor"] = serde_json::json!("wow");
     for (edited, reason) in [
         (
             other_format,
             "format mrgl-other schema 1 instead of mrgl-set-undo schema 1",
+        ),
+        (
+            other_schema,
+            "format mrgl-set-undo schema 2 instead of mrgl-set-undo schema 1",
         ),
         (other_flavor, "flavor wow instead of wowf"),
     ] {
@@ -1426,6 +1466,58 @@ fn a_failed_undo_write_puts_the_files_written_before_it_back_and_keeps_the_recor
     );
     sets::undo_apply(&flavor, &path).expect("undone once the file is free");
     assert_eq!(snapshot(&wtf_of(&root)), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// An undo whose removal of a created file fails (task 117): the files put back before it are put back
+/// as they were at the start of the undo, a file gone since the apply gone again, and the record stays.
+#[cfg(windows)]
+#[test]
+fn a_failed_removal_in_an_undo_puts_the_earlier_files_back_as_they_were() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = temp_game_root("undo-revert-removal");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    std::fs::create_dir_all(wtf_of(&root).join("Account/MRGLSETS/Second Realm/Newbie"))
+        .expect("a character folder");
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
+    // The first character's file is gone since the apply; the created one is held.
+    std::fs::remove_file(wtf_of(&root).join(FIRST)).expect("the first file gone");
+    let applied = snapshot(&wtf_of(&root));
+    let created = wtf_of(&root)
+        .join("Account")
+        .join("MRGLSETS")
+        .join("Second Realm")
+        .join("Newbie")
+        .join("AddOns.txt");
+    const FILE_SHARE_READ: u32 = 0x1;
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&created)
+        .expect("a handle that shares reads");
+    let error = sets::undo_apply(&flavor, &path).expect_err("the created file is held");
+    drop(held);
+    assert!(
+        matches!(&error, Error::SetUndoFailed { set, reverted: true, .. } if set == "raid"),
+        "{error}"
+    );
+    assert!(
+        error
+            .to_string()
+            .starts_with(&format!("undoing set raid failed: {}: ", created.display())),
+        "{error}"
+    );
+    assert_eq!(
+        snapshot(&wtf_of(&root)),
+        applied,
+        "the first file is gone again, the second is as the apply left it"
+    );
+    assert!(
+        sets::undo_dir_of(&path).join(sets::UNDO_FILE).is_file(),
+        "the record stays for another undo"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

@@ -286,6 +286,7 @@ struct Place<'a> {
     character: Option<&'a str>,
 }
 
+// coverage: os-begin — built only by the arms below that the operating system alone provokes
 fn io_error(context: &'static str, path: &Path, source: io::Error) -> Error {
     Error::Io {
         context,
@@ -293,6 +294,7 @@ fn io_error(context: &'static str, path: &Path, source: io::Error) -> Error {
         source,
     }
 }
+// coverage: os-end
 
 /// One `.lua` and one `.lua.bak` of an addon, as found in a folder.
 #[derive(Default)]
@@ -316,8 +318,8 @@ fn collect(
         }
         Ok(metadata) if metadata.is_dir() => {}
         Ok(_) => return Ok(()),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => return Err(io_error("reading WTF", dir, source)),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()), // coverage: os
+        Err(source) => return Err(io_error("reading WTF", dir, source)),          // coverage: os
     }
     let entries = fs::read_dir(dir).map_err(|source| io_error("reading WTF", dir, source))?;
     let mut pairs: BTreeMap<String, Pair> = BTreeMap::new();
@@ -330,7 +332,7 @@ fn collect(
         };
         let file_type = entry
             .file_type()
-            .map_err(|source| io_error("reading WTF", &path, source))?;
+            .map_err(|source| io_error("reading WTF", &path, source))?; // coverage: os
         if file_type.is_symlink() {
             warnings.push(link_warning(&path));
             continue;
@@ -340,7 +342,7 @@ fn collect(
         }
         let bytes = entry
             .metadata()
-            .map_err(|source| io_error("reading WTF", &path, source))?
+            .map_err(|source| io_error("reading WTF", &path, source))? // coverage: os
             .len();
         let pair = pairs.entry(addon.to_lowercase()).or_default();
         let found = Some((addon.to_string(), path, bytes));

@@ -285,7 +285,9 @@ impl Engine {
                     flavor,
                     target: link_target(&path)
                         .map(|target| target.display().to_string())
+                        // coverage: os-begin — the link changed between `is_link` and `link_target`
                         .unwrap_or_else(|error| format!("an unreadable target ({error})")),
+                    // coverage: os-end
                 });
             }
         }
@@ -404,7 +406,9 @@ pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
                 skipped.push(Skipped { name, reason });
                 continue;
             }
+            // coverage: os-begin — the guard's other arm is the one below
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                // coverage: os-end
                 if let Err(error) = create_junction(&path, &target) {
                     skipped.push(Skipped {
                         name,
@@ -414,13 +418,15 @@ pub fn link(engine: &Engine, folder: &Path) -> Result<Linked> {
                 }
                 false
             }
+            // coverage: os-begin — a `symlink_metadata` failure other than a missing path, on the
+            // name of a real folder
             Err(error) => {
                 skipped.push(Skipped {
                     name,
                     reason: format!("{}: {error}", path.display()),
                 });
                 continue;
-            }
+            } // coverage: os-end
         };
         let version = addon
             .version()
@@ -646,15 +652,19 @@ mod system {
                     std::ptr::null_mut(),
                 )
             };
+            // coverage: os-begin — the ioctl's own failure
             if ok == 0 {
                 Err(io::Error::last_os_error())
+                // coverage: os-end
             } else {
                 Ok(())
             }
         };
         let result = set();
+        // coverage: os-begin — the clean-up after the ioctl's failure
         if result.is_err() {
             let _ = std::fs::remove_dir(link);
+            // coverage: os-end
         }
         result
     }

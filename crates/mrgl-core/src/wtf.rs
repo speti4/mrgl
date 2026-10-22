@@ -86,7 +86,7 @@ fn subfolders(dir: &Path, warnings: &mut Vec<String>) -> Result<Vec<(String, Pat
         let path = entry.path();
         let file_type = entry
             .file_type()
-            .map_err(|source| io_error(&path, source))?;
+            .map_err(|source| io_error(&path, source))?; // coverage: os
         if file_type.is_symlink() {
             warnings.push(link_warning(&path));
         } else if file_type.is_dir() {

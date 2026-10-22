@@ -1160,6 +1160,12 @@ mod tests {
             "the key names an addon without an id; an id not asked is left out"
         );
         assert_eq!(read["abc"], one);
+        let under_data = serde_json::json!({ "data": { "addons": { "abc": one } } });
+        assert_eq!(
+            parse_recents(&under_data, &["abc"])["abc"],
+            one,
+            "an object under `data` is the root"
+        );
         let listed = serde_json::json!({ "data": [one, { "id": "def" }, "text"] });
         assert_eq!(
             parse_recents(&listed, &["abc"])
