@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-22 — edit the files, not this section._
 
-**State:** 14 backlog (0 ready · 0 blocked · 3 waiting · 11 ideas) · 0 in progress · 73 done · 5 dropped · 5 decisions
+**State:** 13 backlog (0 ready · 0 blocked · 3 waiting · 10 ideas) · 0 in progress · 76 done · 5 dropped · 5 decisions
 
 ### Ready
 
@@ -45,9 +45,13 @@ _none_
 
 | # | Task | Size | Created |
 |---|---|---|---|
-| 088 | [The doctor names a staging folder kept for its previous\ folders](backlog/088-doctor-names-a-staging-folder-kept-for-its-previous-folders.md) | S | 2026-10-22 |
-| 089 | [update <name> says what happened when another entry of the same source already …](backlog/089-update-one-reports-a-second-entry-of-the-same-source.md) | S | 2026-10-22 |
-| 090 | [import runs the dependency check after an install, as add and update do](backlog/090-import-runs-the-dependency-check-after-an-install.md) | S | 2026-10-22 |
+| 100 | [The install path picks the named entry among two sidecar entries of one source](backlog/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md) | S | 2026-10-22 |
+
+#### M2 Window MVP
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 099 | [The window's update reports a second entry of the same source that has the pick…](backlog/099-the-windows-update-reports-a-second-entry-of-the-same-source.md) | S | 2026-10-22 |
 
 #### M4 Sources
 
@@ -91,17 +95,17 @@ _none_
 | # | Task | Closed |
 |---|---|---|
 | 091 | [The remaining toolbox lines move into the core: the set list note, the not-inst…](done/091-the-remaining-toolbox-lines-move-into-the-core.md) | 2026-10-22 |
+| 090 | [import runs the dependency check after an install, as add and update do](done/090-import-runs-the-dependency-check-after-an-install.md) | 2026-10-22 |
+| 089 | [update <name> says what happened when another entry of the same source already …](done/089-update-one-reports-a-second-entry-of-the-same-source.md) | 2026-10-22 |
+| 088 | [The doctor names a staging folder kept for its previous\ folders](done/088-doctor-names-a-staging-folder-kept-for-its-previous-folders.md) | 2026-10-22 |
 | 087 | [The command line's update check writes the last-check file the window reads](done/087-cli-update-check-writes-the-last-check-file.md) | 2026-10-22 |
 | 086 | [One summary line of set apply and savedvars in the core, shared by the command …](done/086-one-set-and-savedvars-summary-in-the-core.md) | 2026-10-22 |
 | 085 | [The window's toolbox undoes an apply, edits a set and names the account](done/085-window-toolbox-undo-edit-and-account.md) | 2026-10-22 |
 | 084 | [Stale staging folders are swept, so a run that ends mid-install leaves nothing …](done/084-stale-staging-folders-are-swept.md) | 2026-10-22 |
 | 083 | [A reinstall of the installed version says it was reinstalled, not updated from …](done/083-a-reinstall-of-the-installed-version-says-so.md) | 2026-10-22 |
 | 082 | [An install and an update report the whole interface check: out of date next to …](done/082-install-and-update-report-the-interface-check.md) | 2026-10-22 |
-| 081 | [The window's rows show the interface states scan and list mark](done/081-window-rows-show-the-interface-states.md) | 2026-10-22 |
-| 080 | [Housekeeping after the M1 fixes: one Blizzard_ prefix, the doctor's formatter a…](done/080-housekeeping-after-wave-5.md) | 2026-10-22 |
-| 079 | [Window and exe polish after the first release: the checks after an update, the …](done/079-window-and-exe-polish-after-the-first-release.md) | 2026-10-22 |
 
-_63 more in `done/`._
+_66 more in `done/`._
 
 ### Decisions
 

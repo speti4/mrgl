@@ -509,35 +509,52 @@ impl Engine {
     /// or out of date). One scan; a scan
     /// that fails is a warning and no check.
     pub fn check_installed(&self, folders: &[String]) -> InstalledChecks {
+        self.check_installed_each(&[folders])
+            .pop()
+            .unwrap_or_default()
+    }
+
+    /// [`Engine::check_installed`] for several installs at once, one answer per install in their order,
+    /// over one scan and one dependency check of the flavor as it is now: `import` checks every addon it
+    /// installed after the last one (task 090), so a library later on the list counts as there.
+    pub fn check_installed_each(&self, installs: &[&[String]]) -> Vec<InstalledChecks> {
         let scan = match scan::scan_flavor(&self.flavor) {
             Ok(scan) => scan,
             Err(error) => {
-                return InstalledChecks {
+                let failed = InstalledChecks {
                     warnings: vec![error.to_string()],
                     ..InstalledChecks::default()
                 };
+                return vec![failed; installs.len()];
             }
         };
         let state = self.load_state().ok().map(|loaded| loaded.state);
-        let installed = |folder: &str| folders.iter().any(|one| one.eq_ignore_ascii_case(folder));
-        let dependencies = dependencies::check(&scan, state.as_ref())
-            .into_iter()
-            .filter(|check| installed(&check.folder))
-            .collect();
-        let primary = folders.first().and_then(|primary| {
-            scan.addons
-                .iter()
-                .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
-        });
-        let mismatch = primary.and_then(|addon| interface::check_addon(addon, self.flavor.version));
-        let out_of_date =
-            primary.and_then(|addon| interface::out_of_date_addon(addon, self.flavor.version));
-        InstalledChecks {
-            dependencies,
-            mismatch,
-            out_of_date,
-            warnings: Vec::new(),
-        }
+        let all = dependencies::check(&scan, state.as_ref());
+        installs
+            .iter()
+            .map(|folders| {
+                let installed =
+                    |folder: &str| folders.iter().any(|one| one.eq_ignore_ascii_case(folder));
+                let dependencies = all
+                    .iter()
+                    .filter(|check| installed(&check.folder))
+                    .cloned()
+                    .collect();
+                let primary = folders.first().and_then(|primary| {
+                    scan.addons
+                        .iter()
+                        .find(|addon| addon.folder.eq_ignore_ascii_case(primary))
+                });
+                InstalledChecks {
+                    dependencies,
+                    mismatch: primary
+                        .and_then(|addon| interface::check_addon(addon, self.flavor.version)),
+                    out_of_date: primary
+                        .and_then(|addon| interface::out_of_date_addon(addon, self.flavor.version)),
+                    warnings: Vec::new(),
+                }
+            })
+            .collect()
     }
 
     /// Unpacks a zip into a fresh folder under `staging\`, refusing any entry that would land outside it,

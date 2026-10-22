@@ -106,10 +106,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `apply`, task 027; `set undo`, `set enable|disable|drop <set> <addon>` and `--account`, task 073;
   below), `update --all | <name> --flavor <flavor> [--dry-run] [--yes]` (task 006,
   below), with `--json` for machines and `--serious` for the murloc-averse; its end-to-end tests under
-  `tests/`. `list` and `add <file.zip>` run the dependency check
+  `tests/`. `list`, `add`, `update` and `import` (task 090) run the dependency check
   (task 029; `scan` reads the folder only): a warning line per addon with a missing required dependency,
   `missing: <names>` at the end of the addon's `list` line, and in `--json` a `dependencies` object per
-  addon of `list` and a `dependencies` array of the installed folders under `add`'s `addon`, each with
+  addon of `list`, a `dependencies` array of the installed folders under `add`'s `addon` and on every
+  installed entry of the `import` document, each with
   `folder`, `required`, `met`, `embedded` (a subset of `missing`), `missing` and `nolib` (`true`, `false` or
   `null` for unknown).
   `savedvars --flavor <flavor> [--clean]` (task 025) prints a data line per SavedVariables entry (size,
@@ -167,7 +168,13 @@ another format or schema is refused on import. `mrgl import` resolves every `git
 flavor's build and installs the current release through the engine under the entry's name, so the version
 in the list is a record, not a pin; a zip in hand is reported as not importable, a `link:` entry is skipped,
 and an addon the flavor already has (the same name, the same source, or a folder of the entry that is there,
-managed or not) is reported and left alone. `--dry-run` resolves every entry and writes nothing under
+managed or not) is reported and left alone. Once every entry is done, `import` runs the checks of the
+install summary of `add` and `update` over the addons it installed (`Engine::check_installed_each`, one
+scan of the flavor as the import left it, so a library installed later on the list counts as there; task
+090): a missing required dependency is a warning line (`NeedsLibrary needs the missing dependency
+LibMissing: install it or the addon does not load`) in the entry's `warnings` and the document's, and the
+entry's `dependencies` carries the check of each installed folder; the interface warnings follow (task 082,
+below). `--dry-run` resolves every entry and writes nothing under
 `Interface\AddOns` or in the sidecar (the release list cache of the GitHub source is written as on any
 resolve). An entry that fails does not stop the others; the run then ends with exit code 1. The list may
 come from another flavor: the picks are made for the flavor it is imported into, with a warning.
@@ -217,7 +224,8 @@ lock keeps the run's own folders and those of another running mrgl on the same f
 the command line); the hour keeps a folder made a moment ago that is not locked yet, and a run of an mrgl
 from before task 084, which takes no lock; `previous\` holds the folders an interrupted or failed swap moved
 aside, perhaps the only copy of the version installed before, so that folder stays until it is removed by
-hand. A leftover that cannot be removed is a warning on the install's result, never an error.
+hand, and `mrgl doctor` names it with its age, its size and what to do with it (task 088, see
+[The doctor](#the-doctor)). A leftover that cannot be removed is a warning on the install's result, never an error.
 
 The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
 request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
@@ -277,7 +285,13 @@ terminal or with `--json` the command stops and says what `--yes` does, exit 1),
 one install path with the pick the check made (`AddonUpdate::request`, no second resolve), say each
 install's summary line with the dependency and interface warnings of the installed addon, and end with the
 summary that counts every state (`1 addon updated, 2 up to date, 1 pinned, 1 ignored`; `--dry-run` says
-`1 update available` and writes nothing under `Interface\AddOns` or in the sidecar). Right after the check,
+`1 update available` and writes nothing under `Interface\AddOns` or in the sidecar). An update the one
+install path answers with "installed already" is not counted as updated (task 089): under the addon's own
+entry (another run updated it since the check) `update` says the nothing-to-do line of `add`; under another
+entry of the same source, which the install path finds first by its source (a renamed addon next to its old
+name), it says a warning that names that entry, `QuestieClassic not updated: Questie, a second entry of
+github:Questie/Questie, has 1.2.3 installed already in _forever_; QuestieClassic stays at 1.2.2`, and leaves
+both entries as they are; the summary counts either as `1 installed already`. Right after the check,
 before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
 as the window's check does (task 087, below): a source gone, a failed check and an addon left before the
 rate limit are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
@@ -285,7 +299,9 @@ that cannot be written is a warning (`the answers of this check are not kept for
 `latest`, `order` (the installed version against `latest`: `older`, `same`, `newer`, or `null` when there is
 no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installed `addon` block and the
 interface check of the installed addon, `interface_mismatch` and `interface_out_of_date` (task 082, below),
-the `counts` per state, `stopped` (the
+`installed_already` (task 089: the entry the install path found at the pick's version, as an `addon` block
+with `same_entry` and the line as `message`; `null` otherwise), the document's `updated` and
+`installed_already` counts, the `counts` per state, `stopped` (the
 `BudgetStop` with its `message`, `null` when the check asked about every addon) and the warnings. An
 update or a check that fails does not stop the others; the run then ends with exit code 1. A stop before
 the rate limit is a warning in the summary (`2 not checked (rate limit)`), not a failure: exit code 0.
@@ -497,6 +513,16 @@ The lines, with the JSON field in brackets:
   is a file that cannot be opened at all.
 - `  cache: <size> in <n> files` or `empty` (`cache`: `bytes`, `files`, `reason`): the install engine's zips
   under `<home>\<flavor-id>\cache\`, links and junctions not followed.
+- `  kept staging: <folder> (<age> old, <size> in <n> files; previous: <names>)`, one line per folder, then
+  once `  kept staging advice: <what to do>` (`kept_staging[]`: `path`, `created`, `age_seconds`, `bytes`,
+  `files`, `previous`, `advice`; task 088): every run folder under `<home>\<flavor-id>\staging\` that holds
+  a `previous\` folder, the addon folders an interrupted or failed swap moved aside, which the sweep of task
+  084 never removes (`mrgl_core::staging::kept`). A folder whose lock a running mrgl holds is a swap in
+  progress and is left out. The age comes from the time in the folder's name, else its modified time
+  (`created` in UTC); the size counts every file under it, links and junctions not followed. The advice
+  says to copy a folder from `previous\` back into `Interface\AddOns` when that addon is missing or broken,
+  then delete the staging folder: the doctor names it, the user decides, and mrgl never removes it. No line
+  and an empty list when there is none.
 - `  client: running (<exe>, pid <n>)`, `not running` or `unknown (<reason>)` (`client`: `status`, `pid`,
   `exe`, `reason`): whether a process runs from the flavor folder (task 023); `unknown` when the process list
   cannot be taken.
@@ -506,8 +532,8 @@ The lines, with the JSON field in brackets:
   game folder).
 
 The summary names what needs a look: no game root, a missing flavor folder, an AddOns folder that takes no
-write, a sidecar that is rebuilt or unreadable, a process list that cannot be taken, a used-up rate limit and
-the warnings. The tests run the report offline: the core's tests hand it a fixed process list, an in-memory
+write, a sidecar that is rebuilt or unreadable, a kept staging folder, a process list that cannot be taken, a
+used-up rate limit and the warnings. The tests run the report offline: the core's tests hand it a fixed process list, an in-memory
 HTTP stub and a fixed WebView2 and Windows answer; the end-to-end tests stub the WebView2 version with a
 `webview2=<version>` item of `MRGL_DISCOVERY` and the Windows version with a
 `windows=<display version>,<build>.<ubr>` item (`windows=24H2,26100.1234`, a part may be left out; any other

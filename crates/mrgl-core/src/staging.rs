@@ -12,7 +12,8 @@
 //! creation time its name carries (`<stem>-<nanoseconds since 1970>-<attempt>`), else by its modified
 //! time. A folder that holds a `previous\` folder is never swept: it holds the addon folders an interrupted
 //! or failed swap moved aside, which may be the only copy of the version installed before. A removal that
-//! fails is a warning, never an error.
+//! fails is a warning, never an error. Such a folder stays until the user removes it, so [`kept`] lists
+//! them for the doctor (task 088).
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
@@ -131,6 +132,51 @@ pub fn sweep_at(staging: &Path, now: SystemTime) -> Vec<String> {
         }
     }
     warnings
+}
+
+/// A run folder the sweep keeps because it holds a `previous\` folder (task 088): the addon folders an
+/// interrupted or failed swap moved aside, which the doctor names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptRun {
+    /// The run folder.
+    pub path: PathBuf,
+    /// When it was made: the time its name carries, else its modified time.
+    pub created: Option<SystemTime>,
+    /// The names under its `previous\` folder, sorted.
+    pub previous: Vec<String>,
+}
+
+/// Every folder under `staging` that the sweep keeps for a `previous\` folder in it and that no running
+/// mrgl holds (a held lock is a swap in progress), sorted by name; a `staging` that does not exist holds
+/// none. Reads only: a lock this process can take is released at once, as the sweep does.
+pub fn kept(staging: &Path) -> Vec<KeptRun> {
+    let Ok(entries) = std::fs::read_dir(staging) else {
+        return Vec::new();
+    };
+    let mut kept: Vec<KeptRun> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.path())
+        .filter(|path| path.join(PREVIOUS_DIR).exists() && lock_is_free(&path.join(LOCK_FILE)))
+        .map(|path| {
+            let mut previous: Vec<String> = std::fs::read_dir(path.join(PREVIOUS_DIR))
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            previous.sort();
+            KeptRun {
+                created: created_at(&path),
+                previous,
+                path,
+            }
+        })
+        .collect();
+    kept.sort_by(|a, b| a.path.cmp(&b.path));
+    kept
 }
 
 /// Whether a folder under `staging\` is a leftover: old enough, no `previous\` in it, and its lock free.
@@ -260,6 +306,29 @@ mod tests {
         std::fs::create_dir_all(kept.join(PREVIOUS_DIR).join("OneFolder")).expect("previous");
         assert_eq!(sweep(&staging), Vec::<String>::new());
         assert!(kept.join(PREVIOUS_DIR).join("OneFolder").is_dir());
+        let _ = std::fs::remove_dir_all(staging.parent().expect("the test folder"));
+    }
+
+    #[test]
+    fn kept_lists_a_folder_with_previous_folders_and_no_other() {
+        let staging = temp_staging("kept");
+        let kept_dir = planted(&staging, "Kept.zip", OLD);
+        std::fs::create_dir_all(kept_dir.join(PREVIOUS_DIR).join("Two")).expect("previous");
+        std::fs::create_dir_all(kept_dir.join(PREVIOUS_DIR).join("One")).expect("previous");
+        planted(&staging, "Plain.zip", OLD);
+        // A swap in progress: its run holds the lock.
+        let running = RunDir::create(&staging, "Running.zip").expect("a run folder");
+        std::fs::create_dir_all(running.path().join(PREVIOUS_DIR).join("Three")).expect("previous");
+        let found = kept(&staging);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, kept_dir);
+        assert_eq!(found[0].previous, ["One", "Two"]);
+        let age = SystemTime::now()
+            .duration_since(found[0].created.expect("the time in the name"))
+            .expect("in the past");
+        assert!(age >= OLD && age < OLD + Duration::from_secs(60), "{age:?}");
+        drop(running);
+        assert_eq!(kept(&staging.join("none")), Vec::new());
         let _ = std::fs::remove_dir_all(staging.parent().expect("the test folder"));
     }
 

@@ -2509,7 +2509,57 @@ fn import_line(item: &list_file::Imported) -> String {
 /// What `update` did with one addon the check found an update for.
 enum Applied {
     Updated(Box<InstallSummary>),
+    /// Task 089: the one install path found the pick's version installed already, under the addon's own
+    /// entry or under another entry of the same source, and installed nothing.
+    InstalledAlready(Box<InstalledAlready>),
     Failed(String),
+}
+
+/// An update the one install path answered with "installed already" (task 089): the entry it found and
+/// the line `update` says about it.
+struct InstalledAlready {
+    /// The entry as the sidecar has it: the `addon` block of the nothing-to-do summary.
+    summary: InstallSummary,
+    /// Whether the entry found is the updated addon's own.
+    same_entry: bool,
+    kind: Kind,
+    line: String,
+}
+
+impl InstalledAlready {
+    /// The answer for the addon `name` at `version` (task 089). Its own entry at the pick's version (another
+    /// run updated it since the check) is the nothing-to-do line; another entry of the same source (a renamed
+    /// addon next to its old name) is a warning that names that entry and says the addon stays as it is.
+    fn of(name: &str, version: &str, current: &AlreadyInstalled, folder_name: &str) -> Self {
+        let summary = already_installed_summary(current, folder_name);
+        if current.name.eq_ignore_ascii_case(name) {
+            let line = summary.line.clone();
+            return InstalledAlready {
+                summary,
+                same_entry: true,
+                kind: Kind::Nothing,
+                line,
+            };
+        }
+        let line = format!(
+            "{name} not updated: {}, a second entry of {}, has {} installed already in {folder_name}; {name} stays at {version}",
+            current.name, current.entry.source, current.entry.version
+        );
+        InstalledAlready {
+            summary,
+            same_entry: false,
+            kind: Kind::Warning,
+            line,
+        }
+    }
+
+    /// The `installed_already` object of the addon in `update --json`.
+    fn json(&self) -> serde_json::Value {
+        let mut value = self.summary.addon.clone();
+        value["same_entry"] = self.same_entry.into();
+        value["message"] = self.line.clone().into();
+        value
+    }
 }
 
 /// `mrgl update --all | <name> --flavor <id> [--dry-run] [--yes]` (task 006): the update check of the core
@@ -2649,7 +2699,15 @@ fn update_command(
                 Ok(SourceInstalled {
                     outcome: PickInstalled::AlreadyInstalled(current),
                     ..
-                }) => Applied::Updated(Box::new(already_installed_summary(&current, &folder_name))),
+                }) => {
+                    warnings.extend(current.warnings.iter().cloned());
+                    let already =
+                        InstalledAlready::of(&addon.name, &addon.version, &current, &folder_name);
+                    if !reporter.json {
+                        reporter.say(already.kind, &already.line);
+                    }
+                    Applied::InstalledAlready(Box::new(already))
+                }
                 Err(error) => {
                     let line = format!("{}: {error}", addon.name);
                     if !reporter.json {
@@ -2665,6 +2723,10 @@ fn update_command(
     let updated = applied
         .values()
         .filter(|result| matches!(result, Applied::Updated(_)))
+        .count();
+    let installed_already = applied
+        .values()
+        .filter(|result| matches!(result, Applied::InstalledAlready(_)))
         .count();
     let mut failed: Vec<&str> = applied
         .iter()
@@ -2693,8 +2755,14 @@ fn update_command(
                     Some(Applied::Failed(line)) => Some(line.clone()),
                     _ => None,
                 };
+                // Task 089: the entry the one install path found at the pick's version, `null` otherwise.
+                let already = match applied.get(&addon.name) {
+                    Some(Applied::InstalledAlready(already)) => Some(already.json()),
+                    _ => None,
+                };
                 value["updated"] = summary.is_some().into();
                 value["addon"] = summary.map(|summary| summary.addon.clone()).into();
+                value["installed_already"] = already.into();
                 // Task 082: the interface check of the updated addon, `null` when it passes or was not
                 // updated.
                 value["interface_mismatch"] =
@@ -2729,6 +2797,7 @@ fn update_command(
             "dry_run": dry_run,
             "addons": addons,
             "updated": updated,
+            "installed_already": installed_already,
             "counts": counts,
             "stopped": stopped,
             "warnings": warnings,
@@ -2740,7 +2809,11 @@ fn update_command(
         let of = if dry_run {
             SummaryOf::DryRun
         } else {
-            SummaryOf::Update { updated, left: 0 }
+            SummaryOf::Update {
+                updated,
+                left: 0,
+                installed_already,
+            }
         };
         let (kind, summary) = check.summary(of, &folder_name);
         reporter.say(kind, summary);
