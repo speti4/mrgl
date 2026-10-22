@@ -13,6 +13,10 @@ not the list. The summary under a heading is written by hand and kept by the gen
 
 - The dependency and interface checks say what the client says: an embedded-only dependency is missing, a lower interface number is out of date ([076](https://github.com/speti4/mrgl/blob/main/tasks/done/076-the-checks-say-what-the-client-says.md))
 
+### Project housekeeping
+
+- Housekeeping after the M1 fixes: one `Blizzard_` prefix, the doctor's formatter alias, the voice sample in the docs ([080](https://github.com/speti4/mrgl/blob/main/tasks/done/080-housekeeping-after-wave-5.md))
+
 ## 0.1.0 — 2026-10-22
 
 The first release, 0.1.0: one portable zip with the `mrgl` command line and the `mrgl-app` window, both with
