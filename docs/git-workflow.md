@@ -11,11 +11,9 @@ How changes reach `main`: the rules for every contributor, checked by a hook and
 - **Titles.** Commit subjects and pull request titles are imperative and start with a type in lower case, as
   `type: subject` or `type(scope): subject`, where the type is one of `feat`, `fix`, `docs`, `ci`, `chore`,
   `tasks` and `deps` (dependabot). A `Merge …` or `Revert "…"` subject passes as git writes it.
-- **Trailers.** `Co-Authored-By:` lines are fine, including one for an AI assistant (`Co-Authored-By: Claude
-  …`). If you work with Claude Code, leave out its `Claude-Session:` trailer and session link: they point to a
-  private session and are rejected in a commit message or a pull request description (D-004). A pull
-  request written with Claude Code ends its description with `🤖 Generated with Claude Code` (a convention,
-  not checked); the squash merge appends the `Co-authored-by` lines of the branch's commits by itself.
+- **Trailers.** `Co-Authored-By:` lines are fine. If you work with Claude Code, leave out its `Claude-Session:`
+  trailer and session link: they point to a private session and are rejected in a commit message or a pull
+  request description (D-004).
 - **Author address.** The maintainer commits with the GitHub noreply address (D-004); contributors choose their
   own.
 - **The hook.** Once per clone, `git config core.hooksPath .githooks` enables the `commit-msg` hook, which checks
