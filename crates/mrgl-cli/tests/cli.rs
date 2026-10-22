@@ -1836,6 +1836,7 @@ fn add_github_updates_another_version_and_json_is_one_document() {
         serde_json::json!({
             "name": "Questie",
             "version": "1.2.3",
+            "outcome": "installed",
             "previous_version": null,
             "source": "github:Questie/Questie",
             "folders": ["Questie"],
@@ -4534,6 +4535,93 @@ fn rollback_puts_the_previous_version_back_pins_it_and_goes_forward_again() {
     assert!(output.status.success(), "{}", stderr_last_line(&output));
     assert_eq!(stdout(&output).lines().count(), 4, "{}", stdout(&output));
     assert!(stdout_last_line(&output).starts_with("rolled back OneFolder from 1.1.0 to 1.0.0"));
+}
+
+#[test]
+fn a_reinstall_of_the_installed_version_says_so_and_keeps_the_rollback() {
+    // Task 083: the zip of the version the sidecar records is a reinstall, not an update from the previous
+    // version to the same one; the previous version stays for `rollback`.
+    let game = Game::new("reinstall");
+    add_in(&game, &["one-folder-1.0.0.zip"]);
+    let add = |zip: &str, args: &[&str]| {
+        let output = game
+            .mrgl()
+            .args(args)
+            .arg("add")
+            .arg(zips().join(zip))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        output
+    };
+    let output = add("one-folder-1.0.0.zip", &["--serious"]);
+    assert_eq!(
+        stdout_last_line(&output),
+        "reinstalled OneFolder 1.0.0 (1 folder: OneFolder) in _forever_",
+        "a reinstall of the first install"
+    );
+    let output = add("one-folder-1.1.0.zip", &["--serious"]);
+    assert_eq!(
+        stdout_last_line(&output),
+        "updated OneFolder from 1.0.0 to 1.1.0 (1 folder: OneFolder) in _forever_",
+        "a real update still says updated"
+    );
+    let output = game
+        .mrgl()
+        .args(["--serious", "add"])
+        .arg(zips().join("one-folder-1.1.0.zip"))
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "dry run: would reinstall OneFolder 1.1.0 (1 folder: OneFolder) in _forever_"
+    );
+    let output = add("one-folder-1.1.0.zip", &["--serious"]);
+    assert_eq!(
+        stdout_last_line(&output),
+        "reinstalled OneFolder 1.1.0 (1 folder: OneFolder) in _forever_"
+    );
+    // The murloc speaks on the reinstall too: the line goes through the voice.
+    let output = add("one-folder-1.1.0.zip", &[]);
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 4, "two two-line messages: {text}");
+    assert_eq!(
+        lines[3],
+        "reinstalled OneFolder 1.1.0 (1 folder: OneFolder) in _forever_"
+    );
+
+    let output = add("one-folder-1.1.0.zip", &["--json"]);
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["addon"]["outcome"], "reinstalled");
+    assert_eq!(value["addon"]["version"], "1.1.0");
+    assert_eq!(value["addon"]["previous_version"], "1.0.0");
+    let output = game
+        .mrgl()
+        .args(["--json", "add"])
+        .arg(zips().join("one-folder-1.1.0.zip"))
+        .args(["--flavor", "forever", "--dry-run"])
+        .output()
+        .expect("run mrgl");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["addon"]["outcome"], "reinstalled");
+    assert_eq!(value["addon"]["previous_version"], "1.0.0");
+    assert_eq!(
+        sidecar(&game)["addons"]["OneFolder"]["previous_version"],
+        "1.0.0"
+    );
+
+    let output = run_in(&game, &["rollback", "onefolder"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    assert_eq!(
+        stdout_last_line(&output),
+        "rolled back OneFolder from 1.1.0 to 1.0.0 (1 folder: OneFolder) in _forever_; pinned at 1.0.0, `mrgl unpin OneFolder` lets updates reach it again"
+    );
 }
 
 #[test]

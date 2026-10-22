@@ -38,6 +38,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::client::{self, ProcessList, RunningClient, SystemProcesses};
@@ -131,12 +132,49 @@ impl Drop for Staged {
     }
 }
 
+/// Which kind of install a commit was (task 083), told by the entry it replaced: none, one of another
+/// version, or one of the same version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallOutcome {
+    /// The sidecar had no entry for the addon.
+    Installed,
+    /// The entry recorded another version, which is the previous version now.
+    Updated,
+    /// The entry recorded the same version: the folders are written again and the entry's previous
+    /// version stays what it was.
+    Reinstalled,
+}
+
+impl InstallOutcome {
+    /// The outcome of installing `version` over the entry `replaced` (the one the commit replaces).
+    pub fn of(replaced: Option<&Entry>, version: &str) -> InstallOutcome {
+        match replaced {
+            None => InstallOutcome::Installed,
+            Some(entry) if entry.version == version => InstallOutcome::Reinstalled,
+            Some(_) => InstallOutcome::Updated,
+        }
+    }
+
+    /// The previous version the new entry records: the replaced entry's version on an update, its own
+    /// previous version on a reinstall (tasks 022, 077), none on a first install.
+    pub fn previous_version(replaced: Option<&Entry>, version: &str) -> Option<String> {
+        replaced.and_then(|entry| match InstallOutcome::of(Some(entry), version) {
+            InstallOutcome::Reinstalled => entry.previous_version.clone(),
+            _ => Some(entry.version.clone()),
+        })
+    }
+}
+
 /// What an install did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installed {
     pub name: String,
     pub version: String,
-    /// The version that was installed before, when the addon was managed already.
+    /// A first install, an update from another version or a reinstall of the recorded one (task 083).
+    pub outcome: InstallOutcome,
+    /// The version that was installed before, when the addon was managed already; on a reinstall the
+    /// entry's previous version, kept for `rollback`, not the version installed again.
     pub previous_version: Option<String>,
     /// The folders written, the primary one first.
     pub folders: Vec<String>,
@@ -618,13 +656,9 @@ impl Engine {
                 files.insert(format!("{}/{path}", addon.folder), hash.clone());
             }
         }
-        let previous_version = previous.as_ref().and_then(|(_, entry)| {
-            if entry.version == staged.version {
-                entry.previous_version.clone()
-            } else {
-                Some(entry.version.clone())
-            }
-        });
+        let replaced = previous.as_ref().map(|(_, entry)| entry);
+        let outcome = InstallOutcome::of(replaced, &staged.version);
+        let previous_version = InstallOutcome::previous_version(replaced, &staged.version);
         let entry = Entry {
             source: staged.source.clone(),
             version: staged.version.clone(),
@@ -666,6 +700,7 @@ impl Engine {
         Ok(Installed {
             name: staged.name.clone(),
             version: staged.version.clone(),
+            outcome,
             previous_version,
             folders: new_folders,
             removed_folders: stale,

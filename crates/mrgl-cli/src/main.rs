@@ -31,8 +31,8 @@ use mrgl_core::flavor::{self, Flavor, FlavorId, VersionSource};
 use mrgl_core::forever::{ForeverBuild, ForeverStatus, STALE_AFTER_DAYS};
 use mrgl_core::home::{self, Config};
 use mrgl_core::install::{
-    AlreadyInstalled, Engine, Installed, InstalledChecks, Mark, Metadata, PickInstalled, PickStep,
-    SourceInstalled, SourceRequest,
+    AlreadyInstalled, Engine, InstallOutcome, Installed, InstalledChecks, Mark, Metadata,
+    PickInstalled, PickStep, SourceInstalled, SourceRequest,
 };
 use mrgl_core::interface::{self, InterfaceMismatch, InterfaceOutOfDate};
 use mrgl_core::link;
@@ -1435,8 +1435,9 @@ impl InstallSummary {
 /// The one summary of an install, for `add <file.zip>`, `add github:` and `update` (task 055): the
 /// engine's warnings and those of the dependency check of the installed folders (task 029) go to
 /// `warnings`; the `addon` block names the addon as the sidecar records it now; the line is `installed
-/// <name> <version> (<folders>) into <flavor folder>`, or `updated <name> from <previous> to <version>
-/// (<folders>) in <flavor folder>`, with the folders of the previous version that went.
+/// <name> <version> (<folders>) into <flavor folder>`, `updated <name> from <previous> to <version>
+/// (<folders>) in <flavor folder>`, or `reinstalled <name> <version> (<folders>) in <flavor folder>` for the
+/// version the sidecar recorded already (task 083), with the folders of the previous version that went.
 fn install_summary(
     engine: &Engine,
     installed: &Installed,
@@ -1461,6 +1462,7 @@ fn install_summary(
     let addon = serde_json::json!({
         "name": installed.name,
         "version": installed.version,
+        "outcome": installed.outcome,
         "previous_version": installed.previous_version,
         "source": source,
         "folders": installed.folders,
@@ -1473,12 +1475,16 @@ fn install_summary(
         count_folders(installed.folders.len()),
         installed.folders.join(", ")
     );
-    let mut line = match &installed.previous_version {
-        Some(previous) => format!(
+    let mut line = match (installed.outcome, &installed.previous_version) {
+        (InstallOutcome::Reinstalled, _) => format!(
+            "reinstalled {} {} ({folders}) in {folder_name}",
+            installed.name, installed.version
+        ),
+        (InstallOutcome::Updated, Some(previous)) => format!(
             "updated {} from {previous} to {} ({folders}) in {folder_name}",
             installed.name, installed.version
         ),
-        None => format!(
+        _ => format!(
             "installed {} {} ({folders}) into {folder_name}",
             installed.name, installed.version
         ),
@@ -1505,6 +1511,8 @@ fn already_installed_summary(current: &AlreadyInstalled, folder_name: &str) -> I
         addon: serde_json::json!({
             "name": current.name,
             "version": current.entry.version,
+            // Nothing was installed (task 083: the outcome of an install, `null` here).
+            "outcome": null,
             "previous_version": current.entry.previous_version,
             "source": current.entry.source,
             "folders": current.entry.folders,
@@ -1669,10 +1677,11 @@ fn add_zip(
         engine
             .refuse_links(&loaded.state, &staged.folders())
             .map_err(|error| error.to_string())?;
-        let previous = loaded
-            .state
-            .entry(&staged.name)
-            .map(|(_, entry)| entry.version.clone());
+        // What the install would record (task 083): a reinstall of the recorded version keeps the entry's
+        // previous version, as the commit does.
+        let replaced = loaded.state.entry(&staged.name).map(|(_, entry)| entry);
+        let outcome = InstallOutcome::of(replaced, &staged.version);
+        let previous = InstallOutcome::previous_version(replaced, &staged.version);
         let folders = staged.folders();
         if reporter.json {
             reporter.document(serde_json::json!({
@@ -1682,6 +1691,7 @@ fn add_zip(
                 "addon": {
                     "name": staged.name,
                     "version": staged.version,
+                    "outcome": outcome,
                     "previous_version": previous,
                     "source": staged.source,
                     "folders": folders,
@@ -1693,12 +1703,15 @@ fn add_zip(
             for warning in &warnings {
                 reporter.say(Kind::Warning, warning);
             }
-            let what = match &previous {
-                Some(previous) => format!(
+            let what = match (outcome, &previous) {
+                (InstallOutcome::Reinstalled, _) => {
+                    format!("reinstall {} {}", staged.name, staged.version)
+                }
+                (InstallOutcome::Updated, Some(previous)) => format!(
                     "update {} from {previous} to {}",
                     staged.name, staged.version
                 ),
-                None => format!("install {} {}", staged.name, staged.version),
+                _ => format!("install {} {}", staged.name, staged.version),
             };
             reporter.say(
                 Kind::Success,

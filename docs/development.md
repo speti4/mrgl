@@ -197,8 +197,14 @@ and the download is removed whatever the install returned. `Engine::resolve` is 
 a dry run, and `Engine::install_pick` the same path for a pick in hand. The link refusal of task 005 sits in
 `Engine::commit`, so a zip in hand, a source, an import, an update and a rollback all refuse to install over
 a linked addon or a junction mrgl did not make. The command line reports every install with one summary
-(the `installed …`/`updated …` line and the `addon` block of the JSON document, with the dependency and
-interface checks).
+(the line and the `addon` block of the JSON document, with the dependency and interface checks). The line
+follows the commit's outcome (`InstallOutcome`, told by the entry the commit replaces, task 083): `installed
+OneFolder 1.0.0 (1 folder: OneFolder) into _forever_` without an entry, `updated OneFolder from 1.0.0 to
+1.1.0 (…) in _forever_` over an entry of another version, and `reinstalled OneFolder 1.1.0 (…) in _forever_`
+over an entry of the same version, whose previous version stays what it was, so `rollback` still goes back
+to it; `add <file.zip> --dry-run` says `would install`, `would update` or `would reinstall` by the same rule.
+The `addon` block carries the outcome as `outcome`: `installed`, `updated` or `reinstalled` (`null` for an
+addon found installed already, where nothing was installed).
 
 The staging folder's lifetime (task 084, `mrgl_core::staging`): every download and every unpacked zip gets
 a run folder of its own under `<flavor-id>\staging\` (`<stem>-<nanoseconds since 1970>-<attempt>`), and
