@@ -49,6 +49,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - Housekeeping after the M1 fixes: one `Blizzard_` prefix, the doctor's formatter alias, the voice sample in the docs ([080](https://github.com/speti4/mrgl/blob/main/tasks/done/080-housekeeping-after-wave-5.md))
 - One summary line of `set apply` and `savedvars` in the core, shared by the command line and the window ([086](https://github.com/speti4/mrgl/blob/main/tasks/done/086-one-set-and-savedvars-summary-in-the-core.md))
 - The remaining toolbox lines move into the core: the set list note, the not-installed warning and the two-account error's words ([091](https://github.com/speti4/mrgl/blob/main/tasks/done/091-the-remaining-toolbox-lines-move-into-the-core.md))
+- The window's offline sketch says "source not configured" as the core does ([102](https://github.com/speti4/mrgl/blob/main/tasks/done/102-the-ui-mock-says-source-not-configured-as-the-core-does.md))
 
 ## 0.1.0 — 2026-10-22
 
