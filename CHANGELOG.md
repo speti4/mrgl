@@ -44,6 +44,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The WoWInterface source ([094](https://github.com/speti4/mrgl/blob/main/tasks/done/094-the-wowinterface-source.md))
 - The Wago source ([095](https://github.com/speti4/mrgl/blob/main/tasks/done/095-the-wago-source.md))
 - Adopt, the report: what source each unmanaged addon of a folder has ([097](https://github.com/speti4/mrgl/blob/main/tasks/done/097-adopt-the-report-of-the-sources-of-an-addons-folder.md))
+- Adopt `--apply`: sidecar entries without a reinstall, and the `.curseclient` guard ([098](https://github.com/speti4/mrgl/blob/main/tasks/done/098-adopt-apply-writes-sidecar-entries-without-a-reinstall.md))
 
 ### Project housekeeping
 
