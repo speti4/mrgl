@@ -1109,3 +1109,205 @@ fn the_set_list_note_reads_as_on_the_command_line() {
         "the line `mrgl set list` prints (task 091)"
     );
 }
+
+// --- task 117: the arms the fixture can provoke ---
+
+#[test]
+fn the_refusal_lines_name_what_runs_and_what_waits() {
+    let lines = [
+        toolbox::busy_line(),
+        toolbox::toolbox_busy_line(),
+        toolbox::marks_wait_line(),
+        toolbox::updating_line(),
+        toolbox::adopt_updating_line(),
+    ];
+    for (index, line) in lines.iter().enumerate() {
+        assert!(line.contains("running"), "{line}");
+        assert!(
+            lines[index + 1..].iter().all(|other| other != line),
+            "each refusal says what waits: {line}"
+        );
+    }
+    assert!(toolbox::updating_line().contains("SavedVariables cleanup waits"));
+    assert!(toolbox::adopt_updating_line().contains("adopt waits"));
+    assert!(toolbox::marks_wait_line().contains("pin, ignore and the channel wait"));
+}
+
+#[test]
+fn what_cannot_be_read_is_an_error_among_the_messages_and_the_rest_is_drawn() {
+    let game = Game::new("unreadable");
+    // A sets file that is not JSON, an undo record that is not one either, and a file where the WTF
+    // account folder should be: the sets, the characters, the undo and the SavedVariables each fail.
+    std::fs::write(game.sets_path(), "{").expect("the broken sets file");
+    let undo = sets::undo_dir_of(&game.sets_path());
+    std::fs::create_dir_all(&undo).expect("the undo folder");
+    std::fs::write(undo.join(sets::UNDO_FILE), "{").expect("the broken undo record");
+    let account = game.wtf().join("Account");
+    std::fs::remove_dir_all(&account).expect("the account folder removed");
+    std::fs::write(&account, "not a folder").expect("a file in its place");
+
+    let answer = game.load();
+    let toolbox = view(&answer);
+    let kinds: Vec<&str> = answer.messages.iter().map(|message| message.kind).collect();
+    assert_eq!(kinds, ["error", "error", "error", "error"]);
+    assert_eq!(
+        toolbox.sets_note, answer.messages[0],
+        "the error of the sets is the note"
+    );
+    assert!(
+        answer.messages[0].plain.contains("sets file"),
+        "{}",
+        answer.messages[0].plain
+    );
+    assert!(toolbox.sets.is_empty() && toolbox.characters.is_empty());
+    assert_eq!(toolbox.undo, None);
+    assert!(
+        answer.messages[2].plain.contains("undo record"),
+        "{}",
+        answer.messages[2].plain
+    );
+    let saved = &toolbox.saved_variables;
+    assert_eq!(
+        saved.summary, answer.messages[3],
+        "the error of the listing is its summary"
+    );
+    assert!(saved.files.is_empty() && saved.bytes == 0 && saved.orphans == 0);
+    assert_eq!(
+        (saved.size.as_str(), saved.orphan_size.as_str()),
+        ("0 B", "0 B")
+    );
+}
+
+#[test]
+fn a_flavor_without_an_addons_folder_marks_no_orphan_and_says_so() {
+    let game = Game::new("no-addons");
+    std::fs::remove_dir_all(game.flavor_folder().join("Interface")).expect("no AddOns folder");
+    let answer = game.load();
+    assert_eq!(answer.messages.len(), 1);
+    assert_eq!(answer.messages[0].kind, "warning");
+    assert!(
+        answer.messages[0].plain.starts_with("no AddOns folder at "),
+        "{}",
+        answer.messages[0].plain
+    );
+    assert_eq!(view(&answer).saved_variables.orphans, 0);
+
+    let answer = game.clean();
+    assert_eq!(answer.zip, None);
+    let kinds: Vec<&str> = answer.messages.iter().map(|message| message.kind).collect();
+    assert_eq!(kinds, ["warning", "nothing"]);
+    assert!(
+        answer.messages[0].plain.starts_with("no AddOns folder at "),
+        "{}",
+        answer.messages[0].plain
+    );
+}
+
+#[test]
+fn a_character_picked_where_there_is_none_is_the_core_s_error() {
+    let game = Game::new("no-characters");
+    std::fs::remove_dir_all(game.wtf()).expect("no WTF folder");
+    let answer = game.apply("raid", Some("Mrgltest"), None);
+    assert!(answer.changes.is_empty());
+    assert_eq!(answer.messages.len(), 1);
+    assert_eq!(answer.messages[0].kind, "error");
+    assert_eq!(
+        answer.messages[0].plain,
+        mrgl_core::Error::NoCharacters { path: game.wtf() }.to_string()
+    );
+}
+
+#[test]
+fn an_unknown_flavor_refuses_every_write() {
+    let game = Game::new("unknown-flavor");
+    let home = game.home();
+    let voice = Voice::new(true);
+    let answers = [
+        toolbox::apply(
+            &game.root(),
+            "wow_mrgl",
+            "raid",
+            Pick::default(),
+            Some(&home),
+            voice,
+        ),
+        toolbox::undo(&game.root(), "wow_mrgl", Some(&home), voice),
+        toolbox::edit(
+            &game.root(),
+            "wow_mrgl",
+            "raid",
+            "RaidFrames",
+            "enable",
+            Some(&home),
+            voice,
+        ),
+        toolbox::clean(&game.root(), "wow_mrgl", Some(&home), voice),
+    ];
+    for answer in &answers {
+        assert_eq!(answer.toolbox, None);
+        assert_eq!(
+            plains(answer),
+            [(
+                "error",
+                format!(
+                    "no flavor wow_mrgl: no such flavor folder under {}",
+                    game.root().display()
+                )
+                .as_str()
+            )]
+        );
+    }
+}
+
+#[test]
+fn an_undo_warns_of_a_file_changed_since_the_apply_and_puts_it_back_all_the_same() {
+    let game = Game::new("undo-changed");
+    let path = game
+        .character("Fixture Realm", "Mrgltest")
+        .join("AddOns.txt");
+    let before = std::fs::read(&path).expect("AddOns.txt");
+    let applied = game.apply("solo", Some("Mrgltest"), Some("Fixture Realm"));
+    assert_eq!(applied.messages.last().expect("a summary").kind, "success");
+    // The client wrote the file at logout, say.
+    std::fs::write(&path, "QuestArrows: enabled\r\n").expect("changed since");
+
+    let answer = game.undo();
+    let kinds: Vec<&str> = answer.messages.iter().map(|message| message.kind).collect();
+    assert_eq!(kinds, ["warning", "warning"]);
+    assert!(
+        answer.messages[0]
+            .plain
+            .ends_with("AddOns.txt changed since the apply (the client writes it at logout); put back as it was before the apply all the same"),
+        "{}",
+        answer.messages[0].plain
+    );
+    assert_eq!(std::fs::read(&path).expect("AddOns.txt"), before);
+    assert_eq!(
+        labels(&answer.undone.expect("undone").restore),
+        ["Fixture Realm/Mrgltest"]
+    );
+}
+
+#[test]
+fn a_cleanup_whose_zip_has_nowhere_to_go_moves_nothing() {
+    let game = Game::new("backups-file");
+    let orphan = game
+        .wtf()
+        .join("Account")
+        .join(ACCOUNT)
+        .join("SavedVariables/OldMeter.lua");
+    std::fs::create_dir_all(game.backups().parent().expect("the backups folder"))
+        .expect("the backups folder");
+    std::fs::write(game.backups(), "not a folder")
+        .expect("a file where the backups of the flavor go");
+    let answer = game.clean();
+    assert_eq!(answer.zip, None);
+    assert_eq!(answer.messages.len(), 1);
+    assert_eq!(answer.messages[0].kind, "error");
+    assert!(orphan.is_file(), "the orphan stays");
+    assert_eq!(
+        view(&answer).saved_variables.orphans,
+        2,
+        "and is listed still"
+    );
+}

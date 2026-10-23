@@ -54,6 +54,10 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - A Wago page address resolves to its `wago:<id>` through the keyless slugs list ([105](https://github.com/speti4/mrgl/blob/main/tasks/done/105-a-wago-page-address-resolves-to-its-id.md))
 - The Wago update check asks for its addons in bulk, one request per game version ([106](https://github.com/speti4/mrgl/blob/main/tasks/done/106-the-wago-update-check-asks-in-bulk.md))
 
+### M5 Trust
+
+- Test hardening toward full line and branch coverage ([117](https://github.com/speti4/mrgl/blob/main/tasks/done/117-test-hardening-toward-full-line-and-branch-coverage.md))
+
 ### Project housekeeping
 
 - Housekeeping after the M1 fixes: one `Blizzard_` prefix, the doctor's formatter alias, the voice sample in the docs ([080](https://github.com/speti4/mrgl/blob/main/tasks/done/080-housekeeping-after-wave-5.md))

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use mrgl_core::VERSION;
 use mrgl_core::adopt::Answers;
-use mrgl_core::discover::{self, GameRoot, RootOrigin};
+use mrgl_core::discover::{self, RootOrigin};
 use mrgl_core::doctor;
 use mrgl_core::flavor;
 use mrgl_core::home;
@@ -122,7 +122,7 @@ pub struct RootChoice {
 // coverage: off — the native folder dialog; the choice itself is `choose`, tested without a dialog
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[tauri::command]
-pub async fn choose_root(app: tauri::AppHandle) -> RootChoice {
+pub async fn choose_root<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> RootChoice {
     blocking(
         move || {
             let picked = app
@@ -197,49 +197,40 @@ pub fn choose(
         }
         None => false,
     };
-    let mut answer = list::load(
-        Some(GameRoot {
-            path: root.clone(),
-            origin: RootOrigin::Remembered,
-        }),
-        Vec::new(),
-        home,
-        voice,
-    );
-    if answer.message.kind == Kind::Banner.as_str() {
-        let count: usize = answer
-            .flavors
-            .iter()
-            .map(|flavor| flavor.addons.len())
-            .sum();
-        let names: Vec<&str> = answer
-            .flavors
-            .iter()
-            .map(|flavor| flavor.name.as_str())
-            .collect();
-        let plain = if saved {
-            format!(
-                "game root saved: {} (flavors: {}), {}",
-                root.display(),
-                names.join(", "),
-                list::count_noun(count, "addon")
-            )
-        } else {
-            format!(
-                "game root chosen for this run, not remembered (no mrgl home folder): {} (flavors: {}), {}",
-                root.display(),
-                names.join(", "),
-                list::count_noun(count, "addon")
-            )
-        };
-        answer.message = Message::new(
-            voice,
-            if saved { Kind::Success } else { Kind::Warning },
-            plain,
-        );
-    }
+    let views = match list::flavor_views(&root, home) {
+        Ok(views) => views,
+        // coverage: os-begin — the root was listed by `game_root_of` a moment ago
+        Err(error) => return refused(error.to_string()),
+        // coverage: os-end
+    };
+    let count: usize = views.iter().map(|flavor| flavor.addons.len()).sum();
+    let names: Vec<&str> = views.iter().map(|flavor| flavor.name.as_str()).collect();
+    let plain = if saved {
+        format!(
+            "game root saved: {} (flavors: {}), {}",
+            root.display(),
+            names.join(", "),
+            list::count_noun(count, "addon")
+        )
+    } else {
+        format!(
+            "game root chosen for this run, not remembered (no mrgl home folder): {} (flavors: {}), {}",
+            root.display(),
+            names.join(", "),
+            list::count_noun(count, "addon")
+        )
+    };
     RootChoice {
-        flavors: Some(answer),
+        flavors: Some(FlavorsAnswer {
+            root: Some(root.display().to_string()),
+            root_origin: Some(RootOrigin::Remembered),
+            flavors: views,
+            message: Message::new(
+                voice,
+                if saved { Kind::Success } else { Kind::Warning },
+                plain,
+            ),
+        }),
         message: None,
     }
 }
@@ -253,16 +244,23 @@ pub struct Diagnostics {
     pub failed: Message,
 }
 
+impl Diagnostics {
+    /// The answer when no report was made: no text, and the one message either way.
+    pub fn failed(message: Message) -> Diagnostics {
+        Diagnostics {
+            text: String::new(),
+            copied: message.clone(),
+            failed: message,
+        }
+    }
+}
+
 /// The doctor's report of this process (one request for the GitHub rate limit, the AddOns write probe).
 #[tauri::command]
 pub async fn diagnostics() -> Diagnostics {
     blocking(
         || diagnostics_of(&doctor::report_of_process(None, None), voice()),
-        |message| Diagnostics {
-            text: String::new(),
-            copied: message.clone(),
-            failed: message,
-        },
+        Diagnostics::failed,
     )
     .await
 }
@@ -310,25 +308,17 @@ pub async fn resolve(flavor: String, folder: String) -> ResolveAnswer {
             let root = match discover::resolve_root_of_process(None) {
                 Ok(resolution) => resolution.root,
                 Err(error) => {
-                    return ResolveAnswer {
-                        pick: None,
-                        message: Message::new(voice(), Kind::Error, error),
-                    };
+                    return ResolveAnswer::refused(Message::new(voice(), Kind::Error, error));
                 }
             };
             let Some(flavor_folder) =
                 root.and_then(|root| list::flavor_folder(&root.path, &flavor))
             else {
-                return ResolveAnswer {
-                    pick: None,
-                    message: Message::new(
-                        voice(),
-                        Kind::Error,
-                        format!(
-                            "no flavor {flavor}: no game root, or no such flavor folder under it"
-                        ),
-                    ),
-                };
+                return ResolveAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Error,
+                    format!("no flavor {flavor}: no game root, or no such flavor folder under it"),
+                ));
             };
             let sources = Sources::from_env();
             list::resolve(
@@ -339,10 +329,7 @@ pub async fn resolve(flavor: String, folder: String) -> ResolveAnswer {
                 voice(),
             )
         },
-        |message| ResolveAnswer {
-            pick: None,
-            message,
-        },
+        ResolveAnswer::refused,
     )
     .await
 }
@@ -394,7 +381,7 @@ pub fn native_theme(theme: &str) -> Option<tauri::Theme> {
 
 /// Gives the window the native theme of a theme preference, at start and on every change of it. A theme
 /// the platform cannot set is no error: the title bar keeps the system's, the page is drawn all the same.
-pub fn apply_native_theme(window: &tauri::WebviewWindow, theme: &str) {
+pub fn apply_native_theme<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, theme: &str) {
     let _ = window.set_theme(native_theme(theme));
 }
 
@@ -411,8 +398,8 @@ pub fn preferences() -> PreferencesAnswer {
 /// they apply; the error is the message that says why nothing was stored. The window takes the theme as
 /// it applies ([`apply_native_theme`], task 079).
 #[tauri::command]
-pub fn set_preferences(
-    window: tauri::WebviewWindow,
+pub fn set_preferences<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
     theme: Option<String>,
     serious: Option<bool>,
 ) -> Result<PreferencesAnswer, Message> {
@@ -449,8 +436,8 @@ fn engine_of(flavor: &str) -> Result<Engine, Message> {
 
 /// A run of the update actions (task 010) on a blocking thread: one at a time ([`UpdateRun`]), each
 /// progress event sent on the channel as it happens, the answer at the end.
-async fn update_run(
-    app: tauri::AppHandle,
+async fn update_run<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     flavor: String,
     plan: Plan,
     progress: Channel<UpdateEvent>,
@@ -498,8 +485,8 @@ async fn update_run(
 
 /// "Check for updates" of a flavor (task 010): every managed addon against its source, nothing installed.
 #[tauri::command]
-pub async fn check_updates(
-    app: tauri::AppHandle,
+pub async fn check_updates<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     flavor: String,
     progress: Channel<UpdateEvent>,
 ) -> ActionAnswer {
@@ -508,8 +495,8 @@ pub async fn check_updates(
 
 /// "Update all" of a flavor (task 010): the check, then every update it found.
 #[tauri::command]
-pub async fn update_all(
-    app: tauri::AppHandle,
+pub async fn update_all<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     flavor: String,
     progress: Channel<UpdateEvent>,
 ) -> ActionAnswer {
@@ -518,8 +505,8 @@ pub async fn update_all(
 
 /// A row's "Update" (task 010): the check of that addon, then its update when it has one.
 #[tauri::command]
-pub async fn update_one(
-    app: tauri::AppHandle,
+pub async fn update_one<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     flavor: String,
     folder: String,
     progress: Channel<UpdateEvent>,
@@ -554,8 +541,8 @@ pub fn cancel_message(running: bool, voice: Voice) -> Message {
 /// the version to pin at (none: the installed one) or the channel as `value`. Refused while an update
 /// runs, since both write the flavor's sidecar.
 #[tauri::command]
-pub async fn mark(
-    app: tauri::AppHandle,
+pub async fn mark<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     flavor: String,
     folder: String,
     action: String,
@@ -626,8 +613,8 @@ pub async fn toolbox(flavor: String) -> ToolboxAnswer {
 
 /// One toolbox write on a blocking thread: refused with a warning while another one goes, else `write`
 /// with the game root of this process (task 074's one write at a time).
-async fn toolbox_write(
-    app: tauri::AppHandle,
+async fn toolbox_write<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     flavor: String,
     write: impl FnOnce(&Path, &str) -> ToolboxAnswer + Send + 'static,
 ) -> ToolboxAnswer {
@@ -655,8 +642,8 @@ async fn toolbox_write(
 /// `account` when the realm and the name sit under two accounts) names (task 074 over tasks 014 and 027;
 /// the account is task 085); refused while the client runs (task 023) and while another toolbox write goes.
 #[tauri::command]
-pub async fn apply_set(
-    app: tauri::AppHandle,
+pub async fn apply_set<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     flavor: String,
     set: String,
     character: Option<String>,
@@ -677,7 +664,10 @@ pub async fn apply_set(
 /// Undoes the last set apply of a flavor that changed a file (task 085 over task 073); refused while the
 /// client runs (task 023) and while another toolbox write goes.
 #[tauri::command]
-pub async fn undo_set(app: tauri::AppHandle, flavor: String) -> ToolboxAnswer {
+pub async fn undo_set<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    flavor: String,
+) -> ToolboxAnswer {
     toolbox_write(app, flavor, |root, flavor| {
         toolbox::undo(root, flavor, home_dir().as_deref(), voice())
     })
@@ -687,8 +677,8 @@ pub async fn undo_set(app: tauri::AppHandle, flavor: String) -> ToolboxAnswer {
 /// Enables, disables or drops one addon of a stored set (`action`: `enable`, `disable` or `drop`; task 085
 /// over task 073), in `sets.json` only; refused while another toolbox write goes.
 #[tauri::command]
-pub async fn edit_set(
-    app: tauri::AppHandle,
+pub async fn edit_set<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     flavor: String,
     set: String,
     addon: String,
@@ -712,7 +702,10 @@ pub async fn edit_set(
 /// 025); refused while the client runs (task 023), while an update runs (an install swaps addon folders,
 /// which the orphan rule reads) and while another toolbox write goes.
 #[tauri::command]
-pub async fn clean_saved_variables(app: tauri::AppHandle, flavor: String) -> ToolboxAnswer {
+pub async fn clean_saved_variables<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    flavor: String,
+) -> ToolboxAnswer {
     blocking(
         move || {
             if app.state::<UpdateRun>().is_running() {
@@ -774,8 +767,8 @@ pub async fn adopt(flavor: String) -> AdoptAnswer {
 /// so no source is asked again while they stand. Refused while an update runs (both write the sidecar) and
 /// while another toolbox write goes; an update and a mark wait for it the same way.
 #[tauri::command]
-pub async fn adopt_apply(
-    app: tauri::AppHandle,
+pub async fn adopt_apply<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     flavor: String,
     alongside: bool,
     answers: Option<Answers>,
@@ -822,6 +815,7 @@ pub async fn adopt_apply(
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use mrgl_core::discover::GameRoot;
 
     #[test]
     fn a_message_carries_its_kind_and_both_lines() {
@@ -890,6 +884,133 @@ mod tests {
         assert_eq!(theme_of(Some("auto")), None);
         assert_eq!(theme_of(None), None, "no stored theme is auto");
         assert_eq!(native_theme("sepia"), None, "an unknown theme is auto");
+    }
+
+    #[test]
+    fn a_panic_on_the_worker_is_a_fatal_message() {
+        let message = tauri::async_runtime::block_on(blocking(
+            || -> Message { panic!("the worker tripped") },
+            |message| message,
+        ));
+        assert_eq!(message.kind, "fatal");
+        assert!(
+            message.plain.starts_with("the window's worker stopped: "),
+            "{}",
+            message.plain
+        );
+        let value = tauri::async_runtime::block_on(blocking(|| 42, |_| 0));
+        assert_eq!(value, 42, "a worker that returns answers as it is");
+        // The answers of the diagnostics and of a resolve when their worker stopped.
+        let diagnostics = tauri::async_runtime::block_on(blocking(
+            || -> Diagnostics { panic!("no report") },
+            Diagnostics::failed,
+        ));
+        assert_eq!(diagnostics.text, "");
+        assert_eq!(diagnostics.copied, diagnostics.failed);
+        assert_eq!(diagnostics.failed.kind, "fatal");
+        let resolve = tauri::async_runtime::block_on(blocking(
+            || -> ResolveAnswer { panic!("no pick") },
+            ResolveAnswer::refused,
+        ));
+        assert_eq!(resolve.pick, None);
+        assert_eq!(resolve.message.kind, "fatal");
+    }
+
+    /// A game root with the given flavor folders under a temporary folder, removed at the end.
+    struct Root {
+        dir: PathBuf,
+    }
+
+    impl Root {
+        fn new(name: &str, flavors: &[(&str, &str)]) -> Root {
+            let dir = std::env::temp_dir()
+                .join(format!("mrgl-app-commands-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            let root = dir.join("World of Warcraft");
+            let mut build_info = "Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|Version!STRING:0|Tags!STRING:0|Product!STRING:0\n".to_string();
+            for (folder, id) in flavors {
+                let flavor = root.join(folder);
+                std::fs::create_dir_all(flavor.join("Interface/AddOns")).expect("the flavor");
+                std::fs::write(
+                    flavor.join(".flavor.info"),
+                    format!("Product Flavor!STRING:0\n{id}\n"),
+                )
+                .expect(".flavor.info");
+                build_info.push_str(&format!(
+                    "eu|1|e8c4ef4e67bd1d94d820254984258fa8|1.60.1.70245||{id}\n"
+                ));
+            }
+            std::fs::write(root.join(".build.info"), build_info).expect(".build.info");
+            Root { dir }
+        }
+
+        fn report(&self, root: bool, warnings: &[&str]) -> doctor::Report {
+            let path = self.dir.join("World of Warcraft");
+            let inputs = doctor::Inputs {
+                root: root.then_some(GameRoot {
+                    path,
+                    origin: RootOrigin::Flag,
+                }),
+                home: Some(self.dir.join("home")),
+                api_keys: doctor::api_keys_from(|_| None),
+                warnings: warnings.iter().map(|line| line.to_string()).collect(),
+                ..doctor::Inputs::default()
+            };
+            doctor::report(
+                inputs,
+                &doctor::Probes {
+                    processes: &mrgl_core::client::FixedProcesses(Vec::new()),
+                    http: &list::Offline,
+                    runtime: &doctor::FixedRuntime::default(),
+                },
+            )
+        }
+    }
+
+    impl Drop for Root {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[test]
+    fn the_diagnostics_count_the_flavors_and_what_to_look_at() {
+        let root = Root::new("diagnostics", &[("_forever_", "wowf"), ("_retail_", "wow")]);
+        // One flavor, nothing to look at.
+        let one = Root::new("one-flavor", &[("_forever_", "wowf")]);
+        let diagnostics = diagnostics_of(&one.report(true, &[]), Voice::new(true));
+        assert_eq!(diagnostics.text, one.report(true, &[]).text());
+        assert_eq!(
+            (diagnostics.copied.kind, diagnostics.copied.plain.as_str()),
+            (
+                "success",
+                "diagnostics of 1 flavor copied, nothing to look at; paste them into a bug report"
+            )
+        );
+        assert_eq!(
+            (diagnostics.failed.kind, diagnostics.failed.plain.as_str()),
+            (
+                "error",
+                "the clipboard took no text; run `mrgl doctor` and copy its lines instead"
+            )
+        );
+        // Two flavors, one thing: a warning met on the way.
+        let diagnostics = diagnostics_of(
+            &root.report(true, &["the config is odd"]),
+            Voice::new(false),
+        );
+        assert_eq!(diagnostics.copied.kind, "warning");
+        assert_eq!(diagnostics.copied.murloc, Kind::Warning.murloc());
+        assert_eq!(
+            diagnostics.copied.plain,
+            "diagnostics of 2 flavors copied, 1 thing to look at (1 warning); paste them into a bug report"
+        );
+        // No root, so no flavor, and two things: the missing root and the warnings.
+        let diagnostics = diagnostics_of(&root.report(false, &["one", "two"]), Voice::new(true));
+        assert_eq!(
+            diagnostics.copied.plain,
+            "diagnostics of no flavor copied, 2 things to look at (no game root, 2 warnings); paste them into a bug report"
+        );
     }
 
     #[test]

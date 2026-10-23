@@ -4,5 +4,19 @@ fn main() {
     // the exe until a clean build.
     println!("cargo::rerun-if-changed=icons/icon.ico");
     println!("cargo::rerun-if-changed=icons/icon.png");
-    tauri_build::build()
+    tauri_build::build();
+    // The test binaries link the resource library tauri-build links into the exe (tauri-winres writes it as
+    // `resource.lib` under OUT_DIR): its application manifest asks for Common Controls v6, which the menu
+    // crate's `TaskDialogIndirect` import needs, so a test binary that builds a Tauri app on the mock runtime
+    // (`tests/commands.rs`, task 117) starts at all; without the manifest the loader refuses it before `main`.
+    if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
+        let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is set for a build script");
+        // The MSVC name, which the pinned toolchain builds with; the GNU toolchain's resource library is an archive.
+        let library = if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            "resource.lib"
+        } else {
+            "libresource.a"
+        };
+        println!("cargo::rustc-link-arg-tests={out_dir}/{library}");
+    }
 }

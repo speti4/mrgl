@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use mrgl_core::adopt;
-use mrgl_core::install::{Engine, Mark, PickInstalled, PickStep, SourceInstalled};
+use mrgl_core::install::{Engine, Mark, PickInstalled, PickStep, SourceInstalled, SourceRequest};
 use mrgl_core::last_check::LastCheck;
 use mrgl_core::sources::{Channel, Source};
 use mrgl_core::state::{FlavorHome, State};
@@ -280,7 +280,7 @@ pub fn run<S: Source + ?Sized>(
         let state = engine
             .load_state()
             .map(|loaded| loaded.state)
-            .unwrap_or_else(|_| State::new(&engine.flavor.id));
+            .unwrap_or_else(|_| State::new(&engine.flavor.id)); // coverage: os — the check read it a moment ago
         let mut last = LastCheck::read(&flavor_home, &engine.flavor.id);
         last.record(&state, &check.addons);
         if let Err(error) = last.write(&flavor_home) {
@@ -296,10 +296,7 @@ pub fn run<S: Source + ?Sized>(
             Plan::Check => "check",
             Plan::All | Plan::One(_) => "update",
         };
-        let mut messages: Vec<Message> = warnings
-            .into_iter()
-            .map(|line| say(Kind::Warning, line))
-            .collect();
+        let mut messages = warning_messages(voice, warnings);
         let plain = if checked == 0 {
             format!("{what} cancelled before its first addon in {folder_name}; nothing updated")
         } else {
@@ -318,16 +315,17 @@ pub fn run<S: Source + ?Sized>(
     let mut reread: BTreeSet<String> = BTreeSet::new();
     let mut left = 0;
     if *plan != Plan::Check {
-        let updates: Vec<&AddonUpdate> = check.updates().collect();
+        // An update of the check always has its request (the check's own pick of a source spec).
+        let updates: Vec<(&AddonUpdate, SourceRequest)> = check
+            .updates()
+            .filter_map(|addon| addon.request().map(|request| (addon, request)))
+            .collect();
         let count = updates.len();
-        for (position, addon) in updates.iter().enumerate() {
+        for (position, (addon, request)) in updates.iter().enumerate() {
             if cancelled() {
                 left = count - position;
                 break;
             }
-            let Some(request) = addon.request() else {
-                continue;
-            };
             let folder = folder_of(&addon.name);
             let event = |phase: Phase, kind: Kind, plain: String| UpdateEvent {
                 phase,
@@ -348,18 +346,10 @@ pub fn run<S: Source + ?Sized>(
                     position + 1
                 ),
             ));
-            let outcome = engine.install_from_source(source, &request, &mut |step| match step {
-                PickStep::Downloading { pick, .. } => events(event(
-                    Phase::Downloading,
-                    Kind::Progress,
-                    format!("downloading {}", pick.asset),
-                )),
-                PickStep::Installing { pick, .. } => events(event(
-                    Phase::Installing,
-                    Kind::Progress,
-                    format!("installing {} into {folder_name}", pick.asset),
-                )),
-                PickStep::Resolving { .. } | PickStep::Picked { .. } => {}
+            let outcome = engine.install_from_source(source, request, &mut |step| {
+                send_step(&step, &folder_name, &mut |phase, plain| {
+                    events(event(phase, Kind::Progress, plain))
+                });
             });
             match outcome {
                 Ok(SourceInstalled {
@@ -425,10 +415,7 @@ pub fn run<S: Source + ?Sized>(
         },
     };
     let (kind, plain) = check.summary(of, &folder_name);
-    let mut messages: Vec<Message> = warnings
-        .into_iter()
-        .map(|line| say(Kind::Warning, line))
-        .collect();
+    let mut messages = warning_messages(voice, warnings);
     messages.push(say(kind, plain));
     // The rows take the check's answer, but an addon updated in this run (or found at the pick's version
     // under its own entry) reads from the disk and the cache again: it is the release it was updated to
@@ -439,6 +426,30 @@ pub fn run<S: Source + ?Sized>(
         .filter(|addon| !reread.contains(&addon.name))
         .collect();
     answer(&online, messages)
+}
+
+/// Sends the progress event of one step of the engine's install path, its phase and its plain line: the
+/// download and the install. The run hands the engine the check's own pick, so the engine resolves nothing
+/// and the resolving steps send no event.
+fn send_step(step: &PickStep<'_>, folder_name: &str, send: &mut dyn FnMut(Phase, String)) {
+    match step {
+        PickStep::Downloading { pick, .. } => {
+            send(Phase::Downloading, format!("downloading {}", pick.asset));
+        }
+        PickStep::Installing { pick, .. } => send(
+            Phase::Installing,
+            format!("installing {} into {folder_name}", pick.asset),
+        ),
+        PickStep::Resolving { .. } | PickStep::Picked { .. } => {}
+    }
+}
+
+/// The warnings of an answer as its messages, in their order.
+fn warning_messages(voice: Voice, warnings: Vec<String>) -> Vec<Message> {
+    warnings
+        .into_iter()
+        .map(|line| Message::new(voice, Kind::Warning, line))
+        .collect()
 }
 
 /// The mark of a row menu item: `pin` (at `value`, else the installed version), `unpin`, `ignore`,
@@ -473,17 +484,15 @@ pub fn mark(
     home: Option<&Path>,
     voice: Voice,
 ) -> ActionAnswer {
-    let mut messages = Vec::new();
-    match engine.apply_mark(folder, mark) {
+    let messages = match engine.apply_mark(folder, mark) {
         Ok(marked) => {
-            for warning in &marked.warnings {
-                messages.push(Message::new(voice, Kind::Warning, warning));
-            }
             let (kind, plain) = mark.line(&marked, &engine.flavor.folder_name());
+            let mut messages = warning_messages(voice, marked.warnings);
             messages.push(Message::new(voice, kind, plain));
+            messages
         }
-        Err(error) => messages.push(Message::new(voice, Kind::Error, error)),
-    }
+        Err(error) => vec![Message::new(voice, Kind::Error, error)],
+    };
     ActionAnswer {
         flavor: Some(list::flavor_view(engine.flavor.clone(), home, &[])),
         messages,
@@ -493,4 +502,76 @@ pub fn mark(
 /// The refusal of a run while another one goes.
 pub fn busy_line() -> &'static str {
     "an update is running already; wait for it to end or cancel it"
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use mrgl_core::sources::{Pick, SourceSpec, Target};
+
+    fn pick() -> Pick {
+        Pick {
+            source: "github:Example/One".to_string(),
+            release: "v1.1.0".to_string(),
+            version: "1.1.0".to_string(),
+            published: None,
+            prerelease: false,
+            asset: "one-folder-1.1.0.zip".to_string(),
+            url: "https://example.invalid/one-folder-1.1.0.zip".to_string(),
+            size: None,
+            md5: None,
+            flavor: "forever".to_string(),
+            interface: Some(16001),
+            guess: false,
+            reason: "release.json names forever".to_string(),
+            notes: None,
+            page: None,
+            nolib: false,
+            forever_build: mrgl_core::forever::ForeverBuild::Yes,
+            stale: None,
+        }
+    }
+
+    #[test]
+    fn the_download_and_the_install_are_events_and_the_resolving_steps_none() {
+        let pick = pick();
+        let path = Path::new("staging/one-folder-1.1.0.zip");
+        let spec = SourceSpec::parse("github:Example/One").expect("a spec");
+        let target = Target::new(mrgl_core::flavor::FlavorId::Forever);
+        let steps = [
+            PickStep::Resolving {
+                spec: &spec,
+                target: &target,
+            },
+            PickStep::Picked { pick: &pick },
+            PickStep::Downloading {
+                pick: &pick,
+                to: path,
+            },
+            PickStep::Installing {
+                pick: &pick,
+                zip: path,
+            },
+        ];
+        let mut sent = Vec::new();
+        for step in &steps {
+            send_step(step, "_forever_", &mut |phase, plain| {
+                sent.push((phase, plain))
+            });
+        }
+        assert_eq!(
+            sent,
+            [
+                (
+                    Phase::Downloading,
+                    "downloading one-folder-1.1.0.zip".to_string()
+                ),
+                (
+                    Phase::Installing,
+                    "installing one-folder-1.1.0.zip into _forever_".to_string()
+                ),
+            ]
+        );
+    }
 }

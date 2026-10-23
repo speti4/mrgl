@@ -29,6 +29,11 @@ serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+# The mock runtime the command tests build the window's commands on (`tauri::test`, task 117): a feature of
+# the crate the exe carries already, no new crate, so `cargo deny` and the license page do not change. The
+# resolver (3) unifies a dev-dependency's features into dev builds only: `cargo build --release` never
+# enables `test`.
+tauri = { workspace = true, features = ["test"] }
 
 [build-dependencies]
 tauri-build.workspace = true
