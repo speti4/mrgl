@@ -11,6 +11,12 @@ fn main() {
     // (`tests/commands.rs`, task 117) starts at all; without the manifest the loader refuses it before `main`.
     if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
         let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is set for a build script");
-        println!("cargo::rustc-link-arg-tests={out_dir}/resource.lib");
+        // The MSVC name, which the pinned toolchain builds with; the GNU toolchain's resource library is an archive.
+        let library = if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            "resource.lib"
+        } else {
+            "libresource.a"
+        };
+        println!("cargo::rustc-link-arg-tests={out_dir}/{library}");
     }
 }
