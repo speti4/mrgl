@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-24 — edit the files, not this section._
 
-**State:** 6 backlog (0 ready · 0 blocked · 3 waiting · 3 ideas) · 2 in progress · 105 done · 5 dropped · 6 decisions
+**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 106 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -57,6 +57,7 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
+| 125 | [The add dry run reports what the commit records](backlog/125-the-add-dry-run-reports-what-the-commit-records.md) | S | 2026-10-24 |
 
 #### M6 macOS preview
 
@@ -72,12 +73,6 @@ _none_
 |---|---|---|---|
 | 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
 
-#### M5 Trust
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 124 | [The low findings of the hardening review in one sweep](wip/124-the-low-findings-of-the-hardening-review-in-one-sweep.md) | 2026-10-24 | `none` |
-
 ### Closed – do not reopen
 
 | # | Task | Closed | Reason | Reopen when |
@@ -92,6 +87,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 124 | [The low findings of the hardening review in one sweep](done/124-the-low-findings-of-the-hardening-review-in-one-sweep.md) | 2026-10-24 |
 | 123 | [One folder-name rule for every staged and recorded addon folder](done/123-one-folder-name-rule-for-every-staged-and-recorded-addon-folder.md) | 2026-10-24 |
 | 122 | [Tests of the usage guide generator's error paths](done/122-tests-of-the-usage-guide-generators-error-paths.md) | 2026-10-24 |
 | 121 | [A hardening review of the code that touches the disk, the network and the keys](done/121-a-hardening-review-of-the-code-that-touches-the-disk-the-network-and-the-keys.md) | 2026-10-24 |
@@ -101,9 +97,8 @@ _none_
 | 116 | [The window installs a zip in hand with a recorded source](done/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md) | 2026-10-24 |
 | 115 | [A distribution-off CurseForge entry is a state of its own in the update check](done/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md) | 2026-10-24 |
 | 114 | [The window's update reports an entry folded into another during the run](done/114-the-windows-update-reports-an-entry-folded-into-another.md) | 2026-10-24 |
-| 117 | [Test hardening toward full line and branch coverage](done/117-test-hardening-toward-full-line-and-branch-coverage.md) | 2026-10-23 |
 
-_95 more in `done/`._
+_96 more in `done/`._
 
 ### Decisions
 
