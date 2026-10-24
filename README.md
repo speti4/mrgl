@@ -1,12 +1,18 @@
 # mrgl
 
+<!-- guide: start -->
+
 A flavor-correct World of Warcraft addon manager for Windows 11, Forever-first: one portable zip with two exes
 (the `mrgl` command line and the `mrgl-app` window), nothing to install, no Electron, and it never touches
 your game client.
 
+<!-- guide: end -->
+
 [![CI](https://github.com/speti4/mrgl/actions/workflows/ci.yml/badge.svg)](https://github.com/speti4/mrgl/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/speti4/mrgl)](https://github.com/speti4/mrgl/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/speti4/mrgl)](LICENSE)
+
+<!-- guide: start -->
 
 A run of `update --all` over two managed addons, one of them behind its release:
 
@@ -89,8 +95,9 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
 Download `mrgl-<version>.zip` and `SHA256SUMS.txt` from the
 [latest release](https://github.com/speti4/mrgl/releases/latest), check the zip and unpack it into a folder
 of your choice. Nothing is installed: the folder holds `mrgl.exe` (the command line), `mrgl-app.exe` (the
-window), `THIRD-PARTY-LICENSES.html` and `lists\forever-starter.json`, and WebView2 is part of Windows 11. The
-exes are not signed yet, so SmartScreen may ask once before the first start.
+window), `GUIDE.html` (how to use mrgl: the user sections of the README as one page that opens offline),
+`THIRD-PARTY-LICENSES.html` and `lists\forever-starter.json`, and WebView2 is part of Windows 11. The exes are
+not signed yet, so SmartScreen may ask once before the first start.
 
 ```powershell
 (Get-FileHash mrgl-0.1.0.zip -Algorithm SHA256).Hash      # the value in SHA256SUMS.txt, in capitals
@@ -100,6 +107,8 @@ Expand-Archive mrgl-0.1.0.zip mrgl; cd mrgl
 .\mrgl.exe import lists\forever-starter.json --flavor forever --dry-run   # the starter list's picks
 ```
 
+<!-- guide: end -->
+
 ## Build from source
 
 mrgl is a Rust core with a `clap` command line and a Tauri 2 window on WebView2; why is in
@@ -108,6 +117,12 @@ the MSVC toolchain and the Visual Studio 2022 C++ build tools (details in [CONTR
 
 ```powershell
 cargo build --release
+```
+
+<!-- guide: start -->
+<!-- guide: section The command line -->
+
+```powershell
 target\release\mrgl.exe --version
 target\release\mrgl-app.exe                                                 # the window: every flavor's addons, their updates and states, its toolbox (sets with undo and edit, SavedVariables, adopt)
 target\release\mrgl.exe list --flavor forever                               # what is installed, managed by mrgl or not
@@ -161,6 +176,8 @@ pick for forever: github:<owner>/<repo> v2.1.0 (Addon-v2.1.0-forever.zip, flavor
 release notes: Quest arrows point the right way again (https://github.com/<owner>/<repo>/releases/tag/v2.1.0)
 ```
 
+<!-- guide: section Sources -->
+
 A source spec names where an addon comes from: `github:<owner>/<repo>` (or the repository's address),
 `wago:<id>` (or the addon's Wago page, `addons.wago.io/addons/<slug>`), `wowi:<id>` (or the WoWInterface
 page, `www.wowinterface.com/downloads/info<id>…`) and `curse:<id>` (or `www.curseforge.com/projects/<id>`).
@@ -201,6 +218,8 @@ with the page again, counted apart and not as a failure, so a daily `mrgl update
 target\release\mrgl.exe add MyAddon-2.0.0.zip --as curse:<id> --flavor forever
 ```
 
+<!-- guide: section Adopting the addons you have -->
+
 `mrgl adopt` looks at the addons mrgl did not install and says where each one comes from: the Wago,
 WoWInterface and CurseForge ids and the GitHub website its TOC names, or, for an addon whose TOC names none,
 a curated list of GitHub repositories ([`data/github-sources.json`](data/github-sources.json), which grows
@@ -225,6 +244,8 @@ the addons the report can adopt, with the same lines as the command line. In a f
 manages a dialog asks first, and its "Adopt alongside the CurseForge app" is the window's
 `--alongside-curseforge`; the warning follows the adopt.
 
+<!-- guide: section The game folder and the addon list -->
+
 On a standard install no flag is needed: mrgl finds the game folder through the registry (the launcher's
 key, or the game's Uninstall entry) or under `Program Files (x86)` / `Program Files` and says so; `mrgl root` with no argument shows the folder a
 run would use and where it came from, and `mrgl root <folder>` remembers one (also `--root <folder>` or
@@ -237,6 +258,8 @@ TOC's version and the CurseForge, Wago and WoWInterface ids the TOC names, and m
 is installed through mrgl. The summary counts both; `--json` carries `managed`, `source` and `version` per
 addon.
 
+<!-- guide: section Forever notes -->
+
 On Forever, `add --dry-run` and `list` show a Forever note for each addon. `forever build: yes`, `no` or
 `unknown` says whether the addon's source publishes a Forever build at all: its `release.json` names one,
 names other flavors only, or nothing says (a WoWInterface project is `yes` when its compatibility list
@@ -247,6 +270,8 @@ Forever build still only half works there (Forever hides combat values from addo
 verified and its source; a note older than 90 days is marked stale. `list` stays offline and reads what the
 last `add` of the same source fetched, so before that the build is `unknown`. The notes live in
 [`data/forever-notes.json`](data/forever-notes.json) and grow through pull requests.
+
+<!-- guide: section Backups, SavedVariables and sets -->
 
 A backup is a plain zip under `%LOCALAPPDATA%\mrgl\backups\<flavor-id>\` (or the folder `--to` names), and a
 restore moves the current `WTF` folder aside into the same place before it writes, so it can be undone by
@@ -275,6 +300,8 @@ game runs, like the apply); `set enable`, `set disable` and `set drop <set> <add
 stored set without touching any `AddOns.txt`, and `set save` keeps an addon that is no longer installed,
 with a warning that names it.
 
+<!-- guide: section Dependencies -->
+
 `list`, `add`, `update` and `import` check the required dependencies (the TOC's `## Dependencies` and
 `## RequiredDeps`) of every addon they list or install and name what the game will not find, as a warning,
 never a refusal:
@@ -289,6 +316,8 @@ own `Blizzard_` addons. A library the addon carries only inside its own folder d
 says `Dependency missing` and does not load the addon, so mrgl names it missing too and says why. `--json`
 has the details per addon under `dependencies`.
 
+<!-- guide: section API keys -->
+
 The sources' API keys are your own: `MRGL_GITHUB_TOKEN` (a GitHub personal access token lifts the limit of
 60 requests an hour), `MRGL_WAGO_KEY` and `MRGL_CURSEFORGE_KEY` for the sources that need one. mrgl reads a key
 from the environment variable of that name first, then from the Windows Credential Manager, where
@@ -297,11 +326,15 @@ an argument, so the shell's history does not keep it) and `mrgl key clear <sourc
 list` and `mrgl doctor` name each key and where it comes from, never its value, and a key is sent to its
 own source's servers only.
 
+<!-- guide: section When something does not work -->
+
 Something not working? `mrgl doctor` prints what a bug report needs: the game folder and how it was found,
 each flavor's build, AddOns folder, sidecar, cache, running client and any staging folder kept with the addon
 folders a failed update moved aside (with what to do with it), the WebView2 version, the GitHub rate
 limit and which API keys are set (never their values). Paths under your profile folder show as `~`; paste the
 block into the [bug report](https://github.com/speti4/mrgl/issues/new?template=bug-report.yml).
+
+<!-- guide: section Developing addons -->
 
 `link` makes a directory junction under `Interface\AddOns` for every subfolder of a development folder that
 has a TOC named after it (no admin rights needed), so the game loads your addons straight from your repo. A
@@ -309,6 +342,8 @@ folder that is itself an addon (a TOC named after it, `MyAddon.toc` or `MyAddon_
 that one addon, so a repository that is the addon folder needs no parent. A
 folder of the same name already there is skipped, never replaced; an install never writes over a linked
 addon, and `unlink` removes exactly the junctions `link` made, never a folder and never a file of yours.
+
+<!-- guide: section Lists and the interface check -->
 
 An exported list carries each managed addon's source and version; `import` installs the current release of
 every entry the flavor does not have yet whose source this run can ask (`github:`, `wowi:`, and `wago:` and
@@ -319,6 +354,8 @@ zip for another flavor; `scan` and `list` mark an addon `out of date` when its i
 than the installed build, as the game's own addon list does after a patch, and an install or an update says
 so for the addon it just installed. The window marks its rows the same way, `interface mismatch` or
 `out of date` under the row's state.
+
+<!-- guide: end -->
 
 ## Documentation
 
@@ -338,7 +375,11 @@ flight and the history, one file per item. Windows 11 is the platform; a macOS p
 
 mrgl is for anyone who keeps more than one WoW flavor and wants the right build of each addon in each of them.
 
+<!-- guide: start -->
+
 ## License
 
 [MIT](LICENSE). World of Warcraft and the murloc are Blizzard Entertainment's; mrgl is an independent,
 non-commercial tool and ships no Blizzard audio or artwork.
+
+<!-- guide: end -->

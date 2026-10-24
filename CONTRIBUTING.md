@@ -91,11 +91,14 @@ cargo test --locked
 # The oldest supported Rust, the rust-version of Cargo.toml (rustup toolchain install 1.90 --profile minimal, once).
 cargo +1.90 check --all-targets --locked
 python -I scripts/changelog.py --check
+python -I scripts/usage-guide.py --check
 ```
 
 `--locked` fails when `Cargo.lock` is out of step with the manifests instead of rewriting it. The changelog
 check wants `CHANGELOG.md` to match `tasks/done/` exactly, so a change that closes a task runs `python -I
-scripts/changelog.py` and commits the result with it. The commit messages and the pull request text follow the
+scripts/changelog.py` and commits the result with it. The usage guide check renders `GUIDE.html`, the page the
+release zip carries, from the README's user sections and writes nothing: it fails on a README construct the
+page cannot render or a broken marker ([docs/development.md](docs/development.md#the-usage-guide)). The commit messages and the pull request text follow the
 commit rules, which the hook above checks locally and the `commit-rules` job again in CI.
 
 When `Cargo.toml`, `Cargo.lock` or `.github/` change, also:

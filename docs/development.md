@@ -187,14 +187,15 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the release tag and the date, and the candidates without a Forever build yet are in task 028's Log. A
   change to the list changes its stub under `crates/mrgl-core/tests/fixtures/starter-list/` with it (see
   [Fixtures](#fixtures)).
-- `scripts/` — helper scripts for the icon, the release zip, the changelog, the commit rules and the coverage
-  table (`coverage-check.py`, with the pins `coverage-toolchain.txt` and `cargo-llvm-cov-version.txt`, see
+- `scripts/` — helper scripts for the icon, the release zip, the usage guide of the zip (`usage-guide.py`, see
+  [The usage guide](#the-usage-guide)), the changelog, the commit rules and the coverage table
+  (`coverage-check.py`, with the pins `coverage-toolchain.txt` and `cargo-llvm-cov-version.txt`, see
   [Coverage](#coverage)).
 - `docs/` — this page, the git workflow, the maintainer sessions, origin, research and the voice guide.
 - `tasks/` — the backlog, the work in flight, the history and the decisions (the task standard).
-- `.github/workflows/` — CI (fmt, clippy, test, the oldest supported Rust, the changelog check, the dependency
-  policy, the workflow lint, the coverage measurement, the commit rules), the tagged release, the weekly advisory
-  check and the task-to-issue mirror;
+- `.github/workflows/` — CI (fmt, clippy, test, the oldest supported Rust, the changelog and usage guide
+  checks, the dependency policy, the workflow lint, the coverage measurement, the commit rules), the tagged
+  release, the weekly advisory check and the task-to-issue mirror;
   `.github/actions/install-rust-toolchain/` — the toolchain install step the CI jobs share;
   `.github/dependabot.yml` — the weekly dependency updates.
 - `rust-toolchain.toml` — the pinned Rust version (see [The Rust toolchain](#the-rust-toolchain)).
@@ -1113,8 +1114,9 @@ uv run --with pillow python -I scripts\make-icon.py   # crates\mrgl-app\icons\ic
 
 `.github/workflows/ci.yml` runs seven jobs on every push to `main` and every pull request: `test`
 (windows-latest: `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`), `lint` (ubuntu:
-`cargo fmt --check` and `scripts/changelog.py --check`, the latter skipped on a tag, see
-[The changelog](#the-changelog)), `msrv` (windows-latest: `cargo check` with the toolchain that `rust-version`
+`cargo fmt --check`, `scripts/changelog.py --check`, skipped on a tag, see
+[The changelog](#the-changelog), and `scripts/usage-guide.py --check`, see [The usage guide](#the-usage-guide)),
+`msrv` (windows-latest: `cargo check` with the toolchain that `rust-version`
 in `Cargo.toml` names, so nothing newer than the declared minimum slips in; it runs on Windows because the
 Windows target needs tauri-build's resource compiler, which a Linux runner lacks), `non-windows` (ubuntu:
 `cargo check --all-targets --locked` over the workspace, below), `deny` (`cargo deny check`
@@ -1249,8 +1251,8 @@ of phantom branches no code change removes is listed here with the measured numb
 ### The release
 
 `scripts\release.ps1` builds the release profile (fat LTO, stripped) and packs `target\release\mrgl.exe`,
-`target\release\mrgl-app.exe`, `THIRD-PARTY-LICENSES.html` and the Forever starter list into
-`dist\mrgl-<version>.zip`. The list sits at `lists\forever-starter.json` in the zip, its path in the repo, so
+`target\release\mrgl-app.exe`, `GUIDE.html` (the usage guide, [below](#the-usage-guide)),
+`THIRD-PARTY-LICENSES.html` and the Forever starter list into `dist\mrgl-<version>.zip`. The list sits at `lists\forever-starter.json` in the zip, its path in the repo, so
 `mrgl import lists\forever-starter.json --flavor forever` works from the unpacked zip without the repo (task
 012); both exes carry the murloc icon ([The UI](#the-ui)). The version is
 the workspace `Cargo.toml` one, the only place it is written: `tauri-build` stamps it into the app exe's
@@ -1276,8 +1278,34 @@ Pushing a tag `v<version>` runs the same jobs; when the six the release needs pa
 publishes it with the checksum file as a GitHub release titled `mrgl <version>`, with the notes file as its
 text, through the runner's `gh` CLI. The release job builds without the Rust cache, so nothing a pull request
 run cached reaches the zip. A downloaded zip is checked against its attestation with
-`gh attestation verify <zip> --repo speti4/mrgl`. A usage guide inside the zip and signed exes are M5. The steps
-of a release, from the version bump to closing its milestone, are the list in [The changelog](#the-changelog).
+`gh attestation verify <zip> --repo speti4/mrgl`. Signed exes are M5. The steps of a release, from the version
+bump to closing its milestone, are the list in [The changelog](#the-changelog).
+
+### The usage guide
+
+`GUIDE.html` in the zip is the README's user half as one page that opens offline (task 120): inline CSS, no
+script, no image, no external asset. `scripts/usage-guide.py` renders it from `README.md` with the standard
+library alone, and `release.ps1` writes it next to the exes; the page is never committed and never edited, so
+the README stays the one source of the words. HTML comments in the README, which GitHub does not show, pick the
+parts: `<!-- guide: start -->` and `<!-- guide: end -->` around each region the page takes (the intro, the
+example run, *What it will do* and *Install*, the command list and the prose after it, *License*), and
+`<!-- guide: section <title> -->` for a heading on the page only, which splits the long prose under *Build from
+source* (a heading the page leaves out) into the sections of its table of contents. The page's header names the
+version of `Cargo.toml` and holds the regions' text before their first heading. Two rewrites fit the README to
+a page next to the exes: `target\release\` becomes `.\`, and a link to a file of the repo points at that file
+in the release's tag on GitHub. The Markdown is the subset the README uses (`##` and `###` headings,
+paragraphs, `- ` lists, fenced code, code spans, links, `**bold**`); anything else in a region, a table or
+emphasis or raw HTML, stops the script with its line number, and so does a link to a file the repo does not
+have. The output is deterministic, the same README and version give the same bytes.
+
+The lint job runs `--check` on every pull request: it renders the page from the current README and writes
+nothing, so a README edit the generator cannot read fails where it is made, not on the day of a release. A
+README change that adds a section of its own for users moves the markers with it.
+
+```powershell
+python -I scripts/usage-guide.py --check                    # render it, write nothing; exit 1 on a problem
+python -I scripts/usage-guide.py --out dist\GUIDE.html      # the page, to open it in a browser
+```
 
 ### The changelog
 
