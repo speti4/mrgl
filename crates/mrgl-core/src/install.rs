@@ -754,18 +754,8 @@ impl Engine {
     /// carry over to the new name, and its cached zips move to the new name's cache folder.
     pub fn commit(&self, mut staged: Staged, state: &mut State) -> Result<Installed> {
         let new_folders = staged.folders();
-        let previous = state
-            .entry(&staged.name)
-            .or_else(|| renamed_entry(state, &staged.name, &new_folders))
-            .map(|(name, entry)| (name.to_string(), entry.clone()));
-        let stale: Vec<String> = previous
-            .iter()
-            .flat_map(|(_, entry)| entry.folders.iter())
-            .filter(|folder| !contains_folder(&new_folders, folder))
-            .cloned()
-            .collect();
-        let guarded: Vec<String> = new_folders.iter().chain(&stale).cloned().collect();
-        self.refuse_links(state, &guarded)?;
+        let (previous, stale) = replaced_and_dropped(state, &staged.name, &new_folders);
+        self.refuse_dropped_and_staged(state, &new_folders, &stale)?;
         let addons_dir = self.addons_dir();
         std::fs::create_dir_all(&addons_dir).map_err(|source| Error::Io {
             context: "creating the AddOns folder",
@@ -1142,6 +1132,28 @@ impl Engine {
         })
     }
 
+    /// The refusals of [`Engine::commit`] without the commit (task 124, a dry run's): the folder-name rule and
+    /// the link guard over the staged folders and the folders of the previous version this one drops,
+    /// before anything moves, so `add <file.zip> --dry-run` refuses what the install would, a dropped
+    /// folder that is a junction mrgl did not make (task 067) or a recorded `..` (task 123) included.
+    pub fn refuse_commit(&self, state: &State, staged: &Staged) -> Result<()> {
+        let new_folders = staged.folders();
+        let (_, stale) = replaced_and_dropped(state, &staged.name, &new_folders);
+        self.refuse_dropped_and_staged(state, &new_folders, &stale)
+    }
+
+    /// [`Engine::refuse_links`] over the staged folders and the dropped ones, the commit's and the dry run's
+    /// one guard.
+    fn refuse_dropped_and_staged(
+        &self,
+        state: &State,
+        new_folders: &[String],
+        stale: &[String],
+    ) -> Result<()> {
+        let guarded: Vec<String> = new_folders.iter().chain(stale).cloned().collect();
+        self.refuse_links(state, &guarded)
+    }
+
     /// The folder-name rule (task 123) over folders the sidecar records, before any of them is joined to
     /// `Interface\AddOns`: the first that fails refuses the whole call ([`Error::RecordedFolderRefused`]).
     /// [`Engine::remove`] and [`Engine::rollback`] call it on the entry they act on, and
@@ -1275,6 +1287,26 @@ impl Engine {
             }
         }
     }
+}
+
+/// The entry a commit of `name` with `new_folders` replaces (the one of that name, else the one that records
+/// the same addon under another name, task 077) and the folders of it the new version drops (task 067).
+fn replaced_and_dropped(
+    state: &State,
+    name: &str,
+    new_folders: &[String],
+) -> (Option<(String, Entry)>, Vec<String>) {
+    let previous = state
+        .entry(name)
+        .or_else(|| renamed_entry(state, name, new_folders))
+        .map(|(name, entry)| (name.to_string(), entry.clone()));
+    let stale: Vec<String> = previous
+        .iter()
+        .flat_map(|(_, entry)| entry.folders.iter())
+        .filter(|folder| !contains_folder(new_folders, folder))
+        .cloned()
+        .collect();
+    (previous, stale)
 }
 
 /// The Forever signal the sidecar records for a pick (task 096): the pick's own for a source whose answers

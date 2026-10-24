@@ -2018,8 +2018,9 @@ fn add_zip(
             .stage(&zip, &metadata)
             .map_err(|error| error.to_string())?;
         warnings.extend(staged.sweep_warnings.iter().cloned());
+        // The commit's refusals, the folders the previous version drops included (task 124).
         engine
-            .refuse_links(&loaded.state, &staged.folders())
+            .refuse_commit(&loaded.state, &staged)
             .map_err(|error| error.to_string())?;
         // What the install would record (task 083): a reinstall of the recorded version keeps the entry's
         // previous version, as the commit does.
@@ -2993,6 +2994,19 @@ fn update_command(
     let available = updates.len();
     // The updates this run installs: none on a dry run, else every one after `--yes` or the confirmation.
     let to_apply = if dry_run {
+        // Task 124: an update the commit would refuse over a folder the entry records (a junction mrgl did
+        // not make, a recorded `..`; kept or dropped by the new version, the commit refuses either) says
+        // so here, as the install would.
+        warnings.extend(updates.iter().filter_map(|addon| {
+            let folders = state
+                .entry(&addon.name)
+                .map(|(_, entry)| entry.folders.clone())
+                .unwrap_or_default();
+            engine
+                .refuse_links(&state, &folders)
+                .err()
+                .map(|error| format!("the update of {} would be refused: {error}", addon.name))
+        }));
         Vec::new()
     } else {
         let stdin = std::io::stdin();

@@ -318,6 +318,13 @@ under Interface\AddOns; nothing was moved or removed, and the entry is yours to 
 (`Error::RecordedFolderRefused`). Every install path reaches these checks, since every one stages and commits
 through the engine: a zip in hand, every source, `import`, `update`, `rollback` and the window's update and
 add, which call `Engine::install_from_source` and `Engine::install` and carry the refusal as their error line.
+The dry run of `add <file.zip>` runs the commit's guard itself, `Engine::refuse_commit` (task 124): the
+staged folders and the folders of the previous version the new one drops, as the commit computes them, so a
+dropped folder that is a junction mrgl did not make (task 067) or a recorded `..` refuses the dry run with the
+install's line instead of a `would update`. `update --dry-run` stages nothing and cannot know which folders a
+new version drops, so it holds every folder an available update's entry records to the same guard (kept or
+dropped, the commit refuses such a folder either way) and says so in a warning, `the update of <name> would
+be refused: <the refusal>`, on the screen and among the JSON's `warnings`.
 The GitHub mapping of adopt (`GithubMapping::problems`, which refuses a leading space too), the shareable
 list file (`ListEntry::not_shareable`) and the set apply's undo record hold their names to the same function.
 The zip entry rule refuses a component ending in a dot or a space too (task 124, finding L6 of task 121,

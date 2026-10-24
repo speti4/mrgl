@@ -137,6 +137,15 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
   test is the command line's end-to-end `key` tests, which pass through the feature, and `cargo tree -p
   mrgl-cli -e features --edges normal -i mrgl-core` shows the release graph without it. `cargo clippy -p
   mrgl-core -p mrgl-cli -p mrgl-app -- -D warnings` (no test targets, so no feature) is clean.
+- 2026-10-24 — The follow-up of 123 (item 11): `Engine::refuse_commit` runs the commit's guard without the
+  commit, over the staged folders and the folders of the previous version the new one drops
+  (`replaced_and_dropped`, which `Engine::commit` now shares), and the dry run of `add <file.zip>` calls it
+  instead of `refuse_links` over the staged folders alone. `update --dry-run` stages nothing, so it holds
+  every folder an available update's entry records to `refuse_links` and warns `the update of <name> would
+  be refused: <the refusal>` (screen and JSON `warnings`). Tests: `add --dry-run` and `add` of
+  `several-folders-2.1.0.zip` over a hand-made junction where the dropped `SeveralFolders_Data` was, then
+  over a sidecar that records `..`: both refuse with the same line and touch nothing; `update --all
+  --dry-run` over an entry that records `..` and one whose folder is a foreign junction warns about both.
 
 ## Deviations from the plan
 
