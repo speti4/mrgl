@@ -5,7 +5,8 @@ release notes next to it.
 
 .DESCRIPTION
 The version is the workspace Cargo.toml one, the only place it is written. The zip holds mrgl.exe (the
-command line), mrgl-app.exe (the window), THIRD-PARTY-LICENSES.html (cargo-about over the crates compiled
+command line), mrgl-app.exe (the window), GUIDE.html (the usage guide: scripts\usage-guide.py over the
+README's user sections, generated here and never committed), THIRD-PARTY-LICENSES.html (cargo-about over the crates compiled
 into the exes, with about.toml and scripts\third-party-licenses.hbs) and lists\forever-starter.json (the
 Forever starter list, so `mrgl import lists\forever-starter.json --flavor forever` works from the unpacked
 zip). Next to the zip go SHA256SUMS.txt (the
@@ -52,7 +53,7 @@ function Find-Tool([string] $Name) {
     $tool.Source
 }
 
-# What can fail fast runs before the build: the tools and the release notes.
+# What can fail fast runs before the build: the tools, the release notes and the usage guide.
 $cargo = Find-Tool "cargo"
 $cargoAbout = Find-Tool "cargo-about"
 # The cargo-about CI installs: scripts\cargo-about-version.txt is the one place its version is written, so a
@@ -76,6 +77,9 @@ $outDir = (Resolve-Path $Out).Path
 $notes = Join-Path $outDir "release-notes-$version.md"
 & $python @pythonArgs -I (Join-Path $root "scripts\changelog.py") --notes $version --out $notes
 if ($LASTEXITCODE -ne 0) { throw "release notes failed ($LASTEXITCODE)" }
+$guideScript = Join-Path $root "scripts\usage-guide.py"
+& $python @pythonArgs -I $guideScript --check
+if ($LASTEXITCODE -ne 0) { throw "usage guide failed ($LASTEXITCODE)" }
 
 if (-not $SkipBuild) {
     & $cargo build --release --locked -p mrgl-cli -p mrgl-app
@@ -103,6 +107,11 @@ Copy-Item $app (Join-Path $stage "mrgl-app.exe")
 # The starter list at its path in the repo, so the README's import line works from the unpacked zip as written.
 New-Item -ItemType Directory -Force (Join-Path $stage "lists") | Out-Null
 Copy-Item $starter (Join-Path $stage "lists\forever-starter.json")
+# The usage guide next to the exes: the README's user sections as one page that opens offline.
+$guide = Join-Path $stage "GUIDE.html"
+& $python @pythonArgs -I $guideScript --out $guide
+if ($LASTEXITCODE -ne 0) { throw "usage guide failed ($LASTEXITCODE)" }
+$guideKb = [math]::Round((Get-Item $guide).Length / 1KB)
 
 # The notices of the crates compiled into the exes (their MIT, Apache-2.0, BSD and MPL-2.0 licenses ask for
 # them). cargo-about reads the graph through `cargo metadata`, which wants the sources of every platform's
@@ -137,6 +146,6 @@ $zipMb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 Write-Host "version:  $version (app exe properties: $stamped)"
 Write-Host "cli:      $cli ($cliMb MB)"
 Write-Host "app:      $app ($appMb MB)"
-Write-Host "zip:      $zip ($zipMb MB; THIRD-PARTY-LICENSES.html $licensesKb KB inside)"
+Write-Host "zip:      $zip ($zipMb MB; GUIDE.html $guideKb KB and THIRD-PARTY-LICENSES.html $licensesKb KB inside)"
 Write-Host "sha256:   $hash ($sums)"
 Write-Host "notes:    $notes"

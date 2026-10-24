@@ -60,6 +60,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 ### M5 Trust
 
 - Test hardening toward full line and branch coverage ([117](https://github.com/speti4/mrgl/blob/main/tasks/done/117-test-hardening-toward-full-line-and-branch-coverage.md))
+- A usage guide as HTML inside the release zip ([120](https://github.com/speti4/mrgl/blob/main/tasks/done/120-a-usage-guide-as-html-inside-the-release-zip.md))
 
 ### Project housekeeping
 

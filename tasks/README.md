@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-24 — edit the files, not this section._
 
-**State:** 6 backlog (0 ready · 0 blocked · 3 waiting · 3 ideas) · 1 in progress · 101 done · 5 dropped · 6 decisions
+**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 102 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -57,6 +57,7 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
+| 122 | [Tests of the usage guide generator's error paths](backlog/122-tests-of-the-usage-guide-generators-error-paths.md) | S | 2026-10-24 |
 
 #### M6 macOS preview
 
@@ -86,6 +87,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 120 | [A usage guide as HTML inside the release zip](done/120-a-usage-guide-as-html-inside-the-release-zip.md) | 2026-10-24 |
 | 119 | [The local coverage run needs a short checkout path](done/119-the-local-coverage-run-needs-a-short-checkout-path.md) | 2026-10-24 |
 | 118 | [One stand-in client helper for the tests of the three crates](done/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | 2026-10-24 |
 | 116 | [The window installs a zip in hand with a recorded source](done/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md) | 2026-10-24 |
@@ -95,9 +97,8 @@ _none_
 | 113 | [The window's adopt apply reuses the shown report's answers](done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 |
 | 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](done/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 |
 | 110 | [The window's install paths warn in a folder the CurseForge app manages](done/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md) | 2026-10-22 |
-| 109 | [The window's adopt view: the report and --apply in the toolbox](done/109-the-windows-adopt-view.md) | 2026-10-22 |
 
-_91 more in `done/`._
+_92 more in `done/`._
 
 ### Decisions
 
