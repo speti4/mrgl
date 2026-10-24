@@ -127,6 +127,16 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
   next logout, not the write, is what loses it. Tests: the three outcomes of the second look against
   stubs, and one test per writer with a process list that starts the stand-in client after its first
   answer, so the guard finds none and the second look finds it; the README's backup section says it.
+- 2026-10-24 — L10: the folder key store (`FolderStore`, `FOLDER_STORE_PREFIX` and the `folder:` arm of
+  `store_from_env`) is built only under `cfg(any(test, feature = "folder-key-store"))`; the feature is the
+  core's, with no dependency, and `mrgl-cli`'s `[dev-dependencies]` names the core again with it, as
+  `mrgl-app` does with `tauri`'s `test` feature. Decided 2026-10-24: the feature, not a warning, since a
+  warning leaves the key in a plain file all the same, and the feature costs no code path: a release build
+  reads `folder:<path>` as any other value, the Credential Manager. `cargo test --locked`, the clippy line
+  and the coverage run stay as CONTRIBUTING writes them, since all three build the dev-dependencies; the
+  test is the command line's end-to-end `key` tests, which pass through the feature, and `cargo tree -p
+  mrgl-cli -e features --edges normal -i mrgl-core` shows the release graph without it. `cargo clippy -p
+  mrgl-core -p mrgl-cli -p mrgl-app -- -D warnings` (no test targets, so no feature) is clean.
 
 ## Deviations from the plan
 

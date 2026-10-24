@@ -702,7 +702,13 @@ under Control Panel, Credential Manager, Windows Credentials. Outside Windows th
 reads find nothing and a write is refused (a key store there is M6). `MRGL_KEY_STORE=off` turns the store
 off for a run the same way, and `MRGL_KEY_STORE=folder:<path>` keeps the keys as files under that folder
 (`mrgl-<source>`, the key as the content), the tests' store, the mirror of `MRGL_HTTP_STUB`; any other value
-is the Credential Manager.
+is the Credential Manager. A key in a plain file is what the Credential Manager is there to avoid, so the
+folder store exists only in a build with the core's `folder-key-store` feature (task 124, finding L10 of
+task 121): the command line's dev-dependency on the core turns it on, and the resolver (3) unifies a
+dev-dependency's features into dev builds only, so `cargo test`, `cargo clippy --all-targets` and the
+coverage run have it while `cargo build --release` does not, and there `folder:<path>` is any other value
+(`cargo tree -p mrgl-cli -e features --edges normal -i mrgl-core` lists no `folder-key-store`). The core's
+own unit tests have it through `cfg(test)`.
 
 `mrgl key set <source>` (`github`, `wago`, `curse`, a source's name, or the variable) reads the key from the
 standard input, all of it from a pipe (`Get-Clipboard | mrgl key set wago`) or one line from a terminal,
