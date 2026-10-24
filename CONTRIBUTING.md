@@ -92,14 +92,18 @@ cargo test --locked
 cargo +1.90 check --all-targets --locked
 python -I scripts/changelog.py --check
 python -I scripts/usage-guide.py --check
+python -I -m unittest discover -s scripts/tests
 ```
 
 `--locked` fails when `Cargo.lock` is out of step with the manifests instead of rewriting it. The changelog
 check wants `CHANGELOG.md` to match `tasks/done/` exactly, so a change that closes a task runs `python -I
 scripts/changelog.py` and commits the result with it. The usage guide check renders `GUIDE.html`, the page the
 release zip carries, from the README's user sections and writes nothing: it fails on a README construct the
-page cannot render or a broken marker ([docs/development.md](docs/development.md#the-usage-guide)). The commit messages and the pull request text follow the
-commit rules, which the hook above checks locally and the `commit-rules` job again in CI.
+page cannot render or a broken marker ([docs/development.md](docs/development.md#the-usage-guide)). The last
+line runs the tests of the helper scripts under `scripts/tests/` (the standard library's `unittest`, nothing to
+install), which today hold one test for each README the usage guide generator refuses. The commit messages and
+the pull request text follow the commit rules, which the hook above checks locally and the `commit-rules` job
+again in CI.
 
 When `Cargo.toml`, `Cargo.lock` or `.github/` change, also:
 
