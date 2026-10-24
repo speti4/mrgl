@@ -675,14 +675,10 @@ fn a_failed_first_swap_leaves_a_fresh_folder_absent() {
 #[cfg(windows)]
 #[test]
 fn a_locked_file_in_the_old_folder_fails_the_swap_and_changes_nothing() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let sandbox = Sandbox::new("locked");
     sandbox.install("one-folder-1.0.0.zip");
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(sandbox.addon("OneFolder/core.lua"))
-        .expect("a handle with no sharing");
+    let lock = locked::file(&sandbox.addon("OneFolder/core.lua"));
     let error = sandbox
         .engine
         .install(
@@ -1885,14 +1881,10 @@ fn a_folder_a_failed_swap_moved_folders_into_is_never_swept() {
 #[cfg(windows)]
 #[test]
 fn a_leftover_that_cannot_be_removed_is_a_warning_and_the_install_stands() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let sandbox = Sandbox::new("sweep-stuck");
     let stuck = plant_run_folder(&sandbox, "download-Stuck.zip", HOURS_AGO);
-    let open = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(stuck.join("download-Stuck.zip"))
-        .expect("a handle with no sharing");
+    let open = locked::file(&stuck.join("download-Stuck.zip"));
     let installed = sandbox.install("one-folder-1.0.0.zip");
     assert_eq!(installed.warnings.len(), 1, "{:?}", installed.warnings);
     assert!(
@@ -2111,14 +2103,10 @@ fn remove_passes_over_a_folder_deleted_by_hand() {
 #[cfg(windows)]
 #[test]
 fn a_folder_that_cannot_be_removed_fails_the_removal() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let sandbox = Sandbox::new("remove-locked");
     sandbox.install("one-folder-1.0.0.zip");
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(sandbox.addon("OneFolder/core.lua"))
-        .expect("a handle with no sharing");
+    let lock = locked::file(&sandbox.addon("OneFolder/core.lua"));
     let error = sandbox
         .engine
         .remove("OneFolder")
@@ -2138,15 +2126,11 @@ fn a_folder_that_cannot_be_removed_fails_the_removal() {
 #[cfg(windows)]
 #[test]
 fn a_cache_that_cannot_be_removed_is_a_warning() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let sandbox = Sandbox::new("remove-locked-cache");
     sandbox.install("one-folder-1.0.0.zip");
     let cache = sandbox.engine.home.addon_cache_dir("OneFolder");
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(cache.join("1.0.0.zip"))
-        .expect("a handle with no sharing");
+    let lock = locked::file(&cache.join("1.0.0.zip"));
     let removed = sandbox.engine.remove("OneFolder").expect("removes");
     assert!(sandbox.folders().is_empty());
     assert!(sandbox.state().addons.is_empty());
@@ -2254,15 +2238,11 @@ fn a_rename_without_a_cache_or_with_the_zip_there_already_moves_what_it_can() {
 #[cfg(windows)]
 #[test]
 fn a_cached_zip_that_cannot_move_to_the_new_name_is_a_warning() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let sandbox = Sandbox::new("rename-locked-cache");
     installed_as_arena(&sandbox);
     let arena_cache = sandbox.engine.home.addon_cache_dir("Boss-Arena");
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(arena_cache.join("4.0.0.zip"))
-        .expect("a handle with no sharing");
+    let lock = locked::file(&arena_cache.join("4.0.0.zip"));
     let installed = sandbox.install("boss-core-5.0.0.zip");
     assert_eq!(installed.name, "Boss-Core");
     assert_eq!(installed.warnings.len(), 2, "{:?}", installed.warnings);

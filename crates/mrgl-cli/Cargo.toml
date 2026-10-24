@@ -19,3 +19,7 @@ workspace = true
 mrgl-core.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+# The stand-in client and the held files of the tests (task 118), shared with the other two crates.
+mrgl-test-support.workspace = true

@@ -10,13 +10,13 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-#[cfg(windows)]
-use std::process::{Child, Command, Stdio};
 
 use mrgl_core::Error;
 use mrgl_core::backup::{self, WTF_DIR};
 use mrgl_core::flavor::{self, Flavor};
 use mrgl_core::savedvars::{self, CLEANUP_PREFIX, Status};
+#[cfg(windows)]
+use mrgl_test_support::stand_in::{SKIPPED, spawn_stand_in};
 
 fn fixture_wtf() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/wtf/WTF")
@@ -402,65 +402,6 @@ fn a_restore_refuses_the_cleanup_zip() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The stand-in client (task 063): a copy of the signed `ping.exe` of the system folder, named
-/// `client-stand-in.exe` in the flavor folder and pinging the loopback address for an hour, so it runs
-/// until the test stops it. Never a copy of this test binary: a binary that copies itself and runs the
-/// copy is what an antivirus heuristic reads as a dropper. `None` when the system folder has no
-/// `ping.exe`; the test is then skipped with a message.
-#[cfg(windows)]
-fn spawn_stand_in(flavor_folder: &Path) -> Option<StandIn> {
-    let ping = PathBuf::from(std::env::var_os("SystemRoot")?)
-        .join("System32")
-        .join("ping.exe");
-    if !ping.is_file() {
-        return None;
-    }
-    let copy = flavor_folder.join("client-stand-in.exe");
-    std::fs::copy(&ping, &copy).expect("the copy");
-    let child = Command::new(&copy)
-        .args(["-n", "3600", "127.0.0.1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("the stand-in starts");
-    Some(StandIn {
-        child,
-        stopped: false,
-    })
-}
-
-/// The running stand-in client: `stop` kills and waits for it, and so does a drop, so a failing
-/// assertion leaves no process behind.
-#[cfg(windows)]
-struct StandIn {
-    child: Child,
-    stopped: bool,
-}
-
-#[cfg(windows)]
-impl StandIn {
-    fn id(&self) -> u32 {
-        self.child.id()
-    }
-
-    fn stop(&mut self) {
-        self.child.kill().expect("killed");
-        self.child.wait().expect("waited");
-        self.stopped = true;
-    }
-}
-
-#[cfg(windows)]
-impl Drop for StandIn {
-    fn drop(&mut self) {
-        if !self.stopped {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
 #[cfg(windows)]
 #[test]
 fn the_cleanup_is_refused_while_the_client_runs_and_the_listing_is_not() {
@@ -471,7 +412,7 @@ fn the_cleanup_is_refused_while_the_client_runs_and_the_listing_is_not() {
     let backups = backups_of(&root);
 
     let Some(mut child) = spawn_stand_in(&flavor.folder) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let error = savedvars::clean_orphans(&flavor, &backups).expect_err("refused");

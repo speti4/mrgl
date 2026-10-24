@@ -3,15 +3,17 @@
 //! the plain line (docs/nerglish.md, rule 3); the murloc line is checked only for being there. `MRGL_HOME`
 //! points every run at a temporary folder, so no test reads or writes the real config, and
 //! `MRGL_DISCOVERY` is `off` or a stub (task 020), so no test reads the real registry or looks under
-//! `Program Files`. The running-client tests (task 023) copy this test binary into a temporary flavor
-//! folder and start it as a stand-in client, never a game file. The `backup` tests (task 013) copy the
-//! synthetic fixture `WTF` tree into a temporary flavor folder and never touch a real one. The managed and
-//! unmanaged `list` tests (task 037) install a fixture zip through the engine into a temporary game folder.
+//! `Program Files`. The running-client tests (task 023) start the stand-in client of `mrgl-test-support`
+//! (the system's `ping.exe` copied into a temporary flavor folder, task 063), never a game file. The
+//! `backup` tests (task 013) copy the synthetic fixture `WTF` tree into a temporary flavor folder and never
+//! touch a real one. The managed and unmanaged `list` tests (task 037) install a fixture zip through the
+//! engine into a temporary game folder.
 
 use std::path::{Path, PathBuf};
-#[cfg(windows)]
-use std::process::Child;
 use std::process::{Command, Output, Stdio};
+
+#[cfg(windows)]
+use mrgl_test_support::stand_in::{SKIPPED, spawn_stand_in};
 
 /// The synthetic game folder of `mrgl-core`.
 fn fixtures() -> PathBuf {
@@ -697,72 +699,13 @@ fn temp_game_root(name: &str) -> PathBuf {
     root
 }
 
-/// The stand-in client (task 063): a copy of the signed `ping.exe` of the system folder, named
-/// `client-stand-in.exe` in the flavor folder and pinging the loopback address for an hour, so it runs
-/// until the test stops it. Never a copy of this test binary: a binary that copies itself and runs the
-/// copy is what an antivirus heuristic reads as a dropper. `None` when the system folder has no
-/// `ping.exe`; the test is then skipped with a message.
-#[cfg(windows)]
-fn spawn_stand_in(flavor_folder: &Path) -> Option<StandIn> {
-    let ping = PathBuf::from(std::env::var_os("SystemRoot")?)
-        .join("System32")
-        .join("ping.exe");
-    if !ping.is_file() {
-        return None;
-    }
-    let copy = flavor_folder.join("client-stand-in.exe");
-    std::fs::copy(&ping, &copy).expect("the copy");
-    let child = Command::new(&copy)
-        .args(["-n", "3600", "127.0.0.1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("the stand-in starts");
-    Some(StandIn {
-        child,
-        stopped: false,
-    })
-}
-
-/// The running stand-in client: `stop` kills and waits for it, and so does a drop, so a failing
-/// assertion leaves no process behind.
-#[cfg(windows)]
-struct StandIn {
-    child: Child,
-    stopped: bool,
-}
-
-#[cfg(windows)]
-impl StandIn {
-    fn id(&self) -> u32 {
-        self.child.id()
-    }
-
-    fn stop(&mut self) {
-        self.child.kill().expect("killed");
-        self.child.wait().expect("waited");
-        self.stopped = true;
-    }
-}
-
-#[cfg(windows)]
-impl Drop for StandIn {
-    fn drop(&mut self) {
-        if !self.stopped {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
 #[cfg(windows)]
 #[test]
 fn scan_and_list_name_the_running_client_in_the_summary_and_the_json() {
     let root = temp_game_root("scan");
     let folder = root.join("_forever_");
     let Some(mut child) = spawn_stand_in(&folder) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
 
@@ -1347,7 +1290,7 @@ fn add_and_remove_json_are_one_document_each() {
 fn add_and_remove_warn_while_the_client_runs_and_still_write() {
     let game = Game::new("client-running");
     let Some(mut child) = spawn_stand_in(&game.root.join("_forever_")) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let install_line = format!(
@@ -2519,7 +2462,7 @@ fn restore_is_refused_while_the_client_runs() {
     let before = snapshot(&flavor.join("WTF"));
 
     let Some(mut child) = spawn_stand_in(&flavor) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let output = mrgl()
@@ -5287,7 +5230,7 @@ fn savedvars_clean_is_refused_while_the_client_runs() {
     let before = snapshot(&wtf);
 
     let Some(mut child) = spawn_stand_in(&flavor) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let output = mrgl()
@@ -7244,7 +7187,7 @@ fn set_apply_is_refused_while_the_client_runs() {
     let before = snapshot(&wtf);
 
     let Some(mut child) = spawn_stand_in(&root.join("_forever_")) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let output = set_run(&root, &home, &["--serious", "set", "apply", "everyday"]);
@@ -7426,7 +7369,7 @@ fn set_apply_to_one_character_is_refused_while_the_client_runs() {
     assert!(output.status.success(), "{output:?}");
     let before = snapshot(&wtf);
     let Some(mut child) = spawn_stand_in(&root.join("_forever_")) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let output = set_run(
@@ -7536,7 +7479,7 @@ fn set_undo_is_refused_while_the_client_runs() {
     assert!(output.status.success(), "{output:?}");
     let applied = snapshot(&wtf);
     let Some(mut child) = spawn_stand_in(&root.join("_forever_")) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let output = set_run(&root, &home, &["--serious", "set", "undo"]);
@@ -9913,14 +9856,7 @@ fn set_save_replaces_a_set_an_apply_creates_an_addons_txt_and_an_undo_removes_it
     // An undo record that cannot be removed is a warning; the files are put back all the same.
     let extra = home.join("wowf").join("set-undo").join("extra.txt");
     std::fs::write(&extra, "").expect("the extra file");
-    let held = {
-        use std::os::windows::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
-            .read(true)
-            .share_mode(0)
-            .open(&extra)
-            .expect("the extra file held open")
-    };
+    let held = mrgl_test_support::locked::file(&extra);
     let output = set_run(&root, &home, &["--serious", "set", "undo"]);
     drop(held);
     assert!(output.status.success(), "{output:?}");
@@ -10142,7 +10078,7 @@ fn update_warns_once_about_the_running_client_over_two_updates() {
     )
     .expect("the second list");
     let Some(mut child) = spawn_stand_in(&game.root.join("_forever_")) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let output = game

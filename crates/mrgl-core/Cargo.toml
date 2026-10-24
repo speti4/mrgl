@@ -34,3 +34,7 @@ ureq.workspace = true
 # the dev addon junctions (task 005) and the API keys in the Credential Manager (task 093), Windows only; the other targets list nothing and find nothing
 # until the macOS preview (M6).
 windows-sys.workspace = true
+
+[dev-dependencies]
+# The stand-in client and the held files of the tests (task 118), shared with the other two crates.
+mrgl-test-support.workspace = true

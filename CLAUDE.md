@@ -10,7 +10,8 @@ set the user asked for), and never touches the game client.
 ## Layout
 - `crates/mrgl-core` (flavor detection, AddOns scan and TOC parsing, sources, the install engine, the state
   sidecar, backups, the voice table), `crates/mrgl-cli` (the `mrgl` exe), `crates/mrgl-app` (the `mrgl-app` exe:
-  Tauri 2 window, static UI under `ui/`)
+  Tauri 2 window, static UI under `ui/`), `crates/mrgl-test-support` (the stand-in client and the held-file
+  helpers the tests of the three crates share; a dev-dependency only, never in an exe)
 - `docs/` (origin, research, development, git workflow, maintainer sessions, the voice), `tasks/`, the
   community files at the root and under
   `.github/`; the full layout is in `docs/development.md`

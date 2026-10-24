@@ -6,8 +6,9 @@ How changes reach `main`: the rules for every contributor, checked by a hook and
 
 - **Branch, pull request, squash merge.** Nothing is pushed to `main` directly. A branch becomes a pull request,
   CI has to be green (the ruleset on `main` requires `test`, `lint`, `msrv`, `non-windows`, `deny`,
-  `workflow-lint` and `commit-rules`), and the pull request is squash-merged, so `main` stays linear with one
-  commit per change. The squash commit's message is the pull request title and description, so write both as a commit message.
+  `workflow-lint`, `coverage` and `commit-rules`), and the pull request is squash-merged, so `main` stays
+  linear with one commit per change. The squash commit's message is the pull request title and description,
+  so write both as a commit message.
 - **Titles.** Commit subjects and pull request titles are imperative and start with a type in lower case, as
   `type: subject` or `type(scope): subject`, where the type is one of `feat`, `fix`, `docs`, `ci`, `chore`,
   `tasks` and `deps` (dependabot). A `Merge …` or `Revert "…"` subject passes as git writes it.
