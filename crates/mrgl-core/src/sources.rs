@@ -781,6 +781,13 @@ pub struct RequestBudget {
     pub resets: &'static str,
 }
 
+/// The bound on the body of an API answer (task 124): the GitHub release list and a `release.json`, the
+/// Wago, CurseForge and WoWInterface answers. The largest of them, WoWInterface's file list of every
+/// project, is some 5.6 MB.
+pub const MAX_ANSWER_BYTES: u64 = 32 * 1024 * 1024;
+/// The bound on the body of a download ([`Request::download`]): an addon zip, megabytes at most.
+pub const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
+
 /// One HTTP request, as a source issues it: a GET, or a POST with its body ([`Http::post`], task 092).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
@@ -793,6 +800,10 @@ pub struct Request {
     /// its own turns it off ([`Request::no_redirects`], task 096: CurseForge's `x-api-key`), gets the
     /// redirect as the answer and follows it with the key only to its own hosts ([`crate::keys::may_send`]).
     pub follow_redirects: bool,
+    /// The most bytes the answer's body may have (task 124): [`MAX_ANSWER_BYTES`] for an API answer, the
+    /// default, [`MAX_DOWNLOAD_BYTES`] for a download ([`Request::download`]). A longer body fails the
+    /// request as the network does, before it is read whole.
+    pub max_body: u64,
 }
 
 impl Request {
@@ -802,6 +813,7 @@ impl Request {
             headers: Vec::new(),
             body: None,
             follow_redirects: true,
+            max_body: MAX_ANSWER_BYTES,
         }
     }
 
@@ -812,7 +824,14 @@ impl Request {
             headers: Vec::new(),
             body: Some(body.into()),
             follow_redirects: true,
+            max_body: MAX_ANSWER_BYTES,
         }
+    }
+
+    /// The same request as a download (task 124): its body may be as long as [`MAX_DOWNLOAD_BYTES`].
+    pub fn download(mut self) -> Request {
+        self.max_body = MAX_DOWNLOAD_BYTES;
+        self
     }
 
     pub fn header(mut self, name: &str, value: impl Into<String>) -> Request {
@@ -832,8 +851,9 @@ impl Request {
     }
 }
 
-/// The answer to a [`Request`]: the status, the headers and the whole body (an addon zip is a few megabytes
-/// at most; the release list and a `release.json` are kilobytes).
+/// The answer to a [`Request`]: the status, the headers and the whole body, at most the request's
+/// [`Request::max_body`] (an addon zip is a few megabytes at most; the release list and a `release.json`
+/// are kilobytes).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     pub status: u16,
@@ -872,10 +892,12 @@ pub trait Http {
     }
 }
 
-/// The real client: `ureq` over rustls, with mrgl's user agent, a connect and a response timeout, and the
+/// The real client: `ureq` over rustls, with mrgl's user agent, a connect and a response timeout, HTTPS
+/// only (task 124: a plain `http://` address, or a redirect to one, fails before a connection), and the
 /// HTTP status always returned rather than raised. Redirects are followed (an asset download hops to the
 /// object store) and an `Authorization` header never follows one; a request with its redirects off
-/// ([`Request::no_redirects`]) gets the redirect itself as the answer.
+/// ([`Request::no_redirects`]) gets the redirect itself as the answer. A body is read up to the request's
+/// [`Request::max_body`].
 pub struct UreqHttp {
     agent: ureq::Agent,
 }
@@ -885,6 +907,7 @@ impl UreqHttp {
         let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .user_agent(format!("mrgl/{}", crate::VERSION))
+            .https_only(true)
             .timeout_connect(Some(std::time::Duration::from_secs(20)))
             .timeout_recv_response(Some(std::time::Duration::from_secs(30)))
             .build();
@@ -908,7 +931,21 @@ fn network_error(request: &Request, reason: String) -> Error {
     }
 }
 
-/// The answer `ureq` read, as a [`Response`]: the status, the headers and the whole body.
+/// The reason of a body longer than its request's bound (task 124), the real client's and the stub's.
+fn body_too_long(request: &Request) -> String {
+    format!(
+        "reading the body: the answer is longer than the bound of {} for {}",
+        crate::zip_entry::size_text(request.max_body),
+        if request.max_body > MAX_ANSWER_BYTES {
+            "a download"
+        } else {
+            "an API answer"
+        }
+    )
+}
+
+/// The answer `ureq` read, as a [`Response`]: the status, the headers and the whole body, at most the
+/// request's bound.
 fn ureq_response(
     request: &Request,
     answer: std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error>,
@@ -928,10 +965,13 @@ fn ureq_response(
     let body = response
         .body_mut()
         .with_config()
-        // An addon zip is megabytes; a limit keeps a runaway answer from eating the memory.
-        .limit(512 * 1024 * 1024)
+        // The bound keeps a runaway answer from eating the memory (task 124: one per request kind).
+        .limit(request.max_body)
         .read_to_vec()
-        .map_err(|error| network_error(request, format!("reading the body: {error}")))?;
+        .map_err(|error| match error {
+            ureq::Error::BodyExceedsLimit(_) => network_error(request, body_too_long(request)),
+            error => network_error(request, format!("reading the body: {error}")),
+        })?;
     Ok(Response {
         status,
         headers,
@@ -976,7 +1016,8 @@ impl Http for UreqHttp {
 /// without a body, so the cache is testable too. A file `<answer>.headers` next to an answer adds its
 /// `Name: value` lines to the answer's headers, and its `Status: <code>` line sets the status (a `Link` to
 /// the next page, a 403 with the rate-limit headers; task 042). A POST is answered like a GET of its URL,
-/// from the same files (task 092). The requests are kept for the tests to read, a POST with its body.
+/// from the same files (task 092). An answer file longer than the request's [`Request::max_body`] fails as
+/// the real client does (task 124). The requests are kept for the tests to read, a POST with its body.
 pub struct FolderHttp {
     root: PathBuf,
     requests: Mutex<Vec<Request>>,
@@ -1117,6 +1158,10 @@ impl FolderHttp {
                 });
             }
         };
+        // The real client's bound (task 124), so a source's request kind is tested against the stub too.
+        if body.len() as u64 > request.max_body {
+            return Err(network_error(request, body_too_long(request)));
+        }
         let etag = Self::etag_of(&body);
         let mut status = 200;
         let mut headers = vec![("ETag".to_string(), etag.clone())];
@@ -2067,6 +2112,73 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("the connection was cut"), "{error}");
+    }
+
+    #[test]
+    fn the_real_client_refuses_a_plain_http_address_before_any_connection() {
+        // Task 124: HTTPS only, so neither an address nor a redirect goes over plain HTTP; the check comes
+        // before the connection, so the port is never asked.
+        let error = UreqHttp::new()
+            .get(&Request::get("http://127.0.0.1:9/a"))
+            .unwrap_err();
+        assert!(matches!(error, Error::Network { .. }), "{error}");
+        assert!(
+            error.to_string().contains("configured for https only"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_body_past_its_requests_bound_fails_in_the_real_client_and_in_the_stub() {
+        // Task 124: an API answer is bounded at 32 MB, a download at 512 MB; a request's bound is a
+        // field, so a few bytes stand in for the megabytes here.
+        let get = Request::get("https://api.example.test/a");
+        assert_eq!(get.max_body, MAX_ANSWER_BYTES);
+        assert_eq!(
+            Request::post("https://api.example.test/a", Vec::new()).max_body,
+            MAX_ANSWER_BYTES
+        );
+        assert_eq!(get.clone().download().max_body, MAX_DOWNLOAD_BYTES);
+        let small = Request {
+            max_body: 4,
+            ..get.clone()
+        };
+        let answer = |body: &'static str| {
+            ureq::http::Response::builder()
+                .status(200)
+                .body(ureq::Body::builder().data(body))
+                .unwrap()
+        };
+        let error = ureq_response(&small, Ok(answer("the body")))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "cannot reach https://api.example.test/a: reading the body: the answer is longer than the bound of 4 B for an API answer"
+        );
+        assert_eq!(
+            ureq_response(&small, Ok(answer("abc"))).unwrap().body,
+            b"abc"
+        );
+        assert_eq!(
+            body_too_long(&get.clone().download()),
+            "reading the body: the answer is longer than the bound of 512.0 MB for a download"
+        );
+        let root = std::env::temp_dir().join(format!("mrgl-stub-bound-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("api.example.test")).unwrap();
+        std::fs::write(root.join("api.example.test").join("a"), b"the body").unwrap();
+        let stub = FolderHttp::new(&root);
+        let error = stub.get(&small).unwrap_err();
+        assert!(matches!(error, Error::Network { .. }), "{error}");
+        assert!(
+            error
+                .to_string()
+                .ends_with("bound of 4 B for an API answer"),
+            "{error}"
+        );
+        assert_eq!(stub.get(&get).unwrap().body, b"the body");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

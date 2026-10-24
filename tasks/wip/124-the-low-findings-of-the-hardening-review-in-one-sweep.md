@@ -64,6 +64,19 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
 ## Log
 
 - 2026-10-24 — promoted
+- 2026-10-24 — L1: the real client's agent is `https_only(true)`, so a plain `http://` address or a redirect
+  to one fails before a connection (`configured for https only`); a unit test asks `http://127.0.0.1:9/`
+  and gets the error without the port being asked.
+- 2026-10-24 — L2: `Request::max_body`, the bound of the answer's body, `sources::MAX_ANSWER_BYTES` (32 MiB)
+  by default and `sources::MAX_DOWNLOAD_BYTES` (512 MiB) through `Request::download`, which the asset
+  download of every source asks for (GitHub, Wago, WoWInterface, CurseForge on every hop); a longer body
+  fails as the network does (`reading the body: the answer is longer than the bound of 32.0 MB for an API
+  answer`), in the real client and in the folder stub alike. Decided 2026-10-24: two bounds, not one per
+  answer: the largest API answer, WoWInterface's file list of every project, is some 5.6 MB, so 32 MiB
+  keeps a margin for its growth and still cuts the memory an API answer can take from 512 MiB to 32;
+  a `release.json` gets no bound of its own, since it shares the API answers' and a third constant would
+  guard nothing more. Tests: the bound in the real client's reader and in the stub, and each source's
+  recorded requests carry the download bound on the asset and the answer bound on the API.
 
 ## Deviations from the plan
 

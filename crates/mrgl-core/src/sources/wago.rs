@@ -875,7 +875,10 @@ impl<H: Http> Source for Wago<H> {
 
     /// Downloads the release with the key (on Wago's host only, [`keys::may_send`]); a 404 names the file.
     fn fetch(&self, pick: &Pick, to: &Path) -> Result<()> {
-        let response = self.send(&pick.url, true)?;
+        let request = Request::get(pick.url.as_str())
+            .header("Accept", "application/json")
+            .download();
+        let response = self.send_request(request, true)?;
         match response.status {
             200 => {}
             404 => {
@@ -1551,6 +1554,11 @@ mod tests {
         assert_eq!(
             keyless.http().requests()[0].header_value("Authorization"),
             None
+        );
+        // A download, bounded as one (task 124).
+        assert_eq!(
+            keyless.http().requests()[0].max_body,
+            crate::sources::MAX_DOWNLOAD_BYTES
         );
         let error = Wago::new(MapHttp::new().answer(url, 500, ""), None, None)
             .fetch(&test_pick(url), &to)

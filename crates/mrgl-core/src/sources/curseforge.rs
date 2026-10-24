@@ -414,14 +414,18 @@ impl<H: Http> CurseForge<H> {
     }
 
     /// A GET with the key on CurseForge's two hosts only ([`keys::may_send`]), the client's redirects off and
-    /// each redirect followed here, the key going along only to a next address on those hosts.
+    /// each redirect followed here, the key going along only to a next address on those hosts. `json` asks
+    /// for an API answer; without it the request is the file's download, bounded as one (task 124).
     fn send(&self, url: &str, json: bool) -> Result<Response> {
         let mut url = url.to_string();
         for _ in 0..=MAX_REDIRECTS {
             let mut request = Request::get(url.clone()).no_redirects();
-            if json {
-                request = request.header("Accept", "application/json");
-            }
+            request = if json {
+                request.header("Accept", "application/json")
+            } else {
+                // The one request that is no API answer is the file's download (task 124).
+                request.download()
+            };
             if let Some(key) = &self.key
                 && keys::may_send(SourceKind::CurseForge, &url)
             {
@@ -1028,6 +1032,12 @@ mod tests {
         let requests = source.http().requests();
         assert_eq!(requests.len(), 2);
         assert!(requests.iter().all(|request| !request.follow_redirects));
+        // A download on every hop, bounded as one (task 124).
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.max_body == crate::sources::MAX_DOWNLOAD_BYTES)
+        );
         assert_eq!(requests[0].header_value(KEY_HEADER), Some("made-up-key"));
         assert_eq!(requests[1].header_value(KEY_HEADER), None, "another host");
         // A redirect that never lands is given up after the bound.

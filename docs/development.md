@@ -8,7 +8,12 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
 - `crates/mrgl-core` — the library: flavor detection (`flavor`), the AddOns scan and TOC parsing (`scan`,
   `toc`; `scan` also holds `CLIENT_ADDON_PREFIX` and `is_client_addon`, the one `Blizzard_` rule that the
   dependency check and the SavedVariables share, task 080), the sources (`sources`: the `Source` trait, the `Pick` it hands to the install engine, the `Http`
-  trait with the real `ureq` client and the folder-backed stub; `sources::github` reads the releases API,
+  trait with the real `ureq` client and the folder-backed stub; the real client asks over HTTPS only (a
+  plain `http://` address, or a redirect to one, fails before a connection) and bounds an answer's body by
+  the request's kind, 32 MiB for an API answer (`sources::MAX_ANSWER_BYTES`; the largest, WoWInterface's
+  file list, is some 5.6 MB) and 512 MiB for a download (`sources::MAX_DOWNLOAD_BYTES`, which
+  `Request::download` asks for: an asset of every source), a longer body failing as the network does, and
+  the stub holds its answers to the same bound, task 124; `sources::github` reads the releases API,
   the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
   home folder, task 003; the pick carries `notes`, the release body's first line with text once its
   Markdown markers are stripped, cut at `NOTES_MAX_CHARS` (120) with an ellipsis by `sources::notes_line`,
