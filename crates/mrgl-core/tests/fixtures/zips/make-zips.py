@@ -139,6 +139,19 @@ write("escaping-path.zip", [
     ("Escape/../../Outside.lua", "-- must never be written\n"),
 ])
 
+# Task 123 (finding H1 of task 121): a TOC at the root whose stem is `.`, `..` or a blank, names the entry
+# check lets through since none of their components is `.` or `..`. The install falls back to the zip's stem;
+# a test that copies one under a stem that is no folder name either (`..zip`) sees the zip refused.
+for file_name, toc_name in [
+    ("dot-toc.zip", "..toc"),
+    ("dot-dot-toc.zip", "...toc"),
+    ("blank-toc.zip", " .toc"),
+]:
+    write(file_name, [
+        (toc_name, toc("Odd Root TOC", "1.0.0")),
+        ("core.lua", "-- a root TOC whose stem is no folder name\n"),
+    ])
+
 write("needs-library-1.0.0.zip", [
     ("NeedsLibrary/NeedsLibrary.toc",
      toc("Needs Library", "1.0.0",

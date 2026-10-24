@@ -34,6 +34,12 @@
 //! entry at its declared size, and that refusal is reported as the same lie. Either way the error is
 //! [`Error::ZipTooLarge`], naming the zip, the bound and, for a refusal while writing, the bytes written;
 //! the caller removes what was written (the engine its staging folder, the restore its half-written `WTF`).
+//!
+//! The one folder-name rule (task 123) lives here too, next to the entry rule whose character and device
+//! name checks it shares: [`is_folder_name`] says whether a name is one folder (or file) right under a
+//! folder Windows will create as written. The install engine holds every staged addon folder and every
+//! folder the sidecar records to it before it joins the name to `Interface\AddOns`, and the GitHub mapping
+//! of adopt, the shareable list file and the set apply's undo record hold their names to it.
 
 use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
@@ -387,11 +393,7 @@ fn entry_path(name: &str) -> Option<Vec<String>> {
             "" | "." => continue,
             ".." => return None,
             part => {
-                if part
-                    .chars()
-                    .any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
-                    || is_reserved_device_name(part)
-                {
+                if refused_by_windows(part) {
                     return None;
                 }
                 parts.push(part.to_string());
@@ -399,6 +401,29 @@ fn entry_path(name: &str) -> Option<Vec<String>> {
         }
     }
     Some(parts)
+}
+
+/// The one folder-name rule (task 123): whether a name is one folder or file right under a folder, as
+/// Windows creates it as written. It fails on an empty name, `.` and `..`, a path separator (`/`, `\`),
+/// a trailing dot or space (Windows drops them, so `AddOns\.` and `AddOns\ ` are `AddOns` itself), a
+/// character Windows refuses (a control character, `:<>"|?*`, the entry rule's) and a reserved device
+/// name (`CON`, `NUL`, `COM1` … `LPT9`, with or without an extension). A leading space and an inner dot
+/// pass.
+pub fn is_folder_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\\'])
+        && !name.ends_with(['.', ' '])
+        && !refused_by_windows(name)
+}
+
+/// One path component Windows will not create: a control character, `:<>"|?*` or a reserved device
+/// name. The entry rule and the folder-name rule share it.
+fn refused_by_windows(part: &str) -> bool {
+    part.chars()
+        .any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
+        || is_reserved_device_name(part)
 }
 
 /// `CON`, `NUL`, `COM1` … `LPT9`, with or without an extension: a file Windows will not create.
@@ -495,6 +520,92 @@ mod tests {
             entry_path("Foo/Console.lua"),
             strings(&["Foo", "Console.lua"])
         );
+    }
+
+    // --- the folder-name rule (task 123), one test per case ---
+
+    #[test]
+    fn a_folder_name_passes_with_inner_dots_spaces_and_a_leading_space() {
+        for name in [
+            "OneFolder",
+            "BigWigs_Core",
+            "DBM-Core",
+            "Lib.Sub",
+            "Fixture Realm",
+            " Leading",
+            "1-before.txt",
+            "COM0",
+            "COM10",
+            "Console",
+            "..x",
+        ] {
+            assert!(is_folder_name(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn an_empty_folder_name_fails() {
+        assert!(!is_folder_name(""));
+    }
+
+    #[test]
+    fn a_dot_or_dot_dot_folder_name_fails() {
+        assert!(!is_folder_name("."));
+        assert!(!is_folder_name(".."));
+    }
+
+    #[test]
+    fn a_folder_name_with_a_separator_fails() {
+        for name in ["a/b", "a\\b", "/a", "a\\", "..\\Some"] {
+            assert!(!is_folder_name(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_name_with_a_colon_fails() {
+        for name in ["C:", "a:b", "Foo:stream"] {
+            assert!(!is_folder_name(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_name_with_a_control_character_fails() {
+        for name in ["a\u{1}b", "tab\there", "line\n", "\u{7f}"] {
+            assert!(!is_folder_name(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_name_with_another_character_windows_refuses_fails() {
+        for name in ["a<b", "a>b", "a\"b", "a|b", "a?b", "a*b"] {
+            assert!(!is_folder_name(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_name_with_a_trailing_dot_or_space_fails() {
+        for name in ["Foo.", "Foo ", "...", " ", "  ", ". ", " ."] {
+            assert!(!is_folder_name(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_reserved_device_name_fails_with_or_without_an_extension() {
+        for name in [
+            "CON", "con", "PRN", "AUX", "NUL", "nul.lua", "COM1", "com9.txt", "LPT1", "lpt9.toc",
+        ] {
+            assert!(!is_folder_name(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn the_entry_rule_lets_the_root_toc_names_of_finding_h1_through() {
+        // Why the folder rule is a rule of its own: none of these entries has a `.` or `..` component,
+        // so the entry rule passes them, and their stems are `.`, `..` and a blank.
+        for name in ["..toc", "...toc", " .toc"] {
+            assert_eq!(entry_path(name), strings(&[name]));
+            assert!(!is_folder_name(&name[..name.len() - 4]), "{name:?}");
+        }
     }
 
     #[test]

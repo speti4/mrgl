@@ -256,8 +256,11 @@ impl Engine {
     /// The install engine's guard (task 005): an install whose folders (the staged ones and the ones it
     /// drops, task 067) include an addon `link` made, or a junction or a symbolic link that mrgl did not
     /// make, is refused before anything moves. A folder two entries list (a dropped folder that a link
-    /// entry names too) is the linked addon when one of them is.
+    /// entry names too) is the linked addon when one of them is. First of all, a folder that is no folder
+    /// name (task 123: a dropped folder `..` of a sidecar written before the rule) is refused before
+    /// its path is joined ([`Error::RecordedFolderRefused`]).
     pub fn refuse_links(&self, state: &State, folders: &[String]) -> Result<()> {
+        self.refuse_recorded_folders(folders)?;
         let flavor = flavor_label(&self.flavor.id);
         for folder in folders {
             let linked = state.addons.iter().find_map(|(name, entry)| {

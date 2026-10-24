@@ -51,6 +51,7 @@ use crate::scan;
 use crate::state;
 use crate::voice::{Kind, count_noun};
 use crate::wtf::{self, ACCOUNT_DIR, WtfFolder};
+use crate::zip_entry;
 
 /// The sets file's name under the flavor's folder of the mrgl home.
 pub const SETS_FILE: &str = "sets.json";
@@ -1231,16 +1232,6 @@ fn write_undo_folder(
     fs::write(folder.join(UNDO_FILE), text + "\n")
 }
 
-/// A name the record may carry for a folder or a file: one path component, never `.` or `..`.
-fn is_plain_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name
-            .chars()
-            .any(|c| c.is_control() || matches!(c, ':' | '/' | '\\'))
-}
-
 /// One file of a read record: its character, the bytes to put back (`None`: remove the file) and the
 /// bytes the apply wrote.
 struct UndoEntry {
@@ -1289,7 +1280,8 @@ fn read_undo(dir: &Path, flavor: &Flavor) -> Result<Option<(UndoRecord, Vec<Undo
         if let Some(name) = names
             .into_iter()
             .chain(file.kept.as_ref())
-            .find(|name| !is_plain_name(name))
+            // A name the record may carry for a folder or a file: one folder name (task 123).
+            .find(|name| !zip_entry::is_folder_name(name))
         {
             return Err(unreadable(format!(
                 "`{}` is not a plain folder or file name",
@@ -1939,11 +1931,13 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_name_is_one_component_and_never_a_dot_name() {
-        assert!(is_plain_name("1-before.txt"));
-        assert!(is_plain_name("Fixture Realm"));
+    fn a_name_of_the_undo_record_is_one_folder_name() {
+        // The record's names follow the one folder-name rule (task 123), whose own cases are tested in
+        // `zip_entry`; these are the shapes a record carries.
+        assert!(zip_entry::is_folder_name("1-before.txt"));
+        assert!(zip_entry::is_folder_name("Fixture Realm"));
         for bad in ["", ".", "..", "a:b", "a/b", "a\\b", "a\u{1}b"] {
-            assert!(!is_plain_name(bad), "{bad:?}");
+            assert!(!zip_entry::is_folder_name(bad), "{bad:?}");
         }
     }
 

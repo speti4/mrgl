@@ -32,6 +32,13 @@
 //! moves, so every path that stages and commits (a zip, a source, a rollback) refuses to install over a
 //! linked addon or a junction mrgl did not make, among the staged folders and the folders of the previous
 //! version the new one drops (task 067).
+//!
+//! No folder name reaches `Interface\AddOns` unchecked (task 123, [`zip_entry::is_folder_name`]): the
+//! stage holds every staged folder to the folder-name rule before anything leaves the staging folder (a
+//! root TOC whose stem fails it falls back to the zip's stem, a folder that still fails refuses the zip,
+//! [`Error::FolderNameRefused`]), and the folders the sidecar records are held to it again before they
+//! are joined, by [`Engine::remove`], [`Engine::rollback`] and the commit's guard
+//! ([`Error::RecordedFolderRefused`]).
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
@@ -695,6 +702,17 @@ impl Engine {
         let unpacked = staged.dir.join("unpacked");
         let files = unpack(zip, &unpacked, self.max_unpacked)?;
         let mut addons = find_addons(&unpacked, &stem, &files)?;
+        // The folder-name rule (task 123), before any folder leaves the staging folder: a name that fails
+        // it would join `Interface\AddOns` as the folder itself or its parent.
+        if let Some(addon) = addons
+            .iter()
+            .find(|addon| !zip_entry::is_folder_name(&addon.folder))
+        {
+            return Err(Error::FolderNameRefused {
+                path: zip.to_path_buf(),
+                folder: addon.folder.clone(),
+            });
+        }
         let name = match &metadata.name {
             Some(name) => name.clone(),
             None => derive_name(
@@ -973,6 +991,7 @@ impl Engine {
             });
         };
         self.refuse_remove_linked(&known, &entry)?;
+        self.refuse_recorded_folders(&entry.folders)?;
         let client_warning = self.client_warning(RunningClient::remove_warning);
         let addons_dir = self.addons_dir();
         for folder in &entry.folders {
@@ -1071,6 +1090,7 @@ impl Engine {
                 Error::AddonNotFound { name, flavor }
             });
         };
+        self.refuse_recorded_folders(&current.folders)?;
         let Some(target) = current
             .previous_version
             .clone()
@@ -1120,6 +1140,24 @@ impl Engine {
             removed_folders: installed.removed_folders,
             warnings,
         })
+    }
+
+    /// The folder-name rule (task 123) over folders the sidecar records, before any of them is joined to
+    /// `Interface\AddOns`: the first that fails refuses the whole call ([`Error::RecordedFolderRefused`]).
+    /// [`Engine::remove`] and [`Engine::rollback`] call it on the entry they act on, and
+    /// [`Engine::refuse_links`] on every folder a commit (or a dry run) is about to touch.
+    pub(crate) fn refuse_recorded_folders(&self, folders: &[String]) -> Result<()> {
+        match folders
+            .iter()
+            .find(|folder| !zip_entry::is_folder_name(folder))
+        {
+            Some(folder) => Err(Error::RecordedFolderRefused {
+                folder: folder.clone(),
+                flavor: flavor_label(&self.flavor.id),
+                sidecar: self.home.state_path(),
+            }),
+            None => Ok(()),
+        }
     }
 
     /// Reads the sidecar, applies one change to the entry a name means (by name, else by folder) and
@@ -1647,12 +1685,15 @@ fn has_own_toc(dir: &Path, folder: &str) -> bool {
 }
 
 /// The addon name of TOCs at a zip's root: the stem every other TOC extends with a suffix (`Foo` for
-/// `Foo.toc` and `Foo_Vanilla.toc`), else the zip's own stem.
+/// `Foo.toc` and `Foo_Vanilla.toc`), else the zip's own stem. A stem that is no folder name (task 123:
+/// `..toc`, `...toc`, ` .toc`) is never a candidate, so it falls back to the zip's stem too, which
+/// [`Engine::stage`] holds to the same rule.
 fn root_toc_name(tocs: &[String], zip_stem: &str) -> String {
     let stems: Vec<&str> = tocs.iter().map(|name| &name[..name.len() - 4]).collect();
     let mut candidates: Vec<&str> = stems
         .iter()
         .copied()
+        .filter(|stem| zip_entry::is_folder_name(stem))
         .filter(|stem| {
             tocs.iter().all(|other| {
                 matches!(
@@ -1983,6 +2024,23 @@ mod tests {
         assert_eq!(
             root_toc_name(&tocs(&["Foo.toc", "Bar.toc"]), "foo-1.0"),
             "foo-1.0"
+        );
+    }
+
+    #[test]
+    fn a_root_toc_stem_that_is_no_folder_name_falls_back_to_the_zip_stem() {
+        // Finding H1 of task 121 (task 123): `.`, `..` and a blank never name the folder.
+        for toc in ["..toc", "...toc", " .toc", "Foo..toc"] {
+            assert_eq!(
+                root_toc_name(&[toc.to_string()], "dot-toc"),
+                "dot-toc",
+                "{toc:?}"
+            );
+        }
+        // Next to a bad one, a good TOC names nothing either: the bad one does not extend it.
+        assert_eq!(
+            root_toc_name(&["..toc".to_string(), "Foo.toc".to_string()], "x"),
+            "x"
         );
     }
 

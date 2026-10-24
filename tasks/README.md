@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-24 — edit the files, not this section._
 
-**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 104 done · 5 dropped · 6 decisions
+**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 105 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -87,6 +87,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 123 | [One folder-name rule for every staged and recorded addon folder](done/123-one-folder-name-rule-for-every-staged-and-recorded-addon-folder.md) | 2026-10-24 |
 | 122 | [Tests of the usage guide generator's error paths](done/122-tests-of-the-usage-guide-generators-error-paths.md) | 2026-10-24 |
 | 121 | [A hardening review of the code that touches the disk, the network and the keys](done/121-a-hardening-review-of-the-code-that-touches-the-disk-the-network-and-the-keys.md) | 2026-10-24 |
 | 120 | [A usage guide as HTML inside the release zip](done/120-a-usage-guide-as-html-inside-the-release-zip.md) | 2026-10-24 |
@@ -96,9 +97,8 @@ _none_
 | 115 | [A distribution-off CurseForge entry is a state of its own in the update check](done/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md) | 2026-10-24 |
 | 114 | [The window's update reports an entry folded into another during the run](done/114-the-windows-update-reports-an-entry-folded-into-another.md) | 2026-10-24 |
 | 117 | [Test hardening toward full line and branch coverage](done/117-test-hardening-toward-full-line-and-branch-coverage.md) | 2026-10-23 |
-| 113 | [The window's adopt apply reuses the shown report's answers](done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 |
 
-_94 more in `done/`._
+_95 more in `done/`._
 
 ### Decisions
 

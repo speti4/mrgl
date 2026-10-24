@@ -48,6 +48,7 @@ use crate::sources::{BuildOffer, Channel, Offered, Source, SourceKind, SourceSpe
 use crate::state::{self, Entry, State};
 use crate::toc;
 use crate::voice::{Kind, count_noun};
+use crate::zip_entry;
 
 /// The curated GitHub mapping as it is compiled in.
 pub const MAPPING_JSON: &str = include_str!("../../../data/github-sources.json");
@@ -82,7 +83,8 @@ impl GithubMapping {
     }
 
     /// Everything wrong with the file, one line each; empty when it holds to the schema: the schema number,
-    /// every key a folder name (no path separator, no surrounding space, unique without regard to case),
+    /// every key a folder name (the install engine's folder-name rule of task 123, and no leading space
+    /// either; unique without regard to case),
     /// every value a canonical `github:<owner>/<repo>` spec.
     pub fn problems(&self) -> Vec<String> {
         let mut problems = Vec::new();
@@ -94,11 +96,7 @@ impl GithubMapping {
         }
         let mut seen: Vec<String> = Vec::new();
         for (folder, source) in &self.folders {
-            let name_ok = !folder.is_empty()
-                && folder.trim() == folder
-                && !folder.contains(['/', '\\', ':'])
-                && folder != "."
-                && folder != "..";
+            let name_ok = zip_entry::is_folder_name(folder) && folder.trim() == folder;
             if !name_ok {
                 problems.push(format!("folder {folder:?}: not a folder name"));
             }
