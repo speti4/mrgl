@@ -17,7 +17,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use mrgl_core::adopt;
-use mrgl_core::install::{Engine, Mark, PickInstalled, PickStep, SourceInstalled, SourceRequest};
+use mrgl_core::install::{
+    Engine, Folded, Mark, PickInstalled, PickStep, SourceInstalled, SourceRequest,
+};
 use mrgl_core::last_check::LastCheck;
 use mrgl_core::sources::{Channel, Source};
 use mrgl_core::state::{FlavorHome, State};
@@ -111,6 +113,10 @@ pub enum Phase {
     /// under the addon's own entry (another run updated it since the check), or under another entry of the
     /// same source, which the event's warning names; the addon stays as it is.
     InstalledAlready,
+    /// An install earlier in the run took every folder of the addon's entry over and dropped the entry
+    /// (task 114 over task 108): nothing is left to update and nothing is installed; the event says the
+    /// core's line (`Folded::update_line`), which names the addon the entry joined.
+    Folded,
     /// The addon's update failed; the engine left it as it was.
     Failed,
 }
@@ -308,10 +314,14 @@ pub fn run<S: Source + ?Sized>(
         return answer(&check.addons, messages);
     }
 
-    // The addons this run updated, the ones the install path found installed already (task 099), and the
-    // rows that read from the disk again: the updated ones and the ones found under their own entry.
+    // The addons this run updated, the ones the install path found installed already (task 099), the ones
+    // an earlier install of the run folded into its addon (task 114), and the rows that read from the disk
+    // again: the updated ones, the folded ones and the ones found under their own entry.
     let mut updated: BTreeSet<String> = BTreeSet::new();
     let mut installed_already: BTreeSet<String> = BTreeSet::new();
+    let mut folded: BTreeSet<String> = BTreeSet::new();
+    // Task 114 over task 108: the entries the installs of this run dropped, folded into the installed addon.
+    let mut dropped: Vec<Folded> = Vec::new();
     let mut reread: BTreeSet<String> = BTreeSet::new();
     let mut left = 0;
     if *plan != Plan::Check {
@@ -335,6 +345,18 @@ pub fn run<S: Source + ?Sized>(
                 check: None,
                 message: say(kind, plain),
             };
+            // Task 114: an entry an earlier install of the run dropped has nothing left to update; the
+            // command line's answer of task 108, in the core's words.
+            if let Some(into) = dropped
+                .iter()
+                .find(|entry| entry.name.eq_ignore_ascii_case(&addon.name))
+            {
+                let (kind, line) = into.update_line(&folder_name);
+                events(event(Phase::Folded, kind, line));
+                folded.insert(addon.name.clone());
+                reread.insert(addon.name.clone());
+                continue;
+            }
             events(event(
                 Phase::Updating,
                 Kind::Progress,
@@ -358,6 +380,7 @@ pub fn run<S: Source + ?Sized>(
                 }) => {
                     installed.warnings.iter().cloned().for_each(&mut warn);
                     installed.client_warning.iter().cloned().for_each(&mut warn);
+                    dropped.extend(installed.folded.iter().cloned());
                     // Task 079: the checks the command line's install summary reports, a missing
                     // dependency and an interface of another build, as warnings of the answer.
                     engine
@@ -411,15 +434,15 @@ pub fn run<S: Source + ?Sized>(
             updated: updated.len(),
             left,
             installed_already: installed_already.len(),
-            folded: 0,
+            folded: folded.len(),
         },
     };
     let (kind, plain) = check.summary(of, &folder_name);
     let mut messages = warning_messages(voice, warnings);
     messages.push(say(kind, plain));
     // The rows take the check's answer, but an addon updated in this run (or found at the pick's version
-    // under its own entry) reads from the disk and the cache again: it is the release it was updated to
-    // now. An addon another entry of its source stood in for keeps the check's answer: it is as it was.
+    // under its own entry, or folded into another entry, whose entry is gone) reads from the disk and the
+    // cache again: it is the release it was updated to now. An addon another entry of its source stood in for keeps the check's answer: it is as it was.
     let online: Vec<AddonUpdate> = check
         .addons
         .into_iter()

@@ -105,6 +105,11 @@ test("the progress slot follows a row through the run", () => {
     label: "installed already",
     value: 1,
   });
+  assert.deepEqual(step("folded", "SeveralFolders_Options"), {
+    phase: "folded",
+    label: "folded into another entry",
+    value: 1,
+  });
   assert.equal(step("failed", "BigWigs").failed, true);
   const before = slots;
   const after = Actions.applyProgress(slots, { phase: "stopped", folder: null });

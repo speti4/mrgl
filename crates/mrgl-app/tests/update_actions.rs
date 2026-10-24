@@ -152,6 +152,7 @@ impl Stub {
             "github:Example/Needy" => Some(("1.0.0", "needs-library-1.0.0.zip")),
             "github:Example/Stale" => Some(("1.0.0", "stale-interface-1.0.0.zip")),
             "github:Example/Twice" => Some(("1.1.0", "one-folder-1.1.0.zip")),
+            "github:Example/Folded" => Some(("2.1.0", "several-folders-2.1.0.zip")),
             "wago:MrglStale" => Some(("1.0.0", "stale-interface-1.0.0.zip")),
             _ => None,
         }
@@ -1270,5 +1271,103 @@ fn a_folder_without_the_curseforge_marker_has_no_such_warning() {
             "{plan:?}: {:?}",
             answer.messages
         );
+    }
+}
+
+/// Task 114 over task 108: a flavor whose sidecar has two entries of `github:Example/Folded`,
+/// `SeveralFolders` and `SeveralFolders_Options` at 2.0.0, each with its own folder made by hand; the
+/// source's current release 2.1.0 is `several-folders-2.1.0.zip`, which carries both folders.
+fn two_entries_one_zip(name: &str) -> Game {
+    let game = Game::bare(name);
+    let mut entries = Vec::new();
+    for folder in ["SeveralFolders", "SeveralFolders_Options"] {
+        let dir = game.addons().join(folder);
+        std::fs::create_dir_all(&dir).expect("the folder");
+        std::fs::write(
+            dir.join(format!("{folder}.toc")),
+            format!("## Interface: 16001\n## Title: {folder}\n## Version: 2.0.0\n"),
+        )
+        .expect("the TOC");
+        entries.push(format!(
+            r#""{folder}": {{ "source": "github:Example/Folded", "version": "2.0.0", "folders": ["{folder}"], "files": {{}}, "installed_at": "2026-10-21T14:03:05Z" }}"#
+        ));
+    }
+    let flavor_home = game.home().join("wowf");
+    std::fs::create_dir_all(&flavor_home).expect("the flavor home");
+    std::fs::write(
+        flavor_home.join("state.json"),
+        format!(
+            r#"{{ "schema": 1, "flavor": "wowf", "addons": {{ {} }} }}"#,
+            entries.join(", ")
+        ),
+    )
+    .expect("the sidecar");
+    game
+}
+
+#[test]
+fn update_all_says_an_entry_an_earlier_install_folded_into_its_addon() {
+    // Task 114: the install of `SeveralFolders` takes the folder of `SeveralFolders_Options` over and drops
+    // its entry (task 108); the update of `SeveralFolders_Options` after it installs nothing, says the
+    // core's line as its own phase and is counted as folded, not as installed already or failed.
+    let game = two_entries_one_zip("folded");
+    let source = Stub::new();
+    let (answer, events) = run_with(&game, &source, Plan::All, None);
+    assert_eq!(
+        phases(&events),
+        [
+            (Phase::Checking, Some("SeveralFolders")),
+            (Phase::Checked, Some("SeveralFolders")),
+            (Phase::Checking, Some("SeveralFolders_Options")),
+            (Phase::Checked, Some("SeveralFolders_Options")),
+            (Phase::Updating, Some("SeveralFolders")),
+            (Phase::Downloading, Some("SeveralFolders")),
+            (Phase::Installing, Some("SeveralFolders")),
+            (Phase::Updated, Some("SeveralFolders")),
+            (Phase::Folded, Some("SeveralFolders_Options")),
+        ]
+    );
+    let last = events.last().expect("an event");
+    assert_eq!((last.index, last.total), (Some(2), Some(2)));
+    assert_eq!(
+        (last.message.kind, last.message.plain.as_str()),
+        (
+            "success",
+            "SeveralFolders_Options folded into SeveralFolders: SeveralFolders 2.1.0 ships its folder SeveralFolders_Options in _forever_, SeveralFolders_Options has no entry of its own now"
+        )
+    );
+    assert_eq!(source.asked.get(), 2, "the folded entry asks nothing more");
+    assert_eq!(
+        last_plain(&answer),
+        "1 addon updated, 1 folded into another entry"
+    );
+    assert_eq!(answer.messages.last().expect("a summary").kind, "success");
+    let plain: Vec<&str> = answer
+        .messages
+        .iter()
+        .map(|message| message.plain.as_str())
+        .collect();
+    assert!(
+        plain.contains(&"SeveralFolders_Options is no longer managed: SeveralFolders replaced every folder of it"),
+        "{plain:?}"
+    );
+    // The sidecar holds the one entry, with both folders.
+    let state = game.engine().load_state().expect("the sidecar").state;
+    assert_eq!(
+        state.addons.keys().collect::<Vec<_>>(),
+        ["SeveralFolders"],
+        "one entry after"
+    );
+    assert_eq!(state.addons["SeveralFolders"].version, "2.1.0");
+    assert_eq!(
+        state.addons["SeveralFolders"].folders,
+        ["SeveralFolders", "SeveralFolders_Options"]
+    );
+    assert_eq!(game.toc_version("SeveralFolders_Options"), "2.1.0");
+    // The rows read from the disk again: no row keeps the dropped entry's check answer.
+    let flavor = answer.flavor.as_ref().expect("the flavor");
+    for row in &flavor.addons {
+        assert!(row.managed, "{row:?}");
+        assert_eq!(row.update, None, "{row:?}");
     }
 }

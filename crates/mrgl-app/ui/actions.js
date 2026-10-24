@@ -71,6 +71,8 @@
     updated: { label: "updated", value: 1 },
     // Task 099: the install path found the pick's version installed already; the event's line says where.
     "installed-already": { label: "installed already", value: 1 },
+    // Task 114: an install earlier in the run folded the addon's entry into its addon; nothing to install.
+    folded: { label: "folded into another entry", value: 1 },
     failed: { label: "failed", value: 1, failed: true },
   };
 

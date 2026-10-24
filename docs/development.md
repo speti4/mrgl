@@ -360,7 +360,8 @@ source, `update --all` updates the first entry and then, for the second, install
 core's line (`Folded::update_line`) through the voice: `SeveralFolders_Options folded into SeveralFolders:
 SeveralFolders 1.2.3 ships its folder SeveralFolders_Options in _forever_, SeveralFolders_Options has no
 entry of its own now`; the summary counts it as `1 folded into another entry`, neither updated nor
-failed, and the sidecar holds the one entry after. Right after the check,
+failed, and the sidecar holds the one entry after. The window's update says the same line as its own phase
+(task 114). Right after the check,
 before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
 as the window's check does (task 087, below): a source gone, a failed check and an addon left before the
 rate limit are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
@@ -939,14 +940,20 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   pick, task 055). Each takes a Tauri channel (`tauri::ipc::Channel`) and sends one event per step as it
   happens: `{ phase, folder, index, total, check, message }`, the phase `checking`, `checked` (with the
   addon's `check`), `stopped` (the request budget's stop line of task 068, a warning, sent once per source
-  that stopped, task 101, and not repeated in the answer), `updating`, `downloading`, `installing`, `updated`, `installed-already` or
-  `failed` (an error), the folder the addon's first one, the message in the voice. `installed-already`
+  that stopped, task 101, and not repeated in the answer), `updating`, `downloading`, `installing`, `updated`, `installed-already`,
+  `folded` or `failed` (an error), the folder the addon's first one, the message in the voice. `installed-already`
   (task 099) is the install path's "installed already" answer in the command line's words of task 089
   (`AlreadyInstalled::update_line` of the core, which both say): the nothing-to-do line under the addon's
   own entry, else the warning that names the second entry of the same source (`OneFolder not updated:
   OldOneFolder, a second entry of github:Example/Twice, has 1.1.0 installed already in _forever_; OneFolder
   stays at 1.0.0`); the summary counts it as `1 installed already`, not as updated, and the row of an addon
-  another entry stood in for keeps the check's answer. The answer is `{ flavor, messages }`: the flavor as
+  another entry stood in for keeps the check's answer. `folded` (task 114) is an addon whose entry an
+  install earlier in the run dropped, since that install's zip carried every folder of it (task 108,
+  `Installed::folded`): nothing is installed and nothing more is asked, the event says the core's line
+  (`Folded::update_line`: `SeveralFolders_Options folded into SeveralFolders: SeveralFolders 2.1.0 ships its
+  folder SeveralFolders_Options in _forever_, SeveralFolders_Options has no entry of its own now`), the
+  summary counts it as `1 folded into another entry`, and its row reads from the disk again, a folder of
+  the addon it joined. The answer is `{ flavor, messages }`: the flavor as
   it is now (its rows read again, with the check's answer laid over them except for the addons this run
   updated; the answers the cache cannot give again are kept in `last-check.json` for the next list, task
   078, and a file that cannot be written is a warning) and the warnings, then the summary, `UpdateCheck::summary` of the core, which the command line

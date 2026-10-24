@@ -60,12 +60,14 @@
 // A progress event of a run (task 010, `src/actions.rs`):
 //
 //   { phase,                                    checking | checked | stopped | updating | downloading |
-//                                               installing | updated | installed-already | failed
+//                                               installing | updated | installed-already | folded | failed
 //     folder, index, total,                     the row (the addon's first folder), its place and the count
 //     check,                                    on `checked`: the check's answer, as a row's `check`
 //     message }                                 progress; the stop's warning; 099: installed already, the
 //                                               core's line (a warning that names a second entry of the
-//                                               same source); a failed update's error
+//                                               same source); 114: folded, the core's line of an
+//                                               entry an earlier install of the run took every folder
+//                                               of; a failed update's error
 //
 // A flavor is `Flavor` of `flavor.rs` plus its friendly name and its scanned addons:
 //
