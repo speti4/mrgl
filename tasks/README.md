@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-24 — edit the files, not this section._
 
-**State:** 10 backlog (0 ready · 0 blocked · 3 waiting · 7 ideas) · 1 in progress · 97 done · 5 dropped · 6 decisions
+**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 4 in progress · 96 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -46,26 +46,18 @@ _none_
 
 ### Ideas
 
-#### M2 Window MVP
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 114 | [The window's update reports an entry folded into another during the run](backlog/114-the-windows-update-reports-an-entry-folded-into-another.md) | S | 2026-10-22 |
-| 116 | [The window installs a zip in hand with a recorded source](backlog/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md) | S | 2026-10-22 |
-
 #### M4 Sources
 
 | # | Task | Size | Created |
 |---|---|---|---|
 | 111 | [A read-only adopt round on the real retail and classic folders](backlog/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md) | S | 2026-10-22 |
-| 115 | [A distribution-off CurseForge entry is a state of its own in the update check](backlog/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md) | S | 2026-10-22 |
 
 #### M5 Trust
 
 | # | Task | Size | Created |
 |---|---|---|---|
 | 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
-| 119 | [The local coverage run needs a short checkout path](backlog/119-the-local-coverage-run-needs-a-short-checkout-path.md) | S | 2026-10-24 |
+| 118 | [One stand-in client helper for the tests of the three crates](backlog/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | S | 2026-10-23 |
 
 #### M6 macOS preview
 
@@ -75,11 +67,19 @@ _none_
 
 ### In progress
 
+#### M2 Window MVP
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 114 | [The window's update reports an entry folded into another during the run](wip/114-the-windows-update-reports-an-entry-folded-into-another.md) | 2026-10-24 | `none` |
+| 116 | [The window installs a zip in hand with a recorded source](wip/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md) | 2026-10-24 | `none` |
+
 #### M4 Sources
 
 | # | Task | Started | Plan |
 |---|---|---|---|
 | 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
+| 115 | [A distribution-off CurseForge entry is a state of its own in the update check](wip/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md) | 2026-10-24 | `none` |
 
 ### Closed – do not reopen
 
@@ -95,7 +95,6 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
-| 118 | [One stand-in client helper for the tests of the three crates](done/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | 2026-10-24 |
 | 117 | [Test hardening toward full line and branch coverage](done/117-test-hardening-toward-full-line-and-branch-coverage.md) | 2026-10-23 |
 | 113 | [The window's adopt apply reuses the shown report's answers](done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 |
 | 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](done/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 |
@@ -105,8 +104,9 @@ _none_
 | 107 | [The window's row menu and the offline sketch follow the sources of this build](done/107-the-windows-row-menu-and-offline-sketch-follow-the-sources-of-this-build.md) | 2026-10-22 |
 | 106 | [The Wago update check asks for its addons in bulk, one request per game version](done/106-the-wago-update-check-asks-in-bulk.md) | 2026-10-22 |
 | 105 | [A Wago page address resolves to its wago:<id> through the keyless slugs list](done/105-a-wago-page-address-resolves-to-its-id.md) | 2026-10-22 |
+| 104 | [A WoWInterface file waiting for approval is a state of its own in the update ch…](done/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md) | 2026-10-22 |
 
-_87 more in `done/`._
+_86 more in `done/`._
 
 ### Decisions
 
