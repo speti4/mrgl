@@ -247,16 +247,21 @@ fn github_path(path: &str) -> Option<SourceSpec> {
     let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) else {
         return None;
     };
-    let is_name = |part: &str| {
-        !part.is_empty()
-            && part
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-    };
-    (is_name(owner) && is_name(repo)).then(|| SourceSpec::GitHub {
+    (is_github_name(owner) && is_github_name(repo)).then(|| SourceSpec::GitHub {
         owner: owner.to_string(),
         repo: repo.to_string(),
     })
+}
+
+/// An owner or a repository name as GitHub takes it: ASCII letters, digits, `-`, `_` and `.`, and not dots
+/// only (task 124: `.` and `..` would name a cache folder above the GitHub cache, and GitHub has no such
+/// repository). The spec, its page address and adopt's `## X-Website` share it.
+pub(crate) fn is_github_name(part: &str) -> bool {
+    !part.is_empty()
+        && part
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && part.chars().any(|c| c != '.')
 }
 
 /// A Wago id: ASCII letters and digits as written (the ids are case-sensitive, `L6Jb2R6v`), at most 32.
@@ -1451,6 +1456,14 @@ mod tests {
             expected
         );
         assert_eq!(expected.to_string(), "github:Questie/Questie");
+        // A name with dots passes as long as it is not dots only (task 124): `.github` is a real repository.
+        assert_eq!(
+            SourceSpec::parse("github:o.x/.github").unwrap(),
+            SourceSpec::GitHub {
+                owner: "o.x".into(),
+                repo: ".github".into(),
+            }
+        );
     }
 
     #[test]
@@ -1462,6 +1475,10 @@ mod tests {
             ("github:/Questie", GITHUB_FORM),
             ("github:Que stie/Questie", GITHUB_FORM),
             ("github:Questie/.git", GITHUB_FORM),
+            ("github:../..", GITHUB_FORM),
+            ("github:./Questie", GITHUB_FORM),
+            ("github:Questie/...", GITHUB_FORM),
+            ("https://github.com/Questie/..", GITHUB_FORM),
             ("bitbucket:abc", SPEC_FORMS),
             ("", SPEC_FORMS),
             ("wago:", WAGO_FORM),

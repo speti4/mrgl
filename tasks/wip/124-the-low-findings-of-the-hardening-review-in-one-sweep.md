@@ -77,6 +77,19 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
   a `release.json` gets no bound of its own, since it shares the API answers' and a third constant would
   guard nothing more. Tests: the bound in the real client's reader and in the stub, and each source's
   recorded requests carry the download bound on the asset and the answer bound on the API.
+- 2026-10-24 — L3: one rule for a GitHub owner or repository, `sources::is_github_name` (ASCII letters,
+  digits, `-`, `_` and `.`, and not dots only), which the spec, its page address and adopt's `## X-Website`
+  share; `github:../..`, `github:./x`, `github:o/...` and `https://github.com/o/..` are refused with the
+  spec form, `.github` still passes. Tests in `sources` and `toc`.
+- 2026-10-24 — L7: the zip cache's folder and file names go through `state::cache_name`: the text itself
+  when `file_safe` keeps it as it is and it is no reserved device name, else its safe form with `-` and the
+  first 16 hex digits of the text's SHA-256 appended, a `_` in front of a device name (with or without an
+  extension, the check of `zip_entry`). Decided 2026-10-24: 16 hex digits (64 bits), since the names come
+  from zips and source answers and 8 digits would let a crafted name be searched to share another
+  addon's folder in minutes; and no fallback to the old folder name, since that folder may be another
+  addon's (the collision itself): a zip cached before this change under a name or a version that now
+  changes is not found by the rollback, which says the zip is missing. Unit test over safe names, names
+  that differ only in the characters `file_safe` replaces, names of dots only and device names.
 
 ## Deviations from the plan
 

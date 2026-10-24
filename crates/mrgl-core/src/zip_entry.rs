@@ -426,8 +426,9 @@ fn refused_by_windows(part: &str) -> bool {
         || is_reserved_device_name(part)
 }
 
-/// `CON`, `NUL`, `COM1` … `LPT9`, with or without an extension: a file Windows will not create.
-fn is_reserved_device_name(part: &str) -> bool {
+/// `CON`, `NUL`, `COM1` … `LPT9`, with or without an extension: a file Windows will not create. The zip
+/// cache's names escape them too ([`crate::state::cache_name`], task 124).
+pub(crate) fn is_reserved_device_name(part: &str) -> bool {
     let stem = part
         .split('.')
         .next()

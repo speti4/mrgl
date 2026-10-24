@@ -1491,7 +1491,9 @@ two files. A POST is answered from the same files as a GET of its URL, and the s
 the request for the test to read (`FolderHttp::requests`).
 `MRGL_GITHUB_TOKEN` (or the key store's `mrgl:github`, [The API keys](#the-api-keys)) holds a personal
 access token for the GitHub API (60 requests an hour without one); it is sent to `api.github.com` only,
-never with an asset download. The release list of a repository is cached with
+never with an asset download. An owner or a repository is ASCII letters, digits, `-`, `_` and `.`, and
+not dots only (`sources::is_github_name`, task 124: `github:../..` would name the mrgl home as its cache
+folder), in a spec, its page address and adopt's `## X-Website` alike. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
 request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
 `release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline.
@@ -1718,7 +1720,12 @@ deleting it only drops a source gone or a failed check until the next check),
 the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves, a download waits here; every run folder is removed when its run ends, and the leftovers of a run
 that ended before that are swept, see "The staging folder's lifetime") and `cache\<addon>\<version>.zip` (the current and the previous
-version's zip for `mrgl rollback`; never required, deleting it only disables the rollback), and the `WTF`
+version's zip for `mrgl rollback`; never required, deleting it only disables the rollback; the addon's
+name and the version go through `state::cache_name`, task 124: a text `file_safe` keeps as it is, letters,
+digits, `.`, `_` and `-`, is its own name, any other gets its safe form with `-` and the first 16 hex digits
+of its SHA-256 appended, and a reserved device name a `_` in front, so `Foo Bar` and `Foo_Bar` never share a
+folder, a name of dots only is no longer `_`, and `NUL` is no device; a zip cached before task 124 under a
+name or a version that changes this way is not found by the rollback, which says the zip is missing), and the `WTF`
 backups under `backups\<flavor-id>\`: `WTF-<date>.zip` per backup (a plain zip, the date local, so the
 names sort by age) and `WTF-before-restore-<date>\` for every `WTF` folder a restore moved aside; nothing
 prunes that folder, deleting a zip or an aside folder by hand is fine. `MRGL_HOME` overrides the home
