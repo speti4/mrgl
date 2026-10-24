@@ -163,6 +163,14 @@ impl Source for Stub {
     fn resolve(&self, spec: &SourceSpec, _target: &Target) -> Result<Pick> {
         self.asked.set(self.asked.get() + 1);
         let spec = spec.to_string();
+        // Task 115: a project whose author allows no download outside CurseForge.
+        if spec == "curse:4244" {
+            return Err(mrgl_core::Error::DistributionOff {
+                spec,
+                name: " (Mrgl No Distribution)".to_string(),
+                page: "https://www.curseforge.com/wow/addons/mrgl-no-distribution".to_string(),
+            });
+        }
         if self.gone == Some(spec.as_str()) {
             return Err(mrgl_core::Error::SourceStatus {
                 host: "GitHub",
@@ -1370,4 +1378,64 @@ fn update_all_says_an_entry_an_earlier_install_folded_into_its_addon() {
         assert!(row.managed, "{row:?}");
         assert_eq!(row.update, None, "{row:?}");
     }
+}
+
+/// The line of the distribution-off project `curse:4244` (task 115), as the CurseForge source says it.
+const DISTRIBUTION_OFF: &str = "the author of curse:4244 (Mrgl No Distribution) allows no download outside CurseForge: download the zip from https://www.curseforge.com/wow/addons/mrgl-no-distribution and install it with `mrgl add <file.zip> --as curse:4244`";
+
+#[test]
+fn a_project_without_distribution_is_a_state_of_its_own_on_its_row_and_after_a_restart() {
+    // Task 115: the zip in hand of `curse:4244`, recorded with its source; the check asks the source, whose
+    // answer is the state `distribution-off`, counted apart and no failure.
+    let game = Game::bare("distribution-off");
+    std::fs::create_dir_all(game.addons()).expect("the AddOns folder");
+    game.engine()
+        .install(
+            &zips().join("MrglNoDistribution-2.0.0.zip"),
+            &Metadata {
+                source: "curse:4244".to_string(),
+                version: None,
+                name: None,
+                nolib: None,
+            },
+        )
+        .expect("the zip in hand");
+    let (answer, events) = run_with(&game, &Stub::new(), Plan::All, None);
+    assert_eq!(
+        phases(&events),
+        [
+            (Phase::Checking, Some("MrglNoDistribution")),
+            (Phase::Checked, Some("MrglNoDistribution")),
+        ]
+    );
+    let check = events[1].check.as_ref().expect("the check's answer");
+    assert_eq!(check.state, UpdateState::DistributionOff);
+    assert_eq!(check.label, "only on CurseForge");
+    assert_eq!(check.detail.as_deref(), Some(DISTRIBUTION_OFF));
+    assert_eq!(
+        events[1].message.plain,
+        format!("MrglNoDistribution  2.0.0  only on CurseForge: {DISTRIBUTION_OFF}")
+    );
+    let summary = answer.messages.last().expect("a summary");
+    assert_eq!(
+        (summary.kind, summary.plain.as_str()),
+        ("nothing", "nothing updated: 1 only on CurseForge")
+    );
+    let row_state = |flavor: &FlavorView| {
+        let row = flavor
+            .addons
+            .iter()
+            .find(|row| row.folder == "MrglNoDistribution")
+            .expect("the row");
+        assert!(row.update.is_none(), "nothing to install");
+        row.check.as_ref().map(|check| check.state)
+    };
+    assert_eq!(
+        row_state(answer.flavor.as_ref().expect("the flavor")),
+        Some(UpdateState::DistributionOff)
+    );
+    // A restart lists offline, where CurseForge is not asked: the kept answer of the check stands.
+    let home = game.home();
+    let restarted = list::flavor_view(game.engine().flavor.clone(), Some(&home), &[]);
+    assert_eq!(row_state(&restarted), Some(UpdateState::DistributionOff));
 }

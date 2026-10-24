@@ -48,8 +48,9 @@ mrgl is under construction; the plan and its state are in [`tasks/`](tasks/READM
 - **Updates you can read first.** `mrgl update --all --dry-run` checks every addon mrgl installed against
   its source, each on its own release channel, and says where each stands: up to date, update available, a
   guess only (no `release.json` names the flavor, so it is not installed blindly), source gone, pinned,
-  ignored, pending approval (a WoWInterface file the site has not approved yet), not checked (a zip in
-  hand, a linked folder), or newer than the release (a deleted release, a
+  ignored, pending approval (a WoWInterface file the site has not approved yet), only on CurseForge (an
+  author who allows no download elsewhere: the line names the page and how its zip goes in), not checked
+  (a zip in hand, a linked folder), or newer than the release (a deleted release, a
   channel switch: never downgraded); `mrgl update --all` installs the updates after one confirmation
   (`--yes` for scripts), leaves a pinned addon alone and skips an ignored one. It says which addon it is
   checking as it goes, and without a GitHub token it stops asking GitHub before the 60 requests an hour run
@@ -191,7 +192,8 @@ release, beta or alpha file, and sends the key to `api.curseforge.com` and `edge
 download needs it too). CurseForge's terms allow no cache of its answers, so mrgl keeps none: the Forever
 note `list` shows for a CurseForge addon is what CurseForge said when it was installed. Some authors allow no
 download outside CurseForge; for such an addon `add` names its page, and the zip you download there goes in
-with its source recorded, so the update check still asks CurseForge for it:
+with its source recorded, so the update check still asks CurseForge for it and says `only on CurseForge`
+with the page again, counted apart and not as a failure, so a daily `mrgl update --all` stays green:
 
 ```powershell
 target\release\mrgl.exe add MyAddon-2.0.0.zip --as curse:<id> --flavor forever

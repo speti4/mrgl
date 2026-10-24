@@ -97,8 +97,9 @@
   }
 
   // The check states a row names under its version: what needs a look or explains a missing arrow (a
-  // file that waits for the site's approval, task 104).
-  const NOTED = ["installed-newer", "guess-only", "pending", "source-gone", "failed", "rate-limited"];
+  // file that waits for the site's approval, task 104; a project whose author allows no download outside
+  // CurseForge, task 115).
+  const NOTED = ["installed-newer", "guess-only", "pending", "distribution-off", "source-gone", "failed", "rate-limited"];
 
   // A pinned row's note, as the check's data line reads the pin (task 077): the release it leaves alone
   // when the installed version is older, the words of a newer one when it is newer (the check's version

@@ -430,7 +430,8 @@ fn a_project_without_distribution_names_its_page_and_installs_from_a_zip_in_hand
     assert_eq!(entry.forever_build, None, "a zip in hand says nothing");
     let check = update::check(&engine, &curse, None, &mut |_| {}).expect("checks");
     assert_eq!(check.addons.len(), 1);
-    assert_eq!(check.addons[0].state, UpdateState::Failed);
+    // Task 115: a state of its own, not a failed check.
+    assert_eq!(check.addons[0].state, UpdateState::DistributionOff);
     assert_eq!(
         check.addons[0].detail.as_deref(),
         Some(error.to_string().as_str())

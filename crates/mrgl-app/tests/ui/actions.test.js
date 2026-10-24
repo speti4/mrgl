@@ -140,6 +140,8 @@ test("the note names the marks and a check state that needs a word", () => {
   assert.equal(Actions.noteOf(gone), "source gone");
   const pending = Object.assign({}, managed, { check: { state: "pending", label: "pending approval" } });
   assert.equal(Actions.noteOf(pending), "pending approval", "a file that waits for approval (task 104)");
+  const off = Object.assign({}, managed, { check: { state: "distribution-off", label: "only on CurseForge" } });
+  assert.equal(Actions.noteOf(off), "only on CurseForge", "a project without distribution (task 115)");
   const upToDate = Object.assign({}, managed, { check: { state: "up-to-date", label: "up to date" } });
   assert.equal(Actions.noteOf(upToDate), "");
   const held = Object.assign({}, managed, { pinned: "1.2.2", check: { state: "pinned", label: "pinned", latest: "1.2.3" } });

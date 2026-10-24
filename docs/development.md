@@ -304,7 +304,14 @@ source's newest file waits for the site's approval (WoWInterface's `UIPending`),
 install yet and nothing for the user to do: its line is `MrglPending  1.0.0  pending approval: the newest
 file waits for approval on WoWInterface; nothing to install until it is approved`, it is counted apart
 (`1 pending approval`), it is no failure (a run with pending addons alone ends with exit code 0) and the
-summary needs no look for it. `source-gone`: no
+summary needs no look for it. `distribution-off` (task 115): the author of a CurseForge project allows no
+download outside CurseForge (`Error::DistributionOff` of task 096, below), so there is nothing mrgl can
+download; it is the author's choice, not an error: its line is the source's, `MrglNoDistribution  2.0.0
+only on CurseForge: the author of curse:4244 (Mrgl No Distribution) allows no download outside CurseForge:
+download the zip from <page> and install it with `mrgl add <file.zip> --as curse:4244``, it is counted
+apart (`1 only on CurseForge`), a run whose only other answers are no failure ends with exit code 0, and
+the summary needs no look for it; a pinned entry stays `pinned`, as for any answer without a release.
+`source-gone`: no
 release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
 hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
 limit, a server error). `installed-newer` (task 068): the installed version is newer than the current
@@ -363,8 +370,8 @@ entry of its own now`; the summary counts it as `1 folded into another entry`, n
 failed, and the sidecar holds the one entry after. The window's update says the same line as its own phase
 (task 114). Right after the check,
 before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
-as the window's check does (task 087, below): a source gone, a failed check and an addon left before the
-rate limit are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
+as the window's check does (task 087, below): a source gone, a failed check, an addon left before the
+rate limit and a project without distribution (task 115) are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
 that cannot be written is a warning (`the answers of this check are not kept for the window: …`). `--json` is one `update` document: every addon with `state`,
 `latest`, `order` (the installed version against `latest`: `older`, `same`, `newer`, or `null` when there is
 no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installed `addon` block and the
@@ -869,7 +876,8 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   check's answer laid over its row, the note under a row's version, whose pin reads the check's `order` as
   the command line's pinned line does: `pinned at 1.1.0-beta, newer than the release`, or `pinned at 2.0.0,
   2.1.0 is out`; task 077; the check states the note names, `NOTED`: `installed-newer`, `guess-only`,
-  `pending` of task 104, `source-gone`, `failed` and `rate-limited`, each by the core's label), `toolbox.js`
+  `pending` of task 104, `distribution-off` of task 115, `source-gone`, `failed` and `rate-limited`, each
+  by the core's label), `toolbox.js`
   (tasks 074 and 085: the target
   picker's options and the `{ character, realm, account }` an option names, the account in an option's
   value and label only when the answer carries one, the set the picker shows, the set's addons in their
@@ -912,7 +920,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   update; an addon whose answer needs the network (nothing cached) has no `check`. What the cache cannot
   tell again is the last online check's (task 078): a check of the window, and `mrgl update --all` or
   `mrgl update <name>` on the command line (task 087), keeps every addon's answer of `source-gone`,
-  `failed` or `rate-limited` in `last-check.json` under the flavor's folder of the mrgl home
+  `failed`, `rate-limited` or `distribution-off` (task 115: the CurseForge source keeps no cache and the
+  offline view has no key, so only the kept answer tells it) in `last-check.json` under the flavor's folder of the mrgl home
   (`mrgl_core::last_check::record_check`, one rule for both writers), and every list lays those answers
   over the offline ones, so a redraw after a
   mark and a restart show them, until the next check of the addon replaces its answer (dropped for any
@@ -1535,7 +1544,7 @@ author allows no download outside CurseForge (`allowModDistribution: false`, or 
 `null`) is `Error::DistributionOff`, `the author of curse:<id> (<name>) allows no download outside
 CurseForge: download the zip from <page> and install it with …`, the command `mrgl add <file.zip> --as
 curse:<id>` at its end: `add` fails with it and the update check
-reports it as failed; `mrgl add <file.zip> --as <spec>` installs a zip in hand with that spec as its
+reports it as the state `distribution-off` (task 115, above), no failed check; `mrgl add <file.zip> --as <spec>` installs a zip in hand with that spec as its
 recorded source (any spec but a Wago page address, which only a request turns into its id; `--as` without
 a zip is refused), the version from the TOC, so the update check asks the source. The API's terms allow no
 saving or caching of its data: nothing of an answer is written, an answer is kept in memory for the run alone

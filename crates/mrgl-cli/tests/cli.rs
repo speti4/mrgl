@@ -6029,7 +6029,7 @@ fn update_json_is_one_document_with_every_state_and_count() {
         serde_json::json!({
             "update-available": 1, "up-to-date": 2, "installed-newer": 2, "pinned": 1, "ignored": 1,
             "guess-only": 1, "source-gone": 2, "not-checked": 2, "rate-limited": 0, "failed": 0,
-            "pending": 0,
+            "pending": 0, "distribution-off": 0,
         })
     );
     assert_eq!(value["stopped"], serde_json::json!([]));
@@ -8780,7 +8780,69 @@ fn add_curse_names_the_page_of_a_project_without_distribution_and_takes_its_zip_
     );
     assert_eq!(state["addons"]["MrglNoDistribution"]["version"], "2.0.0");
 
-    // The update check asks the recorded source, and its line says how the next version goes in.
+    // The update check asks the recorded source, and its line says how the next version goes in. Task
+    // 115: a state of its own, counted apart, no failure: the run ends with exit code 0.
+    let off_line = format!("MrglNoDistribution  2.0.0  only on CurseForge: {off}");
+    for args in [
+        ["--serious", "update", "--all", "--dry-run"],
+        ["--serious", "update", "--all", "--yes"],
+    ] {
+        let output = game
+            .mrgl_curse()
+            .args(args)
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert!(output.status.success(), "{}", stderr_last_line(&output));
+        let text = stdout(&output);
+        assert!(text.lines().any(|line| line == off_line), "{text}");
+        let summary = if args[3] == "--dry-run" {
+            "dry run: 1 only on CurseForge; nothing written"
+        } else {
+            "nothing updated: 1 only on CurseForge"
+        };
+        assert_eq!(text.lines().last(), Some(summary), "{text}");
+    }
+    let output = game
+        .mrgl_curse()
+        .args([
+            "--json",
+            "update",
+            "--all",
+            "--dry-run",
+            "--flavor",
+            "forever",
+        ])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("one document");
+    assert_eq!(value["addons"][0]["state"], "distribution-off");
+    assert_eq!(value["addons"][0]["detail"], off);
+    assert_eq!(value["addons"][0]["latest"], serde_json::Value::Null);
+    assert_eq!(value["counts"]["distribution-off"], 1);
+    assert_eq!(value["counts"]["failed"], 0);
+    // The window's rows keep the answer for an offline start (task 078), as the window's check does.
+    let kept: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(game.home.join("wowf").join("last-check.json")).expect("the kept answers"),
+    )
+    .expect("JSON");
+    assert_eq!(
+        kept["addons"]["MrglNoDistribution"]["state"],
+        "distribution-off"
+    );
+
+    // A failed check next to it still ends the run with exit code 1: `curse:4245` answers 401.
+    let one_folder = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../mrgl-core/tests/fixtures/zips/one-folder-1.0.0.zip");
+    let output = game
+        .mrgl_curse()
+        .args(["--serious", "add"])
+        .arg(&one_folder)
+        .args(["--as", "curse:4245", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
     let output = game
         .mrgl_curse()
         .args([
@@ -8795,9 +8857,15 @@ fn add_curse_names_the_page_of_a_project_without_distribution_and_takes_its_zip_
         .expect("run mrgl");
     assert_eq!(output.status.code(), Some(1), "a failed check");
     let text = stdout(&output);
+    assert!(text.lines().any(|line| line == off_line), "{text}");
     assert!(
         text.lines()
-            .any(|line| line.starts_with("MrglNoDistribution  2.0.0  ") && line.ends_with(off)),
+            .any(|line| line.starts_with("OneFolder  1.0.0  check failed: CurseForge answered 401")),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line == "dry run: 1 only on CurseForge, 1 check failed; nothing written"),
         "{text}"
     );
 
