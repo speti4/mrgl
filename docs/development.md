@@ -190,11 +190,12 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
 - `scripts/` — helper scripts for the icon, the release zip, the usage guide of the zip (`usage-guide.py`, see
   [The usage guide](#the-usage-guide)), the changelog, the commit rules and the coverage table
   (`coverage-check.py`, with the pins `coverage-toolchain.txt` and `cargo-llvm-cov-version.txt`, see
-  [Coverage](#coverage)).
+  [Coverage](#coverage)); `scripts/tests/` — their `unittest` tests (`test_usage_guide.py`, see
+  [The usage guide](#the-usage-guide)), which load a script from its path, since the names carry hyphens.
 - `docs/` — this page, the git workflow, the maintainer sessions, origin, research and the voice guide.
 - `tasks/` — the backlog, the work in flight, the history and the decisions (the task standard).
 - `.github/workflows/` — CI (fmt, clippy, test, the oldest supported Rust, the changelog and usage guide
-  checks, the dependency policy, the workflow lint, the coverage measurement, the commit rules), the tagged
+  checks, the tests of the helper scripts, the dependency policy, the workflow lint, the coverage measurement, the commit rules), the tagged
   release, the weekly advisory check and the task-to-issue mirror;
   `.github/actions/install-rust-toolchain/` — the toolchain install step the CI jobs share;
   `.github/dependabot.yml` — the weekly dependency updates.
@@ -1115,7 +1116,8 @@ uv run --with pillow python -I scripts\make-icon.py   # crates\mrgl-app\icons\ic
 `.github/workflows/ci.yml` runs seven jobs on every push to `main` and every pull request: `test`
 (windows-latest: `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`), `lint` (ubuntu:
 `cargo fmt --check`, `scripts/changelog.py --check`, skipped on a tag, see
-[The changelog](#the-changelog), and `scripts/usage-guide.py --check`, see [The usage guide](#the-usage-guide)),
+[The changelog](#the-changelog), `scripts/usage-guide.py --check` and the tests under `scripts/tests/`, see
+[The usage guide](#the-usage-guide)),
 `msrv` (windows-latest: `cargo check` with the toolchain that `rust-version`
 in `Cargo.toml` names, so nothing newer than the declared minimum slips in; it runs on Windows because the
 Windows target needs tauri-build's resource compiler, which a Linux runner lacks), `non-windows` (ubuntu:
@@ -1302,9 +1304,24 @@ The lint job runs `--check` on every pull request: it renders the page from the 
 nothing, so a README edit the generator cannot read fails where it is made, not on the day of a release. A
 README change that adds a section of its own for users moves the markers with it.
 
+The check proves that the real README renders; `scripts/tests/test_usage_guide.py` proves that what the page
+cannot render still stops it (task 122). It loads the script from its path with `importlib` and runs `main()`
+as `--check` over fixture READMEs written as strings in the test (never a copy of the real README), with the
+README and `Cargo.toml` swapped for temporary files: one test for each rejection, each asserting the exit code 1
+and the message with the README line number the generator names (or the README alone, where the generator has
+no line: a region or a fence left open, no marker, no `##` heading), plus a small fixture README whose page has
+the expected sections, rewrites and links and no external asset, rendered twice to the same bytes. A link in a
+fixture names a file of the real repo, since the generator checks links against the checkout. A new rejection
+in the generator gets its test in the same change: a fixture README that holds the construct on a known line,
+and the assertion on that line and on the message, specific enough that another rejection catching the same
+line would not pass it (the block-level `raw HTML: <line>` against the inline `raw HTML or an autolink`). The
+test has to fail with the rejection taken out of the script, which is worth trying once by hand. The lint job
+runs the tests after the `--check`.
+
 ```powershell
 python -I scripts/usage-guide.py --check                    # render it, write nothing; exit 1 on a problem
 python -I scripts/usage-guide.py --out dist\GUIDE.html      # the page, to open it in a browser
+python -I -m unittest discover -s scripts/tests             # the generator's rejections and a fixture page
 ```
 
 ### The changelog

@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-24 — edit the files, not this section._
 
-**State:** 8 backlog (0 ready · 0 blocked · 3 waiting · 5 ideas) · 1 in progress · 103 done · 5 dropped · 6 decisions
+**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 104 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -57,7 +57,6 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
-| 122 | [Tests of the usage guide generator's error paths](backlog/122-tests-of-the-usage-guide-generators-error-paths.md) | S | 2026-10-24 |
 | 124 | [The low findings of the hardening review in one sweep](backlog/124-the-low-findings-of-the-hardening-review-in-one-sweep.md) | M | 2026-10-24 |
 
 #### M6 macOS preview
@@ -88,6 +87,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 122 | [Tests of the usage guide generator's error paths](done/122-tests-of-the-usage-guide-generators-error-paths.md) | 2026-10-24 |
 | 121 | [A hardening review of the code that touches the disk, the network and the keys](done/121-a-hardening-review-of-the-code-that-touches-the-disk-the-network-and-the-keys.md) | 2026-10-24 |
 | 120 | [A usage guide as HTML inside the release zip](done/120-a-usage-guide-as-html-inside-the-release-zip.md) | 2026-10-24 |
 | 119 | [The local coverage run needs a short checkout path](done/119-the-local-coverage-run-needs-a-short-checkout-path.md) | 2026-10-24 |
@@ -97,9 +97,8 @@ _none_
 | 114 | [The window's update reports an entry folded into another during the run](done/114-the-windows-update-reports-an-entry-folded-into-another.md) | 2026-10-24 |
 | 117 | [Test hardening toward full line and branch coverage](done/117-test-hardening-toward-full-line-and-branch-coverage.md) | 2026-10-23 |
 | 113 | [The window's adopt apply reuses the shown report's answers](done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 |
-| 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](done/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 |
 
-_93 more in `done/`._
+_94 more in `done/`._
 
 ### Decisions
 
