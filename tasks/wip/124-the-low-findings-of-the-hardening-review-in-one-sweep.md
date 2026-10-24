@@ -110,6 +110,12 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
   `Foo /x.lua`, `Foo/x.lua.` and `Foo/.../x.lua` are refused, a leading space and an inner dot pass. The
   fixture `trailing-dot-entry.zip` (`TrailingDot/` next to `TrailingDot./`, 550 bytes) is refused by
   `install` with nothing written; a rerun of `make-zips.py` left every other fixture zip byte-equal.
+- 2026-10-24 — L8: `Request`'s `Debug` is written by hand and prints the values of `sources::SECRET_HEADERS`
+  (`Authorization`, `x-api-key`, any case) as `<hidden>`; `doctor::Inputs::token` is an
+  `Option<keys::Key>`, and `doctor::rate_limit` takes the key and adds it only when `keys::may_send` passes
+  the URL, as every source does. Tests: a request's `{:?}` with both headers in other cases, the doctor's
+  inputs' `{:?}`, the rate-limit request with and without the token; the CurseForge test checks that its
+  key header is among the hidden ones.
 
 ## Deviations from the plan
 

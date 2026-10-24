@@ -1032,6 +1032,12 @@ mod tests {
         let requests = source.http().requests();
         assert_eq!(requests.len(), 2);
         assert!(requests.iter().all(|request| !request.follow_redirects));
+        // The key's header is one a request's `Debug` hides (task 124).
+        assert!(
+            crate::sources::SECRET_HEADERS
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(KEY_HEADER))
+        );
         // A download on every hop, bounded as one (task 124).
         assert!(
             requests

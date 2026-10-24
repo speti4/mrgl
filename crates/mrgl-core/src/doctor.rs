@@ -323,14 +323,17 @@ impl RateLimit {
 }
 
 /// The rate limit, from one `GET /rate_limit` with the token when there is one (GitHub does not count
-/// this request). A transport failure, a status other than 200 or an answer without the numbers is
+/// this request), the token going to the API's own host only ([`keys::may_send`], task 124), as every
+/// source's key does. A transport failure, a status other than 200 or an answer without the numbers is
 /// `unknown` with the reason, never an error.
-pub fn rate_limit(http: &dyn Http, token: Option<&str>) -> RateLimit {
-    let mut request = Request::get(format!("{API_URL}/rate_limit"))
+pub fn rate_limit(http: &dyn Http, token: Option<&keys::Key>) -> RateLimit {
+    let url = format!("{API_URL}/rate_limit");
+    let mut request = Request::get(url.as_str())
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28");
-    if let Some(token) = token.filter(|token| !token.is_empty()) {
-        request = request.header("Authorization", format!("Bearer {token}"));
+    if let Some(token) = token.filter(|_| keys::may_send(crate::sources::SourceKind::GitHub, &url))
+    {
+        request = request.header("Authorization", format!("Bearer {}", token.value()));
     }
     let response = match http.get(&request) {
         Ok(response) => response,
@@ -642,8 +645,9 @@ pub struct Inputs {
     pub only: Option<FlavorId>,
     /// The mrgl home folder.
     pub home: Option<PathBuf>,
-    /// The GitHub token, sent with the rate limit request and never printed.
-    pub token: Option<String>,
+    /// The GitHub token, sent with the rate limit request and never printed: a [`keys::Key`], whose
+    /// `Debug` hides it (task 124).
+    pub token: Option<keys::Key>,
     pub api_keys: Vec<ApiKey>,
     /// Warnings met before the report (an unreadable config).
     pub warnings: Vec<String>,
@@ -663,7 +667,7 @@ pub struct Probes<'a> {
 /// registry or `MRGL_DISCOVERY`.
 pub fn report_of_process(root_flag: Option<PathBuf>, only: Option<FlavorId>) -> Report {
     let (root, warnings) = root_and_warnings(discover::resolve_root_of_process(root_flag));
-    let token = keys::of_process(crate::sources::SourceKind::GitHub).map(keys::Key::into_value);
+    let token = keys::of_process(crate::sources::SourceKind::GitHub);
     let inputs = Inputs {
         root,
         only,
@@ -728,7 +732,7 @@ pub fn report(inputs: Inputs, probes: &Probes<'_>) -> Report {
         root_origin: inputs.root.as_ref().map(|root| root.origin),
         home: inputs.home.as_deref().map(|home| redactor.path(home)),
         webview2: probes.runtime.webview2(),
-        github_rate_limit: rate_limit(probes.http, inputs.token.as_deref()),
+        github_rate_limit: rate_limit(probes.http, inputs.token.as_ref()),
         api_keys: inputs.api_keys.clone(),
         flavors,
         warnings: warnings.iter().map(|line| redactor.text(line)).collect(),
@@ -1403,7 +1407,7 @@ mod tests {
             }),
             only: None,
             home: Some(home.clone()),
-            token: Some(SECRET.to_string()),
+            token: github_token(SECRET),
             api_keys: api_keys_from(|name| (name == TOKEN_ENV).then(|| OsString::from(SECRET))),
             warnings: vec![format!("a warning about {}", profile.join("x").display())],
             redactor: Redactor::new(Some(&profile)),
@@ -1868,8 +1872,35 @@ mod tests {
             assert_eq!(unknown.remaining, None);
         }
         let http = MapHttp::new().answer(url, 200, RATE_LIMIT);
-        rate_limit(&http, Some(""));
+        rate_limit(&http, None);
         assert_eq!(http.requests()[0].header_value("Authorization"), None);
+        let http = MapHttp::new().answer(url, 200, RATE_LIMIT);
+        rate_limit(&http, github_token("made-up-token").as_ref());
+        assert_eq!(
+            http.requests()[0].header_value("Authorization"),
+            Some("Bearer made-up-token")
+        );
+    }
+
+    /// A GitHub token as the environment gives it, the store off.
+    fn github_token(value: &str) -> Option<keys::Key> {
+        keys::lookup(
+            crate::sources::SourceKind::GitHub,
+            &|name| (name == TOKEN_ENV).then(|| OsString::from(value)),
+            &keys::NoStore { reason: "off" },
+        )
+    }
+
+    #[test]
+    fn the_inputs_debug_hides_the_token() {
+        // Task 124: the doctor holds the token as a key, so a `{:?}` of its inputs names it and no more.
+        let inputs = Inputs {
+            token: github_token("made-up-token"),
+            ..Inputs::default()
+        };
+        let printed = format!("{inputs:?}");
+        assert!(!printed.contains("made-up-token"), "{printed}");
+        assert!(printed.contains("<hidden>"), "{printed}");
     }
 
     #[test]

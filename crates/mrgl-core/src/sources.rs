@@ -793,8 +793,14 @@ pub const MAX_ANSWER_BYTES: u64 = 32 * 1024 * 1024;
 /// The bound on the body of a download ([`Request::download`]): an addon zip, megabytes at most.
 pub const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 
+/// The request headers that carry a key (task 124): the GitHub token and the Wago key in `Authorization`,
+/// the CurseForge key in `x-api-key`. A [`Request`]'s `Debug` prints their values as `<hidden>`, so a
+/// `{:?}` or a panic message added later cannot print a key.
+pub const SECRET_HEADERS: [&str; 2] = ["Authorization", "x-api-key"];
+
 /// One HTTP request, as a source issues it: a GET, or a POST with its body ([`Http::post`], task 092).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Its `Debug` hides the values of the [`SECRET_HEADERS`].
+#[derive(Clone, PartialEq, Eq)]
 pub struct Request {
     pub url: String,
     /// Header name and value; the names are sent as given.
@@ -853,6 +859,31 @@ impl Request {
     /// A request header's value, ASCII case-insensitive on the name.
     pub fn header_value(&self, name: &str) -> Option<&str> {
         header_value(&self.headers, name)
+    }
+}
+
+impl fmt::Debug for Request {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let headers: Vec<(&str, &str)> = self
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                let secret = SECRET_HEADERS
+                    .iter()
+                    .any(|secret| secret.eq_ignore_ascii_case(name));
+                (
+                    name.as_str(),
+                    if secret { "<hidden>" } else { value.as_str() },
+                )
+            })
+            .collect();
+        f.debug_struct("Request")
+            .field("url", &self.url)
+            .field("headers", &headers)
+            .field("body", &self.body)
+            .field("follow_redirects", &self.follow_redirects)
+            .field("max_body", &self.max_body)
+            .finish()
     }
 }
 
@@ -2129,6 +2160,28 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("the connection was cut"), "{error}");
+    }
+
+    #[test]
+    fn a_requests_debug_hides_the_headers_that_carry_a_key() {
+        // Task 124: no `{:?}` of a request prints a key, whatever the case of the header's name.
+        let request = Request::get("https://api.example.test/a")
+            .header("Accept", "application/json")
+            .header("authorization", "Bearer made-up-token")
+            .header("X-Api-Key", "made-up-key");
+        let printed = format!("{request:?}");
+        assert!(!printed.contains("made-up"), "{printed}");
+        assert_eq!(printed.matches("<hidden>").count(), 2, "{printed}");
+        assert!(
+            printed.contains(r#"("Accept", "application/json")"#),
+            "{printed}"
+        );
+        assert!(printed.contains("https://api.example.test/a"), "{printed}");
+        // The request itself still carries the values.
+        assert_eq!(
+            request.header_value("Authorization"),
+            Some("Bearer made-up-token")
+        );
     }
 
     #[test]

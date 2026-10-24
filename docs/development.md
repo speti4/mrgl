@@ -707,8 +707,10 @@ available and the count; `--json` is `kind: "keys"` with `api_keys[]` (`source`,
 `store` and `store_unavailable`, and `set` and `clear` answer `kind: "key"` with `action`, `source`,
 `name`, `target`, `changed` and `warnings`. The doctor's `api keys:` line is the same listing.
 
-A key's value lives in a `keys::Key`, whose `Debug` hides it, and no error, listing or JSON carries it. It
-goes to its source's hosts only, over HTTPS (`keys::may_send`): the GitHub token to `api.github.com`
+A key's value lives in a `keys::Key`, whose `Debug` hides it, and no error, listing or JSON carries it; a
+request's `Debug` prints the values of the headers that carry a key as `<hidden>` (`Authorization` and
+`x-api-key`, `sources::SECRET_HEADERS`), and the doctor holds the GitHub token as a `Key` too, task 124. It
+goes to its source's hosts only, over HTTPS (`keys::may_send`, the doctor's rate-limit request included): the GitHub token to `api.github.com`
 (never with an asset download), the Wago key to `addons.wago.io` (the external API and a download link
 there, never the keyless data endpoints, task 095), the CurseForge key to
 `api.curseforge.com` and `edge.forgecdn.net` in the `x-api-key` header (task 096; the CDN asks for it since
