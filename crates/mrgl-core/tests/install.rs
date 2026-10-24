@@ -549,6 +549,33 @@ fn an_escaping_entry_refuses_the_zip_and_writes_nothing() {
 }
 
 #[test]
+fn an_entry_ending_in_a_dot_refuses_the_zip_and_writes_nothing() {
+    // Task 124: `TrailingDot.` is `TrailingDot` once Windows drops the dot, so the zip is refused before
+    // anything is unpacked.
+    let sandbox = Sandbox::new("trailing-dot");
+    let error = sandbox
+        .engine
+        .install(
+            &zip("trailing-dot-entry.zip"),
+            &metadata("trailing-dot-entry.zip"),
+        )
+        .expect_err("refused");
+    match &error {
+        Error::ZipEntryEscapes { entry, .. } => assert_eq!(entry, "TrailingDot./core.lua"),
+        other => panic!("{other}"),
+    }
+    assert!(sandbox.folders().is_empty());
+    assert!(
+        sandbox.staging_entries().is_empty(),
+        "the staging folder is cleaned"
+    );
+    assert!(
+        !sandbox.engine.home.state_path().exists(),
+        "nothing was recorded"
+    );
+}
+
+#[test]
 fn a_zip_without_an_addon_and_a_file_that_is_no_zip_are_errors() {
     let sandbox = Sandbox::new("no-addon");
     let error = sandbox

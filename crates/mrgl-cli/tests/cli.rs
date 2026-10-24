@@ -268,6 +268,47 @@ fn scan_serious_prints_only_plain_lines() {
 }
 
 #[test]
+fn a_control_character_from_a_toc_reaches_the_terminal_as_a_replacement_and_json_escaped() {
+    // Task 124: a TOC whose version holds an escape sequence and a carriage return (a line that would
+    // clear the screen and write over itself) is printed with U+FFFD in their place; `--json` keeps the
+    // characters, escaped by serde.
+    let root = temp_game_root("control-characters");
+    let addon = root
+        .join("_forever_")
+        .join("Interface")
+        .join("AddOns")
+        .join("Evil");
+    std::fs::create_dir_all(&addon).expect("the addon folder");
+    std::fs::write(
+        addon.join("Evil.toc"),
+        "## Interface: 11508\n## Title: Evil\n## Version: 1.0\u{1b}[2J\rfake\n\nEvil.lua\n",
+    )
+    .expect("the TOC");
+    let output = mrgl()
+        .arg("scan")
+        .arg(root.join("_forever_"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("Evil"))
+        .expect("the Evil line");
+    assert!(line.contains("1.0\u{fffd}[2J\u{fffd}fake"), "{line}");
+    assert!(!text.contains(['\u{1b}', '\r']), "{text:?}");
+    let output = mrgl()
+        .args(["--json", "scan"])
+        .arg(root.join("_forever_"))
+        .output()
+        .expect("run mrgl");
+    let json = stdout(&output);
+    assert!(json.contains("1.0\\u001b[2J\\rfake"), "{json}");
+    assert!(!json.contains('\u{fffd}'), "{json}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn list_resolves_a_friendly_name_against_the_root_flag() {
     let output = mrgl()
         .args(["list", "--flavor", "forever", "--root"])
@@ -9538,6 +9579,128 @@ fn add_dry_run_of_a_zip_says_update_and_warns_in_a_folder_the_curseforge_app_man
         sidecar(&game)["addons"]["SeveralFolders"]["version"],
         "2.0.0"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn add_dry_run_refuses_a_dropped_folder_as_the_install_does() {
+    // Task 124: version 2.1.0 drops `SeveralFolders_Data`; the dry run runs the commit's refusals over it
+    // too, so it no longer says `would update` where the install refuses.
+    let game = Game::new("dry-run-dropped");
+    game.install("several-folders-2.0.0.zip");
+    let dry_run = |game: &Game| {
+        game.mrgl()
+            .args(["--serious", "add"])
+            .arg(zips().join("several-folders-2.1.0.zip"))
+            .args(["--flavor", "forever", "--dry-run"])
+            .output()
+            .expect("run mrgl")
+    };
+    let install = |game: &Game| {
+        game.mrgl()
+            .args(["--serious", "add"])
+            .arg(zips().join("several-folders-2.1.0.zip"))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl")
+    };
+
+    // A junction made by hand where the dropped folder was (task 067).
+    let data = game.addon("SeveralFolders_Data");
+    let elsewhere = game.root.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("a target");
+    std::fs::remove_dir_all(&data).expect("the folder goes");
+    mrgl_core::link::create_junction(&data, &elsewhere).expect("a junction by hand");
+    let before = game_snapshot(&game);
+    for output in [dry_run(&game), install(&game)] {
+        assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+        let line = stderr_last_line(&output);
+        assert!(
+            line.starts_with("refused to install over SeveralFolders_Data (flavor "),
+            "{line}"
+        );
+        assert_eq!(game_snapshot(&game), before, "nothing was touched");
+    }
+
+    // A sidecar that records `..` among the addon's folders (task 123): dropped by 2.1.0 as well.
+    std::fs::remove_dir(&data).expect("the junction goes");
+    let mut state = sidecar(&game);
+    state["addons"]["SeveralFolders"]["folders"]
+        .as_array_mut()
+        .expect("the folders")
+        .push("..".into());
+    std::fs::write(game.state_path(), state.to_string()).expect("the sidecar");
+    let before = game_snapshot(&game);
+    for output in [dry_run(&game), install(&game)] {
+        assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+        let line = stderr_last_line(&output);
+        assert!(
+            line.starts_with("refused: the sidecar of ")
+                && line.contains("records the folder `..`, which is no folder name"),
+            "{line}"
+        );
+        assert_eq!(game_snapshot(&game), before, "nothing was touched");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn update_dry_run_says_which_update_the_commit_would_refuse() {
+    // Task 124: `update --dry-run` stages nothing, so it cannot know which folders the new version drops;
+    // a folder the entry records that the commit refuses, kept or dropped, is a warning before the summary.
+    let game = managed_game(
+        "update-dry-refused",
+        &[
+            ("Questie", "github:Questie/Questie", "1.2.2", ""),
+            ("Plain", "github:Example/Prerelease", "0.9.0", ""),
+        ],
+    );
+    let mut state = sidecar(&game);
+    state["addons"]["Questie"]["folders"]
+        .as_array_mut()
+        .expect("the folders")
+        .push("..".into());
+    std::fs::write(game.state_path(), state.to_string()).expect("the sidecar");
+    let plain = game.addon("Plain");
+    let elsewhere = game.root.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("a target");
+    std::fs::remove_dir_all(&plain).expect("the folder goes");
+    mrgl_core::link::create_junction(&plain, &elsewhere).expect("a junction by hand");
+    let before = game_snapshot(&game);
+    let output = run_in(&game, &["update", "--all", "--dry-run"]);
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let refused: Vec<&str> = text
+        .lines()
+        .filter(|line| line.starts_with("the update of "))
+        .collect();
+    assert_eq!(refused.len(), 2, "{text}");
+    assert!(
+        refused[0].starts_with(
+            "the update of Plain would be refused: refused to install over Plain (flavor "
+        ),
+        "{text}"
+    );
+    assert!(
+        refused[1].starts_with("the update of Questie would be refused: refused: the sidecar of ")
+            && refused[1].contains("records the folder `..`"),
+        "{text}"
+    );
+    assert!(
+        stdout_last_line(&output).starts_with("dry run: 2 updates available"),
+        "{text}"
+    );
+    let json = run_in(&game, &["--json", "update", "--all", "--dry-run"]);
+    let document: serde_json::Value = serde_json::from_slice(&json.stdout).expect("one document");
+    let warnings = document["warnings"].as_array().expect("the warnings");
+    assert!(
+        warnings
+            .iter()
+            .filter_map(|warning| warning.as_str())
+            .any(|warning| warning.starts_with("the update of Questie would be refused: ")),
+        "{document}"
+    );
+    assert_eq!(game_snapshot(&game), before, "a dry run writes nothing");
 }
 
 #[cfg(windows)]

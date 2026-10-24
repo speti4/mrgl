@@ -6,9 +6,10 @@
 //! An entry passes when it can be opened for reading, its name (read as UTF-8, else as CP437) is a relative
 //! path under the target folder and it is not a symbolic link. A name fails on an absolute path, a drive
 //! letter, a `..` component, a component with a character Windows refuses (a control character,
-//! `:<>"|?*`) or a reserved device name (`CON`, `NUL`, `COM1` … `LPT9`, with or without an extension);
-//! `\` counts as a separator, `.` and empty components are dropped, and a name with no component left (`./`)
-//! is skipped. A zip that fails refuses as a whole: [`Error::ZipEntryEscapes`] for a name or a link,
+//! `:<>"|?*`), a component ending in a dot or a space (Windows drops it, task 124) or a reserved device
+//! name (`CON`, `NUL`, `COM1` … `LPT9`, with or without an extension); `\` counts as a separator, `.` and
+//! empty components are dropped, and a name with no component left (`./`) is skipped. A zip of more than
+//! [`MAX_ENTRIES`] entries is refused before any entry is read (task 124). A zip that fails refuses as a whole: [`Error::ZipEntryEscapes`] for a name or a link,
 //! [`Error::ZipUnreadable`] for a zip or an entry that cannot be read, each naming the zip by its
 //! [`ZipRole`].
 //!
@@ -51,6 +52,12 @@ use crate::error::{Error, Result};
 /// The bound on what one zip unpacks to unless the caller raises it (task 039): 2 GiB, far above any addon
 /// or `WTF` folder, far below a full disk.
 pub const MAX_UNPACKED: u64 = 2 * 1024 * 1024 * 1024;
+
+/// The bound on the entries of one zip (task 124): 100,000, some thirty times the files of the largest
+/// addon (a few thousand) and five times a `WTF` folder of fifty characters with two hundred addons'
+/// SavedVariables each, so a zip of a few hundred thousand empty files cannot fill `Interface\AddOns`, which
+/// the client and the scan read on every start.
+pub const MAX_ENTRIES: usize = 100_000;
 
 /// What a zip is to its caller: the noun its unreadable message names and the folder its entries must stay
 /// under. The messages of the two commands are written once, in [`Error`], with these words in them.
@@ -95,6 +102,8 @@ pub enum Excess {
         written: u64,
         limit: u64,
     },
+    /// It holds more entries than [`MAX_ENTRIES`], found before any entry was read (task 124).
+    Entries { entries: usize, limit: usize },
 }
 
 impl std::fmt::Display for Excess {
@@ -124,6 +133,10 @@ impl std::fmt::Display for Excess {
                 size_text(*limit),
                 size_text(*written)
             ),
+            Excess::Entries { entries, limit } => write!(
+                formatter,
+                "it holds {entries} entries, more than the bound of {limit} for one zip; nothing was written"
+            ),
         }
     }
 }
@@ -143,13 +156,35 @@ pub struct CheckedEntry {
 /// outside the target folder or a symbolic link, [`Error::ZipUnreadable`] for an entry that cannot be
 /// opened for reading or whose name cannot be read. Once every entry passed, the uncompressed sizes the
 /// file entries declare are summed and a sum past `max_unpacked` refuses the zip with
-/// [`Error::ZipTooLarge`] (task 039). `zip` is the path the errors name.
+/// [`Error::ZipTooLarge`] (task 039). Before any of that, a zip of more than [`MAX_ENTRIES`] entries is
+/// refused with the same error (task 124). `zip` is the path the errors name.
 pub fn checked_entries<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     zip: &Path,
     role: ZipRole,
     max_unpacked: u64,
 ) -> Result<Vec<CheckedEntry>> {
+    checked_entries_within(archive, zip, role, max_unpacked, MAX_ENTRIES)
+}
+
+/// [`checked_entries`] with the bound on the entries given, so a test needs no zip of 100,000 entries.
+fn checked_entries_within<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    zip: &Path,
+    role: ZipRole,
+    max_unpacked: u64,
+    max_entries: usize,
+) -> Result<Vec<CheckedEntry>> {
+    if archive.len() > max_entries {
+        return Err(Error::ZipTooLarge {
+            role,
+            path: zip.to_path_buf(),
+            excess: Excess::Entries {
+                entries: archive.len(),
+                limit: max_entries,
+            },
+        });
+    }
     let unreadable = |reason: String| Error::ZipUnreadable {
         role,
         path: zip.to_path_buf(),
@@ -393,7 +428,7 @@ fn entry_path(name: &str) -> Option<Vec<String>> {
             "" | "." => continue,
             ".." => return None,
             part => {
-                if refused_by_windows(part) {
+                if refused_component(part) {
                     return None;
                 }
                 parts.push(part.to_string());
@@ -408,26 +443,30 @@ fn entry_path(name: &str) -> Option<Vec<String>> {
 /// a trailing dot or space (Windows drops them, so `AddOns\.` and `AddOns\ ` are `AddOns` itself), a
 /// character Windows refuses (a control character, `:<>"|?*`, the entry rule's) and a reserved device
 /// name (`CON`, `NUL`, `COM1` … `LPT9`, with or without an extension). A leading space and an inner dot
-/// pass.
+/// pass. `.` and `..` end in a dot.
 pub fn is_folder_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains(['/', '\\'])
-        && !name.ends_with(['.', ' '])
-        && !refused_by_windows(name)
+    !name.is_empty() && !name.contains(['/', '\\']) && !refused_component(name)
+}
+
+/// One path component Windows will not create as written, the entry rule's and the folder-name rule's: a
+/// trailing dot or space (Windows drops it, so `Foo.` and `Foo` would unpack into one folder and the
+/// sidecar's file list would name a path that is not on disk; task 124 for an entry), or what
+/// [`refused_by_windows`] refuses.
+fn refused_component(part: &str) -> bool {
+    part.ends_with(['.', ' ']) || refused_by_windows(part)
 }
 
 /// One path component Windows will not create: a control character, `:<>"|?*` or a reserved device
-/// name. The entry rule and the folder-name rule share it.
+/// name.
 fn refused_by_windows(part: &str) -> bool {
     part.chars()
         .any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
         || is_reserved_device_name(part)
 }
 
-/// `CON`, `NUL`, `COM1` … `LPT9`, with or without an extension: a file Windows will not create.
-fn is_reserved_device_name(part: &str) -> bool {
+/// `CON`, `NUL`, `COM1` … `LPT9`, with or without an extension: a file Windows will not create. The zip
+/// cache's names escape them too ([`crate::state::cache_name`], task 124).
+pub(crate) fn is_reserved_device_name(part: &str) -> bool {
     let stem = part
         .split('.')
         .next()
@@ -520,6 +559,58 @@ mod tests {
             entry_path("Foo/Console.lua"),
             strings(&["Foo", "Console.lua"])
         );
+        // Task 124: a component ending in a dot or a space is renamed by Windows, so it is refused; a
+        // leading space and an inner dot pass.
+        for name in [
+            "Foo./x.lua",
+            "Foo /x.lua",
+            "Foo/x.lua.",
+            "Foo/x.lua ",
+            "Foo/.../x.lua",
+        ] {
+            assert_eq!(entry_path(name), None, "{name:?}");
+        }
+        assert_eq!(
+            entry_path(" Foo/.x.lua/a.b"),
+            strings(&[" Foo", ".x.lua", "a.b"])
+        );
+    }
+
+    #[test]
+    fn a_zip_of_more_entries_than_the_bound_is_refused_before_any_is_read() {
+        // Task 124: the count comes from the central directory; with a bound of two, three entries are one
+        // too many and even an escaping entry among them is never looked at.
+        let mut archive = zip_of(&[
+            ("Many/Many.toc", b"## Title: Many", false),
+            ("Many/a.lua", b"", false),
+            ("Many/../../b.lua", b"", false),
+        ]);
+        let zip = PathBuf::from("many.zip");
+        let error = checked_entries_within(&mut archive, &zip, ZipRole::Addon, MAX_UNPACKED, 2)
+            .expect_err("refused");
+        assert!(
+            matches!(
+                &error,
+                Error::ZipTooLarge {
+                    role: ZipRole::Addon,
+                    excess: Excess::Entries {
+                        entries: 3,
+                        limit: 2
+                    },
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "refused many.zip: it holds 3 entries, more than the bound of 2 for one zip; nothing was written"
+        );
+        // At the bound the entries are checked as usual.
+        let error = checked_entries_within(&mut archive, &zip, ZipRole::Addon, MAX_UNPACKED, 3)
+            .expect_err("the escaping entry");
+        assert!(matches!(error, Error::ZipEntryEscapes { .. }), "{error}");
+        assert_eq!(MAX_ENTRIES, 100_000);
     }
 
     // --- the folder-name rule (task 123), one test per case ---

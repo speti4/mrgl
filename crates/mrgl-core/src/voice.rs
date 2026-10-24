@@ -101,6 +101,21 @@ pub fn count_noun(count: usize, noun: &str) -> String {
     }
 }
 
+/// A message as a terminal gets it (task 124): every control character (U+0000 to U+001F and U+007F to
+/// U+009F) but the line break becomes U+FFFD, so an escape sequence or a carriage return in a release's
+/// notes, a tag or a TOC field cannot rewrite the screen or fake a prompt. The command line passes every
+/// human line through it; the JSON output, which serde escapes, and the window, which writes text and never
+/// markup, do not. The line break stays: the voice and the command line write it between the lines of one
+/// message.
+pub fn printable(text: &str) -> std::borrow::Cow<'_, str> {
+    let refused = |c: char| c.is_control() && c != '\n';
+    if text.contains(refused) {
+        text.replace(refused, "\u{fffd}").into()
+    } else {
+        text.into()
+    }
+}
+
 /// `MRGL_SERIOUS` set to anything but empty or `0` means serious.
 fn serious_env_set(value: Option<&std::ffi::OsStr>) -> bool {
     value.is_some_and(|value| !value.is_empty() && value != "0")
@@ -171,6 +186,26 @@ mod tests {
             Kind::Success.murloc()
         );
         assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn a_printable_message_keeps_its_line_breaks_and_loses_every_other_control_character() {
+        // Task 124: an escape sequence, a carriage return, a tab, DEL and a C1 control from a release's
+        // notes or a TOC field become U+FFFD; the voice's own line break stays.
+        let said = Voice::new(false).say(
+            Kind::Success,
+            "installed Evil 1.0\u{1b}[2J\rtype y\t\u{7f}\u{9b}31m (1 folder: Evil)",
+        );
+        assert_eq!(
+            printable(&said),
+            format!(
+                "{}\ninstalled Evil 1.0\u{fffd}[2J\u{fffd}type y\u{fffd}\u{fffd}\u{fffd}31m (1 folder: Evil)",
+                Kind::Success.murloc()
+            )
+        );
+        // A clean message comes back as it was, borrowed; letters past ASCII are no control.
+        let clean = "Mrgl.\nno updates for Ölbrücke, 3 up to date";
+        assert!(matches!(printable(clean), std::borrow::Cow::Borrowed(text) if text == clean));
     }
 
     #[test]

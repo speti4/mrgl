@@ -323,14 +323,10 @@ pub fn github_repo_of_website(website: &str) -> Option<String> {
     let owner = parts.next()?;
     let repo = parts.next()?;
     let repo = repo.strip_suffix(".git").unwrap_or(repo);
-    // A repository named `.git` alone is empty once the suffix is gone.
-    let is_name = |part: &str| {
-        !part.is_empty()
-            && part
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-    };
-    (is_name(owner) && is_name(repo)).then(|| format!("{owner}/{repo}"))
+    // A repository named `.git` alone is empty once the suffix is gone; an owner or a repository of dots
+    // only is no name either (task 124).
+    (crate::sources::is_github_name(owner) && crate::sources::is_github_name(repo))
+        .then(|| format!("{owner}/{repo}"))
 }
 
 fn starts_with_ignore_ascii_case(text: &str, prefix: &str) -> bool {
@@ -602,6 +598,10 @@ mod tests {
             ("https://github.com/own er/Repo", None),
             ("https://github.com/Owner/re@po", None),
             ("https://github.com/Owner/.git", None),
+            ("https://github.com/../..", None),
+            ("https://github.com/Owner/..", None),
+            ("https://github.com/./Repo", None),
+            ("https://github.com/Owner/.github", Some("Owner/.github")),
         ] {
             assert_eq!(
                 github_repo_of_website(website).as_deref(),

@@ -63,15 +63,16 @@ impl FlavorHome {
         self.dir.join(CACHE_DIR)
     }
 
-    /// One addon's cache folder: `cache\<addon>`.
+    /// One addon's cache folder: `cache\<addon>`, the name through [`cache_name`].
     pub fn addon_cache_dir(&self, name: &str) -> PathBuf {
-        self.cache_dir().join(file_safe(name))
+        self.cache_dir().join(cache_name(name))
     }
 
-    /// The cached zip of one version of an addon: `cache\<addon>\<version>.zip`.
+    /// The cached zip of one version of an addon: `cache\<addon>\<version>.zip`, both through
+    /// [`cache_name`].
     pub fn cached_zip(&self, name: &str, version: &str) -> PathBuf {
         self.addon_cache_dir(name)
-            .join(format!("{}.zip", file_safe(version)))
+            .join(format!("{}.zip", cache_name(version)))
     }
 
     /// Reads the sidecar: a missing file is a fresh state, a corrupt one a fresh state with a warning.
@@ -104,6 +105,23 @@ pub fn file_safe(text: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// A name or a version as one folder or file name of the zip cache, two texts never sharing one (task 124):
+/// the text itself when [`file_safe`] keeps it as it is and it is no reserved device name, else its safe
+/// form with `-` and the first 16 hex digits of the text's SHA-256 appended, and a `_` before a reserved
+/// device name (`NUL`, `COM1`, with or without an extension), so `Foo Bar` is `Foo_Bar-<hash>` next to
+/// `Foo_Bar`, `...` and `....` are two folders, and `NUL` is `_NUL-<hash>`, never the null device.
+pub fn cache_name(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let safe = file_safe(text);
+    let device = crate::zip_entry::is_reserved_device_name(&safe);
+    if safe == text && !device {
+        return safe;
+    }
+    let hash = format!("{:x}", Sha256::digest(text.as_bytes()));
+    let escape = if device { "_" } else { "" };
+    format!("{escape}{safe}-{}", &hash[..16])
 }
 
 /// One installed addon as the sidecar remembers it.
@@ -499,14 +517,55 @@ mod tests {
         assert_eq!(home.state_path(), home.dir.join("state.json"));
         assert_eq!(home.staging_dir(), home.dir.join("staging"));
         assert_eq!(
+            home.cached_zip("BigAddon", "v1.2.0"),
+            home.dir.join("cache").join("BigAddon").join("v1.2.0.zip")
+        );
+        assert_eq!(
             home.cached_zip("Big Addon", "v1.2/beta"),
             home.dir
                 .join("cache")
-                .join("Big_Addon")
-                .join("v1.2_beta.zip")
+                .join(cache_name("Big Addon"))
+                .join(format!("{}.zip", cache_name("v1.2/beta")))
         );
         assert_eq!(file_safe("..."), "_");
         assert_eq!(file_safe("..Foo"), "Foo");
+    }
+
+    #[test]
+    fn a_cache_name_is_the_text_when_it_is_safe_and_never_shared_otherwise() {
+        // Task 124: a name or a version `file_safe` keeps is its own cache name.
+        for text in [
+            "BigWigs",
+            "DBM-Core",
+            "Some_Addon",
+            "1.2.3",
+            "v1.0.0-beta.2",
+        ] {
+            assert_eq!(cache_name(text), text);
+        }
+        // One it changes keeps its safe form and a hash of the text, so two texts never share a folder.
+        let spaced = cache_name("Foo Bar");
+        assert!(spaced.starts_with("Foo_Bar-"), "{spaced}");
+        assert_eq!(spaced.len(), "Foo_Bar-".len() + 16);
+        assert_ne!(spaced, cache_name("Foo_Bar"));
+        assert_ne!(spaced, cache_name("Foo?Bar"));
+        assert_eq!(
+            spaced,
+            cache_name("Foo Bar"),
+            "the same text, the same name"
+        );
+        let dots = [cache_name("."), cache_name(".."), cache_name("...")];
+        assert!(dots.iter().all(|name| name.starts_with("_-")), "{dots:?}");
+        assert!(dots[0] != dots[1] && dots[1] != dots[2] && dots[0] != dots[2]);
+        // A reserved device name is escaped with a `_` in front, with or without an extension.
+        for (text, safe) in [("NUL", "_NUL-"), ("com1", "_com1-"), ("nul.5", "_nul.5-")] {
+            let name = cache_name(text);
+            assert!(name.starts_with(safe), "{name}");
+            assert!(!crate::zip_entry::is_reserved_device_name(&name), "{name}");
+            assert!(!crate::zip_entry::is_reserved_device_name(&format!(
+                "{name}.zip"
+            )));
+        }
     }
 
     #[test]

@@ -884,6 +884,86 @@ fn an_undo_is_refused_while_the_client_runs() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The system's process list, which starts the stand-in client once it has answered the first time: the
+/// guard before a `WTF` write finds no client, the second look after it finds the one that started during
+/// the write (task 124).
+#[cfg(windows)]
+struct StartsAClient {
+    folder: PathBuf,
+    started: std::cell::RefCell<Option<mrgl_test_support::stand_in::StandIn>>,
+}
+
+#[cfg(windows)]
+impl StartsAClient {
+    fn new(folder: &Path) -> StartsAClient {
+        StartsAClient {
+            folder: folder.to_path_buf(),
+            started: std::cell::RefCell::new(None),
+        }
+    }
+
+    fn pid(&self) -> Option<u32> {
+        self.started.borrow().as_ref().map(|child| child.id())
+    }
+}
+
+#[cfg(windows)]
+impl mrgl_core::client::ProcessList for StartsAClient {
+    fn executables(&self) -> std::io::Result<Vec<mrgl_core::client::RunningProcess>> {
+        let answer = mrgl_core::client::SystemProcesses.executables();
+        let mut started = self.started.borrow_mut();
+        if started.is_none() {
+            *started = spawn_stand_in(&self.folder);
+        }
+        answer
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_client_that_started_during_an_apply_or_an_undo_is_a_warning_once_it_is_done() {
+    let root = temp_game_root("client-meanwhile");
+    let flavor = read(&root);
+    let path = sets_path_of(&root);
+    write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
+    let before = snapshot(&wtf_of(&root));
+    let line = |write: &str, pid: u32| {
+        format!(
+            "a client started in _forever_ during {write} (client-stand-in.exe, pid {pid}): it writes WTF again when it logs out, over what {write} wrote; close it and run {write} again if that is lost"
+        )
+    };
+
+    let processes = StartsAClient::new(&flavor.folder);
+    let applied = sets::apply_set_among(
+        &processes,
+        &flavor,
+        &path,
+        "raid",
+        &Target::EveryCharacter,
+        None,
+    )
+    .expect("applied: the write cannot be held back once done");
+    let Some(pid) = processes.pid() else {
+        eprintln!("{SKIPPED}");
+        return;
+    };
+    assert!(applied.changed() > 0);
+    assert_eq!(applied.warnings, [line("the set apply", pid)]);
+    drop(processes);
+
+    let processes = StartsAClient::new(&flavor.folder);
+    let undone = sets::undo_apply_among(&processes, &flavor, &path).expect("undone");
+    let pid = processes.pid().expect("started as before");
+    assert_eq!(undone.warnings, [line("the set undo", pid)]);
+    assert_eq!(
+        snapshot(&wtf_of(&root)),
+        before,
+        "the undo is done all the same"
+    );
+    drop(processes);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn an_edit_changes_only_the_named_addon_in_the_sets_file() {
     let root = temp_game_root("edit");

@@ -684,7 +684,7 @@ impl<H: Http> Source for WowInterface<H> {
     /// Downloads the project's file (no key, the CDN serves it), checks it against the MD5 the API named
     /// before it is written (task 094), and writes it. A 404 names the file and the project.
     fn fetch(&self, pick: &Pick, to: &Path) -> Result<()> {
-        let response = self.http.get(&Request::get(pick.url.clone()))?;
+        let response = self.http.get(&Request::get(pick.url.clone()).download())?;
         match response.status {
             200 => {}
             404 => {
@@ -1037,6 +1037,11 @@ mod tests {
         let list = wowi.file_list().expect("the list");
         assert!(list.projects.contains_key("1") && !list.projects.contains_key("9"));
         assert_eq!(wowi.http().requests().len(), 1);
+        // The file list of every project is an API answer, bounded as one (task 124).
+        assert_eq!(
+            wowi.http().requests()[0].max_body,
+            crate::sources::MAX_ANSWER_BYTES
+        );
         // The list held for the run answers the offline listing without reading the cache.
         assert_eq!(
             wowi.cached_listing("1").map(|listing| listing.dirs),
@@ -1148,8 +1153,14 @@ mod tests {
                 "WoWInterface answered 500 for {url}: the server has a problem; try again later"
             )
         );
-        fetch(MapHttp::new().answer(url, 200, "zip"), &to).expect("fetched");
+        let wowi = WowInterface::new(MapHttp::new().answer(url, 200, "zip"), None);
+        wowi.fetch(&test_pick(url), &to).expect("fetched");
         assert_eq!(std::fs::read(&to).unwrap(), b"zip");
+        // A download, bounded as one (task 124).
+        assert_eq!(
+            wowi.http().requests()[0].max_body,
+            crate::sources::MAX_DOWNLOAD_BYTES
+        );
         // A file where the download folder would be, and an empty path that cannot be written.
         let file = cache.0.join("a-file");
         std::fs::write(&file, b"").unwrap();

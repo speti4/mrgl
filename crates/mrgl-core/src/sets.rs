@@ -888,6 +888,8 @@ pub struct Applied {
     pub characters: Vec<CharacterChange>,
     /// Addons of the set with no folder under `Interface\AddOns`: their lines are written all the same.
     pub not_installed: Vec<String>,
+    /// Plain lines: a client that started during the apply (task 124).
+    pub warnings: Vec<String>,
 }
 
 impl Applied {
@@ -954,6 +956,8 @@ impl Applied {
 /// [`UNDO_DIR`] next to `sets_path`, replacing the last one; an apply that changes nothing keeps it), then
 /// only the files that change written, each through a temporary file. A failed write puts the files
 /// already written back and is [`Error::SetApplyFailed`]; the record before it is back too when they are.
+/// Once the files are written the running-client check looks again (task 124): a client that started
+/// during the apply is a warning in [`Applied::warnings`].
 pub fn apply_set(
     flavor: &Flavor,
     sets_path: &Path,
@@ -971,13 +975,33 @@ pub fn apply_set_in_account(
     target: &Target,
     account: Option<&str>,
 ) -> Result<Applied> {
+    apply_set_among(
+        &client::SystemProcesses,
+        flavor,
+        sets_path,
+        name,
+        target,
+        account,
+    )
+}
+
+/// [`apply_set_in_account`] against the process list it is given, for the guard before the apply and the
+/// second look after it.
+pub fn apply_set_among(
+    processes: &dyn client::ProcessList,
+    flavor: &Flavor,
+    sets_path: &Path,
+    name: &str,
+    target: &Target,
+    account: Option<&str>,
+) -> Result<Applied> {
     let sets = read_sets_at(sets_path, &flavor.id)?;
     let (name, set) = sets
         .find(name)
         .map(|(key, set)| (key.to_string(), set.clone()))
         .ok_or_else(|| sets.not_found(name, &flavor.id))?;
     let characters = targets_in_account(flavor, target, account)?;
-    client::ensure_client_not_running(flavor)?;
+    client::ensure_client_not_running_among(processes, flavor)?;
 
     let mut plans = Vec::new();
     for character in characters {
@@ -1008,6 +1032,7 @@ pub fn apply_set_in_account(
         set: set.clone(),
         characters: plans.into_iter().map(|plan| plan.change).collect(),
         not_installed,
+        warnings: Vec::new(),
     };
     if plans.iter().all(|plan| plan.change.changed.is_empty()) {
         // Nothing to write: the record of the apply before stays.
@@ -1025,7 +1050,13 @@ pub fn apply_set_in_account(
         return Err(error);
     }
     record.keep();
-    Ok(applied(plans))
+    let mut applied = applied(plans);
+    applied.warnings.extend(client::started_during_among(
+        processes,
+        flavor,
+        "the set apply",
+    ));
+    Ok(applied)
 }
 
 /// One character's file as an apply means to write it.
@@ -1371,15 +1402,27 @@ pub fn undo_record(flavor: &Flavor, sets_path: &Path) -> Result<Option<UndoRecor
 /// guard of task 023 (a running client refuses the undo before anything is written), then the files
 /// written, each through a temporary file. A file that changed since the apply (the client writes it at
 /// logout) is put back all the same, with a warning; a character folder that is gone is passed over with
-/// one. A failed write puts the files already written back and is [`Error::SetUndoFailed`].
+/// one. A failed write puts the files already written back and is [`Error::SetUndoFailed`]. Once the
+/// files are written the running-client check looks again (task 124): a client that started during the
+/// undo is a warning among [`Undone::warnings`].
 pub fn undo_apply(flavor: &Flavor, sets_path: &Path) -> Result<Undone> {
+    undo_apply_among(&client::SystemProcesses, flavor, sets_path)
+}
+
+/// [`undo_apply`] against the process list it is given, for the guard before the undo and the second
+/// look after it.
+pub fn undo_apply_among(
+    processes: &dyn client::ProcessList,
+    flavor: &Flavor,
+    sets_path: &Path,
+) -> Result<Undone> {
     let dir = undo_dir_of(sets_path);
     let Some((record, entries)) = read_undo(&dir, flavor)? else {
         return Err(Error::NothingToUndo {
             flavor: flavor.folder_name(),
         });
     };
-    client::ensure_client_not_running(flavor)?;
+    client::ensure_client_not_running_among(processes, flavor)?;
 
     let mut warnings = Vec::new();
     let mut steps = Vec::new();
@@ -1441,6 +1484,11 @@ pub fn undo_apply(flavor: &Flavor, sets_path: &Path) -> Result<Undone> {
             removed.push(character);
         }
     }
+    warnings.extend(client::started_during_among(
+        processes,
+        flavor,
+        "the set undo",
+    ));
     Ok(Undone {
         set: record.set,
         applied_at: record.applied_at,
@@ -1666,6 +1714,7 @@ mod tests {
             },
             characters,
             not_installed: Vec::new(),
+            warnings: Vec::new(),
         };
         let one = Target::Character {
             name: "grrlwave".into(),
@@ -1746,6 +1795,7 @@ mod tests {
             },
             characters: Vec::new(),
             not_installed: Vec::new(),
+            warnings: Vec::new(),
         };
         assert_eq!(applied.not_installed_warning("_forever_"), None);
         applied.not_installed = vec!["BagSorter".into(), "RaidFrames".into()];

@@ -8,7 +8,12 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
 - `crates/mrgl-core` — the library: flavor detection (`flavor`), the AddOns scan and TOC parsing (`scan`,
   `toc`; `scan` also holds `CLIENT_ADDON_PREFIX` and `is_client_addon`, the one `Blizzard_` rule that the
   dependency check and the SavedVariables share, task 080), the sources (`sources`: the `Source` trait, the `Pick` it hands to the install engine, the `Http`
-  trait with the real `ureq` client and the folder-backed stub; `sources::github` reads the releases API,
+  trait with the real `ureq` client and the folder-backed stub; the real client asks over HTTPS only (a
+  plain `http://` address, or a redirect to one, fails before a connection) and bounds an answer's body by
+  the request's kind, 32 MiB for an API answer (`sources::MAX_ANSWER_BYTES`; the largest, WoWInterface's
+  file list, is some 5.6 MB) and 512 MiB for a download (`sources::MAX_DOWNLOAD_BYTES`, which
+  `Request::download` asks for: an asset of every source), a longer body failing as the network does, and
+  the stub holds its answers to the same bound, task 124; `sources::github` reads the releases API,
   the packager's `release.json` and the asset names, with the release list cached by `ETag` under the mrgl
   home folder, task 003; the pick carries `notes`, the release body's first line with text once its
   Markdown markers are stripped, cut at `NOTES_MAX_CHARS` (120) with an ellipsis by `sources::notes_line`,
@@ -75,10 +80,18 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the current `WTF` aside and reverts on a failure, task 013), the addon sets (`sets`, task 014, below),
   the zip entry check
   both of them call (`zip_entry`, task 044: every entry readable, inside its folder and no link, checked
-  before the first is written; next to it the one folder-name rule, `zip_entry::is_folder_name`, task
+  before the first is written, at most 100,000 entries, task 124; next to it the one folder-name rule, `zip_entry::is_folder_name`, task
   123, below), the running-client check (`client`,
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
-  calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
+  calls and the install engine's warning; the four `WTF` writers, the restore, the set apply, the set undo
+  and the SavedVariables cleanup, look again once their write is done, `client::started_during_among`,
+  task 124: a client that started during the write is a warning on the result, `a client started in
+  _forever_ during the restore (…): it writes WTF again when it logs out, over what the restore wrote; close
+  it and run the restore again if that is lost`, never an error, since the write is done and cannot be held
+  back, and a process list that cannot be taken says so the same way; each writer has an `_among` twin that
+  takes the process list, `backup::restore_wtf_among`, `sets::apply_set_among`, `sets::undo_apply_among`
+  and `savedvars::clean_orphans_among`, which the tests hand a list that starts the stand-in client after
+  its first answer), the mrgl home folder with the remembered game root (`home`,
   D-003), the game root resolution (`discover`, task 020: the flag, `MRGL_ROOT`, the remembered root, then
   the launcher's registry key, the game's Uninstall entry (task 043) and the usual install folders, behind
   a lookup trait with a stub), the
@@ -305,8 +318,19 @@ under Interface\AddOns; nothing was moved or removed, and the entry is yours to 
 (`Error::RecordedFolderRefused`). Every install path reaches these checks, since every one stages and commits
 through the engine: a zip in hand, every source, `import`, `update`, `rollback` and the window's update and
 add, which call `Engine::install_from_source` and `Engine::install` and carry the refusal as their error line.
+The dry run of `add <file.zip>` runs the commit's guard itself, `Engine::refuse_commit` (task 124): the
+staged folders and the folders of the previous version the new one drops, as the commit computes them, so a
+dropped folder that is a junction mrgl did not make (task 067) or a recorded `..` refuses the dry run with the
+install's line instead of a `would update`. `update --dry-run` stages nothing and cannot know which folders a
+new version drops, so it holds every folder an available update's entry records to the same guard (kept or
+dropped, the commit refuses such a folder either way) and says so in a warning, `the update of <name> would
+be refused: <the refusal>`, on the screen and among the JSON's `warnings`.
 The GitHub mapping of adopt (`GithubMapping::problems`, which refuses a leading space too), the shareable
 list file (`ListEntry::not_shareable`) and the set apply's undo record hold their names to the same function.
+The zip entry rule refuses a component ending in a dot or a space too (task 124, finding L6 of task 121,
+`zip_entry::refused_component`, which the two rules share): Windows drops the dot or the space, so `Foo.`
+and `Foo` would unpack into one folder and the sidecar's file list would name paths that are not on disk;
+such a zip is refused before anything is written, as an escaping entry is (`Error::ZipEntryEscapes`).
 
 The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
 request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
@@ -519,7 +543,14 @@ parse, zero, or the flag without `--restore` on `backup` is a usage error). In t
   after every failed stage; the restore removes the half-written `WTF`, puts the previous one back and
   reports `restoring <zip> failed and WTF is as it was: ` with the same clause.
 
-Both are `Error::ZipTooLarge` (the restore's write-time refusal is wrapped in `Error::RestoreFailed`, as
+A zip is bounded in entries too (task 124, finding L5 of task 121): more than `zip_entry::MAX_ENTRIES`,
+100,000, some thirty times the files of the largest addon and five times a large `WTF` folder, refuses it
+before a single entry is read, the count taken from the central directory: ``refused <zip>: it holds
+120000 entries, more than the bound of 100000 for one zip; nothing was written``; no flag raises it. A zip
+of a few hundred thousand empty files passes the size bound and would otherwise create every file in
+staging and then under `AddOns`, which the client and the scan read on every start.
+
+All three are `Error::ZipTooLarge` (the restore's write-time refusal is wrapped in `Error::RestoreFailed`, as
 every failure after `WTF` moved aside is), exit code 1 on the CLI and the `message` of the JSON error
 document. Sizes in these messages are written in steps of 1024, as the `backup --list` sizes are. The
 fixtures under `zips/` that test it, written by `make-zips.py`: `declares-too-much-1.0.0.zip` and
@@ -565,6 +596,13 @@ write their progress lines during the install: the progress callback holds an `I
 run at the next write: the lines are dropped, the swap, the sidecar write and the removal of the run's
 staging folders finish, and the run ends with 0 once that addon's install returns, before the next one
 starts.
+
+Every human line the `Reporter` writes, a message on either stream or a data line, goes through
+`voice::printable` first (task 124): a control character, U+0000 to U+001F and U+007F to U+009F, becomes
+U+FFFD, the line break alone excepted (the voice and the command line put it between the lines of one
+message), so an escape sequence or a carriage return in a release's notes, a tag or a TOC field cannot
+rewrite the terminal or fake a prompt. The JSON documents stay as they are, serde escapes those characters;
+the window writes text, never markup, and needs no such step.
 
 ## The doctor
 
@@ -671,7 +709,13 @@ under Control Panel, Credential Manager, Windows Credentials. Outside Windows th
 reads find nothing and a write is refused (a key store there is M6). `MRGL_KEY_STORE=off` turns the store
 off for a run the same way, and `MRGL_KEY_STORE=folder:<path>` keeps the keys as files under that folder
 (`mrgl-<source>`, the key as the content), the tests' store, the mirror of `MRGL_HTTP_STUB`; any other value
-is the Credential Manager.
+is the Credential Manager. A key in a plain file is what the Credential Manager is there to avoid, so the
+folder store exists only in a build with the core's `folder-key-store` feature (task 124, finding L10 of
+task 121): the command line's dev-dependency on the core turns it on, and the resolver (3) unifies a
+dev-dependency's features into dev builds only, so `cargo test`, `cargo clippy --all-targets` and the
+coverage run have it while `cargo build --release` does not, and there `folder:<path>` is any other value
+(`cargo tree -p mrgl-cli -e features --edges normal -i mrgl-core` lists no `folder-key-store`). The core's
+own unit tests have it through `cfg(test)`.
 
 `mrgl key set <source>` (`github`, `wago`, `curse`, a source's name, or the variable) reads the key from the
 standard input, all of it from a pipe (`Get-Clipboard | mrgl key set wago`) or one line from a terminal,
@@ -684,8 +728,10 @@ available and the count; `--json` is `kind: "keys"` with `api_keys[]` (`source`,
 `store` and `store_unavailable`, and `set` and `clear` answer `kind: "key"` with `action`, `source`,
 `name`, `target`, `changed` and `warnings`. The doctor's `api keys:` line is the same listing.
 
-A key's value lives in a `keys::Key`, whose `Debug` hides it, and no error, listing or JSON carries it. It
-goes to its source's hosts only, over HTTPS (`keys::may_send`): the GitHub token to `api.github.com`
+A key's value lives in a `keys::Key`, whose `Debug` hides it, and no error, listing or JSON carries it; a
+request's `Debug` prints the values of the headers that carry a key as `<hidden>` (`Authorization` and
+`x-api-key`, `sources::SECRET_HEADERS`), and the doctor holds the GitHub token as a `Key` too, task 124. It
+goes to its source's hosts only, over HTTPS (`keys::may_send`, the doctor's rate-limit request included): the GitHub token to `api.github.com`
 (never with an asset download), the Wago key to `addons.wago.io` (the external API and a download link
 there, never the keyless data endpoints, task 095), the CurseForge key to
 `api.curseforge.com` and `edge.forgecdn.net` in the `x-api-key` header (task 096; the CDN asks for it since
@@ -1439,7 +1485,8 @@ name and no folder extended by the others (`boss-core-5.0.0.zip`, task 065), a T
 folder, a TOC with an interface for another build, a path that tries to escape the staging folder, three
 TOCs at the root whose stems are `.`, `..` and a blank (`dot-toc.zip`, `dot-dot-toc.zip`, `blank-toc.zip`,
 task 123: installed under the zip's stem, and refused once a test copies them under a stem that is no folder
-name either), an addon with an embedded-only and a missing required dependency, and a zip with no addon at
+name either), an addon folder next to its twin ending in a dot (`trailing-dot-entry.zip`, task 124: refused by
+the entry rule), an addon with an embedded-only and a missing required dependency, and a zip with no addon at
 all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
 SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made
@@ -1486,7 +1533,9 @@ two files. A POST is answered from the same files as a GET of its URL, and the s
 the request for the test to read (`FolderHttp::requests`).
 `MRGL_GITHUB_TOKEN` (or the key store's `mrgl:github`, [The API keys](#the-api-keys)) holds a personal
 access token for the GitHub API (60 requests an hour without one); it is sent to `api.github.com` only,
-never with an asset download. The release list of a repository is cached with
+never with an asset download. An owner or a repository is ASCII letters, digits, `-`, `_` and `.`, and
+not dots only (`sources::is_github_name`, task 124: `github:../..` would name the mrgl home as its cache
+folder), in a spec, its page address and adopt's `## X-Website` alike. The release list of a repository is cached with
 its `ETag` under `<home>/cache/github/<owner>/<repo>/releases.json`, so a repeated run costs one conditional
 request; the cache can be deleted any time. Next to it, `release-json/tag-<tag>.json` keeps each release's
 `release.json` with that release's tag (tasks 011, 042): this is how `list` reads the Forever build offline.
@@ -1713,7 +1762,12 @@ deleting it only drops a source gone or a failed check until the next check),
 the install engine's `staging\` (a zip is unpacked and checked here before anything
 moves, a download waits here; every run folder is removed when its run ends, and the leftovers of a run
 that ended before that are swept, see "The staging folder's lifetime") and `cache\<addon>\<version>.zip` (the current and the previous
-version's zip for `mrgl rollback`; never required, deleting it only disables the rollback), and the `WTF`
+version's zip for `mrgl rollback`; never required, deleting it only disables the rollback; the addon's
+name and the version go through `state::cache_name`, task 124: a text `file_safe` keeps as it is, letters,
+digits, `.`, `_` and `-`, is its own name, any other gets its safe form with `-` and the first 16 hex digits
+of its SHA-256 appended, and a reserved device name a `_` in front, so `Foo Bar` and `Foo_Bar` never share a
+folder, a name of dots only is no longer `_`, and `NUL` is no device; a zip cached before task 124 under a
+name or a version that changes this way is not found by the rollback, which says the zip is missing), and the `WTF`
 backups under `backups\<flavor-id>\`: `WTF-<date>.zip` per backup (a plain zip, the date local, so the
 names sort by age) and `WTF-before-restore-<date>\` for every `WTF` folder a restore moved aside; nothing
 prunes that folder, deleting a zip or an aside folder by hand is fine. `MRGL_HOME` overrides the home

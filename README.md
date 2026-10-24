@@ -275,7 +275,9 @@ last `add` of the same source fetched, so before that the build is `unknown`. Th
 
 A backup is a plain zip under `%LOCALAPPDATA%\mrgl\backups\<flavor-id>\` (or the folder `--to` names), and a
 restore moves the current `WTF` folder aside into the same place before it writes, so it can be undone by
-hand; it is refused while the game client runs.
+hand; it is refused while the game client runs. A restore, a set apply, a set undo and a SavedVariables
+cleanup look again once they are done: a game started in the meantime is a warning, since it writes `WTF`
+again when you log out, so close it and run the step again if what it wrote is lost.
 
 `mrgl savedvars` lists every `SavedVariables\<Addon>.lua` of a flavor, account-wide and per character, the
 largest first with its `.bak`, and a total. A file is an orphan when no addon folder of its name is left under

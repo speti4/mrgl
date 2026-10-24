@@ -53,7 +53,7 @@ use mrgl_core::sets::{self, AddonSet};
 use mrgl_core::sources::{self, Channel, Source, SourceKind, SourceSpec, Sources, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
 use mrgl_core::update::{self, CheckProgress, SummaryOf, UpdateState};
-use mrgl_core::voice::{Kind, Voice};
+use mrgl_core::voice::{self, Kind, Voice};
 use mrgl_core::zip_entry;
 use mrgl_core::{Error, VERSION};
 
@@ -487,7 +487,9 @@ fn emit(stream: Stream, text: std::fmt::Arguments<'_>) {
     }
 }
 
-/// Prints the two-line messages, the plain data lines, or JSON when asked, through [`emit`].
+/// Prints the two-line messages, the plain data lines, or JSON when asked, through [`emit`]. Every human
+/// line goes through [`voice::printable`] (task 124): a control character from a release, a TOC or a zip
+/// reaches the terminal as U+FFFD; the JSON is serde's and escapes them itself.
 struct Reporter {
     voice: Voice,
     json: bool,
@@ -501,7 +503,7 @@ impl Reporter {
         } else {
             emit(
                 Stream::Stdout,
-                format_args!("{}\n", self.voice.say(kind, plain)),
+                format_args!("{}\n", voice::printable(&self.voice.say(kind, plain))),
             );
         }
     }
@@ -521,13 +523,16 @@ impl Reporter {
     fn say_on_stderr(&self, kind: Kind, plain: impl std::fmt::Display) {
         emit(
             Stream::Stderr,
-            format_args!("{}\n", self.voice.say(kind, plain)),
+            format_args!("{}\n", voice::printable(&self.voice.say(kind, plain))),
         );
     }
 
     /// A plain data line (one addon of a listing); human mode only, the JSON document carries the data.
     fn line(&self, text: impl std::fmt::Display) {
-        emit(Stream::Stdout, format_args!("{text}\n"));
+        emit(
+            Stream::Stdout,
+            format_args!("{}\n", voice::printable(&text.to_string())),
+        );
     }
 
     /// The one JSON document of a command; its `kind` is a fixed name.
@@ -2013,8 +2018,9 @@ fn add_zip(
             .stage(&zip, &metadata)
             .map_err(|error| error.to_string())?;
         warnings.extend(staged.sweep_warnings.iter().cloned());
+        // The commit's refusals, the folders the previous version drops included (task 124).
         engine
-            .refuse_links(&loaded.state, &staged.folders())
+            .refuse_commit(&loaded.state, &staged)
             .map_err(|error| error.to_string())?;
         // What the install would record (task 083): a reinstall of the recorded version keeps the entry's
         // previous version, as the commit does.
@@ -2530,6 +2536,8 @@ fn backup_command(
         let bound = max_unpacked.unwrap_or(zip_entry::MAX_UNPACKED);
         let restored = backup::restore_wtf_bounded(&flavor, &zip, &backups, bound)
             .map_err(|error| error.to_string())?;
+        // Task 124: a client that started during the restore.
+        warnings.extend(restored.warnings.iter().cloned());
         if reporter.json {
             reporter.document(serde_json::json!({
                 "kind": "restore",
@@ -2986,6 +2994,19 @@ fn update_command(
     let available = updates.len();
     // The updates this run installs: none on a dry run, else every one after `--yes` or the confirmation.
     let to_apply = if dry_run {
+        // Task 124: an update the commit would refuse over a folder the entry records (a junction mrgl did
+        // not make, a recorded `..`; kept or dropped by the new version, the commit refuses either) says
+        // so here, as the install would.
+        warnings.extend(updates.iter().filter_map(|addon| {
+            let folders = state
+                .entry(&addon.name)
+                .map(|(_, entry)| entry.folders.clone())
+                .unwrap_or_default();
+            engine
+                .refuse_links(&state, &folders)
+                .err()
+                .map(|error| format!("the update of {} would be refused: {error}", addon.name))
+        }));
         Vec::new()
     } else {
         let stdin = std::io::stdin();
@@ -3565,6 +3586,8 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             let applied =
                 sets::apply_set_in_account(&flavor, &path, &name, &target, account.as_deref())
                     .map_err(set_error)?;
+            // Task 124: a client that started during the apply.
+            warnings.extend(applied.warnings.iter().cloned());
             report_applied(reporter, &flavor, &target, &applied, warnings);
         }
         SetAction::Undo { .. } => {

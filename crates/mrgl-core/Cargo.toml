@@ -35,6 +35,11 @@ ureq.workspace = true
 # until the macOS preview (M6).
 windows-sys.workspace = true
 
+[features]
+# The folder key store of the end-to-end tests, `MRGL_KEY_STORE=folder:<path>` (task 124): a key in a plain
+# file, so only a test build has it; the command line's dev-dependency turns it on, a release build never.
+folder-key-store = []
+
 [dev-dependencies]
 # The stand-in client and the held files of the tests (task 118), shared with the other two crates.
 mrgl-test-support.workspace = true

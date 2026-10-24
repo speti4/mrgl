@@ -436,6 +436,66 @@ fn the_cleanup_is_refused_while_the_client_runs_and_the_listing_is_not() {
     child.stop();
     let cleaned = savedvars::clean_orphans(&flavor, &backups).expect("cleaned");
     assert!(cleaned.zip.is_some());
+    assert!(cleaned.warnings.is_empty(), "{:?}", cleaned.warnings);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The system's process list, which starts the stand-in client once it has answered the first time: the
+/// guard before a `WTF` write finds no client, the second look after it finds the one that started during
+/// the write (task 124).
+#[cfg(windows)]
+struct StartsAClient {
+    folder: PathBuf,
+    started: std::cell::RefCell<Option<mrgl_test_support::stand_in::StandIn>>,
+}
+
+#[cfg(windows)]
+impl StartsAClient {
+    fn new(folder: &Path) -> StartsAClient {
+        StartsAClient {
+            folder: folder.to_path_buf(),
+            started: std::cell::RefCell::new(None),
+        }
+    }
+
+    fn pid(&self) -> Option<u32> {
+        self.started.borrow().as_ref().map(|child| child.id())
+    }
+}
+
+#[cfg(windows)]
+impl mrgl_core::client::ProcessList for StartsAClient {
+    fn executables(&self) -> std::io::Result<Vec<mrgl_core::client::RunningProcess>> {
+        let answer = mrgl_core::client::SystemProcesses.executables();
+        let mut started = self.started.borrow_mut();
+        if started.is_none() {
+            *started = spawn_stand_in(&self.folder);
+        }
+        answer
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_client_that_started_during_the_cleanup_is_a_warning_once_it_is_done() {
+    let root = savedvars_game("client-meanwhile");
+    let flavor = read(&root);
+    let backups = backups_of(&root);
+    let processes = StartsAClient::new(&flavor.folder);
+    let cleaned = savedvars::clean_orphans_among(&processes, &flavor, &backups)
+        .expect("cleaned: the write cannot be held back once done");
+    let Some(pid) = processes.pid() else {
+        eprintln!("{SKIPPED}");
+        return;
+    };
+    assert!(cleaned.zip.is_some());
+    assert_eq!(
+        cleaned.warnings,
+        [format!(
+            "a client started in _forever_ during the SavedVariables cleanup (client-stand-in.exe, pid {pid}): it writes WTF again when it logs out, over what the SavedVariables cleanup wrote; close it and run the SavedVariables cleanup again if that is lost"
+        )]
+    );
+    drop(processes);
     let _ = std::fs::remove_dir_all(&root);
 }
 

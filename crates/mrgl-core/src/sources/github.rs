@@ -719,7 +719,7 @@ impl<H: Http> GitHub<H> {
         asset: &str,
         url: &str,
     ) -> Result<Response> {
-        let response = self.http.get(&Request::get(url))?;
+        let response = self.http.get(&Request::get(url).download())?;
         match response.status {
             200 => Ok(response),
             404 => Err(Error::AssetMissing {
@@ -1617,6 +1617,8 @@ mod tests {
             requests[0].header_value("Authorization"),
             Some("Bearer secret")
         );
+        // The release list is an API answer, bounded as one (task 124).
+        assert_eq!(requests[0].max_body, crate::sources::MAX_ANSWER_BYTES);
         assert_eq!(
             requests[0].header_value("Accept"),
             Some("application/vnd.github+json")
@@ -1802,6 +1804,11 @@ mod tests {
         assert_eq!(
             github.http().requests()[0].header_value("Authorization"),
             None
+        );
+        // An asset is a download, bounded as one (task 124).
+        assert_eq!(
+            github.http().requests()[0].max_body,
+            crate::sources::MAX_DOWNLOAD_BYTES
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

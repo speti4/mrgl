@@ -6,9 +6,11 @@
 //! Manager's generic credential `mrgl:<source>` (`mrgl:github`, `mrgl:wago`, `mrgl:curse`), which
 //! `mrgl key set <source>` writes from the standard input and `mrgl key clear <source>` removes. Outside
 //! Windows the store is not available (a key store there is M6); `MRGL_KEY_STORE=off` turns it off for a
-//! run and `MRGL_KEY_STORE=<folder>` replaces it with a [`FolderStore`] there (the mirror of
-//! `MRGL_HTTP_STUB`), which is how the end-to-end tests stay away from the real Credential Manager, and
-//! the unit tests hand every function a [`MemoryStore`].
+//! run, and in a test build `MRGL_KEY_STORE=folder:<path>` replaces it with a `FolderStore` there (the
+//! mirror of `MRGL_HTTP_STUB`), which is how the end-to-end tests stay away from the real Credential
+//! Manager, and the unit tests hand every function a [`MemoryStore`]. The folder store keeps a key in a
+//! plain file, so it exists only in a build with the `folder-key-store` feature, which the command line's
+//! tests turn on and a release build never has (task 124): there `folder:<path>` is any other value.
 //!
 //! A key's value lives in a [`Key`], whose `Debug` hides it, and goes to its source's hosts only
 //! ([`may_send`]); a listing ([`KeyState`]: `mrgl key list`, the doctor) names the key and its [`Origin`]
@@ -17,6 +19,7 @@
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::io::BufRead;
+#[cfg(any(test, feature = "folder-key-store"))]
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
@@ -33,8 +36,8 @@ pub const WAGO_KEY: &str = "MRGL_WAGO_KEY";
 pub const CURSEFORGE_KEY: &str = "MRGL_CURSEFORGE_KEY";
 /// The sources that take a key, in the order every listing names them; WoWInterface needs none.
 pub const KEYED: [SourceKind; 3] = [SourceKind::GitHub, SourceKind::Wago, SourceKind::CurseForge];
-/// The variable that turns the key store off for a run when it says `off`, and replaces it with a
-/// [`FolderStore`] when it says `folder:<path>`.
+/// The variable that turns the key store off for a run when it says `off`, and, in a test build only,
+/// replaces it with a `FolderStore` when it says `folder:<path>`.
 pub const STORE_ENV: &str = "MRGL_KEY_STORE";
 /// The prefix of a key's entry in the store, before the source's prefix: `mrgl:wago`.
 pub const TARGET_PREFIX: &str = "mrgl:";
@@ -205,14 +208,16 @@ pub fn store_of_process() -> Box<dyn KeyStore> {
     store_from_env(std::env::var_os(STORE_ENV).as_deref())
 }
 
-/// The key store `MRGL_KEY_STORE` names: `off` is no store, `folder:<path>` is a [`FolderStore`] under that
-/// folder (the tests' store, the mirror of `MRGL_HTTP_STUB`), and anything else, unset and empty included, is
-/// the Windows Credential Manager, so a value meant as "on" changes nothing.
+/// The key store `MRGL_KEY_STORE` names: `off` is no store, `folder:<path>` is a `FolderStore` under that
+/// folder in a build with the `folder-key-store` feature (the tests' store, the mirror of `MRGL_HTTP_STUB`;
+/// task 124: never in a release build, where it is any other value), and anything else, unset and empty
+/// included, is the Windows Credential Manager, so a value meant as "on" changes nothing.
 pub fn store_from_env(value: Option<&OsStr>) -> Box<dyn KeyStore> {
     match value.filter(|value| !value.is_empty()) {
         Some(value) if value.eq_ignore_ascii_case("off") => Box::new(NoStore {
             reason: "MRGL_KEY_STORE=off",
         }),
+        #[cfg(any(test, feature = "folder-key-store"))]
         Some(value) if value.to_string_lossy().starts_with(FOLDER_STORE_PREFIX) => {
             Box::new(FolderStore {
                 folder: PathBuf::from(
@@ -224,7 +229,8 @@ pub fn store_from_env(value: Option<&OsStr>) -> Box<dyn KeyStore> {
     }
 }
 
-/// The prefix of a `MRGL_KEY_STORE` value that names a folder store.
+/// The prefix of a `MRGL_KEY_STORE` value that names a folder store (a test build only).
+#[cfg(any(test, feature = "folder-key-store"))]
 pub const FOLDER_STORE_PREFIX: &str = "folder:";
 
 /// A source's key: its environment variable when set and not empty, else the store's entry; `None` for
@@ -393,16 +399,21 @@ impl MemoryStore {
     }
 }
 
-/// A store in a folder, for the end-to-end tests of a child process (`MRGL_KEY_STORE=<folder>`): one
+/// A store in a folder, for the end-to-end tests of a child process (`MRGL_KEY_STORE=folder:<path>`): one
 /// file per source, named after its target with a `-` for the `:` a file name cannot carry
-/// (`mrgl-github`), the key as its UTF-8 content. The folder is made on the first write.
+/// (`mrgl-github`), the key as its UTF-8 content. The folder is made on the first write. A key in a plain
+/// file is what the Credential Manager is there to avoid, so the store is built for the tests only, with
+/// the `folder-key-store` feature (task 124).
+#[cfg(any(test, feature = "folder-key-store"))]
 pub struct FolderStore {
     pub folder: PathBuf,
 }
 
 /// The folder store's name in a line.
+#[cfg(any(test, feature = "folder-key-store"))]
 const FOLDER_STORE: &str = "the folder key store";
 
+#[cfg(any(test, feature = "folder-key-store"))]
 impl FolderStore {
     /// The file of a source's key.
     fn file_of(&self, kind: SourceKind) -> PathBuf {
@@ -419,6 +430,7 @@ impl FolderStore {
     }
 }
 
+#[cfg(any(test, feature = "folder-key-store"))]
 impl KeyStore for FolderStore {
     fn name(&self) -> &'static str {
         FOLDER_STORE

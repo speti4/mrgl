@@ -139,6 +139,15 @@ write("escaping-path.zip", [
     ("Escape/../../Outside.lua", "-- must never be written\n"),
 ])
 
+# Task 124 (finding L6 of task 121): a folder ending in a dot next to its twin without one; Windows drops the
+# dot, so both would unpack into one folder and the file list the sidecar records would name paths that are
+# not on disk. The entry rule refuses the zip.
+write("trailing-dot-entry.zip", [
+    ("TrailingDot/TrailingDot.toc", toc("Trailing Dot", "1.0.0")),
+    ("TrailingDot/core.lua", "-- the folder as written\n"),
+    ("TrailingDot./core.lua", "-- the same folder once Windows drops the dot\n"),
+])
+
 # Task 123 (finding H1 of task 121): a TOC at the root whose stem is `.`, `..` or a blank, names the entry
 # check lets through since none of their components is `.` or `..`. The install falls back to the zip's stem;
 # a test that copies one under a stem that is no folder name either (`..zip`) sees the zip refused.

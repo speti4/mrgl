@@ -583,9 +583,11 @@ pub fn apply(
     let all = sets::characters(&flavor).unwrap_or_default();
 
     let folder_name = flavor.folder_name();
+    // Task 124: a client that started during the apply, after the not-installed warning.
     let mut messages: Vec<Message> = applied
         .not_installed_warning(&folder_name)
         .into_iter()
+        .chain(applied.warnings.iter().cloned())
         .map(|warning| say(Kind::Warning, warning))
         .collect();
     messages.push(said(voice, applied.summary(&target, &folder_name)));
