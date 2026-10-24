@@ -116,9 +116,11 @@ the docs. It runs the whole suite once more under instrumentation, so expect abo
 # scripts/cargo-llvm-cov-version.txt.
 rustup toolchain install --profile minimal --component llvm-tools-preview (Get-Content scripts/coverage-toolchain.txt -Raw).Trim()
 cargo install cargo-llvm-cov --version (Get-Content scripts/cargo-llvm-cov-version.txt -Raw).Trim() --locked
-# Every time: the nightly's name from the pin file, the export as lcov, the table and the floors.
+# Every time: the nightly's name from the pin file, the export as lcov, the table and the floors. The old
+# export goes first: a run that fails leaves it in place, and the check would pass on it.
 $nightly = (Get-Content scripts/coverage-toolchain.txt -Raw).Trim()
 New-Item -ItemType Directory -Force target/llvm-cov | Out-Null
+Remove-Item -Force target/llvm-cov/lcov.info -ErrorAction SilentlyContinue
 cargo "+$nightly" llvm-cov --workspace --branch --locked --lcov --output-path target/llvm-cov/lcov.info
 python -I scripts/coverage-check.py target/llvm-cov/lcov.info
 cargo "+$nightly" llvm-cov report --branch --html --open    # the lines a test misses, file by file
