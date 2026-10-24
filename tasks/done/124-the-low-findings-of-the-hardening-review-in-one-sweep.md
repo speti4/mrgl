@@ -3,6 +3,7 @@ size: M
 origin: done/121-a-hardening-review-of-the-code-that-touches-the-disk-the-network-and-the-keys.md
 created: 2026-10-24
 started: 2026-10-24
+closed: 2026-10-24
 plan: none
 milestone: M5 Trust
 ---
@@ -41,25 +42,25 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
 
 ## Steps
 
-1. [ ] L1 `https_only(true)` on the agent; L2 a body bound per request kind (API answer and `release.json`
+1. [x] L1 `https_only(true)` on the agent; L2 a body bound per request kind (API answer and `release.json`
        small, an asset 512 MiB); a test each against the local HTTP stub
-2. [ ] L3 an owner or repository of dots only refused in the GitHub spec and in `X-Website`; L7 a collision-free
+2. [x] L3 an owner or repository of dots only refused in the GitHub spec and in `X-Website`; L7 a collision-free
        cache folder name (a short hash appended when `file_safe` changed the name), reserved device names
        escaped; tests
-3. [ ] L4 control characters (U+0000 to U+001F, U+007F to U+009F) replaced with U+FFFD in every human line the
+3. [x] L4 control characters (U+0000 to U+001F, U+007F to U+009F) replaced with U+FFFD in every human line the
        CLI prints, JSON untouched; a test through the voice
-4. [ ] L5 a bound on the entries of one zip, refused before anything is written; L6 a component ending in a
+4. [x] L5 a bound on the entries of one zip, refused before anything is written; L6 a component ending in a
        dot or a space refused by the entry rule (sharing `zip_entry`'s checks with 123's folder rule); fixtures
        and tests
-5. [ ] L8 secret header values hidden in `Request`'s `Debug`, the doctor's token as a `keys::Key`, its
+5. [x] L8 secret header values hidden in `Request`'s `Debug`, the doctor's token as a `keys::Key`, its
        rate-limit request through `may_send`; tests
-6. [ ] L9 the running-client check repeated after the unpack of a `WTF` restore, a set apply, a set undo and
+6. [x] L9 the running-client check repeated after the unpack of a `WTF` restore, a set apply, a set undo and
        the SavedVariables cleanup, with a warning line when a client started meanwhile; tests with the stand-in
-7. [ ] L10 the folder key store built for the tests only (a cargo feature the test runs turn on) or named by
+7. [x] L10 the folder key store built for the tests only (a cargo feature the test runs turn on) or named by
        `key list` and the doctor while active; decide, record, test
-8. [ ] The dry run of `add` and `update` runs the refusals of the dropped folders as the commit does; a test
+8. [x] The dry run of `add` and `update` runs the refusals of the dropped folders as the commit does; a test
        over a foreign junction and a recorded `..`
-9. [ ] The docs; `cargo test --locked` and the coverage at 100%
+9. [x] The docs; `cargo test --locked` and the coverage at 100%
 
 ## Log
 
@@ -149,17 +150,56 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
 
 ## Deviations from the plan
 
-- none yet
+- Step 1: the API answer's bound is 32 MiB, not kilobytes to a few MiB: WoWInterface's file list of every
+  project is some 5.6 MB and is an API answer; a `release.json` shares that bound instead of one of its own.
+- Step 3: the line break (U+000A) stays, although it lies in the range the step names: the voice writes it
+  between the murloc and the plain line, and the command line between the lines of one message.
+- Step 6: `Restored` and `sets::Applied` gained a `warnings` field, and each writer an `_among` twin that
+  takes the process list (`backup::restore_wtf_among`, `sets::apply_set_among`, `sets::undo_apply_among`,
+  `savedvars::clean_orphans_among`), the pattern of `client::ensure_client_not_running_among`, so the tests
+  can start the stand-in between the two looks; the window's apply shows the new warning (one `chain` in
+  `toolbox.rs`), its undo and cleanup show their `warnings` already. The README's backup section names the
+  warning; the folder store's warning of the `README.md` line is moot, since the store left the release build.
+- Step 7: `CONTRIBUTING.md` is unchanged: the test instructions stay as written, since `cargo test`, the
+  clippy line and the coverage run all build the dev-dependencies that turn the feature on.
+- Step 8: `update --dry-run` stages nothing, so it cannot tell the dropped folders from the kept ones; it
+  holds every folder an available update's entry records to the guard and warns, since the commit refuses
+  such a folder either way.
 
 ## Verification
 
-- <dated, concrete: what was run, what it showed>
+- 2026-10-24 — `cargo test --locked`: every test binary passes (30), the new tests among them: `sources`
+  (`the_real_client_refuses_a_plain_http_address_before_any_connection`,
+  `a_body_past_its_requests_bound_fails_in_the_real_client_and_in_the_stub`,
+  `a_requests_debug_hides_the_headers_that_carry_a_key`, the bound asserts in each source's tests),
+  `state::tests::a_cache_name_is_the_text_when_it_is_safe_and_never_shared_otherwise`, the dots-only
+  specs and `X-Website` addresses, `voice::tests::a_printable_message_keeps_its_line_breaks_and_loses_every_other_control_character`,
+  `zip_entry::tests::a_zip_of_more_entries_than_the_bound_is_refused_before_any_is_read` and the trailing
+  dot or space names, `tests/install.rs` `an_entry_ending_in_a_dot_refuses_the_zip_and_writes_nothing`,
+  `doctor::tests::the_inputs_debug_hides_the_token`,
+  `client::tests::the_second_look_after_a_wtf_write_warns_about_a_client_or_an_unknown`, the stand-in tests
+  of the four `WTF` writers (`tests/backup.rs`, `tests/sets.rs` apply and undo, `tests/savedvars.rs`; run
+  once with `--nocapture`: none printed the skip line), and the command line's
+  `a_control_character_from_a_toc_reaches_the_terminal_as_a_replacement_and_json_escaped`,
+  `add_dry_run_refuses_a_dropped_folder_as_the_install_does` and
+  `update_dry_run_says_which_update_the_commit_would_refuse`. The command line's `key` tests pass with the
+  folder store coming from the dev-dependency's feature.
+- 2026-10-24 — `cargo tree -p mrgl-cli -e features --edges normal -i mrgl-core`: no `folder-key-store`;
+  with `--edges normal,dev` the feature is there, from the dev-dependency.
+- 2026-10-24 — `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo clippy -p
+  mrgl-core` and `-p mrgl-cli -p mrgl-app` without test targets (the build without the feature),
+  `cargo +1.90 check --all-targets --locked`, `cargo deny check` (advisories, bans, licenses, sources ok),
+  `python -I scripts/usage-guide.py --check`, `python -I -m unittest discover -s scripts/tests`: clean.
+- 2026-10-24 — The coverage measurement of CONTRIBUTING (the pinned nightly, `cargo llvm-cov --workspace
+  --branch`, `scripts/coverage-check.py`), once, on the settled tree: 100.00% lines (0 missed of 15903) and
+  100.00% branches (0 missed of 2290) on all three crates; 6 reasoned exclusions in the code and in the docs.
+- 2026-10-24 — `python -I scripts/changelog.py` regenerated `CHANGELOG.md`; `--check` passes.
 
 ## Closing checklist
 
-- [ ] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log
+- [x] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log
       (a task session of a parallel-sessions repo: listed in the pull request under `## Follow-ups`, the main session files them)
-- [ ] every doc under *Docs that move* changed in this change
-- [ ] Verification written, dated
+- [x] every doc under *Docs that move* changed in this change
+- [x] Verification written, dated
 - [ ] `tasks_check` green, README index regenerated
-- [ ] moved to `done/` with `closed: YYYY-MM-DD`
+- [x] moved to `done/` with `closed: 2026-10-24`

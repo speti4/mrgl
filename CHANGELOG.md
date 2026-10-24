@@ -62,6 +62,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - Test hardening toward full line and branch coverage ([117](https://github.com/speti4/mrgl/blob/main/tasks/done/117-test-hardening-toward-full-line-and-branch-coverage.md))
 - A usage guide as HTML inside the release zip ([120](https://github.com/speti4/mrgl/blob/main/tasks/done/120-a-usage-guide-as-html-inside-the-release-zip.md))
 - One folder-name rule for every staged and recorded addon folder ([123](https://github.com/speti4/mrgl/blob/main/tasks/done/123-one-folder-name-rule-for-every-staged-and-recorded-addon-folder.md))
+- The low findings of the hardening review in one sweep ([124](https://github.com/speti4/mrgl/blob/main/tasks/done/124-the-low-findings-of-the-hardening-review-in-one-sweep.md))
 
 ### Project housekeeping
 
