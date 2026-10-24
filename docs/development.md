@@ -1197,7 +1197,9 @@ usage-error exits write none, which is why the argument parsers have unit tests.
 CONTRIBUTING.md, "Checks before a commit": `scripts/coverage-toolchain.txt` (the nightly by date) and
 `scripts/cargo-llvm-cov-version.txt`. Dependabot sees neither; a bump is a hand edit in a `chore: bump the
 coverage nightly to <date>` pull request that re-measures (a nightly can change the branch count without a
-code change) and adjusts the floors with a sentence why.
+code change) and adjusts the floors with a sentence why. The local run needs a short checkout path, or the
+window crate's command line grows too long for Windows and the crate goes unmeasured without an error; the same
+section of CONTRIBUTING.md says why and gives the `subst` way. The job's runner path is short.
 
 `scripts/coverage-check.py` reads the job's lcov export, prints the table (per crate, then per file by missed
 lines) into the job summary, and fails below its two floors, `LINES_FLOOR` and `BRANCHES_FLOOR` at its top: the

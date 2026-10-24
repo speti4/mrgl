@@ -116,12 +116,34 @@ the docs. It runs the whole suite once more under instrumentation, so expect abo
 # scripts/cargo-llvm-cov-version.txt.
 rustup toolchain install --profile minimal --component llvm-tools-preview (Get-Content scripts/coverage-toolchain.txt -Raw).Trim()
 cargo install cargo-llvm-cov --version (Get-Content scripts/cargo-llvm-cov-version.txt -Raw).Trim() --locked
-# Every time: the nightly's name from the pin file, the summary as JSON, the table and the floors.
+# Every time: the nightly's name from the pin file, the export as lcov, the table and the floors. The old
+# export goes first: a run that fails leaves it in place, and the check would pass on it.
 $nightly = (Get-Content scripts/coverage-toolchain.txt -Raw).Trim()
 New-Item -ItemType Directory -Force target/llvm-cov | Out-Null
+Remove-Item -Force target/llvm-cov/lcov.info -ErrorAction SilentlyContinue
 cargo "+$nightly" llvm-cov --workspace --branch --locked --lcov --output-path target/llvm-cov/lcov.info
 python -I scripts/coverage-check.py target/llvm-cov/lcov.info
 cargo "+$nightly" llvm-cov report --branch --html --open    # the lines a test misses, file by file
+```
+
+The measurement needs a short checkout path: a root of 68 characters at most today, fewer as dependencies are
+added. The nightly cargo names the build folder of every dependency in the rustc command line, one `-L` each, so
+from a deeper folder (a git worktree with a long name, say) the line of the window crate's tests passes the
+32,767 characters Windows allows; cargo then hands rustc an argument file, and cargo-llvm-cov's wrapper, which
+looks for `--crate-name` on the command line, leaves the crate uninstrumented. The table then lacks `mrgl-app`
+and shows core lines missed that only the window's tests reach, with no error about the cause; CI's short runner
+path is not affected. A `subst` drive gives a short path for the run. Map the folder that holds the checkout,
+not the checkout itself: with a drive root as the workspace root, cargo-llvm-cov's pattern for the files under
+`tests/` no longer matches, and they land in the counts. Any free letter does except one a test assumes absent
+(the tests use `Q:` as a drive that does not exist). The mapping lasts until it is removed:
+
+```powershell
+$checkout = (Get-Location).Path
+subst W: (Split-Path -Parent $checkout)    # W: or another free letter, never Q:
+Set-Location "W:\$(Split-Path -Leaf $checkout)"
+# The run and the check above, then back and the mapping removed:
+Set-Location $checkout
+subst W: /d
 ```
 
 CI (`.github/workflows/ci.yml` and `commit-rules.yml`) runs all of them on every push to `main` and every pull

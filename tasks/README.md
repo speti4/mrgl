@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-24 — edit the files, not this section._
 
-**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 100 done · 5 dropped · 6 decisions
+**State:** 6 backlog (0 ready · 0 blocked · 3 waiting · 3 ideas) · 1 in progress · 101 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -57,7 +57,6 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
-| 119 | [The local coverage run needs a short checkout path](backlog/119-the-local-coverage-run-needs-a-short-checkout-path.md) | S | 2026-10-24 |
 
 #### M6 macOS preview
 
@@ -87,6 +86,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 119 | [The local coverage run needs a short checkout path](done/119-the-local-coverage-run-needs-a-short-checkout-path.md) | 2026-10-24 |
 | 118 | [One stand-in client helper for the tests of the three crates](done/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | 2026-10-24 |
 | 116 | [The window installs a zip in hand with a recorded source](done/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md) | 2026-10-24 |
 | 115 | [A distribution-off CurseForge entry is a state of its own in the update check](done/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md) | 2026-10-24 |
@@ -96,9 +96,8 @@ _none_
 | 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](done/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 |
 | 110 | [The window's install paths warn in a folder the CurseForge app manages](done/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md) | 2026-10-22 |
 | 109 | [The window's adopt view: the report and --apply in the toolbox](done/109-the-windows-adopt-view.md) | 2026-10-22 |
-| 108 | [update --all over two entries of one source whose first install takes the secon…](done/108-update-all-over-two-entries-of-one-source-whose-first-install-takes-the-second-folder.md) | 2026-10-22 |
 
-_90 more in `done/`._
+_91 more in `done/`._
 
 ### Decisions
 
