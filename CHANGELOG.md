@@ -72,6 +72,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The toolbox's adopt lines in the window's words, without the command line's flags ([112](https://github.com/speti4/mrgl/blob/main/tasks/done/112-the-toolboxs-adopt-lines-in-the-windows-words.md))
 - One stand-in client helper for the tests of the three crates ([118](https://github.com/speti4/mrgl/blob/main/tasks/done/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md))
 - The local coverage run needs a short checkout path ([119](https://github.com/speti4/mrgl/blob/main/tasks/done/119-the-local-coverage-run-needs-a-short-checkout-path.md))
+- A hardening review of the code that touches the disk, the network and the keys ([121](https://github.com/speti4/mrgl/blob/main/tasks/done/121-a-hardening-review-of-the-code-that-touches-the-disk-the-network-and-the-keys.md))
 
 ## 0.1.0 — 2026-10-22
 
