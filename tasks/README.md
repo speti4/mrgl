@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-24 — edit the files, not this section._
 
-**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 102 done · 5 dropped · 6 decisions
+**State:** 8 backlog (0 ready · 0 blocked · 3 waiting · 5 ideas) · 1 in progress · 103 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -58,6 +58,7 @@ _none_
 |---|---|---|---|
 | 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
 | 122 | [Tests of the usage guide generator's error paths](backlog/122-tests-of-the-usage-guide-generators-error-paths.md) | S | 2026-10-24 |
+| 124 | [The low findings of the hardening review in one sweep](backlog/124-the-low-findings-of-the-hardening-review-in-one-sweep.md) | M | 2026-10-24 |
 
 #### M6 macOS preview
 
@@ -87,6 +88,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 121 | [A hardening review of the code that touches the disk, the network and the keys](done/121-a-hardening-review-of-the-code-that-touches-the-disk-the-network-and-the-keys.md) | 2026-10-24 |
 | 120 | [A usage guide as HTML inside the release zip](done/120-a-usage-guide-as-html-inside-the-release-zip.md) | 2026-10-24 |
 | 119 | [The local coverage run needs a short checkout path](done/119-the-local-coverage-run-needs-a-short-checkout-path.md) | 2026-10-24 |
 | 118 | [One stand-in client helper for the tests of the three crates](done/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | 2026-10-24 |
@@ -96,9 +98,8 @@ _none_
 | 117 | [Test hardening toward full line and branch coverage](done/117-test-hardening-toward-full-line-and-branch-coverage.md) | 2026-10-23 |
 | 113 | [The window's adopt apply reuses the shown report's answers](done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 |
 | 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](done/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 |
-| 110 | [The window's install paths warn in a folder the CurseForge app manages](done/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md) | 2026-10-22 |
 
-_92 more in `done/`._
+_93 more in `done/`._
 
 ### Decisions
 
