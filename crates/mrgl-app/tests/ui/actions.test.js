@@ -157,3 +157,26 @@ test("a pinned row's note follows the check's version order", () => {
   assert.equal(pinned("1.0.0", "1.1.0", null), "pinned at 1.0.0, 1.1.0 is out", "no order: another version is out");
   assert.equal(pinned("1.0.0", "1.0.0", null), "pinned at 1.0.0");
 });
+
+test("the add form waits for a run and an AddOns folder and trims its source (task 116)", () => {
+  const flavor = { id: "wowf", addons_folder: true, addons: [] };
+  assert.deepEqual(Actions.addZipButton(flavor, false), {
+    enabled: true,
+    title: "install an addon zip from disk, with the source it comes from",
+  });
+  assert.deepEqual(Actions.addZipButton(flavor, true), { enabled: false, title: "an update or an add is running" });
+  assert.deepEqual(Actions.addZipButton(Object.assign({}, flavor, { addons_folder: false }), false), {
+    enabled: false,
+    title: "the client has not been started for this flavor yet",
+  });
+  assert.equal(Actions.addZipButton(null, false).enabled, false);
+  assert.deepEqual(Actions.addZipRequest("D:\\Downloads\\A-1.0.zip", "  curse:4244 "), {
+    zip: "D:\\Downloads\\A-1.0.zip",
+    source: "curse:4244",
+  });
+  assert.deepEqual(Actions.addZipRequest("A.zip", "   "), { zip: "A.zip", source: null });
+  assert.deepEqual(Actions.addZipRequest("A.zip", undefined), { zip: "A.zip", source: null });
+  assert.equal(Actions.fileName("D:\\Downloads\\MrglNoDistribution-2.0.0.zip"), "MrglNoDistribution-2.0.0.zip");
+  assert.equal(Actions.fileName("/tmp/a/B-1.zip"), "B-1.zip");
+  assert.equal(Actions.fileName(null), "");
+});

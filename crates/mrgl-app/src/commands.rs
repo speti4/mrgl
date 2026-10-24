@@ -148,6 +148,27 @@ pub async fn choose_root<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> RootCho
     .await
 }
 
+/// The file dialog of the add form (task 116): an addon zip from disk, its path, or nothing when the
+/// dialog was cancelled.
+// coverage: off — the native file dialog; the add itself is `add_zip`, tested without a dialog
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[tauri::command]
+pub async fn choose_zip<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Option<String> {
+    blocking(
+        move || {
+            app.dialog()
+                .file()
+                .set_title("Choose an addon zip")
+                .add_filter("Addon zip", &["zip"])
+                .blocking_pick_file()
+                .and_then(|path| path.into_path().ok())
+                .map(|path| path.display().to_string())
+        },
+        |_| None,
+    )
+    .await
+}
+
 /// The game root a chosen folder names: the folder when it holds flavor folders, its parent when the
 /// folder is a flavor folder itself; `None` otherwise.
 pub fn game_root_of(chosen: &Path) -> Option<PathBuf> {
@@ -575,6 +596,51 @@ pub async fn mark<R: tauri::Runtime>(
                 Ok(engine) => {
                     actions::mark(&engine, &folder, &mark, home_dir().as_deref(), voice())
                 }
+                Err(message) => ActionAnswer::refused(message),
+            }
+        },
+        ActionAnswer::refused,
+    )
+    .await
+}
+
+/// The add form's install of a zip in hand (task 116 over task 096, `actions::add_zip`): `zip` the path
+/// the file dialog answered, `source` the spec the form names (none or empty: the zip's path is recorded).
+/// Refused while an update runs and holds the run while it installs (both install through the engine and
+/// write the flavor's sidecar), and while a toolbox write goes (an adopt writes the sidecar too, a cleanup
+/// reads the AddOns folders an install swaps).
+#[tauri::command]
+pub async fn add_zip<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    flavor: String,
+    zip: String,
+    source: Option<String>,
+) -> ActionAnswer {
+    blocking(
+        move || {
+            if app.state::<ToolboxRun>().is_running() {
+                return ActionAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    toolbox::add_waits_line(),
+                ));
+            }
+            let run = app.state::<UpdateRun>();
+            let Some(_guard) = run.start() else {
+                return ActionAnswer::refused(Message::new(
+                    voice(),
+                    Kind::Warning,
+                    actions::add_busy_line(),
+                ));
+            };
+            match engine_of(&flavor) {
+                Ok(engine) => actions::add_zip(
+                    &engine,
+                    Path::new(&zip),
+                    source.as_deref(),
+                    home_dir().as_deref(),
+                    voice(),
+                ),
                 Err(message) => ActionAnswer::refused(message),
             }
         },

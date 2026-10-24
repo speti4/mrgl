@@ -44,6 +44,7 @@
           </div>
           <input id="search" type="search" placeholder="Search name, folder or source" autocomplete="off" spellcheck="false" />
           <div class="flavor-actions">
+            <button id="add-zip" type="button" class="secondary">Add a zip…</button>
             <button id="check-updates" type="button" class="secondary">Check for updates</button>
             <button id="update-all" type="button" class="primary"></button>
             <button id="cancel-update" type="button" class="danger" hidden>Cancel</button>
@@ -135,6 +136,21 @@
         <div class="confirm-actions">
           <button type="submit" value="cancel" class="secondary">Cancel</button>
           <button type="submit" value="alongside" class="primary">Adopt alongside the CurseForge app</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="add-zip-dialog" class="confirm" aria-labelledby="add-zip-title">
+      <form method="dialog">
+        <h3 id="add-zip-title">Add a zip</h3>
+        <p id="add-zip-file" class="note"></p>
+        <label class="field">Source (optional)
+          <input id="add-zip-source" type="text" placeholder="curse:&lt;id&gt;, wowi:&lt;id&gt;, wago:&lt;id&gt; or github:&lt;owner&gt;/&lt;repo&gt;" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="muted add-zip-hint">With a source, the update check asks it as for any addon mrgl downloaded: the way in for a CurseForge addon whose author allows no download elsewhere. Without one, the zip's path is recorded and a newer zip goes in the same way.</p>
+        <div class="confirm-actions">
+          <button type="submit" value="cancel" class="secondary">Cancel</button>
+          <button type="submit" value="install" class="primary">Install</button>
         </div>
       </form>
     </dialog>

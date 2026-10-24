@@ -20,6 +20,11 @@
 //                                       the first message is its warning (task 110)
 //   Data.cancelUpdate()              -> Promise<message>           the run stops before its next addon; the
 //                                       addon in flight finishes
+//   Data.chooseZip()                 -> Promise<string | null>     task 116: the file dialog's zip, or null
+//   Data.addZip(flavorId, zip, source)  -> Promise<{ flavor, messages }>  task 116: the zip in hand through
+//                                       the engine, recorded with the spec `source` (null: its path), the
+//                                       flavor as it is now and the messages, the summary last; in a flavor
+//                                       with the CurseForge app's marker its warning first (task 110)
 //   Data.mark(flavorId, folder, action, value) -> Promise<{ flavor, messages }>  pin (at `value`, else the
 //                                       installed version), unpin, ignore, unignore, channel (`value`
 //                                       stable | prerelease)
@@ -565,6 +570,41 @@
   const checkUpdates = (flavorId, progress) => runUpdate(flavorId, null, progress, false);
   const updateAll = (flavorId, progress) => runUpdate(flavorId, null, progress, true);
   const updateOne = (flavorId, folder, progress) => runUpdate(flavorId, folder, progress, true);
+
+  // The made-up file dialog of the add form (task 116): the sketch picks one made-up zip, the one a
+  // CurseForge project without distribution offers on its page.
+  function chooseZip() {
+    return Promise.resolve("D:\\Downloads\\MrglNoDistribution-2.0.0.zip");
+  }
+
+  // The made-up add of a zip in hand (task 116): a row named after the zip (`<Name>-<version>.zip`),
+  // recorded with the spec the form names or as a zip in hand, in the core's summary line. A source the
+  // sketch's build lacks (CurseForge) is not checked, as on every row of it.
+  const SPEC_KIND = { github: "github", wago: "wago", wowi: "wowi", curse: "curseforge" };
+  function addZip(flavorId, zip, source) {
+    const flavor = flavors.find((item) => item.id === flavorId);
+    if (!flavor) return Promise.resolve({ flavor: null, messages: [say("error", `no flavor ${flavorId} under ${ROOT}`)] });
+    if (run.going) return Promise.resolve({ flavor: null, messages: [say("warning", "an update or an add is running; the zip waits until it ends")] });
+    const file = String(zip).split(/[\\/]/).pop();
+    const named = /^(.+?)-(\d[\w.]*)\.zip$/i.exec(file);
+    const folder = named ? named[1] : file.replace(/\.zip$/i, "");
+    const version = named ? named[2] : "1.0.0";
+    let badge = { kind: "zip", id: file };
+    if (source) {
+      const spec = /^(github|wago|wowi|curse):(.+)$/.exec(source.trim());
+      if (!spec) return Promise.resolve({ flavor, messages: [say("error", `unknown source: ${source.trim()} (the form takes github:, wago:, wowi: or curse:)`)] });
+      badge = { kind: SPEC_KIND[spec[1]], id: spec[2] };
+    }
+    // On Forever every row has its Forever slot; a zip in hand says nothing of a build (`unknown`).
+    const forever = flavor.id === "wowf" ? { build: "unknown", note: null } : null;
+    const fresh = addon(folder, folder, version, { source: badge, managed: true, forever });
+    const at = flavor.addons.findIndex((row) => row.folder === folder);
+    if (at >= 0) flavor.addons[at] = fresh;
+    else flavor.addons.push(fresh);
+    flavor.addons.sort((a, b) => a.folder.toLowerCase().localeCompare(b.folder.toLowerCase()));
+    const line = `installed ${folder} ${version} (1 folder: ${folder}) into ${flavor.folder}`;
+    return Promise.resolve({ flavor, messages: [curseClientWarning(flavor), say("success", line)].filter(Boolean) });
+  }
 
   // The made-up marks, with the lines of `Mark::line`.
   function mark(flavorId, folder, action, value) {
@@ -1223,6 +1263,8 @@
     updateAll,
     updateOne,
     cancelUpdate,
+    chooseZip,
+    addZip,
     mark,
     preferences,
     setPreferences,

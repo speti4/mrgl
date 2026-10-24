@@ -418,7 +418,8 @@ code {
   font-size: 0.8rem;
   color: var(--muted);
 }
-.field select {
+.field select,
+.field input {
   min-width: 12rem;
   padding: 0.35rem 0.5rem;
   border: 1px solid var(--line);
@@ -426,7 +427,8 @@ code {
   background: var(--bg);
   color: var(--fg);
 }
-.field select:focus {
+.field select:focus,
+.field input:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
@@ -594,6 +596,18 @@ code {
 .confirm h3 {
   margin: 0 0 0.5rem;
   font-size: 1.05rem;
+}
+/* The add form of a zip in hand (task 116): the source field across the dialog. */
+.confirm .field {
+  margin-top: 0.6rem;
+}
+.confirm .field input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.add-zip-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
 }
 .confirm-actions {
   display: flex;

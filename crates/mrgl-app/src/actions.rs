@@ -8,6 +8,12 @@
 //! answer's warnings, with the core's line of the command line's `update` (task 110 over task 098,
 //! `adopt::curse_client_warning`): the check, "update all" and a row's update alike.
 //!
+//! The add of a zip in hand (task 116 over task 096): [`add_zip`] installs a zip from disk through the
+//! engine, recorded with the source spec the add form names (the command line's `add <file.zip> --as
+//! <spec>`) or with its path, so a CurseForge project whose author allows no download outside CurseForge
+//! is managed from the window like any other addon. It warns in a folder the CurseForge app manages, as
+//! the update actions do.
+//!
 //! The cancel rule: the flag is read before each addon of the check and before each install, never during
 //! one. An install that has started runs to its end through the engine's own stage, swap and revert (task
 //! 004), so a cancel never leaves an addon half-written: it is either updated or as it was.
@@ -18,10 +24,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use mrgl_core::adopt;
 use mrgl_core::install::{
-    Engine, Folded, Mark, PickInstalled, PickStep, SourceInstalled, SourceRequest,
+    Engine, Folded, Mark, Metadata, PickInstalled, PickStep, SourceInstalled, SourceRequest,
 };
 use mrgl_core::last_check::LastCheck;
-use mrgl_core::sources::{Channel, Source};
+use mrgl_core::sources::{Channel, Source, SourceSpec};
 use mrgl_core::state::{FlavorHome, State};
 use mrgl_core::update::{self, AddonUpdate, CheckProgress, SummaryOf};
 use mrgl_core::voice::{Kind, Voice};
@@ -525,6 +531,84 @@ pub fn mark(
 /// The refusal of a run while another one goes.
 pub fn busy_line() -> &'static str {
     "an update is running already; wait for it to end or cancel it"
+}
+
+/// The refusal of an add while an update runs (task 116): both install through the engine and write the
+/// flavor's sidecar, one at a time.
+pub fn add_busy_line() -> &'static str {
+    "an update or an add is running; the zip waits until it ends"
+}
+
+/// The source a zip in hand is recorded with (task 116): the spec the add form names, in its canonical
+/// spelling, as the command line's `--as` takes it (any spec but a Wago page address, which only a request
+/// turns into its id), or the zip's path when the field is empty, as `mrgl add <file.zip>` records it.
+pub fn zip_source(zip: &Path, spec: Option<&str>) -> Result<String, String> {
+    let Some(text) = spec.map(str::trim).filter(|text| !text.is_empty()) else {
+        return Ok(zip.display().to_string());
+    };
+    match SourceSpec::parse(text).map_err(|error| error.to_string())? {
+        SourceSpec::WagoPage { .. } => Err(format!(
+            "the source of a zip is a spec, not a page address: {text} (use wago:<id>, the X-Wago-ID line of the addon's TOC)"
+        )),
+        spec => Ok(spec.to_string()),
+    }
+}
+
+/// The window's add of a zip in hand (task 116 over task 096): the zip through the install engine, recorded
+/// with the spec the add form names or with its path ([`zip_source`]), its version the TOC's; the answer
+/// carries the flavor with its rows as they are now, the warnings (the CurseForge app's marker first, task
+/// 110, then the install's own, the missing dependencies and the interface check, as after an update) and
+/// the command line's summary line (`Installed::summary_line`), or the error that left the folder as it was.
+pub fn add_zip(
+    engine: &Engine,
+    zip: &Path,
+    spec: Option<&str>,
+    home: Option<&Path>,
+    voice: Voice,
+) -> ActionAnswer {
+    let folder_name = engine.flavor.folder_name();
+    let say = |kind: Kind, plain: String| Message::new(voice, kind, plain);
+    let answer = |messages: Vec<Message>| ActionAnswer {
+        flavor: Some(list::flavor_view(engine.flavor.clone(), home, &[])),
+        messages,
+    };
+    if !engine.addons_dir().is_dir() {
+        return answer(vec![say(
+            Kind::Nothing,
+            format!(
+                "no Interface\\AddOns folder in {folder_name}: the client has not been started for this flavor yet; start it once, then add the zip"
+            ),
+        )]);
+    }
+    let source = match zip_source(zip, spec) {
+        Ok(source) => source,
+        Err(plain) => return answer(vec![say(Kind::Error, plain)]),
+    };
+    let mut warnings: Vec<String> = adopt::curse_client_warning(&engine.flavor)
+        .into_iter()
+        .collect();
+    let metadata = Metadata {
+        source,
+        version: None,
+        name: None,
+        nolib: None,
+    };
+    let last = match engine.install(zip, &metadata) {
+        Ok(installed) => {
+            warnings.extend(installed.client_warning.iter().cloned());
+            warnings.extend(installed.warnings.iter().cloned());
+            warnings.extend(
+                engine
+                    .check_installed(&installed.folders)
+                    .lines(&folder_name),
+            );
+            say(Kind::Success, installed.summary_line(&folder_name))
+        }
+        Err(error) => say(Kind::Error, error.to_string()),
+    };
+    let mut messages = warning_messages(voice, warnings);
+    messages.push(last);
+    answer(messages)
 }
 
 #[cfg(test)]

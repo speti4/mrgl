@@ -126,6 +126,8 @@ impl Drop for Game {
 /// source has no requests left, as the GitHub API without a token (task 068).
 struct Stub {
     asked: Cell<u32>,
+    /// The specs the source was asked about, in order (task 116).
+    specs: RefCell<Vec<String>>,
     budget: Option<u32>,
     /// A spec whose repository is gone: a 404, as the GitHub source says it.
     gone: Option<&'static str>,
@@ -137,6 +139,7 @@ impl Stub {
     fn new() -> Stub {
         Stub {
             asked: Cell::new(0),
+            specs: RefCell::new(Vec::new()),
             budget: None,
             gone: None,
             stale: false,
@@ -163,6 +166,7 @@ impl Source for Stub {
     fn resolve(&self, spec: &SourceSpec, _target: &Target) -> Result<Pick> {
         self.asked.set(self.asked.get() + 1);
         let spec = spec.to_string();
+        self.specs.borrow_mut().push(spec.clone());
         // Task 115: a project whose author allows no download outside CurseForge.
         if spec == "curse:4244" {
             return Err(mrgl_core::Error::DistributionOff {
@@ -1438,4 +1442,165 @@ fn a_project_without_distribution_is_a_state_of_its_own_on_its_row_and_after_a_r
     let home = game.home();
     let restarted = list::flavor_view(game.engine().flavor.clone(), Some(&home), &[]);
     assert_eq!(row_state(&restarted), Some(UpdateState::DistributionOff));
+}
+
+// --- task 116: the add form's zip in hand, with the source it records ---
+
+/// The add of a zip through the window's action, with the serious voice.
+fn add(game: &Game, zip: &Path, spec: Option<&str>) -> ActionAnswer {
+    let home = game.home();
+    actions::add_zip(&game.engine(), zip, spec, Some(&home), Voice::new(true))
+}
+
+fn row<'a>(answer: &'a ActionAnswer, folder: &str) -> &'a list::Row {
+    answer
+        .flavor
+        .as_ref()
+        .expect("the flavor")
+        .addons
+        .iter()
+        .find(|row| row.folder == folder)
+        .unwrap_or_else(|| panic!("no row {folder}"))
+}
+
+#[test]
+fn the_add_form_installs_a_zip_in_hand_with_its_source_and_the_next_check_asks_it() {
+    // Task 116: the zip downloaded from the page of a project without distribution, recorded as
+    // `curse:4244` (the form's text trimmed), its version the TOC's; the row carries the source like any
+    // other, and the next check asks that source.
+    let game = Game::bare("add-zip-curse");
+    std::fs::create_dir_all(game.addons()).expect("the AddOns folder");
+    let answer = add(
+        &game,
+        &zips().join("MrglNoDistribution-2.0.0.zip"),
+        Some(" curse:4244 "),
+    );
+    let plain: Vec<(&str, &str)> = answer
+        .messages
+        .iter()
+        .map(|message| (message.kind, message.plain.as_str()))
+        .collect();
+    assert_eq!(
+        plain,
+        [(
+            "success",
+            "installed MrglNoDistribution 2.0.0 (1 folder: MrglNoDistribution) into _forever_"
+        )]
+    );
+    let added = row(&answer, "MrglNoDistribution");
+    assert!(added.managed);
+    assert_eq!(added.version.as_deref(), Some("2.0.0"));
+    let badge = serde_json::to_value(&added.source).expect("serializes");
+    assert_eq!(
+        badge,
+        serde_json::json!({ "kind": "curseforge", "id": "4244" })
+    );
+    let state = game.engine().load_state().expect("the sidecar").state;
+    assert_eq!(state.addons["MrglNoDistribution"].source, "curse:4244");
+    assert_eq!(state.addons["MrglNoDistribution"].version, "2.0.0");
+
+    let source = Stub::new();
+    let (answer, _) = run_with(&game, &source, Plan::Check, None);
+    assert_eq!(*source.specs.borrow(), ["curse:4244"]);
+    assert_eq!(
+        last_plain(&answer),
+        "checked _forever_: 1 only on CurseForge"
+    );
+}
+
+#[test]
+fn the_add_form_records_the_path_without_a_source_and_refuses_a_page_or_a_bad_spec() {
+    let game = Game::bare("add-zip-path");
+    std::fs::create_dir_all(game.addons()).expect("the AddOns folder");
+    let zip = zips().join("one-folder-1.0.0.zip");
+    // A page address is no spec the form takes, and a spec mrgl does not read is the core's error; nothing
+    // is installed either way.
+    let answer = add(
+        &game,
+        &zip,
+        Some("https://addons.wago.io/addons/mrgl-wago-one"),
+    );
+    assert_eq!(
+        (answer.messages.len(), last_plain(&answer)),
+        (
+            1,
+            "the source of a zip is a spec, not a page address: https://addons.wago.io/addons/mrgl-wago-one (use wago:<id>, the X-Wago-ID line of the addon's TOC)"
+        )
+    );
+    assert_eq!(answer.messages[0].kind, "error");
+    let answer = add(&game, &zip, Some("nowhere:1"));
+    assert_eq!(answer.messages[0].kind, "error");
+    assert!(
+        !game.addons().join("OneFolder").exists(),
+        "nothing installed"
+    );
+    // An empty field records the zip's path, as `mrgl add <file.zip>` does.
+    let answer = add(&game, &zip, Some("  "));
+    assert_eq!(
+        last_plain(&answer),
+        "installed OneFolder 1.0.0 (1 folder: OneFolder) into _forever_"
+    );
+    let badge = serde_json::to_value(&row(&answer, "OneFolder").source).expect("serializes");
+    assert_eq!(
+        badge,
+        serde_json::json!({ "kind": "zip", "id": "one-folder-1.0.0.zip" })
+    );
+    let state = game.engine().load_state().expect("the sidecar").state;
+    assert_eq!(state.addons["OneFolder"].source, zip.display().to_string());
+    // The same zip again is a reinstall, in the command line's words.
+    let answer = add(&game, &zip, None);
+    assert_eq!(
+        last_plain(&answer),
+        "reinstalled OneFolder 1.0.0 (1 folder: OneFolder) in _forever_"
+    );
+}
+
+#[test]
+fn the_add_form_warns_as_an_install_path_does_and_says_a_failed_install() {
+    let game = Game::bare("add-zip-warnings");
+    // Before the client's first start there is no AddOns folder to add to.
+    let answer = add(&game, &zips().join("one-folder-1.0.0.zip"), None);
+    let message = answer.messages.last().expect("a message");
+    assert_eq!(message.kind, "nothing");
+    assert!(
+        message.plain.starts_with("no Interface")
+            && message
+                .plain
+                .ends_with("folder in _forever_: the client has not been started for this flavor yet; start it once, then add the zip"),
+        "{}",
+        message.plain
+    );
+    assert!(answer.flavor.is_some());
+    std::fs::create_dir_all(game.addons()).expect("the AddOns folder");
+    std::fs::write(game.flavor_folder().join(".curseclient"), "").expect("the marker");
+    // Task 110: the marker's warning first, then the install's interface check, then the summary.
+    let answer = add(
+        &game,
+        &zips().join("stale-interface-1.0.0.zip"),
+        Some("wago:MrglStale"),
+    );
+    let plain: Vec<(&str, &str)> = answer
+        .messages
+        .iter()
+        .map(|message| (message.kind, message.plain.as_str()))
+        .collect();
+    assert_eq!(plain[0], ("warning", CURSE_CLIENT_WARNING));
+    assert_eq!(
+        plain[1],
+        (
+            "warning",
+            "StaleInterface: interface 110207 is not for the build 1.60.1.70245 of _forever_; the zip may be for another flavor"
+        )
+    );
+    assert_eq!(
+        plain.last().copied(),
+        Some((
+            "success",
+            "installed StaleInterface 1.0.0 (1 folder: StaleInterface) into _forever_"
+        ))
+    );
+    // A zip that is not there is the engine's error, and the folder stays as it was.
+    let answer = add(&game, &game.dir.join("gone.zip"), None);
+    assert_eq!(answer.messages.last().expect("a message").kind, "error");
+    assert_eq!(answer.messages[0].plain, CURSE_CLIENT_WARNING);
 }
