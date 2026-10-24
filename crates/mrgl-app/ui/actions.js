@@ -1,6 +1,6 @@
 // The row and flavor actions of task 010, the pure part: the items of a row's menu (update, pin or unpin,
-// ignore or unignore, the channel), the per-row progress slot an update run's events drive, and the note
-// under a row's version. Pure, so `tests/ui/actions.test.js` runs it under Node; `main.js` draws what it
+// ignore or unignore, the channel), the per-row progress slot an update run's events drive, the note
+// under a row's version, and the add form of a zip in hand (task 116). Pure, so `tests/ui/actions.test.js` runs it under Node; `main.js` draws what it
 // answers. Every message comes from Rust; the labels here are the menu's own words.
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -71,6 +71,8 @@
     updated: { label: "updated", value: 1 },
     // Task 099: the install path found the pick's version installed already; the event's line says where.
     "installed-already": { label: "installed already", value: 1 },
+    // Task 114: an install earlier in the run folded the addon's entry into its addon; nothing to install.
+    folded: { label: "folded into another entry", value: 1 },
     failed: { label: "failed", value: 1, failed: true },
   };
 
@@ -95,8 +97,9 @@
   }
 
   // The check states a row names under its version: what needs a look or explains a missing arrow (a
-  // file that waits for the site's approval, task 104).
-  const NOTED = ["installed-newer", "guess-only", "pending", "source-gone", "failed", "rate-limited"];
+  // file that waits for the site's approval, task 104; a project whose author allows no download outside
+  // CurseForge, task 115).
+  const NOTED = ["installed-newer", "guess-only", "pending", "distribution-off", "source-gone", "failed", "rate-limited"];
 
   // A pinned row's note, as the check's data line reads the pin (task 077): the release it leaves alone
   // when the installed version is older, the words of a newer one when it is newer (the check's version
@@ -121,5 +124,28 @@
     return note.join(", ");
   }
 
-  return { menuItems, whyNoUpdate, STEPS, applyProgress, applyCheck, noteOf };
+  // The header's "Add a zip…" (task 116): waits while an update or an add goes, and needs the flavor's
+  // AddOns folder, as the update actions do.
+  function addZipButton(flavor, busy) {
+    if (!flavor) return { enabled: false, title: "no flavor chosen" };
+    if (busy) return { enabled: false, title: "an update or an add is running" };
+    if (flavor.addons_folder === false) {
+      return { enabled: false, title: "the client has not been started for this flavor yet" };
+    }
+    return { enabled: true, title: "install an addon zip from disk, with the source it comes from" };
+  }
+
+  // The add form's request (task 116): the zip the file dialog picked and the source spec typed, trimmed;
+  // an empty field is no source, and the zip's path is recorded (`mrgl add <file.zip>`).
+  function addZipRequest(zip, sourceText) {
+    const source = typeof sourceText === "string" ? sourceText.trim() : "";
+    return { zip, source: source || null };
+  }
+
+  // A path's last part: the zip's file name for the form's line.
+  function fileName(path) {
+    return String(path || "").split(/[\\/]/).pop();
+  }
+
+  return { menuItems, whyNoUpdate, STEPS, applyProgress, applyCheck, noteOf, addZipButton, addZipRequest, fileName };
 });

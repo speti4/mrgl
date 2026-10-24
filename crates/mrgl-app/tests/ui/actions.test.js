@@ -105,6 +105,11 @@ test("the progress slot follows a row through the run", () => {
     label: "installed already",
     value: 1,
   });
+  assert.deepEqual(step("folded", "SeveralFolders_Options"), {
+    phase: "folded",
+    label: "folded into another entry",
+    value: 1,
+  });
   assert.equal(step("failed", "BigWigs").failed, true);
   const before = slots;
   const after = Actions.applyProgress(slots, { phase: "stopped", folder: null });
@@ -135,6 +140,8 @@ test("the note names the marks and a check state that needs a word", () => {
   assert.equal(Actions.noteOf(gone), "source gone");
   const pending = Object.assign({}, managed, { check: { state: "pending", label: "pending approval" } });
   assert.equal(Actions.noteOf(pending), "pending approval", "a file that waits for approval (task 104)");
+  const off = Object.assign({}, managed, { check: { state: "distribution-off", label: "only on CurseForge" } });
+  assert.equal(Actions.noteOf(off), "only on CurseForge", "a project without distribution (task 115)");
   const upToDate = Object.assign({}, managed, { check: { state: "up-to-date", label: "up to date" } });
   assert.equal(Actions.noteOf(upToDate), "");
   const held = Object.assign({}, managed, { pinned: "1.2.2", check: { state: "pinned", label: "pinned", latest: "1.2.3" } });
@@ -149,4 +156,27 @@ test("a pinned row's note follows the check's version order", () => {
   assert.equal(pinned("v1.0.0", "1.0.0", "same"), "pinned at v1.0.0", "the same version by the order");
   assert.equal(pinned("1.0.0", "1.1.0", null), "pinned at 1.0.0, 1.1.0 is out", "no order: another version is out");
   assert.equal(pinned("1.0.0", "1.0.0", null), "pinned at 1.0.0");
+});
+
+test("the add form waits for a run and an AddOns folder and trims its source (task 116)", () => {
+  const flavor = { id: "wowf", addons_folder: true, addons: [] };
+  assert.deepEqual(Actions.addZipButton(flavor, false), {
+    enabled: true,
+    title: "install an addon zip from disk, with the source it comes from",
+  });
+  assert.deepEqual(Actions.addZipButton(flavor, true), { enabled: false, title: "an update or an add is running" });
+  assert.deepEqual(Actions.addZipButton(Object.assign({}, flavor, { addons_folder: false }), false), {
+    enabled: false,
+    title: "the client has not been started for this flavor yet",
+  });
+  assert.equal(Actions.addZipButton(null, false).enabled, false);
+  assert.deepEqual(Actions.addZipRequest("D:\\Downloads\\A-1.0.zip", "  curse:4244 "), {
+    zip: "D:\\Downloads\\A-1.0.zip",
+    source: "curse:4244",
+  });
+  assert.deepEqual(Actions.addZipRequest("A.zip", "   "), { zip: "A.zip", source: null });
+  assert.deepEqual(Actions.addZipRequest("A.zip", undefined), { zip: "A.zip", source: null });
+  assert.equal(Actions.fileName("D:\\Downloads\\MrglNoDistribution-2.0.0.zip"), "MrglNoDistribution-2.0.0.zip");
+  assert.equal(Actions.fileName("/tmp/a/B-1.zip"), "B-1.zip");
+  assert.equal(Actions.fileName(null), "");
 });

@@ -1820,33 +1820,8 @@ fn install_summary(
         "removed_folders": installed.removed_folders,
         "dependencies": dependencies,
     });
-    let folder_name = engine.flavor.folder_name();
-    let folders = format!(
-        "{}: {}",
-        count_folders(installed.folders.len()),
-        installed.folders.join(", ")
-    );
-    let mut line = match (installed.outcome, &installed.previous_version) {
-        (InstallOutcome::Reinstalled, _) => format!(
-            "reinstalled {} {} ({folders}) in {folder_name}",
-            installed.name, installed.version
-        ),
-        (InstallOutcome::Updated, Some(previous)) => format!(
-            "updated {} from {previous} to {} ({folders}) in {folder_name}",
-            installed.name, installed.version
-        ),
-        _ => format!(
-            "installed {} {} ({folders}) into {folder_name}",
-            installed.name, installed.version
-        ),
-    };
-    if !installed.removed_folders.is_empty() {
-        line.push_str(&format!(
-            ", {} of the previous version removed ({})",
-            count_folders(installed.removed_folders.len()),
-            installed.removed_folders.join(", ")
-        ));
-    }
+    // Task 116: the core's line, which the window's add of a zip says too.
+    let line = installed.summary_line(&engine.flavor.folder_name());
     InstallSummary {
         addon,
         mismatch,

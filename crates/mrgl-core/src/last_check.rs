@@ -1,7 +1,8 @@
 //! The answers of the last online update check that the cache cannot give again (task 078): a source gone
-//! (a 404, no release, no asset for the flavor), a check that failed, and an addon the check left before the
-//! request limit. The offline check answers every other state from the GitHub source's cache (task 041), so
-//! it is kept here only for these three, per addon, in `last-check.json` next to the flavor's sidecar
+//! (a 404, no release, no asset for the flavor), a check that failed, an addon the check left before the
+//! request limit, and a CurseForge project whose author allows no download outside CurseForge (task 115:
+//! that source keeps no cache, so offline only the kept answer tells it). The offline check answers every
+//! other state from the sources' caches (task 041), so it is kept here only for these four, per addon, in `last-check.json` next to the flavor's sidecar
 //! (`<home>\<flavor-id>\last-check.json`), until the next online check of the addon replaces it.
 //!
 //! The file is a cache like the release list, not the user's data and not the install record: one that is
@@ -37,11 +38,14 @@ pub const FORMAT: &str = "mrgl-last-check";
 pub const SCHEMA: u32 = 1;
 
 /// Whether the offline check cannot give a state again, so the last online answer is kept: a source gone,
-/// a failed check, an addon not asked before the request limit.
+/// a failed check, an addon not asked before the request limit, a project without distribution (task 115).
 pub fn is_kept(state: UpdateState) -> bool {
     matches!(
         state,
-        UpdateState::SourceGone | UpdateState::Failed | UpdateState::RateLimited
+        UpdateState::SourceGone
+            | UpdateState::Failed
+            | UpdateState::RateLimited
+            | UpdateState::DistributionOff
     )
 }
 
@@ -376,6 +380,9 @@ mod tests {
             Some("the repository is gone (404)")
         );
         assert_eq!(last.addons["B"].latest.as_deref(), Some("2.1"));
+        // Task 115: a project without distribution is kept too, a file waiting for approval is not.
+        assert!(is_kept(UpdateState::DistributionOff));
+        assert!(!is_kept(UpdateState::Pending));
     }
 
     #[test]

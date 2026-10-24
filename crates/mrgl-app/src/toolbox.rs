@@ -312,6 +312,12 @@ pub fn toolbox_busy_line() -> &'static str {
     "a set apply, undo or edit, an adopt or a SavedVariables cleanup is running; the update waits until it ends"
 }
 
+/// The refusal of an add of a zip while a toolbox write goes (task 116): an adopt writes the flavor's
+/// sidecar too, a cleanup reads the AddOns folders an install swaps.
+pub fn add_waits_line() -> &'static str {
+    "a set apply, undo or edit, an adopt or a SavedVariables cleanup is running; the zip waits until it ends"
+}
+
 /// The refusal of a mark while a toolbox write goes: an adopt writes the flavor's sidecar too (task 109).
 pub fn marks_wait_line() -> &'static str {
     "a set apply, undo or edit, an adopt or a SavedVariables cleanup is running; pin, ignore and the channel wait until it ends"

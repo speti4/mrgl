@@ -151,3 +151,19 @@ test("the adopt calls go to their commands, the confirmation as a boolean, the s
     ["adopt_apply", { flavor: "wowf", alongside: false, answers: null }],
   ]);
 });
+
+test("the add form's calls invoke their commands with the zip and the source (task 116)", async () => {
+  const answer = { flavor: null, messages: [{ kind: "success", murloc: "", plain: "installed A 1.0 (1 folder: A) into _forever_" }] };
+  const { calls, invoke } = fake({ choose_zip: "D:\\Downloads\\A-1.0.zip", add_zip: answer });
+  const Data = create(invoke);
+  assert.equal(await Data.chooseZip(), "D:\\Downloads\\A-1.0.zip");
+  assert.equal(await Data.addZip("wowf", "D:\\Downloads\\A-1.0.zip", "curse:4244"), answer);
+  await Data.addZip("wowf", "A.zip", null);
+  await Data.addZip("wowf", "A.zip", "");
+  assert.deepEqual(calls, [
+    ["choose_zip"],
+    ["add_zip", { flavor: "wowf", zip: "D:\\Downloads\\A-1.0.zip", source: "curse:4244" }],
+    ["add_zip", { flavor: "wowf", zip: "A.zip", source: null }],
+    ["add_zip", { flavor: "wowf", zip: "A.zip", source: null }],
+  ]);
+});

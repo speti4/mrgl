@@ -16,6 +16,10 @@
 //                                       Tauri channel; the answer is the flavor as it is now and the
 //                                       messages, the summary last
 //   Data.cancelUpdate()              -> Promise<message>            `cancel_update`: before the next addon
+//   Data.chooseZip()                 -> Promise<string | null>      `choose_zip` (116): the file dialog's zip,
+//                                       null when it was cancelled
+//   Data.addZip(flavorId, zip, source)  -> Promise<{ flavor, messages }>  `add_zip` (116): the zip in hand
+//                                       recorded with the spec `source` (null: its path), the summary last
 //   Data.mark(flavorId, folder, action, value) -> Promise<{ flavor, messages }>  `mark`: pin | unpin |
 //                                       ignore | unignore | channel, `value` the version or the channel
 //   Data.preferences()               -> Promise<{ theme, serious, serious_source, stored }>  `preferences`
@@ -78,6 +82,8 @@
       updateOne: (flavorId, folder, progress) =>
         invoke("update_one", { flavor: flavorId, folder, progress: channel(progress) }),
       cancelUpdate: () => invoke("cancel_update"),
+      chooseZip: () => invoke("choose_zip"),
+      addZip: (flavorId, zip, source) => invoke("add_zip", { flavor: flavorId, zip, source: source || null }),
       mark: (flavorId, folder, action, value) =>
         invoke("mark", { flavor: flavorId, folder, action, value: value === undefined ? null : value }),
       preferences: () => invoke("preferences"),

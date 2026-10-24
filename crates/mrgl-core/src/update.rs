@@ -51,6 +51,10 @@ pub enum UpdateState {
     /// The source's newest file waits for the site's approval (task 104: WoWInterface's pending file): no
     /// release to install yet and nothing for the user to do, counted apart from a failed check.
     Pending,
+    /// The project's author allows no download outside CurseForge (task 115 over task 096: CurseForge's
+    /// `allowModDistribution: false`): nothing mrgl can download, and no failure either; the reason names
+    /// the project's page and how a zip downloaded there goes in (`mrgl add <file.zip> --as curse:<id>`).
+    DistributionOff,
     /// The source has no release or no asset for the flavor any more, or the repository is gone (404).
     SourceGone,
     /// No source to ask: a zip in hand, a linked development folder, a source not configured (task 092).
@@ -64,13 +68,14 @@ pub enum UpdateState {
 
 impl UpdateState {
     /// Every state, in the order a summary counts them.
-    pub const ALL: [UpdateState; 11] = [
+    pub const ALL: [UpdateState; 12] = [
         UpdateState::UpdateAvailable,
         UpdateState::UpToDate,
         UpdateState::InstalledNewer,
         UpdateState::Pinned,
         UpdateState::Ignored,
         UpdateState::Pending,
+        UpdateState::DistributionOff,
         UpdateState::GuessOnly,
         UpdateState::SourceGone,
         UpdateState::NotChecked,
@@ -88,6 +93,7 @@ impl UpdateState {
             UpdateState::Pinned => "pinned",
             UpdateState::Ignored => "ignored",
             UpdateState::Pending => "pending approval",
+            UpdateState::DistributionOff => "only on CurseForge",
             UpdateState::SourceGone => "source gone",
             UpdateState::NotChecked => "not checked",
             UpdateState::Failed => "check failed",
@@ -204,6 +210,7 @@ impl AddonUpdate {
             UpdateState::SourceGone
             | UpdateState::NotChecked
             | UpdateState::Pending
+            | UpdateState::DistributionOff
             | UpdateState::Failed
             | UpdateState::RateLimited => {
                 format!("{}: {detail}", self.state.label())
@@ -719,6 +726,12 @@ fn check_entry<S: Source + ?Sized>(
                 "the newest file waits for approval on {host}; nothing to install until it is approved"
             ));
         }
+        // Task 115: a project whose author allows no download outside CurseForge is no failure either; the
+        // reason is the source's line, which names the page and how the zip downloaded there goes in.
+        Err(error @ Error::DistributionOff { .. }) if entry.pinned.is_none() => {
+            addon.state = UpdateState::DistributionOff;
+            addon.detail = Some(error.to_string());
+        }
         Err(error) => {
             addon.state = if entry.pinned.is_some() {
                 UpdateState::Pinned
@@ -868,6 +881,11 @@ mod tests {
                 None,
                 Some("the newest file waits for approval on WoWInterface"),
             ),
+            addon(
+                UpdateState::DistributionOff,
+                None,
+                Some("the author of curse:1 allows no download outside CurseForge"),
+            ),
             addon(UpdateState::SourceGone, None, Some("no release in x")),
             addon(UpdateState::NotChecked, None, Some("a zip in hand")),
             addon(UpdateState::Failed, None, Some("cannot reach y")),
@@ -893,6 +911,7 @@ mod tests {
                 "Thing  1.0.0  pinned at 1.0.0, not checked: offline",
                 "Thing  1.0.0  ignored, not checked",
                 "Thing  1.0.0  pending approval: the newest file waits for approval on WoWInterface",
+                "Thing  1.0.0  only on CurseForge: the author of curse:1 allows no download outside CurseForge",
                 "Thing  1.0.0  source gone: no release in x",
                 "Thing  1.0.0  not checked: a zip in hand",
                 "Thing  1.0.0  check failed: cannot reach y",
@@ -1166,12 +1185,17 @@ mod tests {
         assert_eq!(lenient_order("1.2.3-", "1.2.3"), Some(Ordering::Equal));
     }
 
-    /// A source that answers one spec with one release, or with a file pending approval, and lists the
-    /// versions it is given.
+    /// A source that answers one spec with one release, or with a file pending approval, or with a
+    /// project whose author allows no download outside CurseForge, and lists the versions it is given.
     struct StubSource {
         current: &'static str,
         pending: bool,
         listed: Option<Vec<String>>,
+    }
+
+    impl StubSource {
+        /// The `current` of a project without distribution (task 115).
+        const DISTRIBUTION_OFF: &'static str = "off";
     }
 
     impl Source for StubSource {
@@ -1180,6 +1204,13 @@ mod tests {
                 return Err(Error::ReleasePending {
                     spec: spec.to_string(),
                     host: "WoWInterface",
+                });
+            }
+            if self.current == StubSource::DISTRIBUTION_OFF {
+                return Err(Error::DistributionOff {
+                    spec: spec.to_string(),
+                    name: " (Thing)".to_string(),
+                    page: "https://www.curseforge.com/wow/addons/thing".to_string(),
                 });
             }
             Ok(pick(&spec.to_string(), self.current))
@@ -1267,6 +1298,43 @@ mod tests {
         let check = check(&engine, &source, None, &mut |_| {}).expect("checks");
         assert_eq!(check.addons[0].state, UpdateState::Pinned);
         assert_eq!(check.addons[0].latest, None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_project_without_distribution_is_a_state_of_its_own_unless_pinned() {
+        // Task 115: the source's line is the reason, and the summary counts it apart and needs no look.
+        let (base, engine) = engine_with("distribution-off", entry("curse:4244", "2.0.0"));
+        let source = StubSource {
+            current: StubSource::DISTRIBUTION_OFF,
+            pending: false,
+            listed: None,
+        };
+        let checked = check(&engine, &source, None, &mut |_| {}).expect("checks");
+        assert_eq!(checked.addons[0].state, UpdateState::DistributionOff);
+        assert_eq!(checked.addons[0].latest, None);
+        assert_eq!(
+            checked.addons[0].line(),
+            "Thing  2.0.0  only on CurseForge: the author of curse:4244 (Thing) allows no download outside CurseForge: download the zip from https://www.curseforge.com/wow/addons/thing and install it with `mrgl add <file.zip> --as curse:4244`"
+        );
+        assert_eq!(
+            checked.summary(SummaryOf::Check, "_forever_"),
+            (
+                Kind::Nothing,
+                "checked _forever_: 1 only on CurseForge".to_string()
+            )
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateState::DistributionOff).expect("serializes"),
+            "distribution-off"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+        // A pinned entry stays pinned, as for any answer without a release.
+        let mut pinned = entry("curse:4244", "2.0.0");
+        pinned.pin(None);
+        let (base, engine) = engine_with("distribution-off-pinned", pinned);
+        let checked = check(&engine, &source, None, &mut |_| {}).expect("checks");
+        assert_eq!(checked.addons[0].state, UpdateState::Pinned);
         let _ = std::fs::remove_dir_all(&base);
     }
 

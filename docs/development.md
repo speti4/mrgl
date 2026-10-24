@@ -128,7 +128,9 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   link under it when the release has notes, task 030; task 040 installs it through the engine or reports
   it installed already), `add
   <file.zip> [--as <spec>]` and `remove` (task 004; a running client is a warning line and `client_warning`
-  in `--json`, task 038; `--as` records a spec as the zip's source instead of its path, task 096), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
+  in `--json`, task 038; `--as` records a spec as the zip's source instead of its path, task 096, and the
+  window's add form does the same, task 116; the install's summary line is the core's
+  `Installed::summary_line`, which the window says too), `backup` with `--list`, `--restore` and `--yes` (task 013), `doctor [--flavor <flavor>]`
   (task 024), `link <folder>` and `unlink <folder>` (task 005; the folder is a development folder or one
   addon folder, task 062, and `link --json` names it as `shape`, `development-folder` or `addon-folder`),
   `export --flavor <flavor> [--to <file>]`
@@ -304,7 +306,14 @@ source's newest file waits for the site's approval (WoWInterface's `UIPending`),
 install yet and nothing for the user to do: its line is `MrglPending  1.0.0  pending approval: the newest
 file waits for approval on WoWInterface; nothing to install until it is approved`, it is counted apart
 (`1 pending approval`), it is no failure (a run with pending addons alone ends with exit code 0) and the
-summary needs no look for it. `source-gone`: no
+summary needs no look for it. `distribution-off` (task 115): the author of a CurseForge project allows no
+download outside CurseForge (`Error::DistributionOff` of task 096, below), so there is nothing mrgl can
+download; it is the author's choice, not an error: its line is the source's, `MrglNoDistribution  2.0.0
+only on CurseForge: the author of curse:4244 (Mrgl No Distribution) allows no download outside CurseForge:
+download the zip from <page> and install it with `mrgl add <file.zip> --as curse:4244``, it is counted
+apart (`1 only on CurseForge`), a run whose only other answers are no failure ends with exit code 0, and
+the summary needs no look for it; a pinned entry stays `pinned`, as for any answer without a release.
+`source-gone`: no
 release, no asset for the flavor or no repository (404) any more. `not-checked`: no source to ask (a zip in
 hand, a linked folder, a source not handled yet). `failed`: the source could not be asked (offline, a rate
 limit, a server error). `installed-newer` (task 068): the installed version is newer than the current
@@ -360,10 +369,11 @@ source, `update --all` updates the first entry and then, for the second, install
 core's line (`Folded::update_line`) through the voice: `SeveralFolders_Options folded into SeveralFolders:
 SeveralFolders 1.2.3 ships its folder SeveralFolders_Options in _forever_, SeveralFolders_Options has no
 entry of its own now`; the summary counts it as `1 folded into another entry`, neither updated nor
-failed, and the sidecar holds the one entry after. Right after the check,
+failed, and the sidecar holds the one entry after. The window's update says the same line as its own phase
+(task 114). Right after the check,
 before the confirmation and on a dry run too, `update` records the check's answers in `last-check.json`
-as the window's check does (task 087, below): a source gone, a failed check and an addon left before the
-rate limit are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
+as the window's check does (task 087, below): a source gone, a failed check, an addon left before the
+rate limit and a project without distribution (task 115) are kept for the window's rows, an addon answered otherwise drops its kept answer, and a file
 that cannot be written is a warning (`the answers of this check are not kept for the window: …`). `--json` is one `update` document: every addon with `state`,
 `latest`, `order` (the installed version against `latest`: `older`, `same`, `newer`, or `null` when there is
 no `latest` or the order cannot tell; task 077), `pick`, `updated`, the installed `addon` block and the
@@ -792,7 +802,9 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
 - `index.html` is the one page: a sidebar with the flavor navigation (the four flavors by their friendly
   names, in the order retail, classic, era, forever, each with its addon count and its count of updates; the
   window opens on Forever), the chosen flavor's header (name, folder, build, the CurseForge marker, the search
-  field, "Check for updates" and "Update all", with "Cancel" in its place while a run goes; task 010), the
+  field, "Add a zip…" (task 116: the file dialog, then a form with the zip's name and an optional source
+  spec, whose "Install" sends the add), "Check for updates" and "Update all", with "Cancel" in its place
+  while a run goes; task 010), the
   addon list (one row per addon: name and folder, version and the version an update brings with the note under
   it, the source badge, the state pill with the interface mark under it (task 081: `interface mismatch` or
   `out of date`, as `scan` and `list` mark the line, the warning's line in its title) and the step a run is
@@ -833,7 +845,8 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
 - `mock-data.js` is the data module of the sketch, made-up rows in the shape the core answers with; its header
   comment is the contract (`Data.version()`, `Data.flavors()`, `Data.chooseRoot()`, `Data.diagnostics()`,
   `Data.resolve(flavorId, folder)`, `Data.checkUpdates(flavorId, progress)`, `Data.updateAll(flavorId,
-  progress)`, `Data.updateOne(flavorId, folder, progress)`, `Data.cancelUpdate()`, `Data.mark(flavorId,
+  progress)`, `Data.updateOne(flavorId, folder, progress)`, `Data.cancelUpdate()`, `Data.chooseZip()`,
+  `Data.addZip(flavorId, zip, source)` (task 116), `Data.mark(flavorId,
   folder, action, value)`, the preferences, `Data.toolbox(flavorId)`, `Data.applySet(flavorId, set,
   target)`, `Data.undoSet(flavorId)`, `Data.editSet(flavorId, set, addon, action)`,
   `Data.cleanSavedVariables(flavorId)`, `Data.adopt(flavorId)`, `Data.adoptApply(flavorId, alongside,
@@ -868,7 +881,10 @@ The files under `ui/` (the layout is task 017's sketch, drawn before the shell):
   check's answer laid over its row, the note under a row's version, whose pin reads the check's `order` as
   the command line's pinned line does: `pinned at 1.1.0-beta, newer than the release`, or `pinned at 2.0.0,
   2.1.0 is out`; task 077; the check states the note names, `NOTED`: `installed-newer`, `guess-only`,
-  `pending` of task 104, `source-gone`, `failed` and `rate-limited`, each by the core's label), `toolbox.js`
+  `pending` of task 104, `distribution-off` of task 115, `source-gone`, `failed` and `rate-limited`, each
+  by the core's label; task 116: the state and the title of "Add a zip…", which waits for a run and an
+  add and needs the AddOns folder, the form's request with its source trimmed, an empty field no source,
+  and a path's file name), `toolbox.js`
   (tasks 074 and 085: the target
   picker's options and the `{ character, realm, account }` an option names, the account in an option's
   value and label only when the answer carries one, the set the picker shows, the set's addons in their
@@ -911,7 +927,8 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   update; an addon whose answer needs the network (nothing cached) has no `check`. What the cache cannot
   tell again is the last online check's (task 078): a check of the window, and `mrgl update --all` or
   `mrgl update <name>` on the command line (task 087), keeps every addon's answer of `source-gone`,
-  `failed` or `rate-limited` in `last-check.json` under the flavor's folder of the mrgl home
+  `failed`, `rate-limited` or `distribution-off` (task 115: the CurseForge source keeps no cache and the
+  offline view has no key, so only the kept answer tells it) in `last-check.json` under the flavor's folder of the mrgl home
   (`mrgl_core::last_check::record_check`, one rule for both writers), and every list lays those answers
   over the offline ones, so a redraw after a
   mark and a restart show them, until the next check of the addon replaces its answer (dropped for any
@@ -939,14 +956,20 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   pick, task 055). Each takes a Tauri channel (`tauri::ipc::Channel`) and sends one event per step as it
   happens: `{ phase, folder, index, total, check, message }`, the phase `checking`, `checked` (with the
   addon's `check`), `stopped` (the request budget's stop line of task 068, a warning, sent once per source
-  that stopped, task 101, and not repeated in the answer), `updating`, `downloading`, `installing`, `updated`, `installed-already` or
-  `failed` (an error), the folder the addon's first one, the message in the voice. `installed-already`
+  that stopped, task 101, and not repeated in the answer), `updating`, `downloading`, `installing`, `updated`, `installed-already`,
+  `folded` or `failed` (an error), the folder the addon's first one, the message in the voice. `installed-already`
   (task 099) is the install path's "installed already" answer in the command line's words of task 089
   (`AlreadyInstalled::update_line` of the core, which both say): the nothing-to-do line under the addon's
   own entry, else the warning that names the second entry of the same source (`OneFolder not updated:
   OldOneFolder, a second entry of github:Example/Twice, has 1.1.0 installed already in _forever_; OneFolder
   stays at 1.0.0`); the summary counts it as `1 installed already`, not as updated, and the row of an addon
-  another entry stood in for keeps the check's answer. The answer is `{ flavor, messages }`: the flavor as
+  another entry stood in for keeps the check's answer. `folded` (task 114) is an addon whose entry an
+  install earlier in the run dropped, since that install's zip carried every folder of it (task 108,
+  `Installed::folded`): nothing is installed and nothing more is asked, the event says the core's line
+  (`Folded::update_line`: `SeveralFolders_Options folded into SeveralFolders: SeveralFolders 2.1.0 ships its
+  folder SeveralFolders_Options in _forever_, SeveralFolders_Options has no entry of its own now`), the
+  summary counts it as `1 folded into another entry`, and its row reads from the disk again, a folder of
+  the addon it joined. The answer is `{ flavor, messages }`: the flavor as
   it is now (its rows read again, with the check's answer laid over them except for the addons this run
   updated; the answers the cache cannot give again are kept in `last-check.json` for the next list, task
   078, and a file that cannot be written is a warning) and the warnings, then the summary, `UpdateCheck::summary` of the core, which the command line
@@ -958,10 +981,27 @@ serious voice sends the murloc line empty. Whatever reads the disk or the networ
   another flavor`), each a warning of the answer; the row, read again, carries the dependency in its
   `missing`. In a flavor folder with the CurseForge app's `.curseclient` marker the first warning of the
   answer is the core's `adopt::curse_client_warning` (task 110), once per run, as `mrgl update` warns
-  there; the window has no add or import of its own, so its update actions are its install paths. One
+  there, and the window's add of a zip warns the same way (`add_zip`, below). One
   run at a time: a second one is refused with a warning. A flavor without an AddOns folder
   answers that the client has not been started for it yet. The window's "Check for updates" is the check
   alone; "Update all" and a row's "Update" run the check first, so they never install on an old answer.
+- `choose_zip` and `add_zip` (task 116 over task 096, `actions::add_zip`): the add form's file dialog
+  (`tauri-plugin-dialog`, called from Rust, a `.zip` filter; it answers the path, or nothing when
+  cancelled), then the install of that zip through the engine, `zip` the path and `source` the spec the
+  form names, the window's `mrgl add <file.zip> --as <spec>`: the spec in its canonical spelling is
+  recorded as the entry's source (any spec but a Wago page address, which only a request turns into its id:
+  `the source of a zip is a spec, not a page address: … (use wago:<id>, …)`; a text that is no spec is the
+  core's `unknown source` error), an empty field records the zip's path as `mrgl add <file.zip>` does, and
+  the version is the TOC's. So a CurseForge project whose author allows no download outside CurseForge is
+  installed from the zip downloaded from its page and managed from the window: the row carries its
+  `curseforge` badge, and the next check asks `curse:<id>` (task 115: `distribution-off`). The answer is
+  `{ flavor, messages }`: the flavor as it is now, the warnings (the CurseForge app's marker first, task 110,
+  then the install's own, the missing dependencies and the interface check, as after an update) and the
+  summary line the command line's `add` prints, the core's `Installed::summary_line` (`installed
+  MrglNoDistribution 2.0.0 (1 folder: MrglNoDistribution) into _forever_`), or the engine's error, which
+  leaves the folder as it was. Without an AddOns folder it says to start the client once. The add holds the
+  update run while it installs, so it is refused while an update runs (`an update or an add is running; the
+  zip waits until it ends`) and an update waits for it; it is refused while a toolbox write goes too.
 - `cancel_update`: asks the run going to stop. The cancel rule: the flag is read before each addon of the
   check and before each install, never during one; an install that has started runs to its end through the
   engine's stage, swap and revert (task 004), so a cancel never leaves an addon half-written. A cancelled run
@@ -1194,6 +1234,7 @@ reasoned exclusions:
 - `mrgl-app/src/main.rs`: the Tauri event loop needs a WebView2 window and a desktop session
 - `mrgl-app/src/lib.rs`: the Tauri event loop needs a WebView2 window and a desktop session
 - `mrgl-app/src/commands.rs`: the native folder dialog; the choice itself is `choose`, tested without a dialog
+- `mrgl-app/src/commands.rs`: the native file dialog; the add itself is `add_zip`, tested without a dialog
 - `mrgl-core/src/keys.rs`: the user's real Credential Manager; the unit tests run the same contract against the
   memory store, the end-to-end tests run with the store off
 - `mrgl-test-support/src/lib.rs`: test code the tests of the three crates share, not the subject of the
@@ -1528,9 +1569,10 @@ author allows no download outside CurseForge (`allowModDistribution: false`, or 
 `null`) is `Error::DistributionOff`, `the author of curse:<id> (<name>) allows no download outside
 CurseForge: download the zip from <page> and install it with …`, the command `mrgl add <file.zip> --as
 curse:<id>` at its end: `add` fails with it and the update check
-reports it as failed; `mrgl add <file.zip> --as <spec>` installs a zip in hand with that spec as its
+reports it as the state `distribution-off` (task 115, above), no failed check; `mrgl add <file.zip> --as <spec>` installs a zip in hand with that spec as its
 recorded source (any spec but a Wago page address, which only a request turns into its id; `--as` without
-a zip is refused), the version from the TOC, so the update check asks the source. The API's terms allow no
+a zip is refused), the version from the TOC, so the update check asks the source; the window's "Add a
+zip…" takes the same spec next to the zip (task 116). The API's terms allow no
 saving or caching of its data: nothing of an answer is written, an answer is kept in memory for the run alone
 (adopt asks the project once for its build and its folders), `listed_versions` stays `None` (the update check
 orders two `displayName`s by `update::lenient_order`), the source has no request budget (no limit is

@@ -501,3 +501,30 @@ test("the adopt apply refuses a marked folder without the confirmation and warns
   assert.deepEqual(forever.adopted, ["adopted Details #Details.20261010.14521.165 as github:Tercioo/Details-Damage-Meter (1 folder: Details)"]);
   assert.ok(forever.messages.every((message) => !message.plain.includes(".curseclient")), "Forever has no marker");
 });
+
+test("the sketch's add form picks a made-up zip and adds its row with the source it names (task 116)", async () => {
+  const zip = await Data.chooseZip();
+  assert.equal(zip, "D:\\Downloads\\MrglNoDistribution-2.0.0.zip");
+  const answer = await Data.addZip("wowf", zip, "curse:4244");
+  assert.deepEqual(answer.messages.map((message) => [message.kind, message.plain]), [
+    ["success", "installed MrglNoDistribution 2.0.0 (1 folder: MrglNoDistribution) into _forever_"],
+  ]);
+  const row = answer.flavor.addons.find((addon) => addon.folder === "MrglNoDistribution");
+  assert.deepEqual(Object.keys(row).sort(), ROW_KEYS.slice().sort());
+  assert.deepEqual(row.source, { kind: "curseforge", id: "4244" });
+  assert.equal(row.managed, true);
+  assert.equal(row.check.state, "not-checked", "the sketch's build has no CurseForge source");
+  assert.equal(row.forever.build, "unknown", "a Forever row has its Forever slot");
+  // Without a source the row is a zip in hand; a spec the form does not take is refused.
+  const plain = await Data.addZip("wowf", "D:\\Downloads\\Loose.zip", null);
+  const loose = plain.flavor.addons.find((addon) => addon.folder === "Loose");
+  assert.deepEqual(loose.source, { kind: "zip", id: "Loose.zip" });
+  assert.equal(loose.version, "1.0.0");
+  const refused = await Data.addZip("wowf", zip, "somewhere:1");
+  assert.equal(refused.messages[0].kind, "error");
+  // A flavor the CurseForge app manages warns first; an unknown flavor is an error.
+  const retail = await Data.addZip("wow", zip, null);
+  assert.equal(retail.messages[0].kind, "warning");
+  assert.match(retail.messages[0].plain, /^the CurseForge app manages _retail_ too/);
+  assert.equal((await Data.addZip("nope", zip, null)).messages[0].kind, "error");
+});

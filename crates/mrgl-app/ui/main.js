@@ -1,6 +1,7 @@
 // The view (task 017): the flavor navigation, the addon list, the search, the voice's two places and the
 // theme; the game folder chooser and "copy diagnostics" (task 009); the update check, "update all", a row's
-// update with its progress slot, the cancel and the row menu's marks (task 010); the toolbox tab of a
+// update with its progress slot, the cancel and the row menu's marks (task 010); the add of a zip in hand
+// with the source it records (task 116); the toolbox tab of a
 // flavor with its set picker and its SavedVariables table (task 074), and its adopt card with the
 // confirmation in a folder the CurseForge app manages (task 109). It reads `window.Data` and draws what
 // it gets; it does not know whether the rows are made up (`mock-data.js`) or the core's answers
@@ -155,6 +156,9 @@
   // The update run going, one at a time (task 010): its id, its flavor, the progress slots of its rows.
   let run = null;
   let runs = 0;
+  // An add of a zip in hand going (task 116), and the zip the add form shows: `{ flavorId, zip }`.
+  let adding = false;
+  let addForm = null;
   // The tab of the chosen flavor: `addons` or `toolbox` (task 074).
   let tab = "addons";
   // The toolbox per flavor id, as the last answer drew it: `{ toolbox, changes }`; a toolbox write going
@@ -257,11 +261,15 @@
     const noFolder = flavor.addons_folder === false;
     const button = $("update-all");
     button.textContent = updates > 0 ? `Update all (${updates})` : "Update all";
-    button.disabled = Boolean(run) || noFolder;
+    button.disabled = Boolean(run) || adding || noFolder;
     button.hidden = Boolean(run);
     button.title = noFolder ? "the client has not been started for this flavor yet" : "check every addon, then install every update";
     const check = $("check-updates");
-    check.disabled = Boolean(run) || noFolder;
+    check.disabled = Boolean(run) || adding || noFolder;
+    // The add of a zip in hand (task 116) waits for a run and for another add, and needs the AddOns folder.
+    const addState = Actions.addZipButton(flavor, Boolean(run) || adding);
+    $("add-zip").disabled = !addState.enabled;
+    $("add-zip").title = addState.title;
     check.title = noFolder ? button.title : "ask the sources about every addon; nothing is installed";
     const cancel = $("cancel-update");
     cancel.hidden = !run;
@@ -881,6 +889,49 @@
       renderFlavor();
     }
   }
+
+  // ---- the add of a zip in hand (task 116): the file dialog, the form with the source, the install
+
+  const addZipDialog = $("add-zip-dialog");
+
+  $("add-zip").addEventListener("click", async () => {
+    const flavor = selected();
+    if (!flavor || run || adding) return;
+    let zip = null;
+    try {
+      zip = await Data.chooseZip();
+    } catch (error) {
+      say({ kind: "error", murloc: "", plain: `choosing the zip failed: ${error}` });
+      return;
+    }
+    if (!zip) return;
+    addForm = { flavorId: flavor.id, zip };
+    $("add-zip-file").textContent = `${Actions.fileName(zip)} into ${flavor.name}`;
+    $("add-zip-file").title = zip;
+    $("add-zip-source").value = "";
+    // Escape leaves the last value; an empty one is no install.
+    addZipDialog.returnValue = "";
+    addZipDialog.showModal();
+  });
+
+  // The form closes with the button pressed (`install` or `cancel`), or empty on Escape.
+  addZipDialog.addEventListener("close", async () => {
+    const form = addForm;
+    addForm = null;
+    if (!form || addZipDialog.returnValue !== "install") return;
+    const request = Actions.addZipRequest(form.zip, $("add-zip-source").value);
+    adding = true;
+    renderFlavor();
+    try {
+      applyActionAnswer(await Data.addZip(form.flavorId, request.zip, request.source));
+    } catch (error) {
+      say({ kind: "error", murloc: "", plain: `adding ${Actions.fileName(request.zip)} failed: ${error}` });
+    } finally {
+      adding = false;
+      renderNav();
+      renderFlavor();
+    }
+  });
 
   // ---- the game folder: the chooser, and the flavors of the folder it answers with
 

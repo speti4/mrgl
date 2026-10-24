@@ -196,6 +196,42 @@ pub struct Installed {
     pub client_warning: Option<String>,
 }
 
+impl Installed {
+    /// The summary line of an install (task 116: the command line's `add`, `update` and `import` and the
+    /// window's add of a zip in hand say it): `installed OneFolder 1.0.0 (1 folder: OneFolder) into
+    /// _forever_`, `updated … from 1.0.0 to 1.1.0 (…) in _forever_`, `reinstalled … 1.1.0 (…) in _forever_`,
+    /// with the folders of the previous version it removed at the end.
+    pub fn summary_line(&self, folder_name: &str) -> String {
+        let folders = format!(
+            "{}: {}",
+            crate::voice::count_noun(self.folders.len(), "folder"),
+            self.folders.join(", ")
+        );
+        let mut line = match (self.outcome, &self.previous_version) {
+            (InstallOutcome::Reinstalled, _) => format!(
+                "reinstalled {} {} ({folders}) in {folder_name}",
+                self.name, self.version
+            ),
+            (InstallOutcome::Updated, Some(previous)) => format!(
+                "updated {} from {previous} to {} ({folders}) in {folder_name}",
+                self.name, self.version
+            ),
+            _ => format!(
+                "installed {} {} ({folders}) into {folder_name}",
+                self.name, self.version
+            ),
+        };
+        if !self.removed_folders.is_empty() {
+            line.push_str(&format!(
+                ", {} of the previous version removed ({})",
+                crate::voice::count_noun(self.removed_folders.len(), "folder"),
+                self.removed_folders.join(", ")
+            ));
+        }
+        line
+    }
+}
+
 /// A sidecar entry an install took every folder of (task 108): the commit dropped it, and the installed
 /// addon ships its folders now, as when a release zip of one source carries the folder of a second entry
 /// of that source.

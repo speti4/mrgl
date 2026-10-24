@@ -385,6 +385,35 @@ fn a_mark_waits_for_an_update_and_for_a_toolbox_write_and_refuses_a_bad_action()
 }
 
 #[test]
+fn an_add_waits_for_an_update_and_for_a_toolbox_write() {
+    // Task 116: both install through the engine and write the sidecar; the zip is not read before.
+    let app = app();
+    let handle = app.handle().clone();
+    let add = || {
+        block_on(commands::add_zip(
+            handle.clone(),
+            "wowf".into(),
+            "Addon-1.0.0.zip".into(),
+            None,
+        ))
+    };
+    let guard = update_run(&app).start().expect("a run starts");
+    let answer = add();
+    assert_eq!(answer.flavor, None);
+    assert_eq!(
+        last(&answer.messages),
+        ("warning", actions::add_busy_line())
+    );
+    drop(guard);
+    let guard = toolbox_run(&app).start().expect("a write starts");
+    assert_eq!(
+        last(&add().messages),
+        ("warning", toolbox::add_waits_line())
+    );
+    drop(guard);
+}
+
+#[test]
 fn a_toolbox_write_is_refused_while_another_one_runs() {
     let app = app();
     let handle = app.handle().clone();
@@ -629,6 +658,57 @@ fn the_update_commands_run_on_the_engine_of_the_process() {
                 "pin".into(),
                 None,
             ));
+            assert_eq!(
+                last(&answer.messages),
+                (
+                    "error",
+                    "no flavor wow_mrgl: no game root, or no such flavor folder under it"
+                )
+            );
+        },
+    );
+}
+
+#[test]
+fn the_add_command_installs_on_the_engine_of_the_process() {
+    // Task 116: the zip in hand with the source the form names, on the flavor of the process's root; the
+    // add holds the update run while it installs and lets it go after.
+    let game = Game::new("add-zip");
+    in_child(
+        "the_add_command_installs_on_the_engine_of_the_process",
+        env(&[("MRGL_ROOT", &game.root()), ("MRGL_HOME", &game.home())]),
+        || {
+            let app = app();
+            let handle = app.handle().clone();
+            let zip = fixtures().join("zips").join("MrglNoDistribution-2.0.0.zip");
+            let answer = block_on(commands::add_zip(
+                handle.clone(),
+                "wowf".into(),
+                zip.display().to_string(),
+                Some("curse:4244".into()),
+            ));
+            assert_eq!(
+                last(&answer.messages),
+                (
+                    "success",
+                    "installed MrglNoDistribution 2.0.0 (1 folder: MrglNoDistribution) into _forever_"
+                )
+            );
+            let flavor = answer.flavor.expect("the flavor");
+            let row = serde_json::to_value(&flavor.addons[0]).expect("serializes");
+            assert_eq!(
+                row["source"],
+                serde_json::json!({ "kind": "curseforge", "id": "4244" })
+            );
+            assert!(!app.state::<UpdateRun>().is_running(), "the add ended");
+            // The engine of a flavor the root does not have.
+            let answer = block_on(commands::add_zip(
+                handle,
+                "wow_mrgl".into(),
+                zip.display().to_string(),
+                None,
+            ));
+            assert_eq!(answer.flavor, None);
             assert_eq!(
                 last(&answer.messages),
                 (

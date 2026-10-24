@@ -33,6 +33,8 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The window's adopt view: the report and `--apply` in the toolbox ([109](https://github.com/speti4/mrgl/blob/main/tasks/done/109-the-windows-adopt-view.md))
 - The window's install paths warn in a folder the CurseForge app manages ([110](https://github.com/speti4/mrgl/blob/main/tasks/done/110-the-windows-install-paths-warn-in-a-curseforge-managed-folder.md))
 - The window's adopt apply reuses the shown report's answers ([113](https://github.com/speti4/mrgl/blob/main/tasks/done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md))
+- The window's update reports an entry folded into another during the run ([114](https://github.com/speti4/mrgl/blob/main/tasks/done/114-the-windows-update-reports-an-entry-folded-into-another.md))
+- The window installs a zip in hand with a recorded source ([116](https://github.com/speti4/mrgl/blob/main/tasks/done/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md))
 
 ### M3 Toolbox
 
@@ -53,6 +55,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - A WoWInterface file waiting for approval is a state of its own in the update check ([104](https://github.com/speti4/mrgl/blob/main/tasks/done/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md))
 - A Wago page address resolves to its `wago:<id>` through the keyless slugs list ([105](https://github.com/speti4/mrgl/blob/main/tasks/done/105-a-wago-page-address-resolves-to-its-id.md))
 - The Wago update check asks for its addons in bulk, one request per game version ([106](https://github.com/speti4/mrgl/blob/main/tasks/done/106-the-wago-update-check-asks-in-bulk.md))
+- A distribution-off CurseForge entry is a state of its own in the update check ([115](https://github.com/speti4/mrgl/blob/main/tasks/done/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md))
 
 ### M5 Trust
 
