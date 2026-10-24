@@ -1435,6 +1435,160 @@ fn add_refuses_an_escaping_zip_with_exit_code_one() {
     assert!(!game.addon("Escape").exists());
 }
 
+// --- task 123: the one folder-name rule (finding H1 of task 121) ---
+
+/// Every file and folder under a folder, as relative paths with `/` (a folder with a trailing `/`) and
+/// each file's bytes: the before-and-after picture that shows a refused run touched nothing.
+fn tree(dir: &Path) -> std::collections::BTreeMap<String, Option<Vec<u8>>> {
+    fn walk(
+        dir: &Path,
+        prefix: &str,
+        out: &mut std::collections::BTreeMap<String, Option<Vec<u8>>>,
+    ) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+            if entry.file_type().expect("a file type").is_dir() {
+                let folder = format!("{name}/");
+                out.insert(folder.clone(), None);
+                walk(&entry.path(), &folder, out);
+            } else {
+                out.insert(name, Some(std::fs::read(entry.path()).expect("a file")));
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(dir, "", &mut out);
+    out
+}
+
+/// The three fixtures of task 123: the zip, the TOC at its root and the stem that TOC would name.
+const ODD_ROOT_TOCS: [(&str, &str, &str); 3] = [
+    ("dot-toc.zip", "..toc", "."),
+    ("dot-dot-toc.zip", "...toc", ".."),
+    ("blank-toc.zip", " .toc", " "),
+];
+
+#[test]
+fn add_of_a_root_toc_whose_stem_is_no_folder_name_installs_under_the_zip_stem() {
+    for (zip_name, toc_name, _) in ODD_ROOT_TOCS {
+        let stem = zip_name.trim_end_matches(".zip");
+        let game = Game::new(&format!("odd-root-toc-{stem}"));
+        game.install("one-folder-1.0.0.zip");
+        let one_folder = tree(&game.addon("OneFolder"));
+        let output = game
+            .mrgl()
+            .arg("add")
+            .arg(zips().join(zip_name))
+            .args(["--flavor", "forever"])
+            .output()
+            .expect("run mrgl");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            stderr_last_line(&output)
+        );
+        assert_eq!(
+            stdout_last_line(&output),
+            format!("installed {stem} unknown (1 folder: {stem}) into _forever_"),
+        );
+        assert!(game.addon(stem).join(toc_name).is_file(), "{zip_name}");
+        assert_eq!(tree(&game.addon("OneFolder")), one_folder, "{zip_name}");
+        let interface: Vec<String> =
+            std::fs::read_dir(game.root.join("_forever_").join("Interface"))
+                .expect("Interface")
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+        assert_eq!(interface, ["AddOns"], "{zip_name}");
+    }
+}
+
+#[test]
+fn add_refuses_a_zip_whose_root_toc_and_stem_are_no_folder_names_with_exit_code_one() {
+    for (zip_name, _, folder) in ODD_ROOT_TOCS {
+        let game = Game::new(&format!("refused-{}", zip_name.trim_end_matches(".zip")));
+        game.install("one-folder-1.0.0.zip");
+        // The same zip under a stem that is no folder name either: `..zip`, `...zip`, ` .zip`.
+        let copies = game.root.parent().expect("the base folder").join("copies");
+        std::fs::create_dir_all(&copies).expect("the copies folder");
+        let copy = copies.join(format!("{folder}.zip"));
+        std::fs::copy(zips().join(zip_name), &copy).expect("the copy");
+        let game_before = tree(&game.root);
+        let home_before = tree(&game.home);
+        for dry_run in [false, true] {
+            let mut command = game.mrgl();
+            command.arg("add").arg(&copy).args(["--flavor", "forever"]);
+            if dry_run {
+                command.arg("--dry-run");
+            }
+            let output = command.output().expect("run mrgl");
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{zip_name}, dry run {dry_run}"
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            let lines: Vec<&str> = stderr.lines().collect();
+            assert_eq!(lines.len(), 2, "{stderr}");
+            assert_eq!(lines[0], "Rwlrwlrwlrwl?!", "the murloc line of an error");
+            assert_eq!(
+                lines[1],
+                format!(
+                    "refused {}: its addon folder would be `{folder}`, which is no folder name under Interface\\AddOns (empty, `.` or `..`, a path, a trailing dot or space, or a character or device name Windows refuses); nothing was installed",
+                    copy.display()
+                )
+            );
+            assert_eq!(tree(&game.root), game_before, "{zip_name}: the game folder");
+            assert_eq!(
+                tree(&game.home),
+                home_before,
+                "{zip_name}: the sidecar, the cache and the staging folder"
+            );
+        }
+    }
+}
+
+#[test]
+fn remove_refuses_a_sidecar_entry_whose_folder_is_dot_dot() {
+    let game = Game::new("recorded-dot-dot");
+    game.install("one-folder-1.0.0.zip");
+    // A sidecar written before the rule: the entry also records `..`, which is `Interface` itself.
+    let mut state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(game.state_path()).expect("the sidecar"))
+            .expect("JSON");
+    state["addons"]["OneFolder"]["folders"]
+        .as_array_mut()
+        .expect("the folders")
+        .push(serde_json::json!(".."));
+    std::fs::write(
+        game.state_path(),
+        serde_json::to_string_pretty(&state).expect("JSON"),
+    )
+    .expect("written");
+    let game_before = tree(&game.root);
+    let home_before = tree(&game.home);
+    let output = game
+        .mrgl()
+        .args(["--serious", "remove", "OneFolder", "--flavor", "forever"])
+        .output()
+        .expect("run mrgl");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim_end(),
+        format!(
+            "refused: the sidecar of forever records the folder `..`, which is no folder name under Interface\\AddOns; nothing was moved or removed, and the entry is yours to correct in {}",
+            game.state_path().display()
+        )
+    );
+    assert_eq!(tree(&game.root), game_before, "the game folder");
+    assert_eq!(tree(&game.home), home_before, "the mrgl home");
+    assert!(game.addon("OneFolder").join("OneFolder.toc").is_file());
+}
+
 #[test]
 fn remove_of_an_unknown_or_unmanaged_addon_is_exit_code_one() {
     let game = Game::new("unknown");

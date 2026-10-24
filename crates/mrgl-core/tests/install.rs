@@ -2353,3 +2353,211 @@ fn a_request_for_a_pick_in_hand_resolves_to_the_pick() {
         "a pick in hand asks nothing"
     );
 }
+
+// --- task 123: the one folder-name rule (finding H1 of task 121) ---
+
+/// Every file and folder under a folder, as relative paths with `/` (a folder with a trailing `/`) and
+/// each file's bytes: the before-and-after picture that shows a refused call touched nothing.
+fn tree(dir: &Path) -> BTreeMap<String, Option<Vec<u8>>> {
+    fn walk(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Option<Vec<u8>>>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+            if entry.file_type().expect("a file type").is_dir() {
+                let folder = format!("{name}/");
+                out.insert(folder.clone(), None);
+                walk(&entry.path(), &folder, out);
+            } else {
+                out.insert(name, Some(std::fs::read(entry.path()).expect("a file")));
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(dir, "", &mut out);
+    out
+}
+
+impl Sandbox {
+    /// The game folder: the flavor with its `Interface` and everything around it.
+    fn game(&self) -> PathBuf {
+        self.root.join("game")
+    }
+
+    /// The mrgl home: the sidecar, the cache and the staging folder.
+    fn home(&self) -> PathBuf {
+        self.root.join("home")
+    }
+}
+
+/// The three fixtures of task 123: the zip, the TOC at its root and the stem that TOC would name.
+const ODD_ROOT_TOCS: [(&str, &str, &str); 3] = [
+    ("dot-toc.zip", "..toc", "."),
+    ("dot-dot-toc.zip", "...toc", ".."),
+    ("blank-toc.zip", " .toc", " "),
+];
+
+#[test]
+fn a_root_toc_whose_stem_is_no_folder_name_installs_under_the_zip_stem_and_nowhere_else() {
+    for (zip_name, toc_name, _) in ODD_ROOT_TOCS {
+        let stem = zip_name.trim_end_matches(".zip");
+        let sandbox = Sandbox::new(&format!("odd-root-toc-{stem}"));
+        sandbox.install("one-folder-1.0.0.zip");
+        let addons_before = tree(&sandbox.addons());
+
+        let installed = sandbox.install(zip_name);
+        assert_eq!(installed.name, stem, "{zip_name}");
+        assert_eq!(installed.folders, [stem], "{zip_name}");
+        assert_eq!(sandbox.folders(), ["OneFolder", stem], "{zip_name}");
+        assert!(sandbox.addon(stem).join(toc_name).is_file(), "{zip_name}");
+        assert!(sandbox.addon(stem).join("core.lua").is_file(), "{zip_name}");
+        let addons_after = tree(&sandbox.addons());
+        for (path, content) in &addons_before {
+            assert_eq!(addons_after.get(path), Some(content), "{zip_name}: {path}");
+        }
+        assert!(
+            addons_after
+                .keys()
+                .filter(|path| !addons_before.contains_key(*path))
+                .all(|path| path.starts_with(&format!("{stem}/"))),
+            "{zip_name}: only the new folder is new"
+        );
+        let interface: Vec<String> =
+            std::fs::read_dir(sandbox.addons().parent().expect("Interface"))
+                .expect("Interface")
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+        assert_eq!(interface, ["AddOns"], "{zip_name}");
+        let state = sandbox.state();
+        assert_eq!(state.addons.len(), 2, "{zip_name}");
+        assert_eq!(state.entry(stem).expect("the entry").1.folders, [stem]);
+    }
+}
+
+#[test]
+fn a_root_toc_and_a_zip_stem_that_are_no_folder_names_refuse_the_zip_and_touch_nothing() {
+    for (zip_name, _, folder) in ODD_ROOT_TOCS {
+        let sandbox = Sandbox::new(&format!("refused-{}", zip_name.trim_end_matches(".zip")));
+        sandbox.install("one-folder-1.0.0.zip");
+        // The same zip under a stem that is no folder name either: `..zip`, `...zip`, ` .zip`.
+        let copies = sandbox.root.join("copies");
+        std::fs::create_dir_all(&copies).expect("the copies folder");
+        let copy = copies.join(format!("{folder}.zip"));
+        std::fs::copy(zip(zip_name), &copy).expect("the copy");
+        let game_before = tree(&sandbox.game());
+        let home_before = tree(&sandbox.home());
+
+        let metadata = Metadata {
+            source: copy.display().to_string(),
+            ..Metadata::default()
+        };
+        let error = sandbox
+            .engine
+            .install(&copy, &metadata)
+            .expect_err("refused");
+        match &error {
+            Error::FolderNameRefused {
+                path,
+                folder: refused,
+            } => {
+                assert_eq!(path, &copy);
+                assert_eq!(refused, folder);
+            }
+            other => panic!("{zip_name}: {other}"),
+        }
+        assert!(
+            error.to_string().starts_with(&format!(
+                "refused {}: its addon folder would be `{folder}`, which is no folder name under Interface\\AddOns",
+                copy.display()
+            )),
+            "{error}"
+        );
+        assert!(
+            error.to_string().ends_with("nothing was installed"),
+            "{error}"
+        );
+        assert_eq!(
+            tree(&sandbox.game()),
+            game_before,
+            "{zip_name}: the game folder"
+        );
+        assert_eq!(
+            tree(&sandbox.home()),
+            home_before,
+            "{zip_name}: the sidecar, the cache and the staging folder"
+        );
+        assert!(
+            sandbox.engine.stage(&copy, &metadata).is_err(),
+            "the stage alone refuses it too"
+        );
+    }
+}
+
+#[test]
+fn a_recorded_folder_that_is_no_folder_name_is_refused_by_remove_rollback_and_a_commit() {
+    let sandbox = Sandbox::new("recorded-dot-dot");
+    sandbox.install("one-folder-1.0.0.zip");
+    sandbox.install("one-folder-1.1.0.zip");
+    // A sidecar written before the rule: the entry also records `..`, which is `Interface` itself.
+    let mut state = sandbox.state();
+    state
+        .addons
+        .get_mut("OneFolder")
+        .expect("the entry")
+        .folders
+        .push("..".to_string());
+    sandbox.engine.home.write_state(&state).expect("written");
+    let game_before = tree(&sandbox.game());
+    let home_before = tree(&sandbox.home());
+    let sidecar = sandbox.engine.home.state_path();
+    let refused = |what: &str, error: Error| {
+        match &error {
+            Error::RecordedFolderRefused {
+                folder,
+                flavor,
+                sidecar: path,
+            } => {
+                assert_eq!(folder, "..", "{what}");
+                assert_eq!(flavor, "forever", "{what}");
+                assert_eq!(path, &sidecar, "{what}");
+            }
+            other => panic!("{what}: {other}"),
+        }
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "refused: the sidecar of forever records the folder `..`, which is no folder name under Interface\\AddOns; nothing was moved or removed, and the entry is yours to correct in {}",
+                sidecar.display()
+            ),
+            "{what}"
+        );
+        assert_eq!(
+            tree(&sandbox.game()),
+            game_before,
+            "{what}: the game folder"
+        );
+        assert_eq!(tree(&sandbox.home()), home_before, "{what}: the mrgl home");
+    };
+
+    refused(
+        "remove",
+        sandbox.engine.remove("OneFolder").expect_err("refused"),
+    );
+    refused(
+        "rollback",
+        sandbox.engine.rollback("OneFolder").expect_err("refused"),
+    );
+    // An install whose new version drops `..`: the commit's guard sees it among the dropped folders.
+    refused(
+        "install",
+        sandbox
+            .engine
+            .install(
+                &zip("one-folder-1.2.0.zip"),
+                &metadata("one-folder-1.2.0.zip"),
+            )
+            .expect_err("refused"),
+    );
+}

@@ -75,7 +75,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the current `WTF` aside and reverts on a failure, task 013), the addon sets (`sets`, task 014, below),
   the zip entry check
   both of them call (`zip_entry`, task 044: every entry readable, inside its folder and no link, checked
-  before the first is written), the running-client check (`client`,
+  before the first is written; next to it the one folder-name rule, `zip_entry::is_folder_name`, task
+  123, below), the running-client check (`client`,
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
   calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
   D-003), the game root resolution (`discover`, task 020: the flag, `MRGL_ROOT`, the remembered root, then
@@ -180,7 +181,8 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   `mrgl import <file> --flavor <flavor>`: `forever-starter.json`, the Forever starter list (task 028). The
   format rule: an entry names a source and a version, its folders are plain folder names, and nothing in it
   is a path of one machine; reading a list refuses an entry whose source is a zip file, a linked folder
-  (`link:`) or another local or absolute path, or whose folder is a path, and names every such entry, and
+  (`link:`) or another local or absolute path, or whose folder is no folder name (the folder-name rule of
+  task 123), and names every such entry, and
   the export leaves an addon from a zip in hand or a linked folder out with a warning. The starter list
   holds GitHub entries only, each one checked against its repository's latest release (a `release.json`
   that names `forever` or `camelot` for an asset of the release, or a `-forever` asset); the check, with
@@ -278,6 +280,33 @@ from before task 084, which takes no lock; `previous\` holds the folders an inte
 aside, perhaps the only copy of the version installed before, so that folder stays until it is removed by
 hand, and `mrgl doctor` names it with its age, its size and what to do with it (task 088, see
 [The doctor](#the-doctor)). A leftover that cannot be removed is a warning on the install's result, never an error.
+
+The folder-name rule (task 123, `zip_entry::is_folder_name`, next to the zip entry rule whose character and
+device-name checks it shares): a folder name is not empty, not `.` or `..`, holds no `/` or `\`, no `:`, no
+control character and none of `<>"|?*`, ends in no dot or space (Windows drops them, so `AddOns\.` and
+`AddOns\ ` are `AddOns` itself and `AddOns\..` is `Interface`) and is no reserved device name (`CON`, `PRN`,
+`AUX`, `NUL`, `COM1` … `COM9`, `LPT1` … `LPT9`, with or without an extension); a leading space and an inner
+dot pass. The zip entry rule alone lets `..toc`, `...toc` and ` .toc` through, since none of their
+components is `.` or `..`, and a TOC at a zip's root names the addon folder by its stem, so the engine holds
+every folder name to the rule before it joins it to `Interface\AddOns` (finding H1 of the hardening review,
+task 121). `Engine::stage` passes over a root TOC whose stem fails the rule, so the folder falls back to the
+zip's stem, as for root TOCs without a common stem; a staged folder that still fails (a zip whose own stem
+fails too, such as `..zip`) refuses the whole zip before anything leaves the staging folder, with
+``refused <zip>: its addon folder would be `..`, which is no folder name under Interface\AddOns (…); nothing
+was installed`` (`Error::FolderNameRefused`), so `AddOns`, `Interface`, the sidecar and the cache stay as
+they were; the dry run of `add` stages, so it refuses the same way. Decided 2026-10-24: the fallback, not a
+refusal, for a root TOC whose stem fails, since the zip's stem is the name the engine already gives root TOCs
+it cannot name. A folder the sidecar records is held to the rule again before it is joined
+(`Engine::refuse_recorded_folders`): `Engine::remove` and `Engine::rollback` on the entry they act on, and
+`Engine::refuse_links`, the guard of every commit and of the dry run, on every folder it is about to touch,
+the dropped ones of the previous version included; a sidecar written before the rule or by hand that records
+`..` is refused with ``refused: the sidecar of <flavor> records the folder `..`, which is no folder name
+under Interface\AddOns; nothing was moved or removed, and the entry is yours to correct in <state.json>``
+(`Error::RecordedFolderRefused`). Every install path reaches these checks, since every one stages and commits
+through the engine: a zip in hand, every source, `import`, `update`, `rollback` and the window's update and
+add, which call `Engine::install_from_source` and `Engine::install` and carry the refusal as their error line.
+The GitHub mapping of adopt (`GithubMapping::problems`, which refuses a leading space too), the shareable
+list file (`ListEntry::not_shareable`) and the set apply's undo record hold their names to the same function.
 
 The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
 request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
@@ -786,8 +815,8 @@ source of an addon whose TOC names none, by its folder:
 Every folder of a multi-folder addon is a key of its own with the same source, which makes them one folder
 group. An entry joins by a pull request, and only for a repository whose releases carry the addon's zip: a
 repository without release zips is no source mrgl can install from. The schema check (`adopt::tests`,
-`GithubMapping::problems`) rejects an unknown field, a schema other than 1, a key that is no folder name (a
-path separator, surrounding space) or repeats another without regard to case, and a value that is not a
+`GithubMapping::problems`) rejects an unknown field, a schema other than 1, a key that is no folder name (the
+folder-name rule of task 123, or a leading space) or repeats another without regard to case, and a value that is not a
 canonical `github:<owner>/<repo>` spec, and it holds the seed: every folder of the Forever starter list
 (`lists/forever-starter.json`) maps to that list's source.
 
@@ -1407,8 +1436,11 @@ without `release.json`, one with no release, one with a draft and a prerelease a
 and small zips for the install engine (`zips/`, written by the deterministic `make-zips.py` next to them:
 one addon folder in three versions, several folders in one archive, several whose core is not the first by
 name and no folder extended by the others (`boss-core-5.0.0.zip`, task 065), a TOC at the zip's root, a wrapper
-folder, a TOC with an interface for another build, a path that tries to escape the staging folder, an addon
-with an embedded-only and a missing required dependency, and a zip with no addon at all), a hand-written
+folder, a TOC with an interface for another build, a path that tries to escape the staging folder, three
+TOCs at the root whose stems are `.`, `..` and a blank (`dot-toc.zip`, `dot-dot-toc.zip`, `blank-toc.zip`,
+task 123: installed under the zip's stem, and refused once a test copies them under a stem that is no folder
+name either), an addon with an embedded-only and a missing required dependency, and a zip with no addon at
+all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
 SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made
 up from the first line, task 013), a second `WTF` tree for the addon sets (`addon-sets/WTF/`, task 014:

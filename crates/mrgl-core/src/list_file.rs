@@ -26,7 +26,8 @@
 //!
 //! A list is shareable (task 028): it names sources and versions, never a path of one machine. Reading a
 //! list refuses an entry whose source is a zip file, a linked development folder (`link:`) or another local
-//! or absolute path, or whose folder is a path rather than a folder name, and the error names every such
+//! or absolute path, or whose folder is no folder name (a path, or a name the folder-name rule of task 123,
+//! [`crate::zip_entry::is_folder_name`], refuses), and the error names every such
 //! entry ([`ListEntry::not_shareable`]); the export leaves an addon from a zip in hand or a linked folder
 //! out of the list, with a warning that names it. A list written by hand or kept in the repo
 //! (`lists/forever-starter.json`) goes through the same check; the import's outcomes for a zip or a
@@ -44,6 +45,7 @@ use crate::interface::{InterfaceMismatch, InterfaceOutOfDate};
 use crate::scan;
 use crate::sources::{Source, SourceSpec, Target};
 use crate::state::{self, State};
+use crate::zip_entry;
 
 /// The `format` of a list file.
 pub const FORMAT: &str = "mrgl-list";
@@ -174,7 +176,8 @@ impl ListFile {
 impl ListEntry {
     /// Why the entry has no place in a shareable list (task 028), as a clause after its name, or `None`
     /// when it names a source and plain folder names only: a zip file, a linked development folder and any
-    /// other local or absolute path belong to one machine and mean nothing on another.
+    /// other local or absolute path belong to one machine and mean nothing on another, and a folder is
+    /// held to the install engine's folder-name rule (task 123).
     pub fn not_shareable(&self) -> Option<String> {
         let source = self.source.trim();
         match EntrySource::of(source) {
@@ -191,11 +194,8 @@ impl ListEntry {
         }
         self.folders
             .iter()
-            .find(|folder| {
-                let folder = folder.trim();
-                folder.contains(['/', '\\', ':']) || folder == "." || folder == ".."
-            })
-            .map(|folder| format!("its folder {folder} is a path, not a folder name"))
+            .find(|folder| !zip_entry::is_folder_name(folder))
+            .map(|folder| format!("its folder `{folder}` is not a folder name"))
     }
 }
 
@@ -1144,10 +1144,20 @@ mod tests {
                 Some(format!("its source {path} is a local path"))
             );
         }
-        for folder in ["..\\Some", "C:\\AddOns\\Some", "Some/Inner", ".", ".."] {
+        for folder in [
+            "..\\Some",
+            "C:\\AddOns\\Some",
+            "Some/Inner",
+            ".",
+            "..",
+            " ..",
+            "Some.",
+            "Some ",
+            "CON",
+        ] {
             assert_eq!(
                 shareable("github:Example/Some", &["Some", folder]),
-                Some(format!("its folder {folder} is a path, not a folder name"))
+                Some(format!("its folder `{folder}` is not a folder name"))
             );
         }
     }

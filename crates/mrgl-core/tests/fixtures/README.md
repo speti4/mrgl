@@ -88,7 +88,10 @@ BOM in a fixture survives every checkout.
   fixture build, for the interface warning of task 015 (`stale-interface-1.0.0`), a TOC one interface
   number behind the Forever fixture build (16000 under 1.60.1), out of date for task 082
   (`behind-interface-1.0.0`), a path that tries to
-  escape the staging folder (`escaping-path`), an addon that requires `LibEmbedded`, carried under its
+  escape the staging folder (`escaping-path`), a TOC at the root whose stem is no folder name next to one
+  Lua file, for the folder-name rule of task 123: `..toc` (`dot-toc`), `...toc` (`dot-dot-toc`) and ` .toc`
+  (`blank-toc`), each installed under the zip's stem and refused once a test copies it under a stem that is
+  no folder name either (`..zip`, `...zip`, ` .zip`), an addon that requires `LibEmbedded`, carried under its
   `Libs/`, and `LibMissing`, carried nowhere (`needs-library-1.0.0`, task 029), a zip with no addon at
   all (`no-addon`), the zip in hand of the CurseForge project `4244`, whose author allows no download
   outside CurseForge (`MrglNoDistribution-2.0.0`, stored, task 096), and a `WTF` backup whose three entries

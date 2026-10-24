@@ -68,6 +68,26 @@ pub enum Error {
     #[error("no addon in {path}: no folder with a .toc at the root or one level down")]
     NoAddonInZip { path: PathBuf },
 
+    /// A staged addon folder is no folder name (task 123, [`crate::zip_entry::is_folder_name`]): a TOC at
+    /// the zip's root whose stem is `.`, `..` or blank, in a zip whose own stem is no folder name either.
+    /// Refused by the stage, before anything is unpacked into place.
+    #[error(
+        "refused {path}: its addon folder would be `{folder}`, which is no folder name under Interface\\AddOns (empty, `.` or `..`, a path, a trailing dot or space, or a character or device name Windows refuses); nothing was installed"
+    )]
+    FolderNameRefused { path: PathBuf, folder: String },
+
+    /// A folder the sidecar records is no folder name (task 123, [`crate::zip_entry::is_folder_name`]), as
+    /// a sidecar written before the rule or by hand can carry: refused before the folder is joined to
+    /// `Interface\AddOns`, by a commit, a removal and a rollback alike.
+    #[error(
+        "refused: the sidecar of {flavor} records the folder `{folder}`, which is no folder name under Interface\\AddOns; nothing was moved or removed, and the entry is yours to correct in {sidecar}"
+    )]
+    RecordedFolderRefused {
+        folder: String,
+        flavor: String,
+        sidecar: PathBuf,
+    },
+
     /// A name that is neither a managed addon nor a folder of the flavor (task 004).
     #[error("addon not found: {name} (flavor {flavor})")]
     AddonNotFound { name: String, flavor: String },
