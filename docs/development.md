@@ -167,6 +167,11 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   card of task 109), the static UI
   under `ui/`, the capability file and the icon; see
   [The UI](#the-ui).
+- `crates/mrgl-test-support` — the helpers the tests of the three crates share (task 118), a dev-dependency of
+  each and never part of an exe: `stand_in`, the stand-in game client of the running-client tests (see
+  [Fixtures](#fixtures)), and `locked`, the file and folder handles a test holds open so that a read, a move or
+  a removal under them fails. The standard library only and Windows only (the other targets compile an empty
+  crate); its code is test code, left out of the coverage measurement (see [Coverage](#coverage)).
 - `data/` — `forever-notes.json`, the curated Forever notes compiled into the core (see
   [Forever notes](#forever-notes)).
 - `lists/` — shareable addon lists in the format `mrgl export` writes (`list_file`, task 015), read by
@@ -1141,7 +1146,8 @@ does not move with the pin.
 The `coverage` job (task 117) measures how much of the three crates the tests run: line and branch coverage
 of the Windows build, with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) on a nightly toolchain,
 since branch coverage is nightly-only. The test files, the build scripts and the `cfg(not(windows))` twins (which
-the `non-windows` job compiles and nothing runs) are not counted. The whole suite runs once more under
+the `non-windows` job compiles and nothing runs) are not counted, nor are the test helpers of
+`crates/mrgl-test-support`, which carry the exclusion attribute below. The whole suite runs once more under
 instrumentation; the exe the command line's end-to-end tests spawn writes its own profile, so its lines count
 like any other, and the core's lines the command line alone reaches count only in a workspace run, never in a
 run of the core crate by itself. A process that ends through `std::process::exit` writes no profile (the C
@@ -1169,7 +1175,9 @@ code, so the list cannot go stale. `coverage_nightly` is the cfg cargo-llvm-cov 
 and the crate-level feature gate behind it exist only there, and the workspace's `unexpected_cfgs` lint
 (`[workspace.lints.rust]` in `Cargo.toml`) declares the cfg so the stable build stays warning-free. An
 exclusion is allowed only on a function or a module whose failure arms only the operating system or the desktop
-can provoke; the logic around such a call is split into a function a test reaches. Two classes need no entry
+can provoke; the logic around such a call is split into a function a test reaches. The one other listed
+exclusion is the test code of `mrgl-test-support`: test code like a `#[cfg(test)]` module, but a library of its
+own, which the `#[cfg(test)]` class below does not cover. Two classes need no entry
 below: every `#[cfg(test)]` module and item carries the attribute (the test code is not the subject, and its
 `assert!` arms would be phantom branches), and the `cfg(not(windows))` twins are not measured at all.
 
@@ -1188,6 +1196,8 @@ reasoned exclusions:
 - `mrgl-app/src/commands.rs`: the native folder dialog; the choice itself is `choose`, tested without a dialog
 - `mrgl-core/src/keys.rs`: the user's real Credential Manager; the unit tests run the same contract against the
   memory store, the end-to-end tests run with the store off
+- `mrgl-test-support/src/lib.rs`: test code the tests of the three crates share, not the subject of the
+  measurement, like a `#[cfg(test)]` module
 
 Branch coverage counts the conditions of `if`, `&&`, `||` and `let … else`, and macro expansions can add
 branches nothing reaches. A dead defensive condition is simplified with a comment rather than tested; a residue
@@ -1334,7 +1344,11 @@ against the loopback address with a count of an hour, so it runs until the test 
 it on a failed assertion too); no game file and no committed executable is involved, and where no `ping.exe`
 is found the test is skipped with a message. The stand-in is never a copy of the test binary itself: a
 binary that copies itself and runs the copy is the pattern an antivirus heuristic reads as a dropper, and
-Windows Defender quarantined the test binaries for it (task 063). The backup tests copy the fixture `WTF`
+Windows Defender quarantined the test binaries for it (task 063). The stand-in is written once, in
+`mrgl_test_support::stand_in` (`spawn_stand_in`, the drop guard `StandIn` and the skip line `SKIPPED`), and the
+tests of the three crates reach it as a dev-dependency (task 118); the handles the tests hold open so that a
+read, a move or a removal fails (`locked::file`, `locked::file_sharing_reads`, `locked::folder`) come from the
+same crate. The backup tests copy the fixture `WTF`
 tree into such a folder.
 
 The sources talk to the network through the `Http` trait of `mrgl_core::sources`, a GET and a POST (task

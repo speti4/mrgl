@@ -397,14 +397,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_removal_that_fails_is_a_warning() {
-        use std::os::windows::fs::OpenOptionsExt;
+        use mrgl_test_support::locked;
         let staging = temp_staging("fails");
         let stuck = planted(&staging, "Stuck.zip", OLD);
-        let open = OpenOptions::new()
-            .read(true)
-            .share_mode(0)
-            .open(stuck.join("unpacked").join("core.lua"))
-            .expect("a handle with no sharing");
+        let open = locked::file(&stuck.join("unpacked").join("core.lua"));
         let warnings = sweep(&staging);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(

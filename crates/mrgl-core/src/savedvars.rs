@@ -1000,7 +1000,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_file_that_cannot_be_removed_stops_the_cleanup_after_the_ones_before_it() {
-        use std::os::windows::fs::OpenOptionsExt;
+        use mrgl_test_support::locked;
         let temp = Temp::new("remove-locked");
         let wtf = temp.path().join("WTF");
         let dir = saved_variables(&wtf, "ACC", None);
@@ -1015,12 +1015,7 @@ mod tests {
         let (zip, _) = backup::zip_files(&temp.path().join("backups"), CLEANUP_PREFIX, &entries)
             .expect("a zip");
         // A handle that shares reads and not the removal: the check reads the file, the removal fails.
-        const FILE_SHARE_READ: u32 = 0x1;
-        let lock = fs::OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ)
-            .open(&held)
-            .expect("a handle that shares reads");
+        let lock = locked::file_sharing_reads(&held);
         let error = remove_checked(&zip, &entries).expect_err("held");
         drop(lock);
         let Error::CleanupIncomplete {

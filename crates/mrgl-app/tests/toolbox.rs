@@ -9,13 +9,13 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-#[cfg(windows)]
-use std::process::{Child, Command, Stdio};
 
 use mrgl_app_lib::toolbox::{self, Pick, ToolboxAnswer, ToolboxView};
 use mrgl_core::flavor::FlavorId;
 use mrgl_core::sets::{self, AddonSet, AddonState, AddonsTxt, SetsFile};
 use mrgl_core::voice::Voice;
+#[cfg(windows)]
+use mrgl_test_support::stand_in::{SKIPPED, spawn_stand_in};
 
 const BUILD_INFO: &str = "Product!STRING:0|Version!STRING:0\nwowf|1.60.1.70245\n";
 const ACCOUNT: &str = "MRGLSETS";
@@ -967,64 +967,6 @@ fn one_realm_and_name_under_two_accounts_apply_to_the_chosen_account() {
     assert_eq!(undo.restore[0].account.as_deref(), Some(TWIN));
 }
 
-/// The stand-in client (task 063): a copy of the signed `ping.exe` of the system folder, named
-/// `client-stand-in.exe` in the flavor folder and pinging the loopback address for an hour, so it runs
-/// until the test stops it. Never a copy of this test binary. `None` when the system folder has no
-/// `ping.exe`; the test is then skipped with a message.
-#[cfg(windows)]
-fn spawn_stand_in(flavor_folder: &Path) -> Option<StandIn> {
-    let ping = PathBuf::from(std::env::var_os("SystemRoot")?)
-        .join("System32")
-        .join("ping.exe");
-    if !ping.is_file() {
-        return None;
-    }
-    let copy = flavor_folder.join("client-stand-in.exe");
-    std::fs::copy(&ping, &copy).expect("the copy");
-    let child = Command::new(&copy)
-        .args(["-n", "3600", "127.0.0.1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("the stand-in starts");
-    Some(StandIn {
-        child,
-        stopped: false,
-    })
-}
-
-/// The running stand-in client: `stop` kills and waits for it, and so does a drop, so a failing assertion
-/// leaves no process behind.
-#[cfg(windows)]
-struct StandIn {
-    child: Child,
-    stopped: bool,
-}
-
-#[cfg(windows)]
-impl StandIn {
-    fn id(&self) -> u32 {
-        self.child.id()
-    }
-
-    fn stop(&mut self) {
-        self.child.kill().expect("killed");
-        self.child.wait().expect("waited");
-        self.stopped = true;
-    }
-}
-
-#[cfg(windows)]
-impl Drop for StandIn {
-    fn drop(&mut self) {
-        if !self.stopped {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
 #[cfg(windows)]
 #[test]
 fn the_wtf_writes_are_refused_while_the_stand_in_client_runs() {
@@ -1034,7 +976,7 @@ fn the_wtf_writes_are_refused_while_the_stand_in_client_runs() {
     let applied = game.apply("solo", None, None);
     assert_eq!(applied.messages.last().expect("a summary").kind, "success");
     let Some(mut client) = spawn_stand_in(&game.flavor_folder()) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let refusal = format!(

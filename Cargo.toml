@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/mrgl-core", "crates/mrgl-cli", "crates/mrgl-app"]
+members = [
+    "crates/mrgl-core",
+    "crates/mrgl-cli",
+    "crates/mrgl-app",
+    "crates/mrgl-test-support",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +20,9 @@ publish = false
 
 [workspace.dependencies]
 mrgl-core = { path = "crates/mrgl-core" }
+# The stand-in client and the held files the tests of the three crates share (task 118): a workspace crate
+# of the standard library only, a dev-dependency, so no exe carries it and nothing joins `cargo deny`.
+mrgl-test-support = { path = "crates/mrgl-test-support" }
 # Argument parsing for the `mrgl` command line (derive): subcommands, flags, help (task 001 / D-002).
 clap = { version = "4.5", features = ["derive"] }
 # The state sidecar's `state.json` (D-003), `release.json` from the sources, the `--json` output and the

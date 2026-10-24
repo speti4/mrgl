@@ -2176,6 +2176,7 @@ name = "mrgl-app"
 version = "0.1.0"
 dependencies = [
  "mrgl-core",
+ "mrgl-test-support",
  "serde",
  "serde_json",
  "tauri",
@@ -2190,6 +2191,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "mrgl-core",
+ "mrgl-test-support",
  "serde_json",
 ]
 
@@ -2198,6 +2200,7 @@ name = "mrgl-core"
 version = "0.1.0"
 dependencies = [
  "md-5",
+ "mrgl-test-support",
  "serde",
  "serde_json",
  "sha2",
@@ -2206,6 +2209,10 @@ dependencies = [
  "windows-sys 0.61.2",
  "zip",
 ]
+
+[[package]]
+name = "mrgl-test-support"
+version = "0.1.0"
 
 [[package]]
 name = "muda"

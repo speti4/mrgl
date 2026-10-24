@@ -11,12 +11,12 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-#[cfg(windows)]
-use std::process::{Child, Command, Stdio};
 
 use mrgl_core::Error;
 use mrgl_core::flavor::{self, Flavor, FlavorId};
 use mrgl_core::sets::{self, AddonState, AddonsTxt, SETS_FILE, SetEdit, Target};
+#[cfg(windows)]
+use mrgl_test_support::stand_in::{SKIPPED, spawn_stand_in};
 
 fn fixture_wtf() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/addon-sets/WTF")
@@ -359,65 +359,6 @@ fn unknown_sets_no_characters_and_a_foreign_sets_file_are_errors() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The stand-in client (task 063): a copy of the signed `ping.exe` of the system folder, named
-/// `client-stand-in.exe` in the flavor folder and pinging the loopback address for an hour, so it runs
-/// until the test stops it. Never a copy of this test binary: a binary that copies itself and runs the
-/// copy is what an antivirus heuristic reads as a dropper. `None` when the system folder has no
-/// `ping.exe`; the test is then skipped with a message.
-#[cfg(windows)]
-fn spawn_stand_in(flavor_folder: &Path) -> Option<StandIn> {
-    let ping = PathBuf::from(std::env::var_os("SystemRoot")?)
-        .join("System32")
-        .join("ping.exe");
-    if !ping.is_file() {
-        return None;
-    }
-    let copy = flavor_folder.join("client-stand-in.exe");
-    std::fs::copy(&ping, &copy).expect("the copy");
-    let child = Command::new(&copy)
-        .args(["-n", "3600", "127.0.0.1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("the stand-in starts");
-    Some(StandIn {
-        child,
-        stopped: false,
-    })
-}
-
-/// The running stand-in client: `stop` kills and waits for it, and so does a drop, so a failing
-/// assertion leaves no process behind.
-#[cfg(windows)]
-struct StandIn {
-    child: Child,
-    stopped: bool,
-}
-
-#[cfg(windows)]
-impl StandIn {
-    fn id(&self) -> u32 {
-        self.child.id()
-    }
-
-    fn stop(&mut self) {
-        self.child.kill().expect("killed");
-        self.child.wait().expect("waited");
-        self.stopped = true;
-    }
-}
-
-#[cfg(windows)]
-impl Drop for StandIn {
-    fn drop(&mut self) {
-        if !self.stopped {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
 #[cfg(windows)]
 #[test]
 fn an_apply_is_refused_while_the_client_runs_and_a_save_is_not() {
@@ -427,7 +368,7 @@ fn an_apply_is_refused_while_the_client_runs_and_a_save_is_not() {
     let before = snapshot(&wtf_of(&root));
 
     let Some(mut child) = spawn_stand_in(&flavor.folder) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let error = sets::apply_set(
@@ -763,7 +704,7 @@ fn an_apply_to_one_character_is_refused_while_the_client_runs() {
     write_set(&root, "raid", &[("BagSorter", AddonState::Disabled)]);
     let before = snapshot(&wtf_of(&root));
     let Some(mut child) = spawn_stand_in(&flavor.folder) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let error = sets::apply_set(
@@ -924,7 +865,7 @@ fn an_undo_is_refused_while_the_client_runs() {
     sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect("applied");
     let applied = snapshot(&wtf_of(&root));
     let Some(mut child) = spawn_stand_in(&flavor.folder) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let error = sets::undo_apply(&flavor, &path).expect_err("refused");
@@ -1266,7 +1207,7 @@ fn an_undo_record_that_cannot_be_kept_refuses_the_apply_before_anything_is_writt
 #[cfg(windows)]
 #[test]
 fn a_record_that_cannot_be_set_aside_or_replaced_refuses_the_apply_before_anything_is_written() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let root = temp_game_root("undo-swap");
     let flavor = read(&root);
     let path = sets_path_of(&root);
@@ -1277,11 +1218,7 @@ fn a_record_that_cannot_be_set_aside_or_replaced_refuses_the_apply_before_anythi
     let before = snapshot(&wtf_of(&root));
 
     // The record before cannot move aside: a file held open under it.
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(undo_dir.join(sets::UNDO_FILE))
-        .expect("a handle with no sharing");
+    let lock = locked::file(&undo_dir.join(sets::UNDO_FILE));
     let error = sets::apply_set(&flavor, &path, "raid", &Target::EveryCharacter).expect_err("held");
     drop(lock);
     assert!(
@@ -1421,7 +1358,7 @@ fn an_undo_passes_over_a_character_folder_that_is_gone_and_a_file_that_is_as_it_
 #[cfg(windows)]
 #[test]
 fn a_failed_undo_write_puts_the_files_written_before_it_back_and_keeps_the_record() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let root = temp_game_root("undo-revert");
     let flavor = read(&root);
     let path = sets_path_of(&root);
@@ -1437,12 +1374,7 @@ fn a_failed_undo_write_puts_the_files_written_before_it_back_and_keeps_the_recor
         .join("AddOns.txt");
     // A handle that shares reads and not the replacement: the undo reads the file, the write over it
     // fails.
-    const FILE_SHARE_READ: u32 = 0x1;
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(FILE_SHARE_READ)
-        .open(&second)
-        .expect("a handle that shares reads");
+    let lock = locked::file_sharing_reads(&second);
     let error = sets::undo_apply(&flavor, &path).expect_err("the second file is held");
     drop(lock);
     assert!(
@@ -1474,7 +1406,7 @@ fn a_failed_undo_write_puts_the_files_written_before_it_back_and_keeps_the_recor
 #[cfg(windows)]
 #[test]
 fn a_failed_removal_in_an_undo_puts_the_earlier_files_back_as_they_were() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let root = temp_game_root("undo-revert-removal");
     let flavor = read(&root);
     let path = sets_path_of(&root);
@@ -1491,12 +1423,7 @@ fn a_failed_removal_in_an_undo_puts_the_earlier_files_back_as_they_were() {
         .join("Second Realm")
         .join("Newbie")
         .join("AddOns.txt");
-    const FILE_SHARE_READ: u32 = 0x1;
-    let held = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(FILE_SHARE_READ)
-        .open(&created)
-        .expect("a handle that shares reads");
+    let held = locked::file_sharing_reads(&created);
     let error = sets::undo_apply(&flavor, &path).expect_err("the created file is held");
     drop(held);
     assert!(
@@ -1524,7 +1451,7 @@ fn a_failed_removal_in_an_undo_puts_the_earlier_files_back_as_they_were() {
 #[cfg(windows)]
 #[test]
 fn an_undo_record_that_cannot_be_removed_is_a_warning() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let root = temp_game_root("undo-stays");
     let flavor = read(&root);
     let path = sets_path_of(&root);
@@ -1534,11 +1461,7 @@ fn an_undo_record_that_cannot_be_removed_is_a_warning() {
     let undo_dir = sets::undo_dir_of(&path);
     let extra = undo_dir.join("extra.txt");
     std::fs::write(&extra, b"not part of the record").expect("a file");
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(&extra)
-        .expect("a handle with no sharing");
+    let lock = locked::file(&extra);
     let undone = sets::undo_apply(&flavor, &path).expect("undone");
     drop(lock);
     assert_eq!(undone.warnings.len(), 1, "{:?}", undone.warnings);

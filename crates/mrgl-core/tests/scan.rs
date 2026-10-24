@@ -427,16 +427,11 @@ fn the_primary_toc_falls_back_to_a_legacy_one() {
 #[cfg(windows)]
 #[test]
 fn an_addon_whose_toc_cannot_be_read_is_skipped_with_a_warning() {
-    use std::os::windows::fs::OpenOptionsExt;
     let flavor = TempFlavor::new("locked-toc");
     let locked = flavor.addons().join("Locked");
     std::fs::create_dir_all(&locked).expect("the addon folder");
     std::fs::write(locked.join("Locked.toc"), "## Interface: 16001\n").expect("its TOC");
-    let open = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(locked.join("Locked.toc"))
-        .expect("a handle with no sharing");
+    let open = mrgl_test_support::locked::file(&locked.join("Locked.toc"));
     let scan = scan::scan(&flavor.root).expect("scans");
     assert!(scan.addons.is_empty());
     assert_eq!(scan.skipped, ["Locked"]);
@@ -572,17 +567,13 @@ fn list_flavors_leaves_out_a_folder_that_is_no_flavor_and_fails_on_a_root_it_can
 #[cfg(windows)]
 #[test]
 fn list_flavors_fails_on_a_flavor_info_it_cannot_read() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let flavor = TempFlavor::new("list-flavors-locked");
     let game = flavor.root.join("game");
     let info = game.join("_forever_").join(".flavor.info");
     std::fs::create_dir_all(game.join("_forever_")).expect("the folder");
     std::fs::write(&info, "Product Flavor!STRING:0\nwowf\n").expect(".flavor.info");
-    let open = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(&info)
-        .expect("a handle with no sharing");
+    let open = locked::file(&info);
     let error = flavor::list_flavors(&game).expect_err("the file cannot be read");
     assert!(
         matches!(&error, Error::Io { context, .. } if *context == "reading .flavor.info"),

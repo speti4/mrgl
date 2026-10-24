@@ -8,14 +8,14 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-#[cfg(windows)]
-use std::process::{Child, Command, Stdio};
 use std::time::{Duration, UNIX_EPOCH};
 
 use mrgl_core::Error;
 use mrgl_core::backup::{self, ASIDE_PREFIX, BACKUP_PREFIX, WTF_DIR};
 use mrgl_core::flavor::{self, Flavor, FlavorId};
 use mrgl_core::zip_entry::ZipRole;
+#[cfg(windows)]
+use mrgl_test_support::stand_in::{SKIPPED, spawn_stand_in};
 
 fn fixture_wtf() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/wtf/WTF")
@@ -392,65 +392,6 @@ fn the_default_backups_folder_is_under_the_home() {
     );
 }
 
-/// The stand-in client (task 063): a copy of the signed `ping.exe` of the system folder, named
-/// `client-stand-in.exe` in the flavor folder and pinging the loopback address for an hour, so it runs
-/// until the test stops it. Never a copy of this test binary: a binary that copies itself and runs the
-/// copy is what an antivirus heuristic reads as a dropper. `None` when the system folder has no
-/// `ping.exe`; the test is then skipped with a message.
-#[cfg(windows)]
-fn spawn_stand_in(flavor_folder: &Path) -> Option<StandIn> {
-    let ping = PathBuf::from(std::env::var_os("SystemRoot")?)
-        .join("System32")
-        .join("ping.exe");
-    if !ping.is_file() {
-        return None;
-    }
-    let copy = flavor_folder.join("client-stand-in.exe");
-    std::fs::copy(&ping, &copy).expect("the copy");
-    let child = Command::new(&copy)
-        .args(["-n", "3600", "127.0.0.1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("the stand-in starts");
-    Some(StandIn {
-        child,
-        stopped: false,
-    })
-}
-
-/// The running stand-in client: `stop` kills and waits for it, and so does a drop, so a failing
-/// assertion leaves no process behind.
-#[cfg(windows)]
-struct StandIn {
-    child: Child,
-    stopped: bool,
-}
-
-#[cfg(windows)]
-impl StandIn {
-    fn id(&self) -> u32 {
-        self.child.id()
-    }
-
-    fn stop(&mut self) {
-        self.child.kill().expect("killed");
-        self.child.wait().expect("waited");
-        self.stopped = true;
-    }
-}
-
-#[cfg(windows)]
-impl Drop for StandIn {
-    fn drop(&mut self) {
-        if !self.stopped {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
 #[cfg(windows)]
 #[test]
 fn a_restore_is_refused_while_the_client_runs_and_a_backup_is_not() {
@@ -462,7 +403,7 @@ fn a_restore_is_refused_while_the_client_runs_and_a_backup_is_not() {
     let before = snapshot(&wtf);
 
     let Some(mut child) = spawn_stand_in(&flavor.folder) else {
-        eprintln!("skipped: no ping.exe in the system folder to start the stand-in client");
+        eprintln!("{SKIPPED}");
         return;
     };
     let error = backup::restore_wtf(&flavor, &backup.zip, &backups).expect_err("refused");
@@ -662,19 +603,14 @@ fn a_junction_under_wtf_is_left_out_of_the_backup_with_a_warning() {
 #[cfg(windows)]
 #[test]
 fn a_locked_file_or_folder_under_wtf_fails_the_backup_and_leaves_no_part_file() {
-    use std::os::windows::fs::OpenOptionsExt;
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    use mrgl_test_support::locked;
     let root = temp_game_root("locked-backup", true);
     let flavor = read(&root);
     let wtf = root.join("_forever_").join(WTF_DIR);
     let backups = backups_of(&root);
 
     let config = wtf.join("Config.wtf");
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(&config)
-        .expect("a handle with no sharing");
+    let lock = locked::file(&config);
     let error = backup::backup_wtf(&flavor, &backups).expect_err("the file cannot be read");
     assert!(
         matches!(&error, Error::Io { context: "reading a WTF file", path, .. } if path == &config),
@@ -683,12 +619,7 @@ fn a_locked_file_or_folder_under_wtf_fails_the_backup_and_leaves_no_part_file() 
     drop(lock);
 
     let account = wtf.join("Account").join("MRGLFIXTURE");
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(&account)
-        .expect("a folder handle with no sharing");
+    let lock = locked::folder(&account);
     let error = backup::backup_wtf(&flavor, &backups).expect_err("the folder cannot be read");
     assert!(
         matches!(&error, Error::Io { context: "reading WTF", path, .. } if path == &account),
@@ -917,18 +848,14 @@ fn a_corrupt_entry_fails_the_restore_and_wtf_comes_back() {
 #[cfg(windows)]
 #[test]
 fn a_locked_file_under_wtf_refuses_the_move_aside() {
-    use std::os::windows::fs::OpenOptionsExt;
+    use mrgl_test_support::locked;
     let root = temp_game_root("locked-restore", true);
     let flavor = read(&root);
     let wtf = root.join("_forever_").join(WTF_DIR);
     let backups = backups_of(&root);
     let backup = backup::backup_wtf(&flavor, &backups).expect("a backup");
     let before = snapshot(&wtf);
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(wtf.join("Config.wtf"))
-        .expect("a handle with no sharing");
+    let lock = locked::file(&wtf.join("Config.wtf"));
     let error = backup::restore_wtf(&flavor, &backup.zip, &backups).expect_err("cannot move");
     assert!(
         matches!(&error, Error::Io { context: "moving WTF aside", path, .. } if path == &wtf),
