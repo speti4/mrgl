@@ -432,6 +432,67 @@ fn a_restore_is_refused_while_the_client_runs_and_a_backup_is_not() {
     child.stop();
     let restored = backup::restore_wtf(&flavor, &backup.zip, &backups).expect("restored");
     assert!(restored.aside.is_some());
+    assert!(restored.warnings.is_empty(), "{:?}", restored.warnings);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The system's process list, which starts the stand-in client once it has answered the first time: the
+/// guard before a `WTF` write finds no client, the second look after it finds the one that started during
+/// the write (task 124).
+#[cfg(windows)]
+struct StartsAClient {
+    folder: PathBuf,
+    started: std::cell::RefCell<Option<mrgl_test_support::stand_in::StandIn>>,
+}
+
+#[cfg(windows)]
+impl StartsAClient {
+    fn new(folder: &Path) -> StartsAClient {
+        StartsAClient {
+            folder: folder.to_path_buf(),
+            started: std::cell::RefCell::new(None),
+        }
+    }
+
+    fn pid(&self) -> Option<u32> {
+        self.started.borrow().as_ref().map(|child| child.id())
+    }
+}
+
+#[cfg(windows)]
+impl mrgl_core::client::ProcessList for StartsAClient {
+    fn executables(&self) -> std::io::Result<Vec<mrgl_core::client::RunningProcess>> {
+        let answer = mrgl_core::client::SystemProcesses.executables();
+        let mut started = self.started.borrow_mut();
+        if started.is_none() {
+            *started = spawn_stand_in(&self.folder);
+        }
+        answer
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_client_that_started_during_a_restore_is_a_warning_once_it_is_done() {
+    let root = temp_game_root("client-meanwhile", true);
+    let flavor = read(&root);
+    let backups = backups_of(&root);
+    let backup = backup::backup_wtf(&flavor, &backups).expect("a backup");
+    let processes = StartsAClient::new(&flavor.folder);
+    let restored = backup::restore_wtf_among(&processes, &flavor, &backup.zip, &backups, u64::MAX)
+        .expect("restored: the write cannot be held back once done");
+    let Some(pid) = processes.pid() else {
+        eprintln!("{SKIPPED}");
+        return;
+    };
+    assert!(restored.aside.is_some());
+    assert_eq!(
+        restored.warnings,
+        [format!(
+            "a client started in _forever_ during the restore (client-stand-in.exe, pid {pid}): it writes WTF again when it logs out, over what the restore wrote; close it and run the restore again if that is lost"
+        )]
+    );
+    drop(processes);
     let _ = std::fs::remove_dir_all(&root);
 }
 

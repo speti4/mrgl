@@ -471,6 +471,8 @@ pub struct Restored {
     pub folders: usize,
     /// Where the previous `WTF` folder went; `None` when there was none.
     pub aside: Option<PathBuf>,
+    /// Plain lines: a client that started during the restore (task 124).
+    pub warnings: Vec<String>,
 }
 
 /// Puts a backup back as the flavor's `WTF` folder. In this order: the guard of task 023 (a running
@@ -481,6 +483,8 @@ pub struct Restored {
 /// aside folder stays where it is and the error names it ([`Error::RestoreRevertFailed`]). A cleanup zip of
 /// the SavedVariables (`SavedVariables-<date>.zip`, task 025) is refused before anything else: it holds a
 /// few files, not a `WTF` folder, and is unzipped into `WTF` by hand ([`Error::NotAWtfBackup`]).
+/// Once the unpack is done the running-client check looks again (task 124): a client that started during
+/// the restore is a warning in [`Restored::warnings`].
 /// The zip is bounded by [`zip_entry::MAX_UNPACKED`]; [`restore_wtf_bounded`] takes another bound.
 pub fn restore_wtf(flavor: &Flavor, zip: &Path, backups: &Path) -> Result<Restored> {
     restore_wtf_bounded(flavor, zip, backups, zip_entry::MAX_UNPACKED)
@@ -496,6 +500,18 @@ pub fn restore_wtf_bounded(
     backups: &Path,
     max_unpacked: u64,
 ) -> Result<Restored> {
+    restore_wtf_among(&client::SystemProcesses, flavor, zip, backups, max_unpacked)
+}
+
+/// [`restore_wtf_bounded`] against the process list it is given, for the guard before the restore and
+/// the second look after it.
+pub fn restore_wtf_among(
+    processes: &dyn client::ProcessList,
+    flavor: &Flavor,
+    zip: &Path,
+    backups: &Path,
+    max_unpacked: u64,
+) -> Result<Restored> {
     restore_wtf_with(
         flavor,
         zip,
@@ -503,6 +519,7 @@ pub fn restore_wtf_bounded(
         max_unpacked,
         SystemTime::now(),
         rename,
+        processes,
     )
 }
 
@@ -520,6 +537,7 @@ fn restore_wtf_with(
     max_unpacked: u64,
     now: SystemTime,
     rename: impl Fn(&Path, &Path) -> io::Result<()>,
+    processes: &dyn client::ProcessList,
 ) -> Result<Restored> {
     if zip.file_name().is_some_and(|name| {
         name.to_string_lossy()
@@ -530,7 +548,7 @@ fn restore_wtf_with(
             path: zip.to_path_buf(),
         });
     }
-    client::ensure_client_not_running(flavor)?;
+    client::ensure_client_not_running_among(processes, flavor)?;
     let (mut archive, entries) = checked_entries(zip, max_unpacked)?;
     let wtf = wtf_dir(flavor);
     let io = |context: &'static str, path: &Path, source| Error::Io {
@@ -556,6 +574,9 @@ fn restore_wtf_with(
             files,
             folders,
             aside,
+            warnings: client::started_during_among(processes, flavor, "the restore")
+                .into_iter()
+                .collect(),
         }),
         Err(reason) => {
             // The bound's refusal (task 039) gives its own clause; anything else is the I/O error.
@@ -1257,8 +1278,16 @@ mod tests {
         fs::write(wtf.join("extra.txt"), b"not in the backup").expect("a change");
         let other_volume = |_: &Path, _: &Path| Err(io::Error::from(io::ErrorKind::CrossesDevices));
         let (now, _) = moment();
-        let restored = restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, other_volume)
-            .expect("restored");
+        let restored = restore_wtf_with(
+            &flavor,
+            &zip,
+            &backups,
+            u64::MAX,
+            now,
+            other_volume,
+            &client::SystemProcesses,
+        )
+        .expect("restored");
         let aside = restored.aside.expect("the previous WTF went aside");
         assert_eq!(
             tree(&aside),
@@ -1278,8 +1307,16 @@ mod tests {
         let before = tree(&wtf);
         let refused = |_: &Path, _: &Path| Err(io::Error::from(io::ErrorKind::PermissionDenied));
         let (now, _) = moment();
-        let error =
-            restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, refused).expect_err("refused");
+        let error = restore_wtf_with(
+            &flavor,
+            &zip,
+            &backups,
+            u64::MAX,
+            now,
+            refused,
+            &client::SystemProcesses,
+        )
+        .expect_err("refused");
         assert!(
             matches!(&error, Error::Io { context: "moving WTF aside", path, .. } if path == &wtf),
             "{error}"
@@ -1299,8 +1336,16 @@ mod tests {
                 .expect("taken");
         }
         let before = tree(&wtf_dir(&flavor));
-        let error = restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, rename)
-            .expect_err("every name taken");
+        let error = restore_wtf_with(
+            &flavor,
+            &zip,
+            &backups,
+            u64::MAX,
+            now,
+            rename,
+            &client::SystemProcesses,
+        )
+        .expect_err("every name taken");
         assert!(
             matches!(&error, Error::Io { context: "naming the aside folder", path, .. } if path == &backups),
             "{error}"
@@ -1340,8 +1385,16 @@ mod tests {
             }
         };
         let (now, _) = moment();
-        let error = restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, once)
-            .expect_err("the revert fails");
+        let error = restore_wtf_with(
+            &flavor,
+            &zip,
+            &backups,
+            u64::MAX,
+            now,
+            once,
+            &client::SystemProcesses,
+        )
+        .expect_err("the revert fails");
         let Error::RestoreRevertFailed {
             path,
             reason,
@@ -1391,8 +1444,16 @@ mod tests {
             Ok(())
         };
         let (now, _) = moment();
-        let error = restore_wtf_with(&flavor, &zip, &backups, u64::MAX, now, then_lock)
-            .expect_err("the half-written WTF stays");
+        let error = restore_wtf_with(
+            &flavor,
+            &zip,
+            &backups,
+            u64::MAX,
+            now,
+            then_lock,
+            &client::SystemProcesses,
+        )
+        .expect_err("the half-written WTF stays");
         let Error::RestoreRevertFailed { aside, .. } = &error else {
             panic!("{error}");
         };

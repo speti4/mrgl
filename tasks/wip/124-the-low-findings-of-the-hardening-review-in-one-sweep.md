@@ -116,6 +116,17 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
   the URL, as every source does. Tests: a request's `{:?}` with both headers in other cases, the doctor's
   inputs' `{:?}`, the rate-limit request with and without the token; the CurseForge test checks that its
   key header is among the hidden ones.
+- 2026-10-24 — L9: `client::started_during_among`, the second look once a `WTF` write is done, and an
+  `_among` twin of each writer that takes the process list (`backup::restore_wtf_among`,
+  `sets::apply_set_among`, `sets::undo_apply_among`, `savedvars::clean_orphans_among`); a client that
+  started during the write is a warning on the result (`Restored::warnings` and `Applied::warnings`, new;
+  `Undone::warnings` and `Cleaned::warnings`, as before), which the command line prints and puts in the
+  JSON's `warnings`, and the window shows after the apply's not-installed warning (its undo and cleanup
+  show their warnings already). A process list that cannot be taken the second time is a warning too.
+  Decided 2026-10-24: a warning, not an error and no revert, since the write is done and the client's
+  next logout, not the write, is what loses it. Tests: the three outcomes of the second look against
+  stubs, and one test per writer with a process list that starts the stand-in client after its first
+  answer, so the guard finds none and the second look finds it; the README's backup section says it.
 
 ## Deviations from the plan
 

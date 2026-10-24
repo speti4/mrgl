@@ -2535,6 +2535,8 @@ fn backup_command(
         let bound = max_unpacked.unwrap_or(zip_entry::MAX_UNPACKED);
         let restored = backup::restore_wtf_bounded(&flavor, &zip, &backups, bound)
             .map_err(|error| error.to_string())?;
+        // Task 124: a client that started during the restore.
+        warnings.extend(restored.warnings.iter().cloned());
         if reporter.json {
             reporter.document(serde_json::json!({
                 "kind": "restore",
@@ -3570,6 +3572,8 @@ fn set_command(reporter: &Reporter, action: SetAction) -> Result<(), String> {
             let applied =
                 sets::apply_set_in_account(&flavor, &path, &name, &target, account.as_deref())
                     .map_err(set_error)?;
+            // Task 124: a client that started during the apply.
+            warnings.extend(applied.warnings.iter().cloned());
             report_applied(reporter, &flavor, &target, &applied, warnings);
         }
         SetAction::Undo { .. } => {

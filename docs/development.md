@@ -83,7 +83,15 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   before the first is written, at most 100,000 entries, task 124; next to it the one folder-name rule, `zip_entry::is_folder_name`, task
   123, below), the running-client check (`client`,
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
-  calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
+  calls and the install engine's warning; the four `WTF` writers, the restore, the set apply, the set undo
+  and the SavedVariables cleanup, look again once their write is done, `client::started_during_among`,
+  task 124: a client that started during the write is a warning on the result, `a client started in
+  _forever_ during the restore (…): it writes WTF again when it logs out, over what the restore wrote; close
+  it and run the restore again if that is lost`, never an error, since the write is done and cannot be held
+  back, and a process list that cannot be taken says so the same way; each writer has an `_among` twin that
+  takes the process list, `backup::restore_wtf_among`, `sets::apply_set_among`, `sets::undo_apply_among`
+  and `savedvars::clean_orphans_among`, which the tests hand a list that starts the stand-in client after
+  its first answer), the mrgl home folder with the remembered game root (`home`,
   D-003), the game root resolution (`discover`, task 020: the flag, `MRGL_ROOT`, the remembered root, then
   the launcher's registry key, the game's Uninstall entry (task 043) and the usual install folders, behind
   a lookup trait with a stub), the

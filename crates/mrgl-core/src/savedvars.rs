@@ -460,9 +460,20 @@ impl Cleaned {
 /// writer with the entry names relative to `WTF`, and every file removed from `WTF` once its entry has been
 /// read back from the finished zip and found equal byte for byte. With no orphan nothing is written. A
 /// failure after the zip is written stops the removals ([`Error::CleanupIncomplete`]): what was removed is
-/// in the zip, the rest stays where it was.
+/// in the zip, the rest stays where it was. Once the files are removed the running-client check looks again
+/// (task 124): a client that started during the cleanup is a warning among [`Cleaned::warnings`].
 pub fn clean_orphans(flavor: &Flavor, into: &Path) -> Result<Cleaned> {
-    client::ensure_client_not_running(flavor)?;
+    clean_orphans_among(&client::SystemProcesses, flavor, into)
+}
+
+/// [`clean_orphans`] against the process list it is given, for the guard before the cleanup and the
+/// second look after it.
+pub fn clean_orphans_among(
+    processes: &dyn client::ProcessList,
+    flavor: &Flavor,
+    into: &Path,
+) -> Result<Cleaned> {
+    client::ensure_client_not_running_among(processes, flavor)?;
     let listing = list_saved_variables(flavor)?;
     let moved: Vec<SavedVariablesFile> = listing
         .files
@@ -487,6 +498,11 @@ pub fn clean_orphans(flavor: &Flavor, into: &Path) -> Result<Cleaned> {
         .collect();
     let (zip, bytes) = backup::zip_files(into, CLEANUP_PREFIX, &entries)?;
     remove_checked(&zip, &entries)?;
+    cleaned.warnings.extend(client::started_during_among(
+        processes,
+        flavor,
+        "the SavedVariables cleanup",
+    ));
     cleaned.zip = Some(zip);
     cleaned.files = entries.len();
     cleaned.bytes = bytes;

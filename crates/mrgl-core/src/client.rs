@@ -108,6 +108,17 @@ impl RunningClient {
         )
     }
 
+    /// The plain warning line of a `WTF` write that this client started during (task 124): the write is
+    /// done, and the client writes `WTF` again when it logs out. `write` names it: `the restore`.
+    pub fn started_warning(&self, flavor: &Flavor, write: &str) -> String {
+        format!(
+            "a client started in {} during {write} ({}, pid {}): it writes WTF again when it logs out, over what {write} wrote; close it and run {write} again if that is lost",
+            flavor.folder_name(),
+            self.exe_name(),
+            self.pid
+        )
+    }
+
     /// The plain warning line of an addon removal under `Interface\AddOns` while this client runs.
     pub fn remove_warning(&self, flavor: &Flavor) -> String {
         format!(
@@ -159,6 +170,26 @@ pub fn ensure_client_not_running_among(processes: &dyn ProcessList, flavor: &Fla
     match client_running_among(processes, &flavor.folder)? {
         Some(client) => Err(client.refusal(flavor)),
         None => Ok(()),
+    }
+}
+
+/// The second look of a `WTF` write, once it is done (task 124): the guard ran before the first byte, but a
+/// client started during a long write writes `WTF` again at logout. The warning line when a client runs
+/// from the flavor folder now ([`RunningClient::started_warning`]) or when the process list cannot be
+/// taken; `None` when none runs. The write stands either way: it cannot be held back once done, and the
+/// user can run it again. `write` names it in the line: `the restore`.
+pub fn started_during_among(
+    processes: &dyn ProcessList,
+    flavor: &Flavor,
+    write: &str,
+) -> Option<String> {
+    match client_running_among(processes, &flavor.folder) {
+        Ok(Some(client)) => Some(client.started_warning(flavor, write)),
+        Ok(None) => None,
+        Err(error) => Some(format!(
+            "whether a client started in {} during {write} is unknown: {error}",
+            flavor.folder_name()
+        )),
     }
 }
 
@@ -629,6 +660,29 @@ mod tests {
         let none = FixedProcesses::default();
         assert!(ensure_client_not_running_among(&none, &flavor).is_ok());
         assert_eq!(warn_if_client_running_among(&none, &flavor), None);
+    }
+
+    #[test]
+    fn the_second_look_after_a_wtf_write_warns_about_a_client_or_an_unknown() {
+        // Task 124: once a `WTF` write is done, a client that runs now started during it.
+        let flavor = flavor("Q:\\wow\\_forever_");
+        let running = FixedProcesses::new([(77, "Q:\\wow\\_forever_\\WowForever.exe")]);
+        assert_eq!(
+            started_during_among(&running, &flavor, "the restore").as_deref(),
+            Some(
+                "a client started in _forever_ during the restore (WowForever.exe, pid 77): it writes WTF again when it logs out, over what the restore wrote; close it and run the restore again if that is lost"
+            )
+        );
+        assert_eq!(
+            started_during_among(&FixedProcesses::default(), &flavor, "the restore"),
+            None
+        );
+        assert_eq!(
+            started_during_among(&BrokenProcesses, &flavor, "the set apply").as_deref(),
+            Some(
+                "whether a client started in _forever_ during the set apply is unknown: cannot list the running processes: no snapshot"
+            )
+        );
     }
 
     #[test]
