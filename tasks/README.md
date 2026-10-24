@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-24 — edit the files, not this section._
 
-**State:** 9 backlog (0 ready · 0 blocked · 3 waiting · 6 ideas) · 2 in progress · 96 done · 5 dropped · 6 decisions
+**State:** 10 backlog (0 ready · 0 blocked · 3 waiting · 7 ideas) · 1 in progress · 97 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -65,6 +65,7 @@ _none_
 | # | Task | Size | Created |
 |---|---|---|---|
 | 103 | [Authenticode-signed exes through SignPath](backlog/103-authenticode-signed-exes-through-signpath.md) | M | 2026-10-22 |
+| 119 | [The local coverage run needs a short checkout path](backlog/119-the-local-coverage-run-needs-a-short-checkout-path.md) | S | 2026-10-24 |
 
 #### M6 macOS preview
 
@@ -80,12 +81,6 @@ _none_
 |---|---|---|---|
 | 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
 
-#### M5 Trust
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 118 | [One stand-in client helper for the tests of the three crates](wip/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | 2026-10-24 | `none` |
-
 ### Closed – do not reopen
 
 | # | Task | Closed | Reason | Reopen when |
@@ -100,6 +95,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 118 | [One stand-in client helper for the tests of the three crates](done/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | 2026-10-24 |
 | 117 | [Test hardening toward full line and branch coverage](done/117-test-hardening-toward-full-line-and-branch-coverage.md) | 2026-10-23 |
 | 113 | [The window's adopt apply reuses the shown report's answers](done/113-the-windows-adopt-apply-reuses-the-shown-reports-answers.md) | 2026-10-22 |
 | 112 | [The toolbox's adopt lines in the window's words, without the command line's fla…](done/112-the-toolboxs-adopt-lines-in-the-windows-words.md) | 2026-10-22 |
@@ -109,9 +105,8 @@ _none_
 | 107 | [The window's row menu and the offline sketch follow the sources of this build](done/107-the-windows-row-menu-and-offline-sketch-follow-the-sources-of-this-build.md) | 2026-10-22 |
 | 106 | [The Wago update check asks for its addons in bulk, one request per game version](done/106-the-wago-update-check-asks-in-bulk.md) | 2026-10-22 |
 | 105 | [A Wago page address resolves to its wago:<id> through the keyless slugs list](done/105-a-wago-page-address-resolves-to-its-id.md) | 2026-10-22 |
-| 104 | [A WoWInterface file waiting for approval is a state of its own in the update ch…](done/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md) | 2026-10-22 |
 
-_86 more in `done/`._
+_87 more in `done/`._
 
 ### Decisions
 
