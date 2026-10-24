@@ -55,8 +55,8 @@ pub enum Error {
     },
 
     /// A zip entry would land outside the folder it is unpacked under (the staging folder, `WTF`): `..`,
-    /// an absolute path, a drive letter, a character or a device name Windows refuses, a symbolic link
-    /// (tasks 004, 013, 044: [`crate::zip_entry`]). Nothing of the zip is written when one is found.
+    /// an absolute path, a drive letter, a character or a device name Windows refuses, a component ending
+    /// in a dot or a space (task 124), a symbolic link (tasks 004, 013, 044: [`crate::zip_entry`]). Nothing of the zip is written when one is found.
     #[error("refused {path}: the entry `{entry}` would land outside {}", .role.folder())]
     ZipEntryEscapes {
         role: crate::zip_entry::ZipRole,

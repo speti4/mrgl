@@ -96,6 +96,20 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
   the voice (an escape sequence, a carriage return, a tab, DEL and a C1 control) and an end-to-end `scan` of
   a TOC whose version holds `ESC[2J` and a carriage return: U+FFFD on the screen, `\u001b` and `\r` in the
   JSON.
+- 2026-10-24 — L5: `zip_entry::MAX_ENTRIES`, 100,000 entries, checked first in `checked_entries` against
+  the central directory's count, before any entry is read or written, for an addon zip and a `WTF` backup
+  alike: `refused <zip>: it holds <n> entries, more than the bound of 100000 for one zip; nothing was
+  written` (`Error::ZipTooLarge` with `Excess::Entries`). Decided 2026-10-24: one bound for both roles and
+  no flag to raise it (the size bound's `--max-unpacked` stays the size bound's): some thirty times the
+  files of the largest addon and five times a `WTF` folder of fifty characters with two hundred addons'
+  SavedVariables each. The unit test runs the check with a bound of two through the private
+  `checked_entries_within`, so no fixture of 100,001 entries is needed.
+- 2026-10-24 — L6: `zip_entry::refused_component`, a trailing dot or space or what `refused_by_windows`
+  refuses, is the one component check of the entry rule and of the folder-name rule of 123
+  (`is_folder_name` keeps its empty and separator checks; `.` and `..` end in a dot); `Foo./x.lua`,
+  `Foo /x.lua`, `Foo/x.lua.` and `Foo/.../x.lua` are refused, a leading space and an inner dot pass. The
+  fixture `trailing-dot-entry.zip` (`TrailingDot/` next to `TrailingDot./`, 550 bytes) is refused by
+  `install` with nothing written; a rerun of `make-zips.py` left every other fixture zip byte-equal.
 
 ## Deviations from the plan
 

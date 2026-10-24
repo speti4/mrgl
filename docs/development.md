@@ -80,7 +80,7 @@ checks before a commit and the project rules are in [CONTRIBUTING.md](../CONTRIB
   the current `WTF` aside and reverts on a failure, task 013), the addon sets (`sets`, task 014, below),
   the zip entry check
   both of them call (`zip_entry`, task 044: every entry readable, inside its folder and no link, checked
-  before the first is written; next to it the one folder-name rule, `zip_entry::is_folder_name`, task
+  before the first is written, at most 100,000 entries, task 124; next to it the one folder-name rule, `zip_entry::is_folder_name`, task
   123, below), the running-client check (`client`,
   task 023: a process found by its executable's path under the flavor folder, the guard every `WTF` write
   calls and the install engine's warning), the mrgl home folder with the remembered game root (`home`,
@@ -312,6 +312,10 @@ through the engine: a zip in hand, every source, `import`, `update`, `rollback` 
 add, which call `Engine::install_from_source` and `Engine::install` and carry the refusal as their error line.
 The GitHub mapping of adopt (`GithubMapping::problems`, which refuses a leading space too), the shareable
 list file (`ListEntry::not_shareable`) and the set apply's undo record hold their names to the same function.
+The zip entry rule refuses a component ending in a dot or a space too (task 124, finding L6 of task 121,
+`zip_entry::refused_component`, which the two rules share): Windows drops the dot or the space, so `Foo.`
+and `Foo` would unpack into one folder and the sidecar's file list would name paths that are not on disk;
+such a zip is refused before anything is written, as an escaping entry is (`Error::ZipEntryEscapes`).
 
 The folders' name (`install::derive_name`, for a zip in hand and a source install the sidecar and the
 request do not name) is the folder every other folder of the zip extends with `_` or `-` (`BigWigs` for
@@ -524,7 +528,14 @@ parse, zero, or the flag without `--restore` on `backup` is a usage error). In t
   after every failed stage; the restore removes the half-written `WTF`, puts the previous one back and
   reports `restoring <zip> failed and WTF is as it was: ` with the same clause.
 
-Both are `Error::ZipTooLarge` (the restore's write-time refusal is wrapped in `Error::RestoreFailed`, as
+A zip is bounded in entries too (task 124, finding L5 of task 121): more than `zip_entry::MAX_ENTRIES`,
+100,000, some thirty times the files of the largest addon and five times a large `WTF` folder, refuses it
+before a single entry is read, the count taken from the central directory: ``refused <zip>: it holds
+120000 entries, more than the bound of 100000 for one zip; nothing was written``; no flag raises it. A zip
+of a few hundred thousand empty files passes the size bound and would otherwise create every file in
+staging and then under `AddOns`, which the client and the scan read on every start.
+
+All three are `Error::ZipTooLarge` (the restore's write-time refusal is wrapped in `Error::RestoreFailed`, as
 every failure after `WTF` moved aside is), exit code 1 on the CLI and the `message` of the JSON error
 document. Sizes in these messages are written in steps of 1024, as the `backup --list` sizes are. The
 fixtures under `zips/` that test it, written by `make-zips.py`: `declares-too-much-1.0.0.zip` and
@@ -1451,7 +1462,8 @@ name and no folder extended by the others (`boss-core-5.0.0.zip`, task 065), a T
 folder, a TOC with an interface for another build, a path that tries to escape the staging folder, three
 TOCs at the root whose stems are `.`, `..` and a blank (`dot-toc.zip`, `dot-dot-toc.zip`, `blank-toc.zip`,
 task 123: installed under the zip's stem, and refused once a test copies them under a stem that is no folder
-name either), an addon with an embedded-only and a missing required dependency, and a zip with no addon at
+name either), an addon folder next to its twin ending in a dot (`trailing-dot-entry.zip`, task 124: refused by
+the entry rule), an addon with an embedded-only and a missing required dependency, and a zip with no addon at
 all), a hand-written
 `WTF` tree in the shape the client writes (`wtf/WTF/`: a `Config.wtf`, an account with its caches and
 SavedVariables, a realm and a character with its `AddOns.txt` and SavedVariables; a few hundred bytes, made

@@ -91,7 +91,9 @@ BOM in a fixture survives every checkout.
   escape the staging folder (`escaping-path`), a TOC at the root whose stem is no folder name next to one
   Lua file, for the folder-name rule of task 123: `..toc` (`dot-toc`), `...toc` (`dot-dot-toc`) and ` .toc`
   (`blank-toc`), each installed under the zip's stem and refused once a test copies it under a stem that is
-  no folder name either (`..zip`, `...zip`, ` .zip`), an addon that requires `LibEmbedded`, carried under its
+  no folder name either (`..zip`, `...zip`, ` .zip`), an addon folder next to its twin with a trailing dot
+  (`TrailingDot` and `TrailingDot.`), which Windows would unpack into one, refused by the entry rule of task
+  124 (`trailing-dot-entry`), an addon that requires `LibEmbedded`, carried under its
   `Libs/`, and `LibMissing`, carried nowhere (`needs-library-1.0.0`, task 029), a zip with no addon at
   all (`no-addon`), the zip in hand of the CurseForge project `4244`, whose author allows no download
   outside CurseForge (`MrglNoDistribution-2.0.0`, stored, task 096), and a `WTF` backup whose three entries
