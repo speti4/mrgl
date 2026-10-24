@@ -53,7 +53,7 @@ use mrgl_core::sets::{self, AddonSet};
 use mrgl_core::sources::{self, Channel, Source, SourceKind, SourceSpec, Sources, Target};
 use mrgl_core::state::{Entry, FlavorHome, State, Status};
 use mrgl_core::update::{self, CheckProgress, SummaryOf, UpdateState};
-use mrgl_core::voice::{Kind, Voice};
+use mrgl_core::voice::{self, Kind, Voice};
 use mrgl_core::zip_entry;
 use mrgl_core::{Error, VERSION};
 
@@ -487,7 +487,9 @@ fn emit(stream: Stream, text: std::fmt::Arguments<'_>) {
     }
 }
 
-/// Prints the two-line messages, the plain data lines, or JSON when asked, through [`emit`].
+/// Prints the two-line messages, the plain data lines, or JSON when asked, through [`emit`]. Every human
+/// line goes through [`voice::printable`] (task 124): a control character from a release, a TOC or a zip
+/// reaches the terminal as U+FFFD; the JSON is serde's and escapes them itself.
 struct Reporter {
     voice: Voice,
     json: bool,
@@ -501,7 +503,7 @@ impl Reporter {
         } else {
             emit(
                 Stream::Stdout,
-                format_args!("{}\n", self.voice.say(kind, plain)),
+                format_args!("{}\n", voice::printable(&self.voice.say(kind, plain))),
             );
         }
     }
@@ -521,13 +523,16 @@ impl Reporter {
     fn say_on_stderr(&self, kind: Kind, plain: impl std::fmt::Display) {
         emit(
             Stream::Stderr,
-            format_args!("{}\n", self.voice.say(kind, plain)),
+            format_args!("{}\n", voice::printable(&self.voice.say(kind, plain))),
         );
     }
 
     /// A plain data line (one addon of a listing); human mode only, the JSON document carries the data.
     fn line(&self, text: impl std::fmt::Display) {
-        emit(Stream::Stdout, format_args!("{text}\n"));
+        emit(
+            Stream::Stdout,
+            format_args!("{}\n", voice::printable(&text.to_string())),
+        );
     }
 
     /// The one JSON document of a command; its `kind` is a fixed name.

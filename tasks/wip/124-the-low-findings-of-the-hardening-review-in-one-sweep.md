@@ -90,6 +90,12 @@ related items, the task file's Log one line per item; M1 and M2 of 121 are not p
   addon's (the collision itself): a zip cached before this change under a name or a version that now
   changes is not found by the rollback, which says the zip is missing. Unit test over safe names, names
   that differ only in the characters `file_safe` replaces, names of dots only and device names.
+- 2026-10-24 — L4: `voice::printable` turns every control character (U+0000 to U+001F, U+007F to U+009F) but
+  the line break into U+FFFD, and the command line's `Reporter` passes every human line through it, a
+  message on stdout or stderr and a data line alike; the JSON documents stay serde's. A unit test through
+  the voice (an escape sequence, a carriage return, a tab, DEL and a C1 control) and an end-to-end `scan` of
+  a TOC whose version holds `ESC[2J` and a carriage return: U+FFFD on the screen, `\u001b` and `\r` in the
+  JSON.
 
 ## Deviations from the plan
 

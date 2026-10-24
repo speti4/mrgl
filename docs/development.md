@@ -571,6 +571,13 @@ run at the next write: the lines are dropped, the swap, the sidecar write and th
 staging folders finish, and the run ends with 0 once that addon's install returns, before the next one
 starts.
 
+Every human line the `Reporter` writes, a message on either stream or a data line, goes through
+`voice::printable` first (task 124): a control character, U+0000 to U+001F and U+007F to U+009F, becomes
+U+FFFD, the line break alone excepted (the voice and the command line put it between the lines of one
+message), so an escape sequence or a carriage return in a release's notes, a tag or a TOC field cannot
+rewrite the terminal or fake a prompt. The JSON documents stay as they are, serde escapes those characters;
+the window writes text, never markup, and needs no such step.
+
 ## The doctor
 
 `mrgl doctor [--flavor <flavor>] [--root <folder>]` prints the diagnostic report a bug report asks for (task

@@ -268,6 +268,47 @@ fn scan_serious_prints_only_plain_lines() {
 }
 
 #[test]
+fn a_control_character_from_a_toc_reaches_the_terminal_as_a_replacement_and_json_escaped() {
+    // Task 124: a TOC whose version holds an escape sequence and a carriage return (a line that would
+    // clear the screen and write over itself) is printed with U+FFFD in their place; `--json` keeps the
+    // characters, escaped by serde.
+    let root = temp_game_root("control-characters");
+    let addon = root
+        .join("_forever_")
+        .join("Interface")
+        .join("AddOns")
+        .join("Evil");
+    std::fs::create_dir_all(&addon).expect("the addon folder");
+    std::fs::write(
+        addon.join("Evil.toc"),
+        "## Interface: 11508\n## Title: Evil\n## Version: 1.0\u{1b}[2J\rfake\n\nEvil.lua\n",
+    )
+    .expect("the TOC");
+    let output = mrgl()
+        .arg("scan")
+        .arg(root.join("_forever_"))
+        .output()
+        .expect("run mrgl");
+    assert!(output.status.success(), "{}", stderr_last_line(&output));
+    let text = stdout(&output);
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("Evil"))
+        .expect("the Evil line");
+    assert!(line.contains("1.0\u{fffd}[2J\u{fffd}fake"), "{line}");
+    assert!(!text.contains(['\u{1b}', '\r']), "{text:?}");
+    let output = mrgl()
+        .args(["--json", "scan"])
+        .arg(root.join("_forever_"))
+        .output()
+        .expect("run mrgl");
+    let json = stdout(&output);
+    assert!(json.contains("1.0\\u001b[2J\\rfake"), "{json}");
+    assert!(!json.contains('\u{fffd}'), "{json}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn list_resolves_a_friendly_name_against_the_root_flag() {
     let output = mrgl()
         .args(["list", "--flavor", "forever", "--root"])
