@@ -23,6 +23,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - `import` runs the dependency check after an install, as `add` and `update` do ([090](https://github.com/speti4/mrgl/blob/main/tasks/done/090-import-runs-the-dependency-check-after-an-install.md))
 - The install path picks the named entry among two sidecar entries of one source ([100](https://github.com/speti4/mrgl/blob/main/tasks/done/100-the-install-path-picks-the-named-entry-among-two-of-one-source.md))
 - `update --all` over two entries of one source whose first install takes the second entry's folder ([108](https://github.com/speti4/mrgl/blob/main/tasks/done/108-update-all-over-two-entries-of-one-source-whose-first-install-takes-the-second-folder.md))
+- A manual round on the real install after 0.1.0: the sources, the window and the toolbox ([128](https://github.com/speti4/mrgl/blob/main/tasks/done/128-a-manual-round-on-the-real-install-after-0-1-0.md))
 
 ### M2 Window MVP
 
@@ -55,6 +56,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - A WoWInterface file waiting for approval is a state of its own in the update check ([104](https://github.com/speti4/mrgl/blob/main/tasks/done/104-a-pending-wowinterface-file-is-a-state-of-its-own-in-update.md))
 - A Wago page address resolves to its `wago:<id>` through the keyless slugs list ([105](https://github.com/speti4/mrgl/blob/main/tasks/done/105-a-wago-page-address-resolves-to-its-id.md))
 - The Wago update check asks for its addons in bulk, one request per game version ([106](https://github.com/speti4/mrgl/blob/main/tasks/done/106-the-wago-update-check-asks-in-bulk.md))
+- A read-only adopt round on the real retail and classic folders ([111](https://github.com/speti4/mrgl/blob/main/tasks/done/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md))
 - A distribution-off CurseForge entry is a state of its own in the update check ([115](https://github.com/speti4/mrgl/blob/main/tasks/done/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md))
 
 ### M5 Trust

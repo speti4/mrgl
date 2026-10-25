@@ -14,11 +14,15 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-25 — edit the files, not this section._
 
-**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 107 done · 5 dropped · 6 decisions
+**State:** 7 backlog (1 ready · 0 blocked · 3 waiting · 3 ideas) · 1 in progress · 109 done · 5 dropped · 6 decisions
 
 ### Ready
 
-_none_
+#### M1 Core + CLI
+
+| # | Task | Size | Created |
+|---|---|---|---|
+| 129 | [The TOC parse is linear in its headers, so a generated TOC of 400,000 headers s…](backlog/129-the-toc-parse-is-linear-in-its-headers.md) | S | 2026-10-25 |
 
 ### Needs decision
 
@@ -45,12 +49,6 @@ _none_
 | 031 | [Self-update of the portable zip with signature verification; CLI self-update](backlog/031-self-update-with-attestation-verification.md) | the signed exes of 103 (D-006), whose certificate subject the check pins | M | 2026-10-21 |
 
 ### Ideas
-
-#### M4 Sources
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 111 | [A read-only adopt round on the real retail and classic folders](backlog/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md) | S | 2026-10-22 |
 
 #### M5 Trust
 
@@ -87,7 +85,9 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 128 | [A manual round on the real install after 0.1.0: the sources, the window and the…](done/128-a-manual-round-on-the-real-install-after-0-1-0.md) | 2026-10-25 |
 | 127 | [The issue mirror closes its duplicate issues](done/127-the-issue-mirror-closes-its-duplicate-issues.md) | 2026-10-25 |
+| 111 | [A read-only adopt round on the real retail and classic folders](done/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md) | 2026-10-25 |
 | 124 | [The low findings of the hardening review in one sweep](done/124-the-low-findings-of-the-hardening-review-in-one-sweep.md) | 2026-10-24 |
 | 123 | [One folder-name rule for every staged and recorded addon folder](done/123-one-folder-name-rule-for-every-staged-and-recorded-addon-folder.md) | 2026-10-24 |
 | 122 | [Tests of the usage guide generator's error paths](done/122-tests-of-the-usage-guide-generators-error-paths.md) | 2026-10-24 |
@@ -95,10 +95,8 @@ _none_
 | 120 | [A usage guide as HTML inside the release zip](done/120-a-usage-guide-as-html-inside-the-release-zip.md) | 2026-10-24 |
 | 119 | [The local coverage run needs a short checkout path](done/119-the-local-coverage-run-needs-a-short-checkout-path.md) | 2026-10-24 |
 | 118 | [One stand-in client helper for the tests of the three crates](done/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | 2026-10-24 |
-| 116 | [The window installs a zip in hand with a recorded source](done/116-the-window-installs-a-zip-in-hand-with-a-recorded-source.md) | 2026-10-24 |
-| 115 | [A distribution-off CurseForge entry is a state of its own in the update check](done/115-a-distribution-off-curseforge-entry-is-a-state-of-its-own-in-update.md) | 2026-10-24 |
 
-_97 more in `done/`._
+_99 more in `done/`._
 
 ### Decisions
 
