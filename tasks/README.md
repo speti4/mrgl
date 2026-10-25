@@ -12,9 +12,9 @@ Every numbered file here is mirrored one way into a GitHub issue by `scripts/syn
 never the issue.
 
 <!-- tasks:index:start -->
-_Generated 2026-10-24 — edit the files, not this section._
+_Generated 2026-10-25 — edit the files, not this section._
 
-**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 106 done · 5 dropped · 6 decisions
+**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 2 in progress · 106 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -72,6 +72,12 @@ _none_
 | # | Task | Started | Plan |
 |---|---|---|---|
 | 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
+
+#### M5 Trust
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 127 | [The issue mirror closes its duplicate issues](wip/127-the-issue-mirror-closes-its-duplicate-issues.md) | 2026-10-25 | `none` |
 
 ### Closed – do not reopen
 
