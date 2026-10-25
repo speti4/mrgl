@@ -1457,8 +1457,10 @@ completed, `dropped/` and a superseded decision as not planned. The labels `mirr
 `size:*`, `dropped` and `decision` are created by the script; every `## ` heading of `tasks/roadmap.md` is a
 milestone with the heading's paragraph as its description (the script never closes a milestone; a release
 does, by hand, step 4 of the list in [The changelog](#the-changelog)). An issue is found again by a hidden
-marker in its body, so a run patches only what differs; an issue whose file is gone is reported as an orphan
-and left alone, and a file without a numbered name is reported and not mirrored.
+marker in its body, so a run patches only what differs; when two issues carry one marker (a run of 2026-10-22
+made a second issue for every file that existed then), the lowest-numbered one is the file's issue and the
+other is closed as not planned with a comment naming it (task 127); an issue whose file is gone is reported
+as an orphan and left alone, and a file without a numbered name is reported and not mirrored.
 
 The `sync-issues` workflow runs it on `main` with the job's token (`issues: write`, nothing else), so the first
 run after the workflow landed created every issue and milestone at once, and a run that follows a task commit

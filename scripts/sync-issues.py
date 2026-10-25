@@ -6,9 +6,10 @@ title, the Context prose in the body, the milestone from the frontmatter, labels
 size, open or closed by the folder. Every `## ` heading of roadmap.md is a milestone (its state is
 never touched here: a release closes a milestone). Idempotent: an issue is found by the marker in its
 body and only the fields that differ are patched; an id padded to another width since its issue was
-made (`/tasks renumber`) still finds that issue, which is edited in place, marker included; an issue
-whose file is gone is reported, never closed or deleted; a file without a numbered name (a legacy file the standard tolerates) is reported
-and not mirrored. Run by CI on a push that touches the task files (.github/workflows/sync-issues.yml),
+made (`/tasks renumber`) still finds that issue, which is edited in place, marker included; a second
+issue of one file (a duplicate, whatever run made it) is closed as not planned with a comment naming the
+one kept, the lowest-numbered; an issue whose file is gone is reported, never closed or deleted; a file
+without a numbered name (a legacy file the standard tolerates) is reported and not mirrored. Run by CI on a push that touches the task files (.github/workflows/sync-issues.yml),
 or by hand after a push:
 
     python -I scripts/sync-issues.py --dry-run     # print what would change
@@ -29,7 +30,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-TEMPLATE_VERSION = "2"
+TEMPLATE_VERSION = "3"
 
 ROOT = Path(__file__).resolve().parent.parent
 TASK_LOCATIONS = ("tasks", ".claude/tasks")
@@ -421,21 +422,34 @@ def same_id(key: str) -> str:
     return re.sub(r"\d+", lambda m: str(int(m.group())), key, count=1)
 
 
-def match_issues(items: list[Item], existing_by_key: dict[tuple[str, str], dict]) -> dict[tuple[str, str], tuple[dict, str] | None]:
+def match_issues(items: list[Item], existing_by_key: dict[tuple[str, str], list[dict]]) -> dict[tuple[str, str], tuple[dict, str] | None]:
     """(kind, key) of every item → (its issue, the key in that issue's marker), or None for a new one.
     The marker's exact key wins; else an issue whose marker holds the same number at another width
     (a repo that mirrored before `/tasks renumber` padded its ids keeps its issues, edited in place).
-    Matched issues are popped from `existing_by_key`, so what stays there is an orphan."""
+    Each key's issues come sorted by number and the lowest one is taken, so a run always keeps the same
+    issue; what stays in `existing_by_key` is a duplicate (a key an item has) or an orphan (no file)."""
     out: dict[tuple[str, str], tuple[dict, str] | None] = {}
+
+    def take(key: tuple[str, str]) -> dict | None:
+        issues = existing_by_key.get(key)
+        if not issues:
+            return None
+        issue = issues.pop(0)
+        if not issues:
+            del existing_by_key[key]
+        return issue
+
     for item in items:
-        issue = existing_by_key.pop((item.kind, item.key), None)
+        issue = take((item.kind, item.key))
         out[(item.kind, item.key)] = None if issue is None else (issue, item.key)
     for item in items:
         if out[(item.kind, item.key)] is not None:
             continue
         old = next((k for k in existing_by_key if k[0] == item.kind and same_id(k[1]) == same_id(item.key)), None)
         if old is not None:
-            out[(item.kind, item.key)] = (existing_by_key.pop(old), old[1])
+            issue = take(old)
+            assert issue is not None
+            out[(item.kind, item.key)] = (issue, old[1])
     return out
 
 
@@ -476,16 +490,19 @@ def sync(repo: str, branch: str, apply: bool) -> int:
         if item.milestone is not None and item.milestone not in milestones:
             raise SystemExit(f"{TASKS_REL}/{item.rel_path}: milestone {item.milestone!r} is not a `## ` heading of {TASKS_REL}/roadmap.md")
 
-    existing_by_key: dict[tuple[str, str], dict] = {}
+    existing_by_key: dict[tuple[str, str], list[dict]] = {}
     for issue in paged(repo, "issues", state="all", labels=MIRROR_LABEL):
         if "pull_request" in issue:
             continue
         match = MARKER.search(issue.get("body") or "")
         if match:
-            existing_by_key[(match.group(1), match.group(2))] = issue
+            existing_by_key.setdefault((match.group(1), match.group(2)), []).append(issue)
+    for issues in existing_by_key.values():
+        issues.sort(key=lambda issue: issue["number"])
 
     matched = match_issues(items, existing_by_key)
-    created = updated = unchanged = 0
+    kept_by_id = {(kind, same_id(key)): found[0]["number"] for (kind, key), found in matched.items() if found is not None}
+    created = updated = unchanged = duplicates = 0
     for item in items:
         found = matched[(item.kind, item.key)]
         issue = None if found is None else found[0]
@@ -525,13 +542,26 @@ def sync(repo: str, branch: str, apply: bool) -> int:
         if apply:
             gh("api", "-X", "PATCH", f"repos/{repo}/issues/{issue['number']}", payload=patch)
 
-    for (kind, key), issue in sorted(existing_by_key.items()):
-        log(f"orphan     #{issue['number']} {kind} {key}: no file under {TASKS_REL}/ — left as is")
+    for (kind, key), issues in sorted(existing_by_key.items()):
+        kept = kept_by_id.get((kind, same_id(key)))
+        for issue in issues:
+            if kept is None:
+                log(f"orphan     #{issue['number']} {kind} {key}: no file under {TASKS_REL}/ — left as is")
+            elif issue.get("state") == "closed":
+                log(f"duplicate  #{issue['number']} {kind} {key} of #{kept}: already closed")
+            else:
+                log(f"duplicate  #{issue['number']} {kind} {key} of #{kept}: closed as not planned")
+                duplicates += 1
+                if apply:
+                    note = f"Duplicate of #{kept}, created by a second mirror run; the {kind}'s issue is #{kept}."
+                    gh("api", f"repos/{repo}/issues/{issue['number']}/comments", payload={"body": note})
+                    gh("api", "-X", "PATCH", f"repos/{repo}/issues/{issue['number']}", payload={"state": "closed", "state_reason": "not_planned"})
 
     verb = "" if apply else " (dry run)"
-    log(f"{'applied' if apply else 'planned'}{verb}: created {created}, updated {updated}, unchanged {unchanged}; "
+    log(f"{'applied' if apply else 'planned'}{verb}: created {created}, updated {updated}, unchanged {unchanged}, "
+        f"duplicates closed {duplicates}; "
         f"{len(items)} items ({sum(i.kind == 'task' for i in items)} tasks, {sum(i.kind == 'decision' for i in items)} decisions)")
-    return changes + created + updated
+    return changes + created + updated + duplicates
 
 
 def main() -> int:
