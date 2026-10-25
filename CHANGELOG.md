@@ -76,6 +76,7 @@ not the list. The summary under a heading is written by hand and kept by the gen
 - The local coverage run needs a short checkout path ([119](https://github.com/speti4/mrgl/blob/main/tasks/done/119-the-local-coverage-run-needs-a-short-checkout-path.md))
 - A hardening review of the code that touches the disk, the network and the keys ([121](https://github.com/speti4/mrgl/blob/main/tasks/done/121-a-hardening-review-of-the-code-that-touches-the-disk-the-network-and-the-keys.md))
 - Tests of the usage guide generator's error paths ([122](https://github.com/speti4/mrgl/blob/main/tasks/done/122-tests-of-the-usage-guide-generators-error-paths.md))
+- The issue mirror closes its duplicate issues ([127](https://github.com/speti4/mrgl/blob/main/tasks/done/127-the-issue-mirror-closes-its-duplicate-issues.md))
 
 ## 0.1.0 — 2026-10-22
 
