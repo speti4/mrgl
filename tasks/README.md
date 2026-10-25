@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-25 — edit the files, not this section._
 
-**State:** 7 backlog (0 ready · 0 blocked · 3 waiting · 4 ideas) · 1 in progress · 107 done · 5 dropped · 6 decisions
+**State:** 6 backlog (0 ready · 0 blocked · 3 waiting · 3 ideas) · 3 in progress · 107 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -46,12 +46,6 @@ _none_
 
 ### Ideas
 
-#### M4 Sources
-
-| # | Task | Size | Created |
-|---|---|---|---|
-| 111 | [A read-only adopt round on the real retail and classic folders](backlog/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md) | S | 2026-10-22 |
-
 #### M5 Trust
 
 | # | Task | Size | Created |
@@ -67,11 +61,18 @@ _none_
 
 ### In progress
 
+#### M1 Core + CLI
+
+| # | Task | Started | Plan |
+|---|---|---|---|
+| 128 | [A manual round on the real install after 0.1.0: the sources, the window and the…](wip/128-a-manual-round-on-the-real-install-after-0-1-0.md) | 2026-10-25 | `none` |
+
 #### M4 Sources
 
 | # | Task | Started | Plan |
 |---|---|---|---|
 | 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
+| 111 | [A read-only adopt round on the real retail and classic folders](wip/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md) | 2026-10-25 | `none` |
 
 ### Closed – do not reopen
 
