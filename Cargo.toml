@@ -37,7 +37,7 @@ thiserror = "2"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # SHA-256 of every installed file for the state sidecar's file list (D-003, task 004): a stable hash the
 # repair and rollback of later tasks can compare against; std has no hash function meant for files.
-sha2 = "0.10"
+sha2 = "0.11"
 # The MD5 a WoWInterface download is checked against before the engine opens it (task 094): the API names
 # the file's MD5 and no other hash. RustCrypto's MD5, the family `sha2` comes from, so its `digest` and
 # buffer crates are in the tree already; one small pure Rust crate instead of a hand-rolled MD5.
