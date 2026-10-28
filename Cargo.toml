@@ -41,7 +41,7 @@ sha2 = "0.10"
 # The MD5 a WoWInterface download is checked against before the engine opens it (task 094): the API names
 # the file's MD5 and no other hash. RustCrypto's MD5, the family `sha2` comes from, so its `digest` and
 # buffer crates are in the tree already; one small pure Rust crate instead of a hand-rolled MD5.
-md-5 = "0.10"
+md-5 = "0.11"
 # The HTTP client of the sources (task 003): the GitHub releases API and the asset downloads, blocking, with
 # rustls compiled in (no OpenSSL, nothing to install, D-002); std has no HTTP and Tauri's own client belongs to
 # the window. Its `ring` provider compiles C and assembly through the MSVC tools the build already needs.
