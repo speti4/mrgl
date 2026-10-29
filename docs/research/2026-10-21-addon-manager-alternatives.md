@@ -67,7 +67,8 @@ developer console; the approval is manual). Every request carries `x-api-key`. P
 to the project page or take a zip the user downloaded by hand. Scraping the website is against the terms
 (Overwolf's own statement is in the sources). Decision D-002 therefore keeps CurseForge optional: the user's
 own key, the API within its terms, "open the page / import a zip" when distribution is off, never scraping.
-The key application is task 007.
+The key application is task 007; the application route and the terms the source follows are on
+[the CurseForge API page](2026-10-22-curseforge-api-terms.md).
 
 ### The Ajour and WowUp history
 
