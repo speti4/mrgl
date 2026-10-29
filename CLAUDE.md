@@ -48,7 +48,7 @@ Before a commit: the checks in CONTRIBUTING.md, "Checks before a commit" (more o
 
 ## Tasks
 - `tasks/` follows the project-pal task standard (`tasks/README.md`): approved plan → `/tasks promote` (or
-  `/tasks add` for later), closing files every follow-up with `/tasks add`, `/tasks check` before a task commit;
+  `/tasks add` for later), closing proposes every follow-up and files the approved ones with `/tasks add`, `/tasks check` before a task commit;
   a task file reads as public text: it states decisions and results, not conversations; a decision stays
   `proposed` until the maintainer decides it
 - `scripts/sync-issues.py` mirrors every numbered task and decision into a GitHub issue, one way (the
