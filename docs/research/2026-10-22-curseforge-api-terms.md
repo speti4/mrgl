@@ -1,6 +1,6 @@
 # The CurseForge Core API: the key, the application and the terms
 
-Verified: 2026-10-22. The terms and the application route are CurseForge's (Overwolf's) to change; re-check
+Verified: 2026-10-22, the outcome added 2026-10-29. The terms and the application route are CurseForge's (Overwolf's) to change; re-check
 the sources before relying on a claim here. Task 007 is the application; the source implementation is M4.
 
 ## The key
@@ -64,8 +64,15 @@ developer; mrgl names CurseForge as the source of an addon anyway, as it names G
 
 ## The outcome
 
-- 2026-10-22 — the application was submitted (task 007's Log has the date). The outcome is added here when it
-  arrives.
+- 2026-10-22 — the application was submitted (task 007's Log has the date).
+- 2026-10-29 — approved: CurseForge's e-mail ("Your CurseForge API Application - Approved") names the
+  application `mrgl` and the 3rd Party CurseForge API, carries the personal API key and points to the Core
+  API documentation; it attaches no term beyond the ones above, so the table stays the source's rule book.
+  The key is the maintainer's own (clause 2.2: non-transferable): it lives in the Windows Credential Manager
+  (`mrgl key set curse`, task 093), never in the repository, a release zip or a task file, and every user of
+  mrgl applies for their own key the same way (D-002). The first requests against the real API are in task
+  096's Verification: the game version type ids of `GET /v1/games/1/version-types` match the constants the
+  source carried, and the manual round (install, update check, distribution-off project, adopt) passed.
 
 ## Sources
 

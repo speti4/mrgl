@@ -12,9 +12,9 @@ Every numbered file here is mirrored one way into a GitHub issue by `scripts/syn
 never the issue.
 
 <!-- tasks:index:start -->
-_Generated 2026-10-25 — edit the files, not this section._
+_Generated 2026-10-29 — edit the files, not this section._
 
-**State:** 7 backlog (1 ready · 0 blocked · 3 waiting · 3 ideas) · 1 in progress · 109 done · 5 dropped · 6 decisions
+**State:** 6 backlog (1 ready · 0 blocked · 2 waiting · 3 ideas) · 1 in progress · 110 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -35,12 +35,6 @@ _none_
 | # | Task | Waits for | Size | Created |
 |---|---|---|---|---|
 | 008 | [Launch-day manual round on the Forever folder](backlog/008-launch-day-manual-round-on-forever.md) | 2026-11-04, the World of Warcraft Forever launch | S | 2026-10-21 |
-
-#### M4 Sources
-
-| # | Task | Waits for | Size | Created |
-|---|---|---|---|---|
-| 007 | [Apply for a CurseForge third-party API key](backlog/007-curseforge-api-key-application.md) | CurseForge approval of the third-party API key application | S | 2026-10-21 |
 
 #### M5 Trust
 
@@ -85,6 +79,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 007 | [Apply for a CurseForge third-party API key](done/007-curseforge-api-key-application.md) | 2026-10-29 |
 | 128 | [A manual round on the real install after 0.1.0: the sources, the window and the…](done/128-a-manual-round-on-the-real-install-after-0-1-0.md) | 2026-10-25 |
 | 127 | [The issue mirror closes its duplicate issues](done/127-the-issue-mirror-closes-its-duplicate-issues.md) | 2026-10-25 |
 | 111 | [A read-only adopt round on the real retail and classic folders](done/111-a-read-only-adopt-round-on-the-real-retail-and-classic-folders.md) | 2026-10-25 |
@@ -94,9 +89,8 @@ _none_
 | 121 | [A hardening review of the code that touches the disk, the network and the keys](done/121-a-hardening-review-of-the-code-that-touches-the-disk-the-network-and-the-keys.md) | 2026-10-24 |
 | 120 | [A usage guide as HTML inside the release zip](done/120-a-usage-guide-as-html-inside-the-release-zip.md) | 2026-10-24 |
 | 119 | [The local coverage run needs a short checkout path](done/119-the-local-coverage-run-needs-a-short-checkout-path.md) | 2026-10-24 |
-| 118 | [One stand-in client helper for the tests of the three crates](done/118-one-stand-in-client-helper-for-the-tests-of-the-three-crates.md) | 2026-10-24 |
 
-_99 more in `done/`._
+_100 more in `done/`._
 
 ### Decisions
 

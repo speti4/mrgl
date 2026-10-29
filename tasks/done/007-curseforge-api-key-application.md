@@ -3,6 +3,7 @@ size: S
 origin: session 2026-10-21
 created: 2026-10-21
 started: 2026-10-22
+closed: 2026-10-29
 plan: none
 milestone: M4 Sources
 ---
@@ -39,7 +40,7 @@ or an api-key query parameter), so without a key the source of M4 can neither re
 1. [x] The research page: the application route, the terms (distribution, no caching, no circumvention, the
        key's confidentiality, the quota, termination), what they mean for the source implementation
 2. [x] The application submitted on the form, with the texts of the research page; the date in the Log
-3. [ ] The outcome (a key issued, with its terms, or refused, with the reason) on the research page; close
+3. [x] The outcome (a key issued, with its terms, or refused, with the reason) on the research page; close
 
 ## Log
 
@@ -52,19 +53,29 @@ or an api-key query parameter), so without a key the source of M4 can neither re
   distribution; the author-approval, volume and terms boxes ticked). The form answered "Thank you"; the
   developer console already holds an organization key of the Studios kind, which is not the one applied for.
   Waiting for Overwolf's review, which is sent by e-mail; no review time is published.
+- 2026-10-29 — approved: the e-mail "Your CurseForge API Application - Approved" (seven days after the
+  application) names the application `mrgl` and the 3rd Party CurseForge API and carries the personal key.
+  The outcome is on the research page; the key went into the Windows Credential Manager through `mrgl key
+  set curse` from the clipboard (never an argument, never a file in the repo), and `mrgl key list` and the
+  doctor report `MRGL_CURSEFORGE_KEY set (credential store)`. The first real-API requests are task 096's
+  step 5. No follow-up: the application was the whole task.
 
 ## Deviations from the plan
 
-- none yet
+- The branch waited locally for the answer instead of being merged as "submitted": one pull request carries
+  the application and its outcome.
 
 ## Verification
 
 - 2026-10-22 — the application submitted; the research page's sources are listed on the page.
+- 2026-10-29 — the key is issued and stored: `mrgl key list` reports `MRGL_CURSEFORGE_KEY set (credential
+  store)` and the doctor's `api keys:` line the same, with no key value in either output; the research page
+  states the outcome and the terms the source implementation follows (its table, unchanged by the approval).
 
 ## Closing checklist
 
-- [ ] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log
-- [ ] every doc under *Docs that move* changed in this change
-- [ ] Verification written, dated
-- [ ] `tasks_check` green, README index regenerated
-- [ ] moved to `done/` with `closed: YYYY-MM-DD`
+- [x] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log (none)
+- [x] every doc under *Docs that move* changed in this change
+- [x] Verification written, dated
+- [x] `tasks_check` green, README index regenerated
+- [x] moved to `done/` with `closed: 2026-10-29`
