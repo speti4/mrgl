@@ -55,9 +55,8 @@ pub const PAGE_SIZE: u32 = 50;
 /// The redirects one request follows before it gives up.
 pub const MAX_REDIRECTS: usize = 5;
 
-// The game version type ids of World of Warcraft (`gameVersionTypeId`). They were extracted from
-// `GET /v1/games/1/version-types` by another client and are kept here as constants until a key allows
-// re-reading them from that endpoint (task 096 waits for the key of task 007 to confirm them).
+// The game version type ids of World of Warcraft (`gameVersionTypeId`), as `GET /v1/games/1/version-types`
+// lists them (read with a key on 2026-10-29, task 096): the API publishes eight WoW types, these eight.
 /// Retail.
 pub const RETAIL: u32 = 517;
 /// Classic Era.

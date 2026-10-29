@@ -108,7 +108,7 @@ fn a_project_answers_forever_and_retail_from_its_files_per_game_version_type() {
         assert_eq!(request.header_value("x-api-key"), Some(KEY));
         assert!(!request.follow_redirects);
     }
-    // The type ids as the constants name them, until a key re-reads them.
+    // The type ids as the constants name them (confirmed against the API on 2026-10-29, task 096).
     assert_eq!(
         [
             curseforge::RETAIL,
