@@ -1683,9 +1683,8 @@ game version type, which the API sorts newest first). The type per flavor is
 `sources::curseforge::game_version_type`: retail 517, Classic Era 67408, Forever 88568, and the progressing
 classic by the installed build, TBC 73246, Wrath 73713, Titan 81212 for `3.80`, Cataclysm 77522, Mists 79434
 (without a build Mists, a guess of the game type); the names in a message and the pick's flavor are Wago's
-(`retail`, `classic`, `forever`, `bc`, `wotlk`, `titan`, `cata`, `mop`). The ids are constants that another
-client extracted from `GET /v1/games/1/version-types`; they are re-read from that endpoint once a key exists
-(task 096 stays open for it). A file's `releaseType` maps onto the channels (`sources::curseforge::file_on`):
+(`retail`, `classic`, `forever`, `bc`, `wotlk`, `titan`, `cata`, `mop`). The ids are constants, the eight WoW
+types `GET /v1/games/1/version-types` lists (read with a key on 2026-10-29, task 096). A file's `releaseType` maps onto the channels (`sources::curseforge::file_on`):
 the stable channel takes the newest release (1), else the newest file, the prerelease channel the newest file,
 a beta (2) or an alpha (3) included, newest by `fileDate`; a file that is not available or names only another
 type's game versions is left out. The pick's version is the file's `displayName`, its release the file id,

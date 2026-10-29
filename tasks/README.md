@@ -14,7 +14,7 @@ never the issue.
 <!-- tasks:index:start -->
 _Generated 2026-10-29 — edit the files, not this section._
 
-**State:** 6 backlog (1 ready · 0 blocked · 2 waiting · 3 ideas) · 1 in progress · 110 done · 5 dropped · 6 decisions
+**State:** 6 backlog (1 ready · 0 blocked · 2 waiting · 3 ideas) · 0 in progress · 111 done · 5 dropped · 6 decisions
 
 ### Ready
 
@@ -59,11 +59,7 @@ _none_
 
 ### In progress
 
-#### M4 Sources
-
-| # | Task | Started | Plan |
-|---|---|---|---|
-| 096 | [The CurseForge source with the user's key](wip/096-the-curseforge-source-with-the-users-key.md) | 2026-10-22 | `none` |
+_none_
 
 ### Closed – do not reopen
 
@@ -79,6 +75,7 @@ _none_
 
 | # | Task | Closed |
 |---|---|---|
+| 096 | [The CurseForge source with the user's key](done/096-the-curseforge-source-with-the-users-key.md) | 2026-10-29 |
 | 007 | [Apply for a CurseForge third-party API key](done/007-curseforge-api-key-application.md) | 2026-10-29 |
 | 128 | [A manual round on the real install after 0.1.0: the sources, the window and the…](done/128-a-manual-round-on-the-real-install-after-0-1-0.md) | 2026-10-25 |
 | 127 | [The issue mirror closes its duplicate issues](done/127-the-issue-mirror-closes-its-duplicate-issues.md) | 2026-10-25 |
@@ -88,9 +85,8 @@ _none_
 | 122 | [Tests of the usage guide generator's error paths](done/122-tests-of-the-usage-guide-generators-error-paths.md) | 2026-10-24 |
 | 121 | [A hardening review of the code that touches the disk, the network and the keys](done/121-a-hardening-review-of-the-code-that-touches-the-disk-the-network-and-the-keys.md) | 2026-10-24 |
 | 120 | [A usage guide as HTML inside the release zip](done/120-a-usage-guide-as-html-inside-the-release-zip.md) | 2026-10-24 |
-| 119 | [The local coverage run needs a short checkout path](done/119-the-local-coverage-run-needs-a-short-checkout-path.md) | 2026-10-24 |
 
-_100 more in `done/`._
+_101 more in `done/`._
 
 ### Decisions
 

@@ -3,6 +3,7 @@ size: M
 origin: session 2026-10-22
 created: 2026-10-22
 started: 2026-10-22
+closed: 2026-10-29
 plan: none
 milestone: M4 Sources
 ---
@@ -51,16 +52,15 @@ the adopt lines (097) with a `curse:` source that can be asked.
 4. [x] Fixtures (the mod, the files per type for Forever and retail, a distribution-off mod, the zip behind the
        CDN URL, a 401) and the tests of the done-when lines; the type ids as constants with a note that they
        are re-read once a key exists
-5. [ ] With the key of 007: re-read the game version type ids from `GET /v1/games/1/version-types` and fix the
+5. [x] With the key of 007: re-read the game version type ids from `GET /v1/games/1/version-types` and fix the
        constants if they differ; the manual round (`add curse:<id>` into a Forever and a retail flavor folder,
        a distribution-off project, `list`, `update --all`, `adopt`) against the real API
 
-## Waits for the key
+## The key
 
-The code and the stubs are in; the task stays in `wip/` until the CurseForge key of task 007 arrives. Then
-step 5: the game version type ids are re-read from the API (the constants of `sources::curseforge` come from
-another client's reading of that endpoint), and the manual round runs against the real API and CDN, with its
-dated line under Verification.
+The code and the stubs landed on 2026-10-22; the task stayed in `wip/` until the CurseForge key of task 007
+arrived (approved 2026-10-29). Step 5 then re-read the game version type ids from the API and ran the manual
+round against the real API and CDN; both are dated lines under Verification.
 
 ## Log
 
@@ -126,6 +126,12 @@ dated line under Verification.
   this build has, a CurseForge paragraph with the distribution-off line and `--as`, an `add curse:<id>` line
   in the usage block, adopt and import), `tests/fixtures/README.md` (the CurseForge answers and the zip in
   hand).
+- 2026-10-29 — step 5 with the key of 007, stored in the Credential Manager: `GET /v1/games/1/version-types`
+  lists eight WoW types and every constant of `sources::curseforge` matches (517 Retail, 67408 Classic, 73246
+  Burning Crusade Classic, 73713 Wrath of the Lich King Classic, 77522 Cataclysm Classic, 79434 Mists of
+  Pandaria Classic, 81212 Wrath Titan Reforged, 88568 Forever), so no constant and no test changes; the
+  comment on the constants stays as the note of where they come from. The manual round passed (Verification).
+  No follow-up found.
 
 ## Deviations from the plan
 
@@ -160,12 +166,28 @@ dated line under Verification.
   no file under the home folder, the sidecar included; a `curse:4242` list entry imports; `4242` classifies
   the Forever build from type 88568 and `list` shows the recorded `forever:yes` without a request. The manual
   round against the real API waits for the key (step 5).
+- 2026-10-29 — step 5 against the real API and CDN with the release build and the key in the Credential
+  Manager (`MRGL_SERIOUS=1`, the output captured outside the repo): `add curse:18808` and `add curse:20697`
+  into the real `_forever_` resolve a Forever release each (`CurseForge lists the release … for forever`,
+  interface 16001), download from `edge.forgecdn.net`, install one folder each and record `forever:yes`,
+  which `list` shows; `add curse:94855` (a project with distribution off) stops with the line that names its
+  page and the `--as` command, and the fixture zip `MrglNoDistribution-2.0.0.zip --as curse:94855` installs
+  with the source recorded (`forever:unknown`); `update --all --dry-run` and `update --all --yes` on the three
+  entries answer `2 up to date, 1 only on CurseForge` with the page named again and nothing written;
+  `add curse:6273` into the real `_retail_` resolves a retail release (interface 120107), installs it and
+  warns that the CurseForge app manages the folder, `list` shows it managed and `update --all --dry-run`
+  answers `1 up to date` with the same warning; `adopt --flavor retail` asks CurseForge for every
+  `X-Curse-Project-ID` of the 55 unmanaged addons and reads `retail build yes` with the release named for
+  each, `its author allows no download outside CurseForge, so it installs from a zip in hand` for the
+  distribution-off ones, and counts 30 adoptable without CurseForge, 7 only with it, 18 with no known source;
+  no 401 or 403 anywhere. The captured output of the whole round contains neither the key nor its last eight
+  characters. Teardown: `remove BugSack --flavor retail` and `remove MrglNoDistribution --flavor forever`;
+  the two Forever addons stay installed as managed addons of that folder.
 
 ## Closing checklist
 
-- [ ] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log
-      (a task session of a parallel-sessions repo: listed in the pull request under `## Follow-ups`, the main session files them)
+- [x] every follow-up is a `backlog/` file (`/tasks add`) or deleted with a reason in the Log (none found)
 - [x] every doc under *Docs that move* changed in this change
-- [ ] Verification written, dated
-- [ ] `tasks_check` green, README index regenerated
-- [ ] moved to `done/` with `closed: YYYY-MM-DD`
+- [x] Verification written, dated
+- [x] `tasks_check` green, README index regenerated
+- [x] moved to `done/` with `closed: 2026-10-29`
